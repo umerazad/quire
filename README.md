@@ -1,6 +1,6 @@
 # Quire native
 
-The Rust/GPUI rewrite is underway. The current executable is a native text-input harness adapted from Zed's GPUI input example. Notebook editing, storage, and the full editor/Vim port are still being implemented through [the task queue](plans/native-rewrite-tasks.md).
+The Rust/GPUI rewrite is underway. The current executable shows two native input views of one Zed text buffer. Edits update both views; Command-Z and Command-Shift-Z undo and redo through the same history. Selections follow edits in the other view using Zed anchors. Notebook persistence, Markdown presentation, and the full editor/Vim port remain in [the task queue](plans/native-rewrite-tasks.md).
 
 Use Rust 1.98.1, Bun, and Node 26 for development. macOS builds require Xcode with the Metal tools. GPUI and its platform/support crates are copied under `vendor/zed`; building does not require either sibling checkout.
 
@@ -18,4 +18,4 @@ Reference protocol tests deliberately run through Node/Vitest. Bun's zstd decode
 
 Generate synthetic notebook fixtures with `bun tools/synthetic-notebook.ts <empty-folder> [pages] [seed]`. Defaults are 6,536 pages and seed 1. Generated notebooks and build output stay outside version control.
 
-The application uses GPL-3.0-or-later; retain the licenses and font notices in `vendor/zed`. Copied components and source revisions are recorded in `vendor/zed/UPSTREAM.json` and `tests/reference/UPSTREAM.json`. Application input code derives from `crates/gpui/examples/input.rs` at that Zed revision. Its only current functional adaptation is the Quire window title.
+The application uses GPL-3.0-or-later; retain the licenses and font notices in `vendor/zed`. Copied components and source revisions are recorded in `vendor/zed/UPSTREAM.json` and `tests/reference/UPSTREAM.json`. Application input code derives from `crates/gpui/examples/input.rs` at that Zed revision, adapted to shared document entities, anchored selections, undo/redo, and two views.

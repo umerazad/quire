@@ -9,6 +9,7 @@ license = "GPL-3.0-or-later"
 gpui.workspace = true
 gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
 unicode-segmentation.workspace = true
+text.workspace = true
 
 [features]
 test-support = ["gpui/test-support", "gpui_platform/test-support"]

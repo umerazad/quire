@@ -21,10 +21,16 @@ function visit(name: string) {
   }
 }
 visit("gpui_platform");
+visit("text");
+required.add("text");
 const destination = "vendor/zed";
-if (existsSync(destination)) throw new Error("vendor/zed already exists. Review its modifications before replacing the snapshot.");
+if (existsSync(destination)) {
+  const previous = JSON.parse(readFileSync(destination + "/UPSTREAM.json", "utf8"));
+  const revision = execFileSync("git", ["-C", source, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  if (previous.revision !== revision) throw new Error("Source revision changed. Review the upstream update before copying.");
+}
 mkdirSync(destination, { recursive: true });
-for (const { path } of selected.values()) cpSync(`${source}/${path}`, `${destination}/${path}`, { recursive: true });
+for (const { path } of selected.values()) if (!existsSync(`${destination}/${path}`)) cpSync(`${source}/${path}`, `${destination}/${path}`, { recursive: true });
 cpSync(`${source}/assets/fonts`, `${destination}/assets/fonts`, { recursive: true });
 for (const license of ["LICENSE-APACHE", "LICENSE-GPL", "LICENSE-AGPL", "LICENSE-MIT"]) if (existsSync(`${source}/${license}`)) cpSync(`${source}/${license}`, `${destination}/${license}`);
 function toml(value: any): string {

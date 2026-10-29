@@ -1,5 +1,7 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
+mod document;
+
 #[path = "example_support/fonts.rs"]
 mod example_support;
 
@@ -32,11 +34,18 @@ actions!(
         Paste,
         Cut,
         Copy,
+        Undo,
+        Redo,
         Quit,
     ]
 );
 
 struct TextInput {
+    document: Entity<document::Document>,
+    version: u64,
+    snapshot: text::BufferSnapshot,
+    _document_subscription: gpui::Subscription,
+    error: Option<String>,
     focus_handle: FocusHandle,
     content: SharedString,
     placeholder: SharedString,
@@ -49,6 +58,102 @@ struct TextInput {
 }
 
 impl TextInput {
+    fn new(document: Entity<document::Document>, cx: &mut Context<Self>) -> Self {
+        let content = document.read(cx).text().into();
+        let version = document.read(cx).version();
+        let snapshot = document.read(cx).snapshot();
+        let subscription = cx.observe(&document, |this, _, cx| {
+            this.refresh_document(cx);
+        });
+        Self {
+            document,
+            version,
+            snapshot,
+            _document_subscription: subscription,
+            error: None,
+            focus_handle: cx.focus_handle(),
+            content,
+            placeholder: "Type here...".into(),
+            selected_range: 0..0,
+            selection_reversed: false,
+            marked_range: None,
+            last_layout: None,
+            last_bounds: None,
+            is_selecting: false,
+        }
+    }
+
+    fn refresh_document(&mut self, cx: &mut Context<Self>) {
+        let document = self.document.read(cx);
+        if self.version == document.version() {
+            return;
+        }
+        let start = self.snapshot.anchor_after(self.selected_range.start);
+        let end = if self.selected_range.is_empty() {
+            start
+        } else {
+            self.snapshot.anchor_before(self.selected_range.end)
+        };
+        self.version = document.version();
+        self.content = document.text().into();
+        self.snapshot = document.snapshot();
+        let start = self.snapshot.offset_for_anchor(&start);
+        let end = self.snapshot.offset_for_anchor(&end);
+        self.selected_range = start.min(end)..start.max(end);
+        self.marked_range = None;
+        self.last_layout = None;
+        cx.notify();
+    }
+
+    fn edit_document(
+        &mut self,
+        range: Range<usize>,
+        inserted: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let expected = self.version;
+        let result = self.document.update(cx, |document, cx| {
+            let result = document.edit(expected, range, inserted);
+            if result.is_ok() {
+                cx.notify();
+            }
+            result
+        });
+        match result {
+            Ok(_) => {
+                self.error = None;
+                self.refresh_document(cx);
+                true
+            }
+            Err(error) => {
+                self.error = Some(error);
+                self.refresh_document(cx);
+                cx.notify();
+                false
+            }
+        }
+    }
+
+    fn undo(&mut self, _: &Undo, window: &mut Window, cx: &mut Context<Self>) {
+        self.document.update(cx, |document, cx| {
+            if document.undo() {
+                cx.notify();
+            }
+        });
+        self.refresh_document(cx);
+        window.notify_text_input_changed(&self.focus_handle);
+    }
+
+    fn redo(&mut self, _: &Redo, window: &mut Window, cx: &mut Context<Self>) {
+        self.document.update(cx, |document, cx| {
+            if document.redo() {
+                cx.notify();
+            }
+        });
+        self.refresh_document(cx);
+        window.notify_text_input_changed(&self.focus_handle);
+    }
+
     fn left(&mut self, _: &Left, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             self.move_to(self.previous_boundary(self.cursor_offset()), window, cx);
@@ -273,7 +378,9 @@ impl TextInput {
     }
 
     fn reset(&mut self, window: &Window, cx: &mut Context<Self>) {
-        self.content = "".into();
+        if !self.edit_document(0..self.content.len(), "", cx) {
+            return;
+        }
         self.selected_range = 0..0;
         self.selection_reversed = false;
         self.marked_range = None;
@@ -359,9 +466,9 @@ impl EntityInputHandler for TextInput {
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
 
-        self.content =
-            (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
-                .into();
+        if !self.edit_document(range.clone(), new_text, cx) {
+            return;
+        }
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
         self.selection_reversed = false;
         self.marked_range.take();
@@ -383,9 +490,9 @@ impl EntityInputHandler for TextInput {
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
 
-        self.content =
-            (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
-                .into();
+        if !self.edit_document(range.clone(), new_text, cx) {
+            return;
+        }
         if !new_text.is_empty() {
             self.marked_range = Some(range.start..range.start + new_text.len());
         } else {
@@ -664,6 +771,9 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))
+            .on_action(cx.listener(Self::undo))
+            .on_action(cx.listener(Self::redo))
+            .children(self.error.clone())
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -690,6 +800,7 @@ impl Focusable for TextInput {
 
 struct InputExample {
     text_input: Entity<TextInput>,
+    second_input: Entity<TextInput>,
     recent_keystrokes: Vec<Keystroke>,
     focus_handle: FocusHandle,
 }
@@ -741,7 +852,10 @@ impl Render for InputExample {
                             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_reset_click)),
                     ),
             )
+            .child("Source")
             .child(self.text_input.clone())
+            .child("Shared view")
+            .child(self.second_input.clone())
             .children(self.recent_keystrokes.iter().rev().map(|ks| {
                 format!(
                     "{:} {}",
@@ -773,6 +887,8 @@ fn run_example() {
             KeyBinding::new("cmd-v", Paste, None),
             KeyBinding::new("cmd-c", Copy, None),
             KeyBinding::new("cmd-x", Cut, None),
+            KeyBinding::new("cmd-z", Undo, None),
+            KeyBinding::new("cmd-shift-z", Redo, None),
             KeyBinding::new("home", Home, None),
             KeyBinding::new("end", End, None),
             KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, None),
@@ -785,19 +901,14 @@ fn run_example() {
                     ..Default::default()
                 },
                 |_, cx| {
-                    let text_input = cx.new(|cx| TextInput {
-                        focus_handle: cx.focus_handle(),
-                        content: "".into(),
-                        placeholder: "Type here...".into(),
-                        selected_range: 0..0,
-                        selection_reversed: false,
-                        marked_range: None,
-                        last_layout: None,
-                        last_bounds: None,
-                        is_selecting: false,
+                    let document = cx.new(|_| {
+                        document::Document::new(text::BufferId::from(std::num::NonZeroU64::MIN), "")
                     });
+                    let text_input = cx.new(|cx| TextInput::new(document.clone(), cx));
+                    let second_input = cx.new(|cx| TextInput::new(document, cx));
                     cx.new(|cx| InputExample {
                         text_input,
+                        second_input,
                         recent_keystrokes: vec![],
                         focus_handle: cx.focus_handle(),
                     })
@@ -848,18 +959,65 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
 
+    #[gpui::test]
+    fn two_inputs_share_edits_and_undo(cx: &mut TestAppContext) {
+        let document = cx.new(|_| {
+            document::Document::new(text::BufferId::from(std::num::NonZeroU64::MIN), "hello")
+        });
+        let source = cx.add_window(|_, cx| TextInput::new(document.clone(), cx));
+        let embed = cx.add_window(|_, cx| TextInput::new(document.clone(), cx));
+        source
+            .update(cx, |input, window, cx| {
+                input.replace_text_in_range(Some(0..5), "مرحبا🙂", window, cx);
+            })
+            .unwrap();
+        embed
+            .update(cx, |input, window, cx| {
+                assert_eq!(input.content, "مرحبا🙂");
+                input.undo(&Undo, window, cx);
+            })
+            .unwrap();
+        source
+            .update(cx, |input, _, _| assert_eq!(input.content, "hello"))
+            .unwrap();
+        source
+            .update(cx, |input, window, cx| input.redo(&Redo, window, cx))
+            .unwrap();
+        embed
+            .update(cx, |input, _, _| assert_eq!(input.content, "مرحبا🙂"))
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn other_view_selection_tracks_earlier_insertions(cx: &mut TestAppContext) {
+        let document = cx.new(|_| {
+            document::Document::new(text::BufferId::from(std::num::NonZeroU64::MIN), "abc")
+        });
+        let source = cx.add_window(|_, cx| TextInput::new(document.clone(), cx));
+        let embed = cx.add_window(|_, cx| TextInput::new(document.clone(), cx));
+        embed
+            .update(cx, |input, window, cx| {
+                input.set_selected_text_range(1..2, window, cx)
+            })
+            .unwrap();
+        source
+            .update(cx, |input, window, cx| {
+                input.replace_text_in_range(Some(0..0), "🙂", window, cx)
+            })
+            .unwrap();
+        embed
+            .update(cx, |input, _, _| {
+                assert_eq!(input.selected_range, 5..6);
+                assert_eq!(&input.content[input.selected_range.clone()], "b");
+            })
+            .unwrap();
+    }
+
     fn input(content: &'static str, cx: &mut Context<TextInput>) -> TextInput {
-        TextInput {
-            focus_handle: cx.focus_handle(),
-            content: content.into(),
-            placeholder: "".into(),
-            selected_range: 0..0,
-            selection_reversed: false,
-            marked_range: None,
-            last_layout: None,
-            last_bounds: None,
-            is_selecting: false,
-        }
+        let document = cx.new(|_| {
+            document::Document::new(text::BufferId::from(std::num::NonZeroU64::MIN), content)
+        });
+        TextInput::new(document, cx)
     }
 
     #[gpui::test]
@@ -907,8 +1065,7 @@ mod tests {
     fn long_single_line_selection_uses_one_geometry_fragment(cx: &mut TestAppContext) {
         let (view, cx) = cx.add_window_view(|_, cx| input("", cx));
         view.update(cx, |input, cx| {
-            input.content = "a".repeat(10_000).into();
-            cx.notify();
+            assert!(input.edit_document(0..0, &"a".repeat(10_000), cx));
         });
         cx.run_until_parked();
         view.update_in(cx, |input, window, cx| {

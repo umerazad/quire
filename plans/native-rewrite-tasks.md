@@ -35,6 +35,22 @@ Constraints: No startup project scan, login, telemetry, collaboration, or langua
 Write set: selected `vendor/zed/` crates, `crates/quire/src/editor/`, editor initialization tests.
 Dependencies: NR02.
 Verify: Type, select, paste, undo/redo, search, and run representative Vim operators in two views of one buffer. Inspect processes, network activity, startup work, and dependency/resource closure.
+Proof notes: Implemented the shared-buffer foundation as NR03a below. Full editor/Vim hosting remains unfinished; the input harness is not a Markdown editor.
+Status: in_progress
+
+#### NR03a: Share native views through Zed text buffers
+
+What to do: Copy `text`, `rope`, `clock`, and their required helpers; make the native input views share one document, version checks, anchored selections, and undo/redo.
+Constraints: Keep the upstream snapshot fixed; reject stale or invalid UTF-8 edits before mutation. The harness does not replace the planned full editor integration.
+Verify: Native GPUI tests cover two views, undo/redo from either view, selection tracking across earlier Unicode insertions, composition ranges, and rejected edits. Build and scoped Clippy including test targets pass.
+Proof notes: `crates/quire/src/document.rs` wraps Zed's text buffer and immutable snapshots. Both input views share its GPUI entity and receive notifications. Added five support crates, for 31 vendored crates total. Tests were first observed failing for absent document/view behavior, then passed after implementation. Nine native/model tests pass, including the original three input tests. Zed's finalization API keeps separate edit commands as separate undo steps. Commands: `cargo test -p quire --locked --features test-support` (9 passed), `cargo clippy -p quire --locked --all-targets --features test-support --no-deps -- -D warnings` (passed), `cargo build -p quire --locked` (passed), formatting and prose lint (passed). A sequential review checked snapshot/selection mapping, rejected-edit behavior, and shared history. Native desktop visual acceptance remains unavailable in the sandbox; this evidence comes from GPUI's headless test contexts.
+Status: done
+
+#### NR03b: Host the full editor and Vim
+
+What to do: Add the remaining `language`, `multi_buffer`, `editor`, and `vim` dependency closure and replace the input harness with an embedded Markdown editor.
+Constraints: Keep account, project scan, language servers, collaboration, and telemetry inactive. Preserve NR03a's shared-document and version-check contracts.
+Verify: Complete the parent task's native editing/Vim scenarios, including multiple views and installed-package resource independence.
 Proof notes: pending.
 Status: pending
 

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/quire", "vendor/zed/crates/gpui_platform", "vendor/zed/crates/gpui", "vendor/zed/crates/collections", "vendor/zed/crates/gpui_util", "vendor/zed/crates/bench_metrics", "vendor/zed/crates/gpui_macros", "vendor/zed/crates/gpui_shared_string", "vendor/zed/crates/http_client", "vendor/zed/crates/refineable", "vendor/zed/crates/refineable/derive_refineable", "vendor/zed/crates/scheduler", "vendor/zed/crates/sum_tree", "vendor/zed/crates/ztracing", "vendor/zed/crates/zlog", "vendor/zed/crates/ztracing_macro", "vendor/zed/crates/util_macros", "vendor/zed/tooling/perf", "vendor/zed/crates/reqwest_client", "vendor/zed/crates/http_client_tls", "vendor/zed/crates/gpui_web", "vendor/zed/crates/gpui_wgpu", "vendor/zed/crates/gpui_macos", "vendor/zed/crates/gpui_apple", "vendor/zed/crates/gpui_ios", "vendor/zed/crates/gpui_windows", "vendor/zed/crates/gpui_linux"]
+members = ["crates/quire", "vendor/zed/crates/gpui_platform", "vendor/zed/crates/gpui", "vendor/zed/crates/collections", "vendor/zed/crates/gpui_util", "vendor/zed/crates/bench_metrics", "vendor/zed/crates/gpui_macros", "vendor/zed/crates/gpui_shared_string", "vendor/zed/crates/http_client", "vendor/zed/crates/refineable", "vendor/zed/crates/refineable/derive_refineable", "vendor/zed/crates/scheduler", "vendor/zed/crates/sum_tree", "vendor/zed/crates/ztracing", "vendor/zed/crates/zlog", "vendor/zed/crates/ztracing_macro", "vendor/zed/crates/util_macros", "vendor/zed/tooling/perf", "vendor/zed/crates/reqwest_client", "vendor/zed/crates/http_client_tls", "vendor/zed/crates/gpui_web", "vendor/zed/crates/gpui_wgpu", "vendor/zed/crates/gpui_macos", "vendor/zed/crates/gpui_apple", "vendor/zed/crates/gpui_ios", "vendor/zed/crates/gpui_windows", "vendor/zed/crates/gpui_linux", "vendor/zed/crates/text", "vendor/zed/crates/clock", "vendor/zed/crates/rope", "vendor/zed/crates/util", "vendor/zed/crates/path"]
 default-members = ["crates/quire"]
 
 [workspace.package]
@@ -15,8 +15,10 @@ edition = "2024"
 "anyhow" = "1.0.86"
 "ashpd" = { "version" = "0.13", "default-features" = false, "features" = ["async-io", "inhibit", "open_uri", "file_chooser", "settings"] }
 "async-channel" = { "version" = "2.5", "default-features" = false }
+"async-fs" = "2.1"
 "async-task" = "4.7"
 "async-tungstenite" = "0.33"
+"async_zip" = { "version" = "0.0.18", "features" = ["deflate", "deflate64"] }
 "backtrace" = "0.3"
 "bench_metrics" = { "path" = "vendor/zed/crates/bench_metrics" }
 "bitflags" = "2.6.0"
@@ -25,6 +27,7 @@ edition = "2024"
 "bytes" = "1.0"
 "cbindgen" = { "version" = "0.28.0", "default-features" = false }
 "chrono" = { "version" = "0.4", "default-features" = false, "features" = ["std", "serde"] }
+"clock" = { "path" = "vendor/zed/crates/clock" }
 "collections" = { "path" = "vendor/zed/crates/collections", "version" = "0.1.0" }
 "console_error_panic_hook" = "0.1.7"
 "core-foundation" = "0.10"
@@ -35,6 +38,7 @@ edition = "2024"
 "ctor" = "1.0.12"
 "derive_more" = { "version" = "2.1", "features" = ["deref", "deref_mut", "from_str"] }
 "derive_refineable" = { "path" = "vendor/zed/crates/refineable/derive_refineable" }
+"dirs" = "6.0"
 "dispatch2" = { "version" = "0.3", "default-features" = false, "features" = ["std"] }
 "dunce" = "1.0"
 "env_logger" = "0.11"
@@ -44,6 +48,8 @@ edition = "2024"
 "foreign-types" = "0.5"
 "futures" = "0.3.34"
 "futures-concurrency" = "7.7.1"
+"futures-lite" = "2"
+"globset" = "0.4"
 "gpui" = { "path" = "vendor/zed/crates/gpui", "default-features" = false }
 "gpui_apple" = { "path" = "vendor/zed/crates/gpui_apple" }
 "gpui_ios" = { "path" = "vendor/zed/crates/gpui_ios" }
@@ -72,6 +78,7 @@ edition = "2024"
 "libc" = "0.2"
 "log" = { "version" = "0.4", "default-features" = false, "features" = ["std"] }
 "mach2" = "0.6"
+"nix" = "0.30"
 "notify-rust" = "4"
 "objc2" = "0.6"
 "objc2-app-kit" = { "version" = "0.3.2", "default-features" = false, "features" = ["NSAlert", "NSAppearance", "NSApplication", "NSButton", "NSCell", "NSColor", "NSControl", "NSCursor", "NSDocumentController", "NSDragging", "NSDraggingItem", "NSEvent", "NSGraphics", "NSImage", "NSMenu", "NSMenuItem", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSScreen", "NSScroller", "NSTrackingArea", "NSView", "NSVisualEffectView", "NSWindow", "NSWorkspace", "block2", "objc2-core-foundation"] }
@@ -89,7 +96,9 @@ edition = "2024"
 "objc2-user-notifications" = { "version" = "0.3", "default-features" = false, "features" = ["std", "block2", "UNNotification", "UNNotificationAction", "UNNotificationCategory", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 "oo7" = { "git" = "https://github.com/zed-industries/oo7", "rev" = "731c1215edb6905876c6137ab300428c7b8d7c13", "version" = "0.6", "default-features" = false }
 "parking_lot" = "0.12.1"
+"path" = { "path" = "vendor/zed/crates/path" }
 "pathfinder_geometry" = "0.5"
+"percent-encoding" = "2.3.2"
 "perf" = { "path" = "vendor/zed/tooling/perf", "default-features" = false }
 "perf-event" = { "package" = "perf-event2", "version" = "0.7.4" }
 "pollster" = "0.4.0"
@@ -106,6 +115,8 @@ edition = "2024"
 "reqwest" = { "git" = "https://github.com/zed-industries/reqwest.git", "rev" = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", "default-features" = false, "features" = ["http2", "macos-system-configuration", "rustls-tls-native-roots", "socks", "stream"], "package" = "zed-reqwest", "version" = "0.12.15-zed" }
 "reqwest_client" = { "path" = "vendor/zed/crates/reqwest_client" }
 "resvg" = { "version" = "0.46.0", "default-features" = false, "features" = ["text", "system-fonts", "memmap-fonts", "raster-images"] }
+"rope" = { "path" = "vendor/zed/crates/rope" }
+"rust-embed" = { "version" = "8.11", "features" = ["include-exclude", "compression"] }
 "rustc-hash" = "2.1.0"
 "rustls" = "0.23.26"
 "rustls-platform-verifier" = "0.7"
@@ -115,7 +126,9 @@ edition = "2024"
 "semver" = { "version" = "1.0", "features" = ["serde"] }
 "serde" = { "version" = "1.0", "features" = ["rc"] }
 "serde_json" = { "version" = "1.0.144", "features" = ["preserve_order", "raw_value"] }
+"serde_json_lenient" = { "version" = "0.2", "features" = ["preserve_order", "raw_value"] }
 "serde_urlencoded" = "0.7"
+"shlex" = "2.0"
 "slotmap" = "1.0.6"
 "smallvec" = { "version" = "1.6", "features" = ["union", "const_new"] }
 "smol" = "2.0"
@@ -127,17 +140,22 @@ edition = "2024"
 "syn" = { "version" = "2.0", "default-features" = false, "features" = ["proc-macro"] }
 "taffy" = { "version" = "=0.15.0", "default-features" = false }
 "tempfile" = "3.20.0"
+"tendril" = "0.5"
+"text" = { "path" = "vendor/zed/crates/text" }
 "thiserror" = "2.0.12"
 "tokio" = "1"
 "tracing" = "0.1.40"
 "tracing-subscriber" = "0.3"
+"unicase" = "2.6"
 "unicode-bidi" = { "version" = "0.3.18", "default-features" = false, "features" = ["hardcoded-data"] }
 "unicode-script" = "0.5.7"
 "unicode-segmentation" = "1.10"
 "url" = "2.2"
 "usvg" = { "version" = "0.46.0", "default-features" = false }
+"util" = { "path" = "vendor/zed/crates/util" }
 "util_macros" = { "path" = "vendor/zed/crates/util_macros" }
 "uuid" = { "version" = "1.1", "features" = ["serde"] }
+"walkdir" = "2.5"
 "wasm-bindgen" = "0.2.120"
 "wasm-bindgen-futures" = "0.4"
 "wasm_thread" = { "git" = "https://github.com/zed-industries/wasm_thread", "rev" = "0cf96c7708dfb97ccf3da50347e25edcf75d6937", "version" = "0.3", "features" = ["es_modules"] }
