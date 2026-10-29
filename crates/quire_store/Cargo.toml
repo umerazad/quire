@@ -9,9 +9,14 @@ license = "GPL-3.0-or-later"
 path = "src/quire_store.rs"
 
 [dependencies]
+anyhow.workspace = true
+sqlez.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 sha2.workspace = true
 zstd.workspace = true
 ryu-js = "=1.0.2"
 unicode-normalization = "=0.1.25"
+
+[dev-dependencies]
+tempfile.workspace = true

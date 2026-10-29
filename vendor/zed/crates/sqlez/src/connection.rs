@@ -66,6 +66,20 @@ impl Connection {
         Self::open(uri, true).unwrap_or_else(|_| Self::open_memory(Some(uri)))
     }
 
+    /// Opens a writable file without substituting an in-memory database.
+    pub fn try_open_file(uri: &str) -> Result<Self> {
+        anyhow::ensure!(
+            !uri.is_empty() && uri != ":memory:",
+            "A persistent database needs a file path. Choose a database file and retry."
+        );
+        let connection = Self::open(uri, true)?;
+        anyhow::ensure!(
+            unsafe { sqlite3_db_readonly(connection.sqlite3, c"main".as_ptr()) } == 0,
+            "The database is read-only. Make the file and parent folder writable, then retry."
+        );
+        Ok(connection)
+    }
+
     pub fn open_memory(uri: Option<&str>) -> Self {
         if let Some(uri) = uri {
             let in_memory_path = format!("file:{}?mode=memory&cache=shared", uri);

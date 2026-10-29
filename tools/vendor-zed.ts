@@ -51,6 +51,8 @@ const workspaceDependencies = { ...localDependencies, ...Object.fromEntries([...
   const value = dependencies[name];
   return [name, value?.path ? { ...value, path: `${destination}/${value.path}` } : value];
 })) };
+// Authoritative WAL saves require the WAL-reset fix absent from Zed's bundled SQLite.
+workspaceDependencies["libsqlite3-sys"] = { version: "=0.39.1", features: ["bundled"] };
 const patches = Object.fromEntries(Object.entries(root.patch?.["crates-io"] ?? {}).map(([name, value]: any) => {
   if (!value.path) return [name, value];
   const path = `${destination}/${value.path}`;

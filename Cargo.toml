@@ -196,7 +196,7 @@ edition = "2024"
 "language_models_cloud" = { "path" = "vendor/zed/crates/language_models_cloud" }
 "languages" = { "path" = "vendor/zed/crates/languages" }
 "libc" = "0.2"
-"libsqlite3-sys" = { "version" = "0.30.1", "features" = ["bundled"] }
+"libsqlite3-sys" = { "version" = "=0.39.1", "features" = ["bundled"] }
 "libwebrtc" = "0.3.26"
 "linkify" = "0.10.0"
 "livekit" = { "version" = "0.7.32", "features" = ["tokio", "rustls-tls-native-roots"] }
