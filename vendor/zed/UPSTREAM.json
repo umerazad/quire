@@ -204,11 +204,19 @@
     },
     {
       "path": "crates/vim/src/vim.rs",
-      "change": "Add editor-local weak search-bar association and targeted submission hooks for embedded hosts; retain workspace lookup for upstream editors and preserve the association across Vim toggles."
+      "change": "Add editor-local weak search-bar association, targeted submission and command-prefix hooks for embedded hosts; retain workspace lookup and preserve the bar association across Vim toggles. Keep embedded visual/local marks in the Vim session when no workspace exists."
     },
     {
       "path": "crates/vim/src/normal/search.rs",
-      "change": "Resolve slash search, search submission, repeat motions, and word-under-cursor search through the host-aware bar lookup while retaining the existing Vim search/motion implementation. Ex commands remain workspace-based until their separate host integration."
+      "change": "Resolve search, repeat motions, word search, Ex find, and substitution through the host-aware bar lookup while retaining the copied algorithms. Ex pattern validation is exposed for prompt errors; invalid substitution ranges stop before any replacement."
+    },
+    {
+      "path": "crates/vim/src/command.rs",
+      "change": "Expose editor-local parsing and range/pattern validation without filename completion or unrelated IDE actions. Preserve the original workspace command-interceptor entry point and parser."
+    },
+    {
+      "path": "crates/vim/src/normal/mark.rs",
+      "change": "Use Vim-session-local marks when an embedded editor has no workspace, allowing visual Ex ranges and local mark lookup. The original workspace mark storage remains unchanged."
     },
     {
       "dependency": "libsqlite3-sys",

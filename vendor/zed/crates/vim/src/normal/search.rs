@@ -2,7 +2,7 @@ use editor::{Editor, EditorSettings};
 use gpui::{Action, Context, TaskExt, Window, actions};
 use language::Point;
 use schemars::JsonSchema;
-use search::{BufferSearchBar, SearchOptions, buffer_search};
+use search::{SearchOptions, buffer_search};
 use serde::Deserialize;
 use settings::Settings;
 use std::{iter::Peekable, str::Chars};
@@ -497,47 +497,43 @@ impl Vim {
     }
 
     fn find_command(&mut self, action: &FindCommand, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(pane) = self.pane(window, cx) else {
+        let Some(search_bar) = self.search_bar(window, cx) else {
             return;
         };
-        pane.update(cx, |pane, cx| {
-            if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-                let search = search_bar.update(cx, |search_bar, cx| {
-                    if !search_bar.show(window, cx) {
-                        return None;
-                    }
-                    let mut query = action.query.clone();
-                    if query.is_empty() {
-                        query = search_bar.query(cx);
-                    };
-
-                    let mut options = SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE;
-                    if search_bar.should_use_smartcase_search(cx) {
-                        options.set(
-                            SearchOptions::CASE_SENSITIVE,
-                            search_bar.is_contains_uppercase(&query),
-                        );
-                    }
-
-                    Some(search_bar.search(&query, Some(options), true, window, cx))
-                });
-                let Some(search) = search else { return };
-                let search_bar = search_bar.downgrade();
-                let direction = if action.backwards {
-                    Direction::Prev
-                } else {
-                    Direction::Next
-                };
-                cx.spawn_in(window, async move |_, cx| {
-                    search.await?;
-                    search_bar.update_in(cx, |search_bar, window, cx| {
-                        search_bar.select_match(direction, 1, window, cx)
-                    })?;
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx);
+        let search = search_bar.update(cx, |search_bar, cx| {
+            if !search_bar.show(window, cx) {
+                return None;
             }
+            let mut query = action.query.clone();
+            if query.is_empty() {
+                query = search_bar.query(cx);
+            };
+
+            let mut options = SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE;
+            if search_bar.should_use_smartcase_search(cx) {
+                options.set(
+                    SearchOptions::CASE_SENSITIVE,
+                    search_bar.is_contains_uppercase(&query),
+                );
+            }
+
+            Some(search_bar.search(&query, Some(options), true, window, cx))
+        });
+        let Some(search) = search else { return };
+        let search_bar = search_bar.downgrade();
+        let direction = if action.backwards {
+            Direction::Prev
+        } else {
+            Direction::Next
+        };
+        cx.spawn_in(window, async move |_, cx| {
+            search.await?;
+            search_bar.update_in(cx, |search_bar, window, cx| {
+                search_bar.select_match(direction, 1, window, cx)
+            })?;
+            anyhow::Ok(())
         })
+        .detach_and_log_err(cx);
     }
 
     fn replace_command(
@@ -547,14 +543,10 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         let replacement = action.replacement.clone();
-        let Some(((pane, workspace), editor)) = self
-            .pane(window, cx)
-            .zip(self.workspace(window, cx))
-            .zip(self.editor())
-        else {
+        let Some((editor, search_bar)) = self.editor().zip(self.search_bar(window, cx)) else {
             return;
         };
-        if let Some(result) = self.update_editor(cx, |vim, editor, cx| {
+        if let Some(Err(error)) = self.update_editor(cx, |vim, editor, cx| {
             let range = action.range.buffer_range(vim, editor, window, cx)?;
             let snapshot = editor.snapshot(window, cx);
             let snapshot = snapshot.buffer_snapshot();
@@ -564,15 +556,13 @@ impl Vim {
             editor.set_search_within_ranges(&[range], cx);
             anyhow::Ok(())
         }) {
-            workspace.update(cx, |workspace, cx| {
-                result.notify_err(workspace, cx);
-            })
-        }
-        let Some(search_bar) = pane.update(cx, |pane, cx| {
-            pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()
-        }) else {
+            if let Some(workspace) = self.workspace(window, cx) {
+                workspace.update(cx, |workspace, cx| {
+                    Err::<(), _>(error).notify_err(workspace, cx);
+                });
+            }
             return;
-        };
+        }
         let mut options = SearchOptions::REGEX;
         let search = search_bar.update(cx, |search_bar, cx| {
             if !search_bar.show(window, cx) {
@@ -662,6 +652,9 @@ impl Vim {
 }
 
 impl Replacement {
+    pub(crate) fn search_pattern(&self) -> &str {
+        &self.search
+    }
     // convert a vim query into something more usable by zed.
     // we don't attempt to fully convert between the two regex syntaxes,
     // but we do flip \( and \) to ( and ) (and vice-versa) in the pattern,

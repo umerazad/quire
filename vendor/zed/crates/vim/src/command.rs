@@ -8,13 +8,13 @@ use editor::{
 };
 use futures::AsyncWriteExt as _;
 use gpui::{
-    Action, App, AppContext as _, Context, Global, Keystroke, Task, TaskExt, WeakEntity, Window,
-    actions,
+    Action, App, AppContext as _, Context, Entity, Global, Keystroke, Task, TaskExt, WeakEntity,
+    Window, actions,
 };
 use itertools::Itertools;
 use language::Point;
 use multi_buffer::MultiBufferRow;
-use project::ProjectPath;
+use project::{ProjectPath, search::SearchQuery};
 use regex::Regex;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions};
@@ -1833,8 +1833,148 @@ fn wrap_count(action: Box<dyn Action>, range: &CommandRange) -> Option<Box<dyn A
 }
 
 pub fn command_interceptor(
-    mut input: &str,
+    input: &str,
     workspace: WeakEntity<Workspace>,
+    cx: &mut App,
+) -> Task<CommandInterceptResult> {
+    command_interceptor_inner(input, Some(workspace), cx)
+}
+
+/// Parses commands supported by an embedded editor without requesting filename completions.
+pub fn editor_command(
+    input: &str,
+    cx: &mut App,
+) -> Task<std::result::Result<Box<dyn Action>, String>> {
+    let parsed = command_interceptor_inner(input, None, cx);
+    cx.spawn(async move |_| {
+        let mut parsed = parsed.await;
+        if parsed.results.is_empty() {
+            return Err("Unknown or incomplete Vim command. Edit the command or press Escape to cancel.".into());
+        }
+        if parsed.results.len() != 1 {
+            return Err("Ambiguous Vim command. Type the full command or press Escape to cancel.".into());
+        }
+        let action = parsed.results.remove(0).action;
+        if !is_editor_command(action.as_ref()) {
+            return Err("This command is unavailable in this editor. Edit the command or press Escape to cancel.".into());
+        }
+        Ok(action)
+    })
+}
+
+fn is_editor_command(action: &dyn Action) -> bool {
+    if let Some(action) = action.as_any().downcast_ref::<WithRange>() {
+        return is_editor_command(action.action.0.as_ref());
+    }
+    if let Some(action) = action.as_any().downcast_ref::<WithCount>() {
+        return is_editor_command(action.action.0.as_ref());
+    }
+    if let Some(action) = action.as_any().downcast_ref::<OnMatchingLines>() {
+        return is_editor_command(action.action.0.as_ref());
+    }
+    matches!(
+        action.name(),
+        "vim::GoToLine"
+            | "vim::FindCommand"
+            | "vim::ReplaceCommand"
+            | "vim::VimSet"
+            | "vim::JoinLines"
+            | "vim::Rewrap"
+            | "vim::VisualDeleteLine"
+            | "vim::YankCommand"
+            | "vim::EndOfDocument"
+            | "vim::StartOfDocument"
+            | "buffer_search::Dismiss"
+            | "editor::SortLinesCaseSensitive"
+            | "editor::SortLinesCaseInsensitive"
+            | "editor::FoldSelectedRanges"
+            | "editor::UnfoldLines"
+            | "editor::UnfoldRecursive"
+            | "editor::Fold"
+            | "editor::FoldRecursive"
+    )
+}
+
+/// Checks editor-local ranges and patterns before a host closes its command prompt.
+pub fn validate_editor_command(
+    action: &dyn Action,
+    editor: &Entity<Editor>,
+    window: &mut Window,
+    cx: &mut App,
+) -> std::result::Result<(), String> {
+    if !is_editor_command(action) {
+        return Err("This command is unavailable in this editor. Edit the command or press Escape to cancel.".into());
+    }
+    let vim = editor
+        .read(cx)
+        .addon::<crate::VimAddon>()
+        .map(|addon| addon.entity.clone())
+        .ok_or("Vim mode is disabled. Enable Vim or press Escape to cancel.")?;
+    vim.update(cx, |vim, cx| {
+        vim.update_editor(cx, |vim, editor, cx| {
+            validate_action(action, vim, editor, window, cx)
+        })
+        .unwrap_or_else(|| Err(anyhow!("the command's editor closed")))
+    })
+    .map_err(|error| {
+        format!("Cannot run this command: {error}. Edit the command or press Escape to cancel.")
+    })
+}
+
+fn validate_action(
+    action: &dyn Action,
+    vim: &mut Vim,
+    editor: &mut Editor,
+    window: &mut Window,
+    cx: &mut App,
+) -> Result<()> {
+    if let Some(action) = action.as_any().downcast_ref::<WithRange>() {
+        action.range.buffer_range(vim, editor, window, cx)?;
+        return validate_action(action.action.0.as_ref(), vim, editor, window, cx);
+    }
+    if let Some(action) = action.as_any().downcast_ref::<WithCount>() {
+        return validate_action(action.action.0.as_ref(), vim, editor, window, cx);
+    }
+    if let Some(action) = action.as_any().downcast_ref::<OnMatchingLines>() {
+        action.range.buffer_range(vim, editor, window, cx)?;
+        Regex::new(&action.search)?;
+        return validate_action(action.action.0.as_ref(), vim, editor, window, cx);
+    }
+    if let Some(action) = action.as_any().downcast_ref::<GoToLine>() {
+        action.range.buffer_range(vim, editor, window, cx)?;
+    }
+    if let Some(action) = action.as_any().downcast_ref::<YankCommand>() {
+        action.range.buffer_range(vim, editor, window, cx)?;
+    }
+    if let Some(action) = action.as_any().downcast_ref::<ReplaceCommand>() {
+        action.range.buffer_range(vim, editor, window, cx)?;
+        validate_search_pattern(action.replacement.search_pattern())?;
+    }
+    if let Some(action) = action.as_any().downcast_ref::<FindCommand>() {
+        validate_search_pattern(&action.query)?;
+    }
+    Ok(())
+}
+
+fn validate_search_pattern(pattern: &str) -> Result<()> {
+    SearchQuery::regex(
+        pattern,
+        false,
+        true,
+        false,
+        false,
+        Default::default(),
+        Default::default(),
+        false,
+        None,
+    )
+    .map(|_| ())
+    .map_err(|error| anyhow!("invalid search pattern: {error:#}"))
+}
+
+fn command_interceptor_inner(
+    mut input: &str,
+    workspace: Option<WeakEntity<Workspace>>,
     cx: &mut App,
 ) -> Task<CommandInterceptResult> {
     while input.starts_with(':') {
@@ -1978,7 +2118,9 @@ pub fn command_interceptor(
         return Task::ready(CommandInterceptResult::default());
     };
 
-    if let Some((cmd_idx, parsed_query, display_string, no_args_positions)) = filenames {
+    if let Some((cmd_idx, parsed_query, display_string, no_args_positions)) = filenames
+        && let Some(workspace) = workspace
+    {
         let filenames = VimCommand::generate_filename_completions(&parsed_query, workspace, cx);
         cx.spawn(async move |cx| {
             let filenames = filenames.await;

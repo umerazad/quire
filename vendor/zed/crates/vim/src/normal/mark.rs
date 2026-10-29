@@ -272,9 +272,6 @@ impl Vim {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let Some(workspace) = self.workspace(window, cx) else {
-            return;
-        };
         if name == "`" {
             name = "'".to_string();
         }
@@ -282,6 +279,10 @@ impl Vim {
             // Not allowed marks
             return;
         }
+        let Some(workspace) = self.workspace(window, cx) else {
+            self.embedded_marks.insert(name, anchors);
+            return;
+        };
         let entity_id = workspace.entity_id();
         Vim::update_globals(cx, |vim_globals, cx| {
             let Some(marks_state) = vim_globals.marks.get(&entity_id) else {
@@ -322,6 +323,9 @@ impl Vim {
                 })
                 .collect::<Vec<Anchor>>();
             return Some(Mark::Local(anchors));
+        }
+        if self.workspace(window, cx).is_none() {
+            return self.embedded_marks.get(name).cloned().map(Mark::Local);
         }
         VimGlobals::update_global(cx, |globals, cx| {
             let workspace_id = self.workspace(window, cx)?.entity_id();

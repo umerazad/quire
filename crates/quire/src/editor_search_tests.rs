@@ -31,7 +31,7 @@ fn find_shortcut() -> &'static str {
     }
 }
 
-fn selection(editor: &Entity<Editor>, cx: &mut App) -> std::ops::Range<usize> {
+pub(super) fn selection(editor: &Entity<Editor>, cx: &mut App) -> std::ops::Range<usize> {
     editor.update(cx, |editor, cx| {
         let selected = editor
             .selections

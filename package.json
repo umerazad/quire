@@ -7,7 +7,9 @@
     "dev": "bun tools/run.ts",
     "test:reference": "node node_modules/vitest/vitest.mjs run tests/reference",
     "test:storage-crash": "node tools/test-storage-crash.ts",
-    "test:vim-search": "cargo test -p vim --locked --features util/debug-embed --lib normal::search::test::"
+    "test:vim-search": "cargo test -p vim --locked --features util/debug-embed --lib normal::search::test::",
+    "test:vim-command": "cargo test -p vim --locked --features util/debug-embed --lib command::test:: -- --test-threads=1",
+    "test:vim-mark": "cargo test -p vim --locked --features util/debug-embed --lib normal::mark::test::"
   },
   "devDependencies": {
     "vitest": "5.0.5"

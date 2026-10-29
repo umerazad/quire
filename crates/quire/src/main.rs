@@ -9,6 +9,9 @@ mod editor_host;
 mod editor_search;
 
 #[cfg(feature = "full-editor")]
+mod editor_command;
+
+#[cfg(feature = "full-editor")]
 mod markdown;
 
 #[path = "example_support/fonts.rs"]

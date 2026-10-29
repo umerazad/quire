@@ -5,6 +5,7 @@ mod test;
 
 mod change_list;
 mod command;
+pub use command::{editor_command, validate_editor_command};
 mod digraph;
 mod helix;
 mod indent;
@@ -515,6 +516,28 @@ pub fn set_search_bar(editor: &mut Editor, bar: &Entity<BufferSearchBar>) {
     editor.register_addon(EmbeddedSearchBar(bar.downgrade()));
 }
 
+/// Captures an embedded command's visual marks and consumes any explicit count.
+pub fn command_prefix(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> String {
+    let Some(vim) = editor
+        .read(cx)
+        .addon::<VimAddon>()
+        .map(|addon| addon.entity.clone())
+    else {
+        return String::new();
+    };
+    vim.update(cx, |vim, cx| {
+        vim.store_visual_marks(window, cx);
+        if vim.mode.is_visual() {
+            return "'<,'>".into();
+        }
+        match Vim::take_count(cx) {
+            Some(count) if count > 1 => format!(".,.+{}", count.saturating_sub(1)),
+            Some(_) => ".".into(),
+            None => String::new(),
+        }
+    })
+}
+
 /// Returns false when the host should use ordinary Find submission instead.
 pub fn submit_search(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> bool {
     let Some(vim) = editor
@@ -565,6 +588,7 @@ pub(crate) struct Vim {
 
     selected_register: Option<char>,
     pub search: SearchState,
+    embedded_marks: HashMap<String, Vec<Anchor>>,
 
     editor: WeakEntity<Editor>,
 
@@ -634,6 +658,7 @@ impl Vim {
             status_label: None,
             selected_register: None,
             search: SearchState::default(),
+            embedded_marks: HashMap::default(),
 
             last_command: None,
             running_command: None,

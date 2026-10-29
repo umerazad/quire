@@ -80,6 +80,7 @@ fn init(cx: &mut App) -> Result<(), String> {
         }
     }
     crate::editor_search::bind_keys(cx);
+    crate::editor_command::bind_keys(cx);
     Ok(())
 }
 
@@ -121,9 +122,27 @@ struct NotebookWindow {
     source_search: Entity<BufferSearchBar>,
     second_search: Entity<BufferSearchBar>,
     mode: Entity<vim::ModeIndicator>,
+    commands: Entity<crate::editor_command::CommandPrompt>,
 }
 
 impl NotebookWindow {
+    fn open_command(
+        &mut self,
+        _: &crate::editor_command::OpenCommand,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let editor = if self.source.focus_handle(cx).contains_focused(window, cx) {
+            &self.source
+        } else if self.second.focus_handle(cx).contains_focused(window, cx) {
+            &self.second
+        } else {
+            cx.propagate();
+            return;
+        };
+        self.commands
+            .update(cx, |prompt, cx| prompt.open(editor, window, cx));
+    }
     fn search_submit(
         &mut self,
         _: &vim::SearchSubmit,
@@ -149,6 +168,8 @@ impl NotebookWindow {
         let second = cx.new(|cx| editor(buffer, window, cx));
         let source_search = crate::editor_search::new(&source, window, cx);
         let second_search = crate::editor_search::new(&second, window, cx);
+        let commands = cx.new(|cx| crate::editor_command::CommandPrompt::new(window, cx));
+        cx.observe(&commands, |_, _, cx| cx.notify()).detach();
         cx.observe(&source_search, |_, _, cx| cx.notify()).detach();
         cx.observe(&second_search, |_, _, cx| cx.notify()).detach();
         window.focus(&source.focus_handle(cx), cx);
@@ -157,6 +178,7 @@ impl NotebookWindow {
             second,
             source_search,
             second_search,
+            commands,
             mode,
         }
     }
@@ -193,6 +215,7 @@ impl Render for NotebookWindow {
         gpui::div()
             .size_full()
             .on_action(cx.listener(Self::search_submit))
+            .on_action(cx.listener(Self::open_command))
             .flex()
             .flex_col()
             .child(gpui::div().p_3().child("Welcome"))
@@ -204,6 +227,9 @@ impl Render for NotebookWindow {
                     .child(source)
                     .child(second),
             )
+            .when(self.commands.read(cx).is_open(), |div| {
+                div.child(self.commands.clone())
+            })
             .child(gpui::div().p_2().child(self.mode.clone()))
     }
 }
@@ -455,3 +481,7 @@ mod tests {
 #[cfg(test)]
 #[path = "editor_search_tests.rs"]
 mod search_tests;
+
+#[cfg(test)]
+#[path = "editor_command_tests.rs"]
+mod command_tests;
