@@ -84,6 +84,8 @@ pub struct MultiBuffer {
     singleton: bool,
     /// The history of the multi-buffer.
     history: History,
+    /// A single-page excerpt delegates history to its source buffer.
+    shared_history_buffer: Option<Entity<Buffer>>,
     /// The explicit title of the multi-buffer.
     /// If `None`, it will be derived from the underlying path or content.
     title: Option<String>,
@@ -1276,6 +1278,23 @@ impl MultiBuffer {
         this
     }
 
+    /// Creates one editable excerpt with the same undo/redo timeline as its source page.
+    /// This remains a non-singleton view so display/source positions retain excerpt mapping.
+    /// Generic context expansion is disabled; the host owns its semantic range.
+    pub fn excerpt(buffer: Entity<Buffer>, range: Range<Point>, cx: &mut Context<Self>) -> Self {
+        let snapshot = buffer.read(cx).snapshot();
+        let mut this = Self::without_headers(buffer.read(cx).capability());
+        this.shared_history_buffer = Some(buffer.clone());
+        this.set_excerpt_ranges_for_path(
+            PathKey::sorted(0),
+            buffer,
+            &snapshot,
+            vec![ExcerptRange::new(range)],
+            cx,
+        );
+        this
+    }
+
     #[inline]
     pub fn new_(capability: Capability, snapshot: MultiBufferSnapshot) -> Self {
         Self {
@@ -1288,6 +1307,7 @@ impl MultiBuffer {
             title: None,
             buffer_changed_since_sync: Default::default(),
             history: History::default(),
+            shared_history_buffer: None,
         }
     }
 
@@ -1321,6 +1341,7 @@ impl MultiBuffer {
             singleton: self.singleton,
             capability: self.capability,
             history: self.history.clone(),
+            shared_history_buffer: self.shared_history_buffer.clone(),
             title: self.title.clone(),
             buffer_changed_since_sync,
         }
@@ -1328,13 +1349,15 @@ impl MultiBuffer {
 
     pub fn set_group_interval(&mut self, group_interval: Duration, cx: &mut Context<Self>) {
         self.history.set_group_interval(group_interval);
-        if self.singleton {
-            for BufferState { buffer, .. } in self.buffers.values() {
-                buffer.update(cx, |buffer, _| {
-                    buffer.set_group_interval(group_interval);
-                });
-            }
+        if let Some(buffer) = self.history_buffer() {
+            buffer.update(cx, |buffer, _| buffer.set_group_interval(group_interval));
         }
+    }
+
+    fn history_buffer(&self) -> Option<Entity<Buffer>> {
+        self.shared_history_buffer
+            .clone()
+            .or_else(|| self.as_singleton())
     }
 
     pub fn with_title(mut self, title: String) -> Self {

@@ -14,6 +14,7 @@ editor = { workspace = true, optional = true }
 search = { workspace = true, optional = true }
 workspace = { workspace = true, optional = true }
 language = { workspace = true, optional = true }
+multi_buffer = { workspace = true, optional = true }
 grammars = { workspace = true, optional = true }
 tree-sitter-md = { workspace = true, optional = true }
 settings = { workspace = true, optional = true }
@@ -29,4 +30,4 @@ zed_actions = { workspace = true, optional = true }
 [features]
 default = ["full-editor"]
 test-support = ["gpui/test-support", "gpui_platform/test-support"]
-full-editor = ["dep:editor", "dep:search", "dep:workspace", "dep:language", "dep:grammars", "dep:tree-sitter-md", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:assets", "dep:util", "dep:zed_actions"]
+full-editor = ["dep:editor", "dep:search", "dep:workspace", "dep:language", "dep:multi_buffer", "dep:grammars", "dep:tree-sitter-md", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:assets", "dep:util", "dep:zed_actions"]

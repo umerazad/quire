@@ -148,7 +148,31 @@ Constraints: One source buffer and history; transformations cannot edit hidden i
 Write set: notebook presentation and excerpt adapters, `tests/native/projection/`.
 Dependencies: NR03.
 Verify: Round-trip display/source positions; edit either occurrence and undo from the other; switch Write/Source; test folds, wrap, select-all, paste, keyboard boundary movement, and Vim operations.
-Proof notes: pending; a rendered screenshot alone cannot close this task.
+Proof notes: NR04.1 establishes the source-excerpt and shared-history foundation below. Hidden syntax, checkboxes/links, full Write/Source switching, wrap/fold mapping, and semantic subtree recomputation remain unimplemented. A rendered screenshot alone cannot close this task.
+Status: in_progress
+
+#### NR04.1: Establish editable excerpt boundaries and shared history
+
+What to do: Add a standalone excerpt adapter over the existing Markdown buffer, expose a development example, and exercise edits/undo in both source and excerpt views.
+Constraints: Preserve exact byte ranges using Zed anchors, with no copied document text or independent history. Validate UTF-8 range boundaries before constructing views. Do not interpret this as completion of subtree parsing, hidden identities, or the full Write projection. NR03's verified headless editor integration permits this feasibility work while its native OS gates remain open.
+Verify: Source/excerpt text and range mapping, shared undo/redo, source edits before the range, boundary Backspace/Delete, select-all paste, Vim delete/join, and Ex substitution cannot mutate outside the excerpt. Generic editor context expansion must not widen it. Record failures before choosing a fallback or modifying upstream behavior.
+Proof notes: `editor_excerpt.rs` validates byte boundaries and constructs an exact-range copied multi-buffer over the existing language buffer. `NotebookWindow::for_buffer` hosts it with the same search/command services. `--excerpt-harness` displays the source excerpt in the right pane. The Cargo lock only gains a direct edge to the already copied `multi_buffer`; no dependency versions change.
+
+The first keyboard test reproduced separate history: an excerpt edit could be undone from Source, but redo in the excerpt did nothing. The copied multi-buffer now has an opt-in single-page excerpt constructor with source-buffer transaction IDs, undo/redo, grouping, and transaction removal. It retains non-singleton display mapping and exact source anchors. Cloning retains that source association. Original constructors keep their existing history behavior. Inserting a different source into this mode fails before changing its excerpt map.
+
+Fresh review then reproduced a boundary escape through the copied `ExpandExcerpts` action: it revealed the entire surrounding page. Generic context expansion now leaves single-page embeds bounded; the host's future semantic subtree adapter owns range changes. Undo intentionally follows shared page history, including Source edits outside the excerpt. A substitution test initially assumed case-sensitive matching despite the copied default ignorecase setting; it now explicitly uses the supported `\C` override while retaining its exact source assertion.
+
+`cargo test -p quire --locked --features test-support` passes 50 tests. Seven excerpt cases cover UTF-8 validation, byte/anchor mapping after an earlier source insertion, shared history between Source and excerpt and between two cloned excerpt windows, boundary Backspace/Delete, clipboard replacement of the selection, Vim delete/join, bounded Ex substitution, and disabled generic context expansion. `cargo test -p multi_buffer --locked --features util/debug-embed --lib` passes all 72 copied tests, including original history and randomized mapping cases. Combined app/multi-buffer Clippy with all targets/test support and `-D warnings`, application build, formatting, and authored/modified-vendor whitespace checks pass. Source comparison verifies 3,025 unchanged files and eleven recorded source forks.
+
+Sequential review checked source ownership, all ten singleton transaction branches, cloning/grouping, coordinate validation, context expansion, the unchanged default constructors, and the narrow lock change. Hidden-identity protection and semantic subtree acceptance remain pending. Native desktop and OS/package checks, the debug unwind warning, and the existing full-workspace sandbox failure remain open.
+Status: done
+
+#### NR04.2: Map Write syntax and protect hidden identities
+
+What to do: Inspect the legacy projection/edit rules, then add hidden bullet/ID presentation, a task checkbox, and a rendered link using the copied display map. Keep Source available over the same buffer.
+Constraints: Display transformations must preserve source bytes and explicit source/display mappings. A hidden ID must not be edited accidentally by cursor movement, selection, paste, or Vim operators. Use observed failures to choose any required edit guard; do not build a second editable document.
+Verify: Compare legacy synthetic fixtures, round-trip positions around hidden spans and Unicode, switch Write/Source, edit through both views, and undo from either. Test folds, wrap, boundary movement, select-all paste, Vim motions/operators, and unchanged hidden identities. Parent NR04 remains open for semantic subtree growth and complete embed behavior.
+Proof notes: pending.
 Status: pending
 
 ### NR05: Prove native typography and input

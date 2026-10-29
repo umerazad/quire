@@ -230,7 +230,7 @@ impl MultiBuffer {
         direction: ExpandExcerptDirection,
         cx: &mut Context<Self>,
     ) {
-        if line_count == 0 {
+        if line_count == 0 || self.shared_history_buffer.is_some() {
             return;
         }
 
@@ -369,6 +369,12 @@ impl MultiBuffer {
         to_insert: &Vec<ExcerptRange<text::Anchor>>,
         cx: &mut Context<Self>,
     ) -> bool {
+        if let Some(source) = &self.shared_history_buffer {
+            assert_eq!(
+                source, &buffer,
+                "A shared-history excerpt cannot add another source buffer"
+            );
+        }
         let path_key_index = self.get_or_create_path_key_index(&path_key);
         if let Some(old_path_key) = self
             .snapshot(cx)

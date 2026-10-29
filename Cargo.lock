@@ -11344,6 +11344,7 @@ dependencies = [
  "gpui_platform",
  "grammars",
  "language",
+ "multi_buffer",
  "release_channel",
  "search",
  "semver",

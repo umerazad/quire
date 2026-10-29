@@ -161,11 +161,24 @@ impl NotebookWindow {
         }
     }
 
+    #[cfg(test)]
     fn new(text: &str, window: &mut Window, cx: &mut gpui::Context<Self>) -> Self {
-        let mode = cx.new(|cx| vim::ModeIndicator::new(window, cx));
         let buffer = crate::markdown::buffer(text, cx);
+        Self::for_buffer(buffer, None, window, cx)
+    }
+
+    fn for_buffer(
+        buffer: Entity<language::Buffer>,
+        excerpt: Option<Entity<multi_buffer::MultiBuffer>>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> Self {
+        let mode = cx.new(|cx| vim::ModeIndicator::new(window, cx));
         let source = cx.new(|cx| editor(buffer.clone(), window, cx));
-        let second = cx.new(|cx| editor(buffer, window, cx));
+        let second = cx.new(|cx| match excerpt {
+            Some(excerpt) => Editor::for_multibuffer(excerpt, None, window, cx),
+            None => editor(buffer, window, cx),
+        });
         let source_search = crate::editor_search::new(&source, window, cx);
         let second_search = crate::editor_search::new(&second, window, cx);
         let commands = cx.new(|cx| crate::editor_command::CommandPrompt::new(window, cx));
@@ -235,7 +248,8 @@ impl Render for NotebookWindow {
 }
 
 pub fn run() {
-    gpui_platform::application().with_assets(assets::Assets).run(|cx| {
+    let excerpt_demo = std::env::args().any(|argument| argument == "--excerpt-harness");
+    gpui_platform::application().with_assets(assets::Assets).run(move |cx| {
         if let Err(error) = init(cx) {
             eprintln!("{error}");
             cx.quit();
@@ -246,13 +260,23 @@ pub fn run() {
             cx.quit();
             return;
         }
+        let prefix = "# Welcome to Quire\n\n";
+        let block = "- Edit this note in either pane. ^b-welcome\n  - Both panes share the same document.";
+        let text = format!("{prefix}{block}\n- [ ] Try Vim, undo, and redo.\n");
+        let buffer = crate::markdown::buffer(&text, cx);
+        let excerpt = if excerpt_demo {
+            match crate::editor_excerpt::buffer(buffer.clone(), prefix.len()..prefix.len() + block.len(), cx) {
+                Ok(excerpt) => Some(excerpt),
+                Err(error) => { eprintln!("{error}"); cx.quit(); return; }
+            }
+        } else { None };
         let options = gpui::WindowOptions {
             window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(gpui::px(1100.), gpui::px(760.)), cx))),
             ..Default::default()
         };
-        match cx.open_window(options, |window, cx| {
+        match cx.open_window(options, move |window, cx| {
             window.set_window_title("Quire Native");
-            cx.new(|cx| NotebookWindow::new("# Welcome to Quire\n\n- Edit this note in either pane. ^b-welcome\n  - Both panes share the same document.\n- [ ] Try Vim, undo, and redo.\n", window, cx))
+            cx.new(|cx| NotebookWindow::for_buffer(buffer, excerpt, window, cx))
         }) {
             Ok(_) => cx.activate(true),
             Err(error) => { eprintln!("Cannot open Quire's window: {error}. Check desktop and graphics access, then retry."); cx.quit(); }
@@ -489,3 +513,7 @@ mod command_tests;
 #[cfg(test)]
 #[path = "editor_input_tests.rs"]
 mod input_tests;
+
+#[cfg(test)]
+#[path = "editor_excerpt_tests.rs"]
+mod excerpt_tests;

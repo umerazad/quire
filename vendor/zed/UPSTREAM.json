@@ -225,6 +225,18 @@
     {
       "dependency": "libsqlite3-sys",
       "change": "Override the workspace dependency to 0.39.1 with bundled SQLite 3.54.1, including the WAL-reset fix. The vendoring generator preserves this Quire override."
+    },
+    {
+      "path": "crates/multi_buffer/src/multi_buffer.rs",
+      "change": "Add an exact-range single-page excerpt constructor that delegates transaction history to its source buffer while retaining non-singleton display mapping. Clone and transaction grouping retain this association; default constructors are unchanged."
+    },
+    {
+      "path": "crates/multi_buffer/src/transaction.rs",
+      "change": "Resolve transaction, undo, redo, grouping, and transaction removal through the optional shared source history for page excerpts, preserving the existing singleton and multi-page behavior."
+    },
+    {
+      "path": "crates/multi_buffer/src/path_key.rs",
+      "change": "Reject insertion of a different source buffer into a single-page shared-history excerpt before changing its excerpt map. Disable generic context expansion for these page embeds; their host owns the semantic range."
     }
   ]
 }
