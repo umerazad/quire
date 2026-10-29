@@ -124,6 +124,24 @@ struct NotebookWindow {
 }
 
 impl NotebookWindow {
+    fn search_submit(
+        &mut self,
+        _: &vim::SearchSubmit,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let editor = if self.source_search.focus_handle(cx).is_focused(window) {
+            Some(&self.source)
+        } else if self.second_search.focus_handle(cx).is_focused(window) {
+            Some(&self.second)
+        } else {
+            None
+        };
+        if editor.is_none_or(|editor| !vim::submit_search(editor, window, cx)) {
+            cx.propagate();
+        }
+    }
+
     fn new(text: &str, window: &mut Window, cx: &mut gpui::Context<Self>) -> Self {
         let mode = cx.new(|cx| vim::ModeIndicator::new(window, cx));
         let buffer = crate::markdown::buffer(text, cx);
@@ -174,6 +192,7 @@ impl Render for NotebookWindow {
             .child(gpui::div().flex_1().min_h_0().child(self.second.clone()));
         gpui::div()
             .size_full()
+            .on_action(cx.listener(Self::search_submit))
             .flex()
             .flex_col()
             .child(gpui::div().p_3().child("Welcome"))

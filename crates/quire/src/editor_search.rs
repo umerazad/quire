@@ -4,11 +4,13 @@ use search::{BufferSearchBar, buffer_search};
 use workspace::ToolbarItemView;
 
 pub fn new(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Entity<BufferSearchBar> {
-    cx.new(|cx| {
+    let bar = cx.new(|cx| {
         let mut bar = BufferSearchBar::new(None, window, cx);
         bar.set_active_pane_item(Some(editor), window, cx);
         bar
-    })
+    });
+    editor.update(cx, |editor, _| vim::set_search_bar(editor, &bar));
+    bar
 }
 
 pub fn bind_keys(cx: &mut App) {
@@ -37,6 +39,11 @@ pub fn bind_keys(cx: &mut App) {
             "shift-tab",
             editor::actions::Backtab,
             Some("BufferSearchBar > Editor"),
+        ),
+        KeyBinding::new(
+            "enter",
+            vim::SearchSubmit,
+            Some("BufferSearchBar && !in_replace > Editor"),
         ),
         KeyBinding::new(
             "enter",

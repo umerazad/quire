@@ -6,7 +6,8 @@
     "verify:vendor": "bun tools/verify-vendor.ts",
     "dev": "bun tools/run.ts",
     "test:reference": "node node_modules/vitest/vitest.mjs run tests/reference",
-    "test:storage-crash": "node tools/test-storage-crash.ts"
+    "test:storage-crash": "node tools/test-storage-crash.ts",
+    "test:vim-search": "cargo test -p vim --locked --features util/debug-embed --lib normal::search::test::"
   },
   "devDependencies": {
     "vitest": "5.0.5"

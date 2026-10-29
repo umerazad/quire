@@ -4,11 +4,11 @@ Read [the architecture and contracts](native-rewrite.md) and [the parity ledger]
 
 Execute in dependency order. Every task needs changed paths, exact commands, observed output, and unresolved risk in its proof notes. If a task proves too large for one focused implementation session, split it into named child tasks with their own verification before starting it. Never mark a whole task done because only its happy path passes.
 
-Read formatted source in a completed tool call before preparing a patch, including newly created files after running the formatter. Use the observed identifier and surrounding text as the anchor. A read followed by a prewritten patch in the same call is not an inspection gate. For scripted replacements, require each exact anchor to match once before writing.
+Read formatted source in a completed tool call before preparing a patch, including newly created files after running the formatter. Use the observed identifier and surrounding text as the anchor. Keep inspection and mutation in separate tool calls; a read followed by a prewritten patch in the same call is not an inspection gate. For scripted replacements, require each exact anchor to match once before writing.
 
 Shared acceptance rules: build independently of sibling repos; preserve source notices; keep failures actionable; no private notebook contents in fixtures; no silent reductions of feature or durability contracts. The task status field is authoritative. Gate descriptions do not grant release or publication authority.
 
-For GPUI tests, inspect the actual assertion APIs before writing them. Editor selections use `MultiBufferOffset` and a `DisplaySnapshot` obtained inside an entity update; `FocusHandle::is_focused` takes only the window. Keep these details in local helpers rather than repeating guessed calls. Find selects a range with Vim off and a cursor with Vim on; assert the intended mode explicitly.
+For GPUI tests, inspect the actual assertion APIs before writing them. Editor selections use `MultiBufferOffset` and a `DisplaySnapshot` obtained inside an entity update; `FocusHandle::is_focused` takes only the window. Keep these details in local helpers rather than repeating guessed calls. Find selects a range with Vim off and a cursor with Vim on; assert the intended mode explicitly. Route search submission using the actual focus handle: Vim can focus query input without updating the search bar's cached query-focus flag.
 
 ## Foundation and feasibility
 
@@ -83,6 +83,20 @@ The first Find test reproduced a missing binding allowing query keystrokes to ex
 
 `cargo test -p quire --locked --features test-support` passes 21 tests. Five new keyboard cases cover query isolation, next/previous, Escape focus, Vim cursor placement, per-pane query/selection isolation, live result updates, Replace Next, Replace All, field cycling, and undo of a multi-match replacement from the other pane. Scoped application Clippy with all targets/test support and `-D warnings` passes. Vim slash search still looks up its bar through a Zed pane and remains a separate adapter task. Native desktop and other-OS acceptance remain open; these are GPUI headless results.
 `cargo build -p quire --locked`, formatting, authored whitespace, vendor verification, and prose lint pass. The debug linker warning remains unchanged.
+Status: done
+
+##### NR03b.3: Route Vim search through the embedded bar
+
+What to do: Give the copied Vim implementation an explicit editor-local search-bar hook and route its existing search methods through it. Dispatch search submission from the native host.
+Constraints: Preserve the existing workspace lookup for upstream callers. Keep Vim search, counts, cancellation, operator motions, and registers in the copied implementation. Avoid a second search algorithm or Zed workspace construction.
+Verify: Keyboard slash/backwards search, submission, cancellation, next/previous, under-cursor search, operator-search motions, pane targeting, and Vim toggling. Run application tests and the copied Vim search regressions; inspect and record each vendor fork.
+Proof notes: The slash and under-cursor tests first failed because the copied methods returned early without `Workspace::for_window`. The fork adds an editor addon holding a weak bar reference, a bar resolver retaining the workspace fallback, and targeted submission functions. The association survives removal/recreation of the Vim addon when preferences change. The application routes submission to the editor belonging to the actually focused query field and propagates ordinary Find submission. A diagnostic caught the cached query-focus flag remaining false after Vim focused the query directly; routing now checks the focus handle.
+
+The existing copied search, motion, count, cancellation, operator, and search-register code remains responsible for behavior. Eleven native search tests pass, including the five ordinary Find/Replace cases plus slash/repeat, word search, cancellation, backward/count handling, delete-to-search with shared undo, and second-pane targeting after disabling/re-enabling Vim. The new fork files are recorded in `UPSTREAM.json`; source comparison verifies 3,031 unchanged files and five explicit source forks.
+
+The first copied-test filter matched zero tests. Listing the compiled binary identified `normal::search::test::`, with 27 cases. That scoped run then exposed development asset loading from the wrong root (`settings/default.json`), which poisoned the shared initializer. `test:vim-search` now selects the actual module and enables the same `util/debug-embed` policy used by Quire. The corrected command, `cargo test -p vim --locked --features util/debug-embed --lib normal::search::test::`, passes all 27 copied cases, including Neovim comparisons and the original workspace path. `cargo test -p quire --locked --features test-support` passes all 27 application tests. Command-palette/Ex integration remains separate.
+
+Scoped application Clippy with all targets/test support and `-D warnings` passes. `cargo clippy -p vim --locked --features util/debug-embed --all-targets --no-deps -- -D warnings` passes for the modified copied crate. Application build, formatting, authored/modified-vendor whitespace, tracked-vendor verification, and prose lint pass. Sequential review checked the weak association, toggle lifecycle, focus-based routing, unchanged motion/register logic, and workspace fallback. The debug unwind warning and full-workspace sandbox failure remain open; no native OS acceptance is implied.
 Status: done
 
 ### NR04: Prove Write and editable-embed mappings

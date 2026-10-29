@@ -37,7 +37,7 @@ use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use multi_buffer::ToPoint as _;
-use normal::search::SearchSubmit;
+pub use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
 use search::BufferSearchBar;
@@ -500,6 +500,37 @@ pub fn init(cx: &mut App) {
 #[derive(Clone)]
 pub(crate) struct VimAddon {
     pub(crate) entity: Entity<Vim>,
+}
+
+struct EmbeddedSearchBar(WeakEntity<BufferSearchBar>);
+
+impl editor::Addon for EmbeddedSearchBar {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// Associates an embedded editor with its own search UI, surviving Vim toggles.
+pub fn set_search_bar(editor: &mut Editor, bar: &Entity<BufferSearchBar>) {
+    editor.register_addon(EmbeddedSearchBar(bar.downgrade()));
+}
+
+/// Returns false when the host should use ordinary Find submission instead.
+pub fn submit_search(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> bool {
+    let Some(vim) = editor
+        .read(cx)
+        .addon::<VimAddon>()
+        .map(|addon| addon.entity.clone())
+    else {
+        return false;
+    };
+    if vim.read(cx).search.cmd_f_search {
+        return false;
+    }
+    vim.update(cx, |_, cx| {
+        cx.defer_in(window, |vim, window, cx| vim.search_submit(window, cx))
+    });
+    true
 }
 
 impl editor::Addon for VimAddon {
@@ -1058,6 +1089,22 @@ impl Vim {
         self.editor.upgrade()
     }
 
+    fn search_bar(&self, window: &Window, cx: &Context<Self>) -> Option<Entity<BufferSearchBar>> {
+        if let Some(bar) = self
+            .editor()?
+            .read(cx)
+            .addon::<EmbeddedSearchBar>()
+            .and_then(|host| host.0.upgrade())
+        {
+            return Some(bar);
+        }
+        self.pane(window, cx)?
+            .read(cx)
+            .toolbar()
+            .read(cx)
+            .item_of_type::<BufferSearchBar>()
+    }
+
     pub fn workspace(&self, window: &Window, cx: &App) -> Option<Entity<Workspace>> {
         Workspace::for_window(window, cx)
     }
@@ -1555,18 +1602,12 @@ impl Vim {
         // If editor gains focus while search bar is still open (not dismissed),
         // the user has explicitly navigated away - clear prior_selections so we
         // don't restore to the old position if they later dismiss the search.
-        if !self.search.prior_selections.is_empty() {
-            if let Some(pane) = self.pane(window, cx) {
-                let search_still_open = pane
-                    .read(cx)
-                    .toolbar()
-                    .read(cx)
-                    .item_of_type::<BufferSearchBar>()
-                    .is_some_and(|bar| !bar.read(cx).is_dismissed());
-                if search_still_open {
-                    self.search.prior_selections.clear();
-                }
-            }
+        if !self.search.prior_selections.is_empty()
+            && self
+                .search_bar(window, cx)
+                .is_some_and(|bar| !bar.read(cx).is_dismissed())
+        {
+            self.search.prior_selections.clear();
         }
 
         let Some(editor) = self.editor() else {

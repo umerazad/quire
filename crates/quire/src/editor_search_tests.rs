@@ -2,11 +2,17 @@ use super::*;
 use gpui::TestAppContext;
 
 fn init_without_vim(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    set_vim_mode(cx, false);
+}
+
+fn set_vim_mode(cx: &mut TestAppContext, enabled: bool) {
     cx.update(|cx| {
-        init(cx).expect("editor initialization");
         let result = settings::SettingsStore::update_global(cx, |store, cx| {
             store.set_user_settings(
-                r#"{"vim_mode":false,"session":{"restore_unsaved_buffers":false}}"#,
+                &format!(
+                    r#"{{"vim_mode":{enabled},"session":{{"restore_unsaved_buffers":false}}}}"#
+                ),
                 cx,
             )
         });
@@ -220,6 +226,161 @@ fn replacement_fields_cycle_by_keyboard_and_enter_replaces_one_match(cx: &mut Te
             assert_eq!(view.second.read(cx).text(cx), "one target changed target\n");
             assert_eq!(view.source_search.read(cx).query(cx), "two");
             assert!(!view.source_search.read(cx).has_active_match());
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn vim_slash_search_submits_and_repeats_without_a_workspace(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let text = "one target two target\n";
+    let window = cx.add_window(|window, cx| NotebookWindow::new(text, window, cx));
+    cx.simulate_keystrokes(window.into(), "/ t a r g e t");
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.source_search.read(cx).query(cx), "target");
+            assert_eq!(view.source.read(cx).text(cx), text);
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "enter");
+    window
+        .update(cx, |view, window, cx| {
+            assert!(view.source.focus_handle(cx).is_focused(window));
+            assert_eq!(selection(&view.source, cx), 4..4);
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "n");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(selection(&view.source, cx), 15..15)
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "shift-n");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(selection(&view.source, cx), 4..4)
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn vim_searches_the_word_under_the_cursor(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let text = "one two one three\n";
+    let window = cx.add_window(|window, cx| NotebookWindow::new(text, window, cx));
+    cx.simulate_keystrokes(window.into(), "*");
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.source_search.read(cx).query(cx), "one");
+            assert_eq!(selection(&view.source, cx), 8..8);
+            assert_eq!(view.source.read(cx).text(cx), text);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn vim_search_cancellation_restores_the_prior_cursor(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let text = "one two target three target\n";
+    let window = cx.add_window(|window, cx| NotebookWindow::new(text, window, cx));
+    cx.simulate_keystrokes(window.into(), "w / t a r g e t");
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(selection(&view.source, cx), 8..8)
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "escape");
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(selection(&view.source, cx), 4..4);
+            assert_eq!(view.source.read(cx).text(cx), text);
+            assert!(view.source.focus_handle(cx).is_focused(window));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn vim_search_counts_and_backwards_direction_use_existing_motions(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let window = cx.add_window(|window, cx| {
+        NotebookWindow::new("one target two target three target\n", window, cx)
+    });
+    cx.simulate_keystrokes(window.into(), "2 / t a r g e t");
+    cx.executor().run_until_parked();
+    cx.simulate_keystrokes(window.into(), "enter");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(selection(&view.source, cx), 15..15)
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "? enter");
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(selection(&view.source, cx), 4..4)
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "n");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(selection(&view.source, cx), 28..28)
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn vim_operator_search_uses_shared_undo(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let original = "one target two target\n";
+    let window = cx.add_window(|window, cx| NotebookWindow::new(original, window, cx));
+    cx.simulate_keystrokes(window.into(), "d / t a r g e t");
+    cx.executor().run_until_parked();
+    cx.simulate_keystrokes(window.into(), "enter");
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "target two target\n");
+            assert_eq!(view.second.read(cx).text(cx), "target two target\n");
+            window.focus(&view.second.focus_handle(cx), cx);
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "u");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.source.read(cx).text(cx), original)
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn vim_search_targets_the_second_pane_after_toggling_vim(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let text = "one target two target\n";
+    let window = cx.add_window(|window, cx| NotebookWindow::new(text, window, cx));
+    set_vim_mode(cx, false);
+    set_vim_mode(cx, true);
+    cx.simulate_keystrokes(window.into(), "/ t a r g e t");
+    cx.executor().run_until_parked();
+    cx.simulate_keystrokes(window.into(), "enter");
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(selection(&view.source, cx), 4..4);
+            window.focus(&view.second.focus_handle(cx), cx);
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "/ t w o");
+    cx.executor().run_until_parked();
+    cx.simulate_keystrokes(window.into(), "enter");
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(selection(&view.source, cx), 4..4);
+            assert_eq!(selection(&view.second, cx), 11..11);
+            assert_eq!(view.source_search.read(cx).query(cx), "target");
+            assert_eq!(view.second_search.read(cx).query(cx), "two");
+            assert!(view.second.focus_handle(cx).is_focused(window));
+            assert_eq!(view.second.read(cx).text(cx), text);
         })
         .unwrap();
 }

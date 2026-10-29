@@ -203,6 +203,14 @@
       "change": "Add try_open_file for fallible, writable persistent opens without memory fallback; reject SQLite's special memory/temporary names and read-only connections."
     },
     {
+      "path": "crates/vim/src/vim.rs",
+      "change": "Add editor-local weak search-bar association and targeted submission hooks for embedded hosts; retain workspace lookup for upstream editors and preserve the association across Vim toggles."
+    },
+    {
+      "path": "crates/vim/src/normal/search.rs",
+      "change": "Resolve slash search, search submission, repeat motions, and word-under-cursor search through the host-aware bar lookup while retaining the existing Vim search/motion implementation. Ex commands remain workspace-based until their separate host integration."
+    },
+    {
       "dependency": "libsqlite3-sys",
       "change": "Override the workspace dependency to 0.39.1 with bundled SQLite 3.54.1, including the WAL-reset fix. The vendoring generator preserves this Quire override."
     }
