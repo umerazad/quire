@@ -182,6 +182,9 @@
     "ztracing",
     "ztracing_macro"
   ],
+  "build_inputs": [
+    "crates/extension_api/wit"
+  ],
   "modifications": [
     {
       "change": "Materialize license symlinks as regular files for checkout independence",

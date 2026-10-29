@@ -29,6 +29,8 @@ for (const seed of ["gpui_platform", "text", "editor", "vim", "assets"]) {
   required.add(seed);
 }
 const destination = "vendor/zed";
+// Cargo metadata does not report sibling files read by build scripts and WIT macros.
+const buildInputs = ["crates/extension_api/wit"];
 let modifications: unknown[] = [];
 if (existsSync(destination)) {
   const previous = JSON.parse(readFileSync(destination + "/UPSTREAM.json", "utf8"));
@@ -38,6 +40,7 @@ if (existsSync(destination)) {
 }
 mkdirSync(destination, { recursive: true });
 for (const { path } of selected.values()) if (!existsSync(`${destination}/${path}`)) cpSync(`${source}/${path}`, `${destination}/${path}`, { recursive: true, dereference: true });
+for (const path of buildInputs) if (!existsSync(`${destination}/${path}`)) cpSync(`${source}/${path}`, `${destination}/${path}`, { recursive: true, dereference: true });
 cpSync(`${source}/assets`, `${destination}/assets`, { recursive: true, dereference: true });
 for (const license of ["LICENSE-APACHE", "LICENSE-GPL", "LICENSE-AGPL", "LICENSE-MIT"]) if (existsSync(`${source}/${license}`)) cpSync(`${source}/${license}`, `${destination}/${license}`);
 function toml(value: any): string {
@@ -76,5 +79,5 @@ for (const [key, value] of Object.entries(root.profile.dev)) if (typeof value !=
 output += "\n[profile.dev.build-override]\n";
 for (const [key, value] of Object.entries(root.profile.dev["build-override"])) output += `${key} = ${toml(value)}\n`;
 writeFileSync("Cargo.toml", output);
-writeFileSync(`${destination}/UPSTREAM.json`, JSON.stringify({ repository: "https://github.com/zed-industries/zed", revision: execFileSync("git", ["-C", source, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), crates: [...selected.keys()].sort(), modifications }, null, 2) + "\n");
+writeFileSync(`${destination}/UPSTREAM.json`, JSON.stringify({ repository: "https://github.com/zed-industries/zed", revision: execFileSync("git", ["-C", source, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), crates: [...selected.keys()].sort(), build_inputs: buildInputs, modifications }, null, 2) + "\n");
 console.log(`Copied ${selected.size} crates into ${destination}.`);
