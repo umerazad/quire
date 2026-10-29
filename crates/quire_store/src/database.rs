@@ -5,6 +5,14 @@ use std::path::Path;
 /// Opens a local writing connection for the storage worker, with no memory fallback.
 /// The caller owns schema migration and must not weaken the durability pragmas.
 pub fn open_writable(path: &Path) -> Result<Connection> {
+    let connection = open_unconfigured(path)?;
+    configure(&connection).with_context(|| format!(
+        "Cannot configure notebook database {} for durable saves. Preserve the database, WAL, and SHM files and check permissions or restore a verified backup.", path.display()
+    ))?;
+    Ok(connection)
+}
+
+pub(crate) fn open_unconfigured(path: &Path) -> Result<Connection> {
     ensure!(
         path.is_absolute(),
         "Cannot open notebook database at {}. Choose an absolute local file path.",
@@ -14,13 +22,10 @@ pub fn open_writable(path: &Path) -> Result<Connection> {
     let connection = Connection::try_open_file(name).with_context(|| format!(
         "Cannot open notebook database {}. Check that the file and parent folder exist and are writable, then retry.", path.display()
     ))?;
-    configure(&connection).with_context(|| format!(
-        "Cannot configure notebook database {} for durable saves. Preserve the database, WAL, and SHM files and check permissions or restore a verified backup.", path.display()
-    ))?;
     Ok(connection)
 }
 
-fn configure(connection: &Connection) -> Result<()> {
+pub(crate) fn configure(connection: &Connection) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         connection.exec("PRAGMA fullfsync = ON")?()?;

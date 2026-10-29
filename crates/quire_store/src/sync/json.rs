@@ -10,6 +10,9 @@ use std::{cmp::Ordering, collections::BTreeMap, fmt, fmt::Write};
 pub struct JsString(Vec<u8>);
 
 impl JsString {
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
     pub fn as_str(&self) -> Option<&str> {
         std::str::from_utf8(&self.0).ok()
     }
@@ -313,6 +316,13 @@ impl<'a> ValueRef<'a> {
     }
     pub fn as_f64(self) -> Option<f64> {
         if let Node::Number(value) = self.node() {
+            Some(*value)
+        } else {
+            None
+        }
+    }
+    pub fn as_bool(self) -> Option<bool> {
+        if let Node::Bool(value) = self.node() {
             Some(*value)
         } else {
             None

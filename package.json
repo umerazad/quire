@@ -5,7 +5,8 @@
   "scripts": {
     "verify:vendor": "bun tools/verify-vendor.ts",
     "dev": "bun tools/run.ts",
-    "test:reference": "node node_modules/vitest/vitest.mjs run tests/reference"
+    "test:reference": "node node_modules/vitest/vitest.mjs run tests/reference",
+    "test:storage-crash": "node tools/test-storage-crash.ts"
   },
   "devDependencies": {
     "vitest": "5.0.5"

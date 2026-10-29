@@ -1,6 +1,6 @@
 use super::json::{JsString, Json, ValueRef};
 use sha2::{Digest, Sha256};
-use std::{collections::HashSet, fmt, io::Read};
+use std::{collections::HashSet, fmt};
 use unicode_normalization::UnicodeNormalization;
 
 pub const FORMAT: u32 = 1;
@@ -135,7 +135,7 @@ fn revision_id_ref(fields: ValueRef<'_>) -> Result<String, Error> {
 pub fn validate_revision(value: impl Into<Json>) -> Result<(), Error> {
     validate_revision_ref(value.into().root())
 }
-fn validate_revision_ref(value: ValueRef<'_>) -> Result<(), Error> {
+pub(crate) fn validate_revision_ref(value: ValueRef<'_>) -> Result<(), Error> {
     revision_content_problem(value).map_err(damaged)?;
     if !is_count(value.field("created")) || !value.field("device").is_string() {
         return Err(damaged("a revision has an invalid origin"));
@@ -359,16 +359,7 @@ fn decode_with_limit(
         })
     })?;
     let incomplete = || damaged("the file is incomplete or not compressed");
-    let mut decoder = zstd::stream::read::Decoder::new(data).map_err(|_| incomplete())?;
-    decoder.window_log_max(28).map_err(|_| incomplete())?;
-    let mut text = Vec::new();
-    decoder
-        .take(limit as u64 + 1)
-        .read_to_end(&mut text)
-        .map_err(|_| incomplete())?;
-    if text.len() > limit {
-        return Err(incomplete());
-    }
+    let text = crate::compression::decompress(data, limit).map_err(|_| incomplete())?;
     if sha256(&text) != parsed.hash {
         return Err(damaged("the file's content does not match its name"));
     }

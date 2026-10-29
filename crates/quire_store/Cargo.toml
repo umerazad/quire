@@ -10,8 +10,10 @@ path = "src/quire_store.rs"
 
 [dependencies]
 anyhow.workspace = true
+futures.workspace = true
 sqlez.workspace = true
-serde.workspace = true
+regex.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 sha2.workspace = true
 zstd.workspace = true

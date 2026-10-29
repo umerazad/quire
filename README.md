@@ -10,6 +10,7 @@ bun run verify:vendor
 bun run test:reference
 cargo test -p quire --locked --features test-support
 cargo test -p quire_store --locked
+bun run test:storage-crash
 cargo build -p quire --locked
 bun run dev
 ```
@@ -20,9 +21,9 @@ The native development app uses `QuireNative` data/config paths, separate from Z
 
 Reference protocol tests deliberately run through Node/Vitest. Bun's zstd decoder reports a truncated frame differently, so running those tests with `bun test` would change the compatibility oracle.
 
-`quire_store` contains the format 1 codec. Its tests read Node-generated files, ask Node to read native files, and compare seeded number and Unicode serialization. The sync JSON representation preserves unknown fields and unpaired UTF-16 surrogates. Its parsing, cloning, serialization, and destruction handle deep records without recursive traversal. The codec is not connected to notebook persistence yet. Regenerate protocol fixtures with `node tools/protocol-vectors.ts`.
+`quire_store` contains the format 1 codec. Its tests read Node-generated files, ask Node to read native files, and compare seeded number and Unicode serialization. The sync JSON representation preserves unknown fields and unpaired UTF-16 surrogates. Its parsing, cloning, serialization, and destruction handle deep records without recursive traversal. Regenerate protocol fixtures with `node tools/protocol-vectors.ts`.
 
-The storage connection foundation reuses Zed's `sqlez` with a fallible file-open path, WAL/FULL, FTS5, and macOS fullfsync. SQLite is pinned to bundled 3.54.1. Notebook schema, acknowledged saves, and recovery remain unfinished.
+The storage library reuses Zed's `sqlez` with a fallible file-open path, WAL/FULL, FTS5, and macOS fullfsync. SQLite is pinned to bundled 3.54.1. Notebook identity/schema checks protect existing databases. Saves commit revisions, heads, outbox entries, and matching recovery changes together; publication selection freezes exact bytes before folder I/O. A bounded worker keeps SQLite off its caller's thread. Tests cover full-disk failure, rollback, stale editor versions, and process-kill recovery. Attachment caching, folder publication, and connecting this service to the editor remain unfinished. Process-kill checks do not establish power-loss durability.
 
 Generate synthetic notebook fixtures with `bun tools/synthetic-notebook.ts <empty-folder> [pages] [seed]`. Defaults are 6,536 pages and seed 1. Generated notebooks and build output stay outside version control.
 
