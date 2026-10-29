@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "verify:vendor": "bun tools/verify-vendor.ts",
     "dev": "bun tools/run.ts",
     "test:reference": "node node_modules/vitest/vitest.mjs run tests/reference"
   },

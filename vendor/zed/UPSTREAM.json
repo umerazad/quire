@@ -34,5 +34,10 @@
     "ztracing",
     "ztracing_macro"
   ],
-  "modifications": []
+  "modifications": [
+    {
+      "change": "Materialize license symlinks as regular files for checkout independence",
+      "files": 32
+    }
+  ]
 }

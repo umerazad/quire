@@ -6,6 +6,7 @@ Use Rust 1.98.1, Bun, and Node 26 for development. macOS builds require Xcode wi
 
 ```sh
 bun install --frozen-lockfile
+bun run verify:vendor
 bun run test:reference
 cargo test -p quire --locked --features test-support
 cargo build -p quire --locked
