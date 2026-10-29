@@ -15,6 +15,7 @@ fn init(cx: &mut App) -> Result<(), String> {
         ));
     }
     theme_settings::init(theme::LoadThemes::JustBase, cx);
+    crate::markdown::init(cx)?;
     release_channel::init(semver::Version::new(0, 1, 0), cx);
     editor::init(cx);
     vim::init(cx);
@@ -121,7 +122,7 @@ struct NotebookWindow {
 impl NotebookWindow {
     fn new(text: &str, window: &mut Window, cx: &mut gpui::Context<Self>) -> Self {
         let mode = cx.new(|cx| vim::ModeIndicator::new(window, cx));
-        let buffer = cx.new(|cx| language::Buffer::local(text, cx));
+        let buffer = crate::markdown::buffer(text, cx);
         let source = cx.new(|cx| editor(buffer.clone(), window, cx));
         let second = cx.new(|cx| editor(buffer, window, cx));
         window.focus(&source.focus_handle(cx), cx);
@@ -193,6 +194,108 @@ mod tests {
             .update(cx, |view, _, cx| {
                 assert_eq!(view.source.read(cx).text(cx), "xhello");
                 assert_eq!(view.second.read(cx).text(cx), "xhello");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn notebook_window_parses_markdown_and_inline_syntax_in_its_shared_buffer(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| init(cx).expect("editor initialization"));
+        let text = "# Quire\n\n- **مرحبا** [link](https://example.com) ^b-1\n";
+        let window = cx.add_window(|window, cx| NotebookWindow::new(text, window, cx));
+        cx.executor().run_until_parked();
+        window
+            .update(cx, |view, _, cx| {
+                let source = view
+                    .source
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .unwrap();
+                let second = view
+                    .second
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .unwrap();
+                assert_eq!(source.entity_id(), second.entity_id());
+                let snapshot = source.read(cx).snapshot();
+                assert_eq!(snapshot.language().unwrap().name().as_ref(), "Markdown");
+                let layers: Vec<_> = snapshot.syntax_layers().collect();
+                assert!(
+                    layers
+                        .iter()
+                        .any(|layer| layer.node().to_sexp().contains("atx_heading"))
+                );
+                assert!(
+                    layers
+                        .iter()
+                        .any(|layer| layer.node().to_sexp().contains("list_item"))
+                );
+                assert!(
+                    layers
+                        .iter()
+                        .any(|layer| layer.language.name().as_ref() == "Markdown-Inline"
+                            && layer.node().to_sexp().contains("strong_emphasis"))
+                );
+                assert_eq!(view.source.read(cx).text(cx), text);
+                assert_eq!(view.second.read(cx).text(cx), text);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn markdown_reparses_shared_vim_edits_and_undo_from_the_other_pane(cx: &mut TestAppContext) {
+        cx.update(|cx| init(cx).expect("editor initialization"));
+        let original = "# Quire\n\n**مرحبا**\n";
+        let window = cx.add_window(|window, cx| NotebookWindow::new(original, window, cx));
+        cx.simulate_keystrokes(window.into(), "d d");
+        cx.executor().run_until_parked();
+        window
+            .update(cx, |view, window, cx| {
+                assert_eq!(view.source.read(cx).text(cx), "\n**مرحبا**\n");
+                assert_eq!(view.second.read(cx).text(cx), "\n**مرحبا**\n");
+                let buffer = view
+                    .source
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .unwrap();
+                assert!(
+                    !buffer
+                        .read(cx)
+                        .snapshot()
+                        .syntax_layers()
+                        .any(|layer| layer.node().to_sexp().contains("atx_heading"))
+                );
+                window.focus(&view.second.focus_handle(cx), cx);
+            })
+            .unwrap();
+        cx.simulate_keystrokes(window.into(), "u");
+        cx.executor().run_until_parked();
+        window
+            .update(cx, |view, _, cx| {
+                assert_eq!(view.source.read(cx).text(cx), original);
+                assert_eq!(view.second.read(cx).text(cx), original);
+                let buffer = view
+                    .source
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .unwrap();
+                assert!(
+                    buffer
+                        .read(cx)
+                        .snapshot()
+                        .syntax_layers()
+                        .any(|layer| layer.node().to_sexp().contains("atx_heading"))
+                );
             })
             .unwrap();
     }

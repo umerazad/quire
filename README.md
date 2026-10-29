@@ -1,6 +1,6 @@
 # Quire native
 
-The Rust/GPUI rewrite is underway. The default executable now hosts Zed's full editor and Vim in two panes sharing one buffer, with a mode indicator. It opens an in-memory example note. Insert mode, multiline typing, line deletion, shared undo/redo, and normal editing/clipboard operations have headless tests. Notebook persistence, Write presentation, and the remaining application workflows are still in [the task queue](plans/native-rewrite-tasks.md).
+The Rust/GPUI rewrite is underway. The default executable now hosts Zed's full editor and Vim in two panes sharing one buffer, with a mode indicator. It opens an in-memory example note using the copied Markdown and inline grammars. Insert mode, multiline typing, line deletion, shared undo/redo, and normal editing/clipboard operations have headless tests. Notebook persistence, Write presentation, and the remaining application workflows are still in [the task queue](plans/native-rewrite-tasks.md).
 
 Use Rust 1.98.1, Bun, and Node 26 for development. macOS builds require Xcode with the Metal tools. GPUI and its platform/support crates are copied under `vendor/zed`; building does not require either sibling checkout.
 

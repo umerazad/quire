@@ -5,6 +5,9 @@ mod document;
 #[cfg(feature = "full-editor")]
 mod editor_host;
 
+#[cfg(feature = "full-editor")]
+mod markdown;
+
 #[path = "example_support/fonts.rs"]
 mod example_support;
 
