@@ -1,6 +1,7 @@
 /target/
 /node_modules/
 !/Cargo.lock
+!/vendor/zed/tooling/corgi/patches/scratch/
 /data/
 /test-results/
 .DS_Store

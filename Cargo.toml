@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/quire", "vendor/zed/crates/gpui_platform", "vendor/zed/crates/gpui", "vendor/zed/crates/collections", "vendor/zed/crates/gpui_util", "vendor/zed/crates/bench_metrics", "vendor/zed/crates/gpui_macros", "vendor/zed/crates/gpui_shared_string", "vendor/zed/crates/http_client", "vendor/zed/crates/refineable", "vendor/zed/crates/refineable/derive_refineable", "vendor/zed/crates/scheduler", "vendor/zed/crates/sum_tree", "vendor/zed/crates/ztracing", "vendor/zed/crates/zlog", "vendor/zed/crates/ztracing_macro", "vendor/zed/crates/util_macros", "vendor/zed/tooling/perf", "vendor/zed/crates/reqwest_client", "vendor/zed/crates/http_client_tls", "vendor/zed/crates/gpui_web", "vendor/zed/crates/gpui_wgpu", "vendor/zed/crates/gpui_macos", "vendor/zed/crates/gpui_apple", "vendor/zed/crates/gpui_ios", "vendor/zed/crates/gpui_windows", "vendor/zed/crates/gpui_linux", "vendor/zed/crates/text", "vendor/zed/crates/clock", "vendor/zed/crates/rope", "vendor/zed/crates/util", "vendor/zed/crates/path"]
+members = ["crates/quire", "vendor/zed/crates/gpui_platform", "vendor/zed/crates/gpui", "vendor/zed/crates/collections", "vendor/zed/crates/gpui_util", "vendor/zed/crates/bench_metrics", "vendor/zed/crates/gpui_macros", "vendor/zed/crates/gpui_shared_string", "vendor/zed/crates/http_client", "vendor/zed/crates/refineable", "vendor/zed/crates/refineable/derive_refineable", "vendor/zed/crates/scheduler", "vendor/zed/crates/sum_tree", "vendor/zed/crates/ztracing", "vendor/zed/crates/zlog", "vendor/zed/crates/ztracing_macro", "vendor/zed/crates/util_macros", "vendor/zed/tooling/perf", "vendor/zed/crates/reqwest_client", "vendor/zed/crates/http_client_tls", "vendor/zed/crates/gpui_web", "vendor/zed/crates/gpui_wgpu", "vendor/zed/crates/gpui_macos", "vendor/zed/crates/gpui_apple", "vendor/zed/crates/gpui_ios", "vendor/zed/crates/gpui_windows", "vendor/zed/crates/gpui_linux", "vendor/zed/crates/text", "vendor/zed/crates/clock", "vendor/zed/crates/rope", "vendor/zed/crates/util", "vendor/zed/crates/path", "vendor/zed/crates/editor", "vendor/zed/crates/assets", "vendor/zed/crates/breadcrumbs", "vendor/zed/crates/ui", "vendor/zed/crates/component", "vendor/zed/crates/theme", "vendor/zed/crates/syntax_theme", "vendor/zed/crates/icons", "vendor/zed/crates/menu", "vendor/zed/crates/ui_macros", "vendor/zed/crates/settings", "vendor/zed/crates/fs", "vendor/zed/crates/git", "vendor/zed/crates/askpass", "vendor/zed/crates/net", "vendor/zed/crates/file_content", "vendor/zed/crates/paths", "vendor/zed/crates/proto", "vendor/zed/crates/telemetry", "vendor/zed/crates/telemetry_events", "vendor/zed/crates/migrator", "vendor/zed/crates/settings_content", "vendor/zed/crates/language_model_core", "vendor/zed/crates/cloud_llm_client", "vendor/zed/crates/zeta_prompt", "vendor/zed/crates/settings_json", "vendor/zed/crates/settings_macros", "vendor/zed/crates/release_channel", "vendor/zed/crates/theme_settings", "vendor/zed/crates/workspace", "vendor/zed/crates/agent_settings", "vendor/zed/crates/language_model", "vendor/zed/crates/credentials_provider", "vendor/zed/crates/env_var", "vendor/zed/crates/project", "vendor/zed/crates/buffer_diff", "vendor/zed/crates/language", "vendor/zed/crates/fuzzy_nucleo", "vendor/zed/crates/fuzzy", "vendor/zed/crates/language_core", "vendor/zed/crates/lsp", "vendor/zed/crates/rpc", "vendor/zed/crates/task", "vendor/zed/crates/zed_actions", "vendor/zed/crates/grammars", "vendor/zed/crates/watch", "vendor/zed/crates/client", "vendor/zed/crates/cloud_api_client", "vendor/zed/crates/cloud_api_types", "vendor/zed/crates/gpui_tokio", "vendor/zed/crates/feature_flags", "vendor/zed/crates/feature_flags_macros", "vendor/zed/crates/proxy_handshake", "vendor/zed/crates/worktree", "vendor/zed/crates/zed_credentials_provider", "vendor/zed/crates/context_server", "vendor/zed/crates/oauth_callback_server", "vendor/zed/crates/dap", "vendor/zed/crates/github_releases", "vendor/zed/crates/node_runtime", "vendor/zed/crates/extension", "vendor/zed/crates/git_hosting_providers", "vendor/zed/crates/markdown", "vendor/zed/crates/mermaid_render", "vendor/zed/crates/languages", "vendor/zed/crates/json_schema_store", "vendor/zed/crates/snippet_provider", "vendor/zed/crates/snippet", "vendor/zed/crates/terminal", "vendor/zed/crates/prettier", "vendor/zed/crates/remote", "vendor/zed/crates/db", "vendor/zed/crates/sqlez", "vendor/zed/crates/sqlez_macros", "vendor/zed/crates/zed_env_vars", "vendor/zed/crates/session", "vendor/zed/crates/ui_input", "vendor/zed/crates/file_icons", "vendor/zed/crates/edit_prediction_types", "vendor/zed/crates/language_detection", "vendor/zed/crates/multi_buffer", "vendor/zed/crates/vim_mode_setting", "vendor/zed/crates/vim", "vendor/zed/crates/command_palette", "vendor/zed/crates/command_palette_hooks", "vendor/zed/crates/picker", "vendor/zed/crates/go_to_line", "vendor/zed/crates/search", "vendor/zed/crates/picker_preview", "vendor/zed/crates/git_ui", "vendor/zed/crates/call", "vendor/zed/crates/audio", "vendor/zed/crates/livekit_client", "vendor/zed/crates/livekit_api", "vendor/zed/crates/notifications", "vendor/zed/crates/prompt_store", "vendor/zed/crates/agent_skills", "vendor/zed/crates/remote_connection", "vendor/zed/crates/auto_update", "vendor/zed/crates/time_format", "vendor/zed/crates/git_ui_core", "vendor/zed/crates/markdown_preview", "vendor/zed/crates/project_panel", "vendor/zed/crates/svg_preview", "vendor/zed/crates/outline_panel", "vendor/zed/crates/outline", "vendor/zed/crates/settings_ui", "vendor/zed/crates/agent", "vendor/zed/crates/acp_thread", "vendor/zed/crates/action_log", "vendor/zed/crates/http_proxy", "vendor/zed/crates/sandbox", "vendor/zed/crates/agent_servers", "vendor/zed/crates/html_to_markdown", "vendor/zed/crates/shell_command_parser", "vendor/zed/crates/streaming_diff", "vendor/zed/crates/web_search", "vendor/zed/crates/eval_utils", "vendor/zed/crates/language_models", "vendor/zed/crates/ai_onboarding", "vendor/zed/crates/anthropic", "vendor/zed/crates/aws_http_client", "vendor/zed/crates/bedrock", "vendor/zed/crates/copilot_chat", "vendor/zed/crates/copilot_ui", "vendor/zed/crates/copilot", "vendor/zed/crates/deepseek", "vendor/zed/crates/extension_host", "vendor/zed/crates/language_extension", "vendor/zed/crates/theme_extension", "vendor/zed/crates/google_ai", "vendor/zed/crates/language_models_cloud", "vendor/zed/crates/open_ai", "vendor/zed/crates/llama_cpp", "vendor/zed/crates/lmstudio", "vendor/zed/crates/mistral", "vendor/zed/crates/ollama", "vendor/zed/crates/openai_subscribed", "vendor/zed/crates/opencode", "vendor/zed/crates/open_router", "vendor/zed/crates/x_ai", "vendor/zed/crates/x_ai_subscribed", "vendor/zed/crates/codestral", "vendor/zed/crates/edit_prediction", "vendor/zed/crates/edit_prediction_context", "vendor/zed/crates/edit_prediction_metrics", "vendor/zed/crates/edit_prediction_ui", "vendor/zed/crates/platform_title_bar"]
 default-members = ["crates/quire"]
 
 [workspace.package]
@@ -12,44 +12,138 @@ edition = "2024"
 "accesskit_macos" = "0.26.0"
 "accesskit_unix" = "0.22"
 "accesskit_windows" = "0.34"
+"acp_thread" = { "path" = "vendor/zed/crates/acp_thread" }
+"action_log" = { "path" = "vendor/zed/crates/action_log" }
+"agent" = { "path" = "vendor/zed/crates/agent" }
+"agent-client-protocol" = { "version" = "=3.6.0", "features" = ["schemars", "unstable", "unstable_protocol_v2"] }
+"agent_servers" = { "path" = "vendor/zed/crates/agent_servers" }
+"agent_settings" = { "path" = "vendor/zed/crates/agent_settings" }
+"agent_skills" = { "path" = "vendor/zed/crates/agent_skills" }
+"aho-corasick" = "1.1"
+"ai_onboarding" = { "path" = "vendor/zed/crates/ai_onboarding" }
+"alacritty_terminal" = { "git" = "https://github.com/zed-industries/alacritty", "rev" = "4c129667ce56611becdc82de6e28218c80e2e88f" }
+"anthropic" = { "path" = "vendor/zed/crates/anthropic" }
+"any_vec" = "0.14"
 "anyhow" = "1.0.86"
+"arc-swap" = "1.9.0"
 "ashpd" = { "version" = "0.13", "default-features" = false, "features" = ["async-io", "inhibit", "open_uri", "file_chooser", "settings"] }
+"askpass" = { "path" = "vendor/zed/crates/askpass" }
+"assets" = { "path" = "vendor/zed/crates/assets" }
 "async-channel" = { "version" = "2.5", "default-features" = false }
+"async-compat" = "0.2.1"
+"async-compression" = { "version" = "0.4", "features" = ["bzip2", "gzip", "futures-io"] }
 "async-fs" = "2.1"
+"async-io" = "2.6.0"
+"async-lock" = { "version" = "3.4", "default-features" = false }
+"async-pipe" = { "git" = "https://github.com/zed-industries/async-pipe-rs", "rev" = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
+"async-recursion" = "1.0.0"
+"async-std" = { "version" = "1.12", "features" = ["unstable"] }
+"async-tar" = { "git" = "https://github.com/zed-industries/async-tar", "rev" = "bd3ad6f89df9a9da7a8535958756d6bf465936a0" }
 "async-task" = "4.7"
+"async-trait" = "0.1"
 "async-tungstenite" = "0.33"
 "async_zip" = { "version" = "0.0.18", "features" = ["deflate", "deflate64"] }
+"audio" = { "path" = "vendor/zed/crates/audio" }
+"auto_update" = { "path" = "vendor/zed/crates/auto_update" }
+"aws-config" = { "version" = "1.8.10", "default-features" = false, "features" = ["behavior-version-latest", "credentials-process", "rt-tokio", "sso"] }
+"aws-credential-types" = { "version" = "1.2.8", "features" = ["hardcoded-credentials"] }
+"aws-sdk-bedrockruntime" = { "version" = "1.112.0", "default-features" = false, "features" = ["behavior-version-latest", "rt-tokio"] }
+"aws-sigv4" = { "version" = "1.4.0", "features" = ["http1"] }
+"aws-smithy-runtime-api" = { "version" = "1.9.2", "features" = ["http-1x", "client"] }
+"aws-smithy-types" = { "version" = "1.3.4", "features" = ["http-body-1-x"] }
+"aws_http_client" = { "path" = "vendor/zed/crates/aws_http_client" }
 "backtrace" = "0.3"
+"base64" = "0.22"
+"bedrock" = { "path" = "vendor/zed/crates/bedrock" }
 "bench_metrics" = { "path" = "vendor/zed/crates/bench_metrics" }
+"betlang" = "0.1.1"
 "bitflags" = "2.6.0"
 "block2" = "0.6"
+"breadcrumbs" = { "path" = "vendor/zed/crates/breadcrumbs" }
+"brush-parser" = "0.3"
+"buffer_diff" = { "path" = "vendor/zed/crates/buffer_diff" }
 "bytemuck" = "1"
 "bytes" = "1.0"
+"call" = { "path" = "vendor/zed/crates/call" }
 "cbindgen" = { "version" = "0.28.0", "default-features" = false }
+"chardetng" = "0.1"
 "chrono" = { "version" = "0.4", "default-features" = false, "features" = ["std", "serde"] }
+"ciborium" = "0.2"
+"client" = { "path" = "vendor/zed/crates/client" }
 "clock" = { "path" = "vendor/zed/crates/clock" }
+"cloud_api_client" = { "path" = "vendor/zed/crates/cloud_api_client" }
+"cloud_api_types" = { "path" = "vendor/zed/crates/cloud_api_types" }
+"cloud_llm_client" = { "path" = "vendor/zed/crates/cloud_llm_client" }
+"codestral" = { "path" = "vendor/zed/crates/codestral" }
 "collections" = { "path" = "vendor/zed/crates/collections", "version" = "0.1.0" }
+"command_palette" = { "path" = "vendor/zed/crates/command_palette" }
+"command_palette_hooks" = { "path" = "vendor/zed/crates/command_palette_hooks" }
+"component" = { "path" = "vendor/zed/crates/component" }
 "console_error_panic_hook" = "0.1.7"
+"const_format" = "0.2"
+"context_server" = { "path" = "vendor/zed/crates/context_server" }
+"convert_case" = "0.11.0"
+"copilot" = { "path" = "vendor/zed/crates/copilot" }
+"copilot_chat" = { "path" = "vendor/zed/crates/copilot_chat" }
+"copilot_ui" = { "path" = "vendor/zed/crates/copilot_ui" }
 "core-foundation" = "0.10"
 "core-foundation-sys" = "0.8.6"
 "core-graphics" = "0.24"
 "core-text" = "21"
+"coreaudio-rs" = { "version" = "0.12", "default-features" = false }
+"cpal" = { "git" = "https://github.com/RustAudio/cpal", "rev" = "e1612d5d98152f8dc2a62e1b51ef7cbf4f7f26b7" }
+"credentials_provider" = { "path" = "vendor/zed/crates/credentials_provider" }
 "criterion" = { "version" = "0.8.2", "features" = ["html_reports"] }
+"crossbeam-queue" = "0.3.12"
 "ctor" = "1.0.12"
+"dap" = { "path" = "vendor/zed/crates/dap" }
+"dap-types" = { "git" = "https://github.com/zed-industries/dap-types", "rev" = "1b461b310481d01e02b2603c16d7144b926339f8" }
+"db" = { "path" = "vendor/zed/crates/db" }
+"deepseek" = { "path" = "vendor/zed/crates/deepseek" }
 "derive_more" = { "version" = "2.1", "features" = ["deref", "deref_mut", "from_str"] }
 "derive_refineable" = { "path" = "vendor/zed/crates/refineable/derive_refineable" }
+"diffy" = "0.4.2"
 "dirs" = "6.0"
 "dispatch2" = { "version" = "0.3", "default-features" = false, "features" = ["std"] }
+"documented" = "0.10"
 "dunce" = "1.0"
+"ec4rs" = { "version" = "1.2", "features" = ["allow-empty-values"] }
+"edit_prediction" = { "path" = "vendor/zed/crates/edit_prediction" }
+"edit_prediction_context" = { "path" = "vendor/zed/crates/edit_prediction_context" }
+"edit_prediction_metrics" = { "path" = "vendor/zed/crates/edit_prediction_metrics", "features" = ["tree-sitter"] }
+"edit_prediction_types" = { "path" = "vendor/zed/crates/edit_prediction_types" }
+"edit_prediction_ui" = { "path" = "vendor/zed/crates/edit_prediction_ui" }
+"editor" = { "path" = "vendor/zed/crates/editor" }
+"emojis" = "0.9"
+"encoding_rs" = "0.8"
 "env_logger" = "0.11"
+"env_var" = { "path" = "vendor/zed/crates/env_var" }
 "etagere" = "0.2"
+"eval_utils" = { "path" = "vendor/zed/crates/eval_utils" }
+"extension" = { "path" = "vendor/zed/crates/extension" }
+"extension_host" = { "path" = "vendor/zed/crates/extension_host" }
+"fancy-regex" = "0.19"
+"feature_flags" = { "path" = "vendor/zed/crates/feature_flags" }
+"feature_flags_macros" = { "path" = "vendor/zed/crates/feature_flags_macros" }
+"file_content" = { "path" = "vendor/zed/crates/file_content" }
+"file_icons" = { "path" = "vendor/zed/crates/file_icons" }
 "flume" = { "version" = "0.12", "default-features" = false, "features" = ["async"] }
 "font-kit" = { "git" = "https://github.com/zed-industries/font-kit", "rev" = "94b0f28166665e8fd2f53ff6d268a14955c82269", "package" = "zed-font-kit", "version" = "0.14.1-zed", "default-features" = false }
 "foreign-types" = "0.5"
+"fs" = { "path" = "vendor/zed/crates/fs" }
 "futures" = "0.3.34"
 "futures-concurrency" = "7.7.1"
 "futures-lite" = "2"
+"fuzzy" = { "path" = "vendor/zed/crates/fuzzy" }
+"fuzzy_nucleo" = { "path" = "vendor/zed/crates/fuzzy_nucleo" }
+"git" = { "path" = "vendor/zed/crates/git" }
+"git_hosting_providers" = { "path" = "vendor/zed/crates/git_hosting_providers" }
+"git_ui" = { "path" = "vendor/zed/crates/git_ui" }
+"git_ui_core" = { "path" = "vendor/zed/crates/git_ui_core" }
+"github_releases" = { "path" = "vendor/zed/crates/github_releases" }
 "globset" = "0.4"
+"go_to_line" = { "path" = "vendor/zed/crates/go_to_line" }
+"google_ai" = { "path" = "vendor/zed/crates/google_ai" }
 "gpui" = { "path" = "vendor/zed/crates/gpui", "default-features" = false }
 "gpui_apple" = { "path" = "vendor/zed/crates/gpui_apple" }
 "gpui_ios" = { "path" = "vendor/zed/crates/gpui_ios" }
@@ -58,28 +152,82 @@ edition = "2024"
 "gpui_macros" = { "path" = "vendor/zed/crates/gpui_macros" }
 "gpui_platform" = { "path" = "vendor/zed/crates/gpui_platform", "default-features" = false }
 "gpui_shared_string" = { "path" = "vendor/zed/crates/gpui_shared_string" }
+"gpui_tokio" = { "path" = "vendor/zed/crates/gpui_tokio" }
 "gpui_util" = { "path" = "vendor/zed/crates/gpui_util" }
 "gpui_web" = { "path" = "vendor/zed/crates/gpui_web", "default-features" = false }
 "gpui_wgpu" = { "path" = "vendor/zed/crates/gpui_wgpu" }
 "gpui_windows" = { "path" = "vendor/zed/crates/gpui_windows", "default-features" = false }
+"grammars" = { "path" = "vendor/zed/crates/grammars" }
+"handlebars" = "4.3"
 "hdrhistogram" = { "version" = "7", "default-features" = false }
 "heapless" = "0.9.2"
 "heck" = "0.5"
+"heed" = { "version" = "0.21", "default-features" = false, "features" = ["read-txn-no-tls", "serde-bincode", "serde-json"] }
+"hex" = "0.4.3"
+"html5ever" = "0.39"
+"html_to_markdown" = { "path" = "vendor/zed/crates/html_to_markdown" }
 "http" = "1.1"
 "http-body" = "1.0"
 "http_client" = { "path" = "vendor/zed/crates/http_client" }
 "http_client_tls" = { "path" = "vendor/zed/crates/http_client_tls" }
+"http_proxy" = { "path" = "vendor/zed/crates/http_proxy" }
+"httparse" = "1.10"
+"icons" = { "path" = "vendor/zed/crates/icons" }
 "icu_segmenter" = { "version" = "2.3.0", "default-features" = false, "features" = ["compiled_data"] }
+"idna" = "1.0"
+"ignore" = "0.4.22"
 "image" = { "version" = "0.25.1", "default-features" = false, "features" = ["bmp", "dds", "exr", "ff", "gif", "hdr", "ico", "jpeg", "png", "pnm", "qoi", "rayon", "tga", "tiff", "webp"] }
+"imara-diff" = { "version" = "0.2", "default-features" = false }
 "indexmap" = { "version" = "2.7.0", "features" = ["serde"] }
+"indoc" = "2"
 "inventory" = "0.3.19"
+"is_executable" = "1.0"
 "itertools" = "0.14.0"
 "js-sys" = "0.3"
+"json_schema_store" = { "path" = "vendor/zed/crates/json_schema_store" }
+"jsonwebtoken" = { "version" = "10.0", "default-features" = false }
+"language" = { "path" = "vendor/zed/crates/language" }
+"language_core" = { "path" = "vendor/zed/crates/language_core" }
+"language_detection" = { "path" = "vendor/zed/crates/language_detection" }
+"language_extension" = { "path" = "vendor/zed/crates/language_extension" }
+"language_model" = { "path" = "vendor/zed/crates/language_model" }
+"language_model_core" = { "path" = "vendor/zed/crates/language_model_core" }
+"language_models" = { "path" = "vendor/zed/crates/language_models" }
+"language_models_cloud" = { "path" = "vendor/zed/crates/language_models_cloud" }
+"languages" = { "path" = "vendor/zed/crates/languages" }
 "libc" = "0.2"
+"libsqlite3-sys" = { "version" = "0.30.1", "features" = ["bundled"] }
+"libwebrtc" = "0.3.26"
+"linkify" = "0.10.0"
+"livekit" = { "version" = "0.7.32", "features" = ["tokio", "rustls-tls-native-roots"] }
+"livekit_api" = { "path" = "vendor/zed/crates/livekit_api" }
+"livekit_client" = { "path" = "vendor/zed/crates/livekit_client" }
+"llama_cpp" = { "path" = "vendor/zed/crates/llama_cpp" }
+"lmstudio" = { "path" = "vendor/zed/crates/lmstudio" }
 "log" = { "version" = "0.4", "default-features" = false, "features" = ["std"] }
+"lru" = "0.16"
+"lsp" = { "path" = "vendor/zed/crates/lsp" }
+"lsp-types" = { "git" = "https://github.com/zed-industries/lsp-types", "rev" = "82d7fc66ebdfabcfeb26ba16bbed9f3d26211fc3" }
 "mach2" = "0.6"
+"markdown" = { "path" = "vendor/zed/crates/markdown" }
+"markdown_preview" = { "path" = "vendor/zed/crates/markdown_preview" }
+"markup5ever_rcdom" = "0.39"
+"menu" = { "path" = "vendor/zed/crates/menu" }
+"mermaid_render" = { "path" = "vendor/zed/crates/mermaid_render" }
+"merman" = { "version" = "=0.8.0-alpha.5", "default-features" = false }
+"migrator" = { "path" = "vendor/zed/crates/migrator" }
+"mime" = "0.3.17"
+"mistral" = { "path" = "vendor/zed/crates/mistral" }
+"moka" = { "version" = "0.12.10", "features" = ["sync"] }
+"multi_buffer" = { "path" = "vendor/zed/crates/multi_buffer" }
+"nanoid" = "0.4"
+"net" = { "path" = "vendor/zed/crates/net" }
 "nix" = "0.30"
+"node_runtime" = { "path" = "vendor/zed/crates/node_runtime" }
+"notifications" = { "path" = "vendor/zed/crates/notifications" }
 "notify-rust" = "4"
+"nucleo" = { "package" = "nucleo-matcher", "version" = "0.3" }
+"oauth_callback_server" = { "path" = "vendor/zed/crates/oauth_callback_server" }
 "objc2" = "0.6"
 "objc2-app-kit" = { "version" = "0.3.2", "default-features" = false, "features" = ["NSAlert", "NSAppearance", "NSApplication", "NSButton", "NSCell", "NSColor", "NSControl", "NSCursor", "NSDocumentController", "NSDragging", "NSDraggingItem", "NSEvent", "NSGraphics", "NSImage", "NSMenu", "NSMenuItem", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSScreen", "NSScroller", "NSTrackingArea", "NSView", "NSVisualEffectView", "NSWindow", "NSWorkspace", "block2", "objc2-core-foundation"] }
 "objc2-core-foundation" = { "version" = "=0.3.2", "default-features" = false }
@@ -94,81 +242,216 @@ edition = "2024"
 "objc2-ui-kit" = { "version" = "0.3.2", "default-features" = false, "features" = ["std", "block2", "objc2-quartz-core", "objc2-core-foundation", "NSText", "UIApplication", "UICommand", "UICornerConfiguration", "UICornerRadius", "UIEvent", "UIGeometry", "UIGestureRecognizer", "UIPanGestureRecognizer", "UIScreenEdgePanGestureRecognizer", "UIInterface", "UIOpenURLContext", "UIPasteboard", "UIResponder", "UIScene", "UISceneConfiguration", "UISceneDefinitions", "UISceneOptions", "UISceneSession", "UIScreen", "UITextInput", "UITextInputTraits", "UITouch", "UITraitCollection", "UIView", "UIViewController", "UIWindow", "UIWindowScene"] }
 "objc2-uniform-type-identifiers" = { "version" = "0.3", "default-features" = false, "features" = ["std", "UTCoreTypes", "UTType"] }
 "objc2-user-notifications" = { "version" = "0.3", "default-features" = false, "features" = ["std", "block2", "UNNotification", "UNNotificationAction", "UNNotificationCategory", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationTrigger", "UNUserNotificationCenter"] }
+"ollama" = { "path" = "vendor/zed/crates/ollama" }
 "oo7" = { "git" = "https://github.com/zed-industries/oo7", "rev" = "731c1215edb6905876c6137ab300428c7b8d7c13", "version" = "0.6", "default-features" = false }
+"open_ai" = { "path" = "vendor/zed/crates/open_ai" }
+"open_router" = { "path" = "vendor/zed/crates/open_router", "features" = ["schemars"] }
+"openai_subscribed" = { "path" = "vendor/zed/crates/openai_subscribed" }
+"opencode" = { "path" = "vendor/zed/crates/opencode" }
+"ordered-float" = "5"
+"outline" = { "path" = "vendor/zed/crates/outline" }
+"outline_panel" = { "path" = "vendor/zed/crates/outline_panel" }
+"palette" = { "version" = "0.7.5", "default-features" = false, "features" = ["std"] }
 "parking_lot" = "0.12.1"
+"partial-json-fixer" = "0.5.3"
 "path" = { "path" = "vendor/zed/crates/path" }
 "pathfinder_geometry" = "0.5"
+"paths" = { "path" = "vendor/zed/crates/paths" }
 "percent-encoding" = "2.3.2"
 "perf" = { "path" = "vendor/zed/tooling/perf", "default-features" = false }
 "perf-event" = { "package" = "perf-event2", "version" = "0.7.4" }
+"pet" = { "git" = "https://github.com/zed-industries/python-environment-tools.git", "rev" = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
+"pet-conda" = { "git" = "https://github.com/zed-industries/python-environment-tools.git", "rev" = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
+"pet-core" = { "git" = "https://github.com/zed-industries/python-environment-tools.git", "rev" = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
+"pet-fs" = { "git" = "https://github.com/zed-industries/python-environment-tools.git", "rev" = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
+"pet-poetry" = { "git" = "https://github.com/zed-industries/python-environment-tools.git", "rev" = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
+"pet-reporter" = { "git" = "https://github.com/zed-industries/python-environment-tools.git", "rev" = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
+"pet-virtualenv" = { "git" = "https://github.com/zed-industries/python-environment-tools.git", "rev" = "5aad7164bfc2a58977b103c8ef8fdd7302ed2e9f" }
+"picker" = { "path" = "vendor/zed/crates/picker" }
+"picker_preview" = { "path" = "vendor/zed/crates/picker_preview" }
+"piper" = "0.2"
+"platform_title_bar" = { "path" = "vendor/zed/crates/platform_title_bar" }
 "pollster" = "0.4.0"
 "postage" = { "version" = "0.5", "default-features" = false }
+"prettier" = { "path" = "vendor/zed/crates/prettier" }
+"pretty_assertions" = { "version" = "1.3.0", "features" = ["unstable"] }
 "proc-macro2" = "1.0.93"
 "profiling" = "1"
+"project" = { "path" = "vendor/zed/crates/project" }
+"project_panel" = { "path" = "vendor/zed/crates/project_panel" }
+"prompt_store" = { "path" = "vendor/zed/crates/prompt_store" }
 "proptest" = { "version" = "1.12.0", "features" = ["attr-macro"] }
+"proptest-derive" = "0.8.0"
+"prost" = "0.14"
+"prost-build" = { "version" = "0.14", "default-features" = false }
+"prost-types" = "0.14"
+"proto" = { "path" = "vendor/zed/crates/proto" }
+"protox" = "0.9"
+"proxy_handshake" = { "path" = "vendor/zed/crates/proxy_handshake" }
+"proxyvars" = "0.2"
+"pulldown-cmark" = { "version" = "0.13.0", "default-features" = false }
+"quick-xml" = "0.41"
 "quote" = "1.0.9"
 "rand" = { "version" = "0.9", "default-features" = false, "features" = ["std", "std_rng", "os_rng"] }
 "raw-window-handle" = "0.6"
 "rayon" = "1.8"
 "refineable" = { "path" = "vendor/zed/crates/refineable" }
 "regex" = { "version" = "1.5", "default-features" = false, "features" = ["std", "perf"] }
+"release_channel" = { "path" = "vendor/zed/crates/release_channel" }
+"remote" = { "path" = "vendor/zed/crates/remote" }
+"remote_connection" = { "path" = "vendor/zed/crates/remote_connection" }
 "reqwest" = { "git" = "https://github.com/zed-industries/reqwest.git", "rev" = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", "default-features" = false, "features" = ["http2", "macos-system-configuration", "rustls-tls-native-roots", "socks", "stream"], "package" = "zed-reqwest", "version" = "0.12.15-zed" }
 "reqwest_client" = { "path" = "vendor/zed/crates/reqwest_client" }
 "resvg" = { "version" = "0.46.0", "default-features" = false, "features" = ["text", "system-fonts", "memmap-fonts", "raster-images"] }
+"rodio" = { "git" = "https://github.com/RustAudio/rodio", "rev" = "3ee9745862279ce1d18db593155016e7ce024aeb", "default-features" = false, "features" = ["wav", "playback", "wav_output", "recording"] }
 "rope" = { "path" = "vendor/zed/crates/rope" }
+"rpc" = { "path" = "vendor/zed/crates/rpc" }
+"rsa" = { "version" = "0.9", "default-features" = false, "features" = ["std", "u64_digit"] }
 "rust-embed" = { "version" = "8.11", "features" = ["include-exclude", "compression"] }
 "rustc-hash" = "2.1.0"
+"rustix" = { "version" = "1.1", "features" = ["fs"] }
 "rustls" = "0.23.26"
 "rustls-platform-verifier" = "0.7"
+"sandbox" = { "path" = "vendor/zed/crates/sandbox" }
 "scap" = { "git" = "https://github.com/zed-industries/scap", "rev" = "b5c86ec58dd4b6b7732bf6ac8be03d6b1f190a82", "default-features" = false, "package" = "zed-scap", "version" = "0.0.8-zed" }
 "scheduler" = { "path" = "vendor/zed/crates/scheduler" }
 "schemars" = { "version" = "1.0", "default-features" = false, "features" = ["std", "indexmap2"] }
+"search" = { "path" = "vendor/zed/crates/search" }
+"seccompiler" = "0.5"
 "semver" = { "version" = "1.0", "features" = ["serde"] }
 "serde" = { "version" = "1.0", "features" = ["rc"] }
 "serde_json" = { "version" = "1.0.144", "features" = ["preserve_order", "raw_value"] }
 "serde_json_lenient" = { "version" = "0.2", "features" = ["preserve_order", "raw_value"] }
+"serde_path_to_error" = "0.1.17"
 "serde_urlencoded" = "0.7"
+"serde_yaml_ng" = "0.10"
+"session" = { "path" = "vendor/zed/crates/session" }
+"settings" = { "path" = "vendor/zed/crates/settings" }
+"settings_content" = { "path" = "vendor/zed/crates/settings_content" }
+"settings_json" = { "path" = "vendor/zed/crates/settings_json", "default-features" = false }
+"settings_macros" = { "path" = "vendor/zed/crates/settings_macros" }
+"settings_ui" = { "path" = "vendor/zed/crates/settings_ui" }
+"sha2" = "0.10"
+"shell_command_parser" = { "path" = "vendor/zed/crates/shell_command_parser" }
+"shellexpand" = "3.1"
 "shlex" = "2.0"
+"similar" = "2.7"
+"simplelog" = { "version" = "0.12", "default-features" = false }
 "slotmap" = "1.0.6"
 "smallvec" = { "version" = "1.6", "features" = ["union", "const_new"] }
 "smol" = "2.0"
+"snippet" = { "path" = "vendor/zed/crates/snippet" }
+"snippet_provider" = { "path" = "vendor/zed/crates/snippet_provider" }
 "spin" = { "version" = "0.10", "default-features" = false, "features" = ["mutex", "spin_mutex", "lock_api"] }
+"sqlez" = { "path" = "vendor/zed/crates/sqlez" }
+"sqlez_macros" = { "path" = "vendor/zed/crates/sqlez_macros" }
+"sqlformat" = "0.2"
 "stacksafe" = "1.0"
+"streaming-iterator" = "0.1"
+"streaming_diff" = { "path" = "vendor/zed/crates/streaming_diff" }
+"strsim" = "0.11"
 "strum" = { "version" = "0.28", "features" = ["derive"] }
 "sum_tree" = { "path" = "vendor/zed/crates/sum_tree" }
+"svg_preview" = { "path" = "vendor/zed/crates/svg_preview" }
 "swash" = "0.2.6"
 "syn" = { "version" = "2.0", "default-features" = false, "features" = ["proc-macro"] }
+"syntax_theme" = { "path" = "vendor/zed/crates/syntax_theme" }
+"sys-locale" = "0.3.1"
+"sysinfo" = { "version" = "0.39", "default-features" = false, "features" = ["system"] }
 "taffy" = { "version" = "=0.15.0", "default-features" = false }
+"task" = { "path" = "vendor/zed/crates/task" }
+"telemetry" = { "path" = "vendor/zed/crates/telemetry" }
+"telemetry_events" = { "path" = "vendor/zed/crates/telemetry_events" }
 "tempfile" = "3.20.0"
 "tendril" = "0.5"
+"terminal" = { "path" = "vendor/zed/crates/terminal" }
 "text" = { "path" = "vendor/zed/crates/text" }
+"theme" = { "path" = "vendor/zed/crates/theme" }
+"theme_extension" = { "path" = "vendor/zed/crates/theme_extension" }
+"theme_settings" = { "path" = "vendor/zed/crates/theme_settings" }
 "thiserror" = "2.0.12"
+"time" = { "version" = "0.3", "features" = ["macros", "parsing", "serde", "serde-well-known", "formatting", "local-offset"] }
+"time_format" = { "path" = "vendor/zed/crates/time_format" }
+"tiny_http" = "0.12"
 "tokio" = "1"
+"tokio-rustls" = { "version" = "0.26", "default-features" = false }
+"toml" = { "version" = "0.9", "default-features" = false, "features" = ["std", "serde", "parse"] }
 "tracing" = "0.1.40"
 "tracing-subscriber" = "0.3"
+"tree-sitter" = { "git" = "https://github.com/tree-sitter/tree-sitter", "rev" = "803c6ebaac27d69e1808b45058482e868d073ceb" }
+"tree-sitter-bash" = "0.25.1"
+"tree-sitter-c" = "0.24.1"
+"tree-sitter-cpp" = { "git" = "https://github.com/tree-sitter/tree-sitter-cpp", "rev" = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }
+"tree-sitter-css" = "0.23"
+"tree-sitter-diff" = "0.1.0"
+"tree-sitter-elixir" = "0.3"
+"tree-sitter-embedded-template" = "0.23.0"
+"tree-sitter-gitcommit" = { "git" = "https://github.com/zed-industries/tree-sitter-git-commit", "rev" = "88309716a69dd13ab83443721ba6e0b491d37ee9" }
+"tree-sitter-go" = { "git" = "https://github.com/zed-industries/tree-sitter-go", "rev" = "6862a49e3c5a7567a6c576420e9a8f944e198a85" }
+"tree-sitter-go-mod" = { "git" = "https://github.com/camdencheek/tree-sitter-go-mod", "rev" = "2e886870578eeba1927a2dc4bd2e2b3f598c5f9a", "package" = "tree-sitter-gomod" }
+"tree-sitter-gowork" = { "git" = "https://github.com/zed-industries/tree-sitter-go-work", "rev" = "acb0617bf7f4fda02c6217676cc64acb89536dc7" }
+"tree-sitter-heex" = { "git" = "https://github.com/zed-industries/tree-sitter-heex", "rev" = "1dd45142fbb05562e35b2040c6129c9bca346592" }
+"tree-sitter-html" = "0.23"
+"tree-sitter-jsdoc" = "0.23"
+"tree-sitter-json" = "0.24"
+"tree-sitter-md" = { "git" = "https://github.com/zed-industries/tree-sitter-markdown", "rev" = "b596e737286780d7bfa9fcddceaeeb754574b352" }
+"tree-sitter-python" = "0.25"
+"tree-sitter-regex" = "0.24"
+"tree-sitter-ruby" = "0.23"
+"tree-sitter-rust" = "0.24.2"
+"tree-sitter-typescript" = { "git" = "https://github.com/zed-industries/tree-sitter-typescript", "rev" = "e2c53597d6a5d9cf7bbe8dccde576fe1e46c5899" }
+"tree-sitter-yaml" = { "git" = "https://github.com/zed-industries/tree-sitter-yaml", "rev" = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
+"ui" = { "path" = "vendor/zed/crates/ui" }
+"ui_input" = { "path" = "vendor/zed/crates/ui_input" }
+"ui_macros" = { "path" = "vendor/zed/crates/ui_macros" }
 "unicase" = "2.6"
 "unicode-bidi" = { "version" = "0.3.18", "default-features" = false, "features" = ["hardcoded-data"] }
 "unicode-script" = "0.5.7"
 "unicode-segmentation" = "1.10"
+"unicode-width" = "0.2"
+"unindent" = "0.2.0"
 "url" = "2.2"
+"urlencoding" = "2.1.2"
 "usvg" = { "version" = "0.46.0", "default-features" = false }
 "util" = { "path" = "vendor/zed/crates/util" }
 "util_macros" = { "path" = "vendor/zed/crates/util_macros" }
 "uuid" = { "version" = "1.1", "features" = ["serde"] }
+"vim" = { "path" = "vendor/zed/crates/vim" }
+"vim_mode_setting" = { "path" = "vendor/zed/crates/vim_mode_setting" }
+"vte" = { "version" = "0.15.0", "features" = ["ansi"] }
 "walkdir" = "2.5"
 "wasm-bindgen" = "0.2.120"
 "wasm-bindgen-futures" = "0.4"
+"wasm-encoder" = "0.254"
 "wasm_thread" = { "git" = "https://github.com/zed-industries/wasm_thread", "rev" = "0cf96c7708dfb97ccf3da50347e25edcf75d6937", "version" = "0.3", "features" = ["es_modules"] }
+"wasmparser" = "0.254"
+"wasmtime" = { "version" = "48.0.7", "default-features" = false, "features" = ["anyhow", "async", "demangle", "runtime", "cranelift", "component-model", "incremental-cache", "parallel-compilation"] }
+"wasmtime-wasi" = { "version" = "48.0.7", "default-features" = false, "features" = ["p2"] }
+"watch" = { "path" = "vendor/zed/crates/watch" }
+"wax" = { "version" = "0.7", "default-features" = false }
 "web-sys" = "0.3"
 "web-time" = "1.1.0"
+"web_search" = { "path" = "vendor/zed/crates/web_search" }
 "webpki-roots" = "1.0.10"
+"webrtc-sys" = "0.3.23"
 "wgpu" = { "git" = "https://github.com/gfx-rs/wgpu", "rev" = "cddb2f5d80dc0009b2ef6767635140cacf90a007", "default-features" = false }
 "which" = "8"
 "windows" = { "version" = "0.62", "features" = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Ole", "Win32_System_Threading", "Win32_System_Variant", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_Shell_PropertiesSystem", "Win32_UI_WindowsAndMessaging"] }
 "windows-core" = "0.62"
 "windows-registry" = "0.6.0"
+"workspace" = { "path" = "vendor/zed/crates/workspace" }
+"worktree" = { "path" = "vendor/zed/crates/worktree" }
+"x_ai" = { "path" = "vendor/zed/crates/x_ai" }
+"x_ai_subscribed" = { "path" = "vendor/zed/crates/x_ai_subscribed" }
 "xkbcommon" = { "version" = "0.8", "default-features" = false }
+"yawc" = { "version" = "0.4", "default-features" = false }
+"zed_actions" = { "path" = "vendor/zed/crates/zed_actions" }
+"zed_credentials_provider" = { "path" = "vendor/zed/crates/zed_credentials_provider" }
+"zed_env_vars" = { "path" = "vendor/zed/crates/zed_env_vars" }
+"zeroize" = "1.8"
+"zeta_prompt" = { "path" = "vendor/zed/crates/zeta_prompt" }
 "zlog" = { "path" = "vendor/zed/crates/zlog" }
+"zstd" = { "version" = "0.13", "default-features" = false, "features" = ["legacy", "arrays"] }
 "ztracing" = { "path" = "vendor/zed/crates/ztracing" }
 "ztracing_macro" = { "path" = "vendor/zed/crates/ztracing_macro" }
 
@@ -177,4 +460,28 @@ rust = { "unexpected_cfgs" = { "level" = "allow" } }
 clippy = { "dbg_macro" = "deny", "todo" = "deny", "declare_interior_mutable_const" = "deny", "redundant_clone" = "deny", "disallowed_methods" = "deny", "style" = { "level" = "allow", "priority" = -1 }, "type_complexity" = "allow", "let_underscore_future" = "allow", "single_range_in_vec_init" = "allow", "too_many_arguments" = "allow", "large_enum_variant" = "allow", "nonminimal_bool" = "allow" }
 
 [patch.crates-io]
+"cpal" = { "git" = "https://github.com/RustAudio/cpal", "rev" = "e1612d5d98152f8dc2a62e1b51ef7cbf4f7f26b7" }
+"tree-sitter-language" = { "git" = "https://github.com/tree-sitter/tree-sitter", "rev" = "803c6ebaac27d69e1808b45058482e868d073ceb" }
+"async-process" = { "git" = "https://github.com/zed-industries/async-process.git", "rev" = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
 "async-task" = { "git" = "https://github.com/zed-industries/async-task.git", "rev" = "015845a19fc31752c02367567d3b8900a406f9da" }
+"windows-capture" = { "git" = "https://github.com/zed-industries/windows-capture.git", "rev" = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
+"calloop" = { "git" = "https://github.com/zed-industries/calloop", "rev" = "3759371fee14c40066d64777e2a36b6ffcc22590" }
+"livekit" = { "git" = "https://github.com/zed-industries/livekit-rust-sdks", "rev" = "fbda05eb278b4a7c5be8fc9b2a92e9b62e732236" }
+"libwebrtc" = { "git" = "https://github.com/zed-industries/livekit-rust-sdks", "rev" = "fbda05eb278b4a7c5be8fc9b2a92e9b62e732236" }
+"notify" = { "git" = "https://github.com/zed-industries/notify", "rev" = "d842f16b2716bd60f09caf3ae3a894237ab38f54" }
+"notify-types" = { "git" = "https://github.com/zed-industries/notify", "rev" = "d842f16b2716bd60f09caf3ae3a894237ab38f54" }
+"webrtc-sys" = { "git" = "https://github.com/zed-industries/livekit-rust-sdks", "rev" = "fbda05eb278b4a7c5be8fc9b2a92e9b62e732236" }
+"khronos-egl" = { "git" = "https://github.com/zed-industries/khronos-egl", "rev" = "42214b36347b108fd9630ca6254b96dde59e04fe" }
+"crash-context" = { "git" = "https://github.com/rust-minidump/minidump-writer", "rev" = "911b04e09b79b736cc15cbe712e83e2d3f348bb9" }
+"scratch" = { "path" = "vendor/zed/tooling/corgi/patches/scratch" }
+
+[profile.dev]
+split-debuginfo = "unpacked"
+incremental = true
+codegen-units = 16
+debug = "limited"
+
+[profile.dev.build-override]
+codegen-units = 16
+split-debuginfo = "unpacked"
+debug = "limited"

@@ -1,0 +1,2 @@
+[env]
+ZED_RELEASE_CHANNEL = "dev"

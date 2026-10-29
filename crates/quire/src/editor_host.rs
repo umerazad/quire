@@ -1,0 +1,295 @@
+use editor::Editor;
+use gpui::{App, AppContext, Entity, Focusable, KeyBinding, UpdateGlobal, Window, prelude::*};
+
+fn init(cx: &mut App) -> Result<(), String> {
+    settings::init(cx);
+    let result = settings::SettingsStore::update_global(cx, |store, cx| {
+        store.set_user_settings(
+            r#"{"vim_mode":true,"session":{"restore_unsaved_buffers":false}}"#,
+            cx,
+        )
+    });
+    if let settings::ParseStatus::Failed { error } = result.parse_status {
+        return Err(format!(
+            "Cannot initialize Quire editor settings: {error}. Check the bundled defaults."
+        ));
+    }
+    theme_settings::init(theme::LoadThemes::JustBase, cx);
+    release_channel::init(semver::Version::new(0, 1, 0), cx);
+    editor::init(cx);
+    vim::init(cx);
+    cx.on_action(|_: &super::Quit, cx| cx.quit());
+    cx.bind_keys([KeyBinding::new(
+        if cfg!(target_os = "macos") {
+            "cmd-q"
+        } else {
+            "ctrl-q"
+        },
+        super::Quit,
+        None,
+    )]);
+    cx.bind_keys([
+        KeyBinding::new("enter", editor::actions::Newline, Some("Editor")),
+        KeyBinding::new("backspace", editor::actions::Backspace, Some("Editor")),
+        KeyBinding::new("delete", editor::actions::Delete, Some("Editor")),
+        KeyBinding::new("left", editor::actions::MoveLeft, Some("Editor")),
+        KeyBinding::new("right", editor::actions::MoveRight, Some("Editor")),
+        KeyBinding::new("up", zed_actions::editor::MoveUp, Some("Editor")),
+        KeyBinding::new("down", zed_actions::editor::MoveDown, Some("Editor")),
+        KeyBinding::new("tab", editor::actions::Tab, Some("Editor")),
+        KeyBinding::new("shift-tab", editor::actions::Outdent, Some("Editor")),
+    ]);
+    let shortcuts = if cfg!(target_os = "macos") {
+        ["cmd-z", "cmd-shift-z", "cmd-a", "cmd-c", "cmd-x", "cmd-v"]
+    } else {
+        [
+            "ctrl-z",
+            "ctrl-shift-z",
+            "ctrl-a",
+            "ctrl-c",
+            "ctrl-x",
+            "ctrl-v",
+        ]
+    };
+    cx.bind_keys([
+        KeyBinding::new(shortcuts[0], editor::actions::Undo, Some("Editor")),
+        KeyBinding::new(shortcuts[1], editor::actions::Redo, Some("Editor")),
+        KeyBinding::new(shortcuts[2], editor::actions::SelectAll, Some("Editor")),
+        KeyBinding::new(shortcuts[3], editor::actions::Copy, Some("Editor")),
+        KeyBinding::new(shortcuts[4], editor::actions::Cut, Some("Editor")),
+        KeyBinding::new(shortcuts[5], editor::actions::Paste, Some("Editor")),
+    ]);
+    let mut keymap =
+        settings::KeymapFile::parse(settings::vim_keymap().as_ref()).map_err(|error| {
+            format!("Cannot read the bundled Vim bindings: {error}. Rebuild or reinstall Quire.")
+        })?;
+    keymap.retain_sections(|section| editor_vim_context(&section.context));
+    match keymap.load_keymap(cx) {
+        settings::KeymapFileLoadResult::Success { key_bindings } => cx.bind_keys(key_bindings),
+        settings::KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => {
+            return Err(format!(
+                "Cannot load Quire Vim bindings: {error_message:?}. Rebuild or reinstall Quire."
+            ));
+        }
+        settings::KeymapFileLoadResult::JsonParseFailure { error } => {
+            return Err(format!(
+                "Cannot parse Quire Vim bindings: {error}. Rebuild or reinstall Quire."
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn editor_vim_context(context: &str) -> bool {
+    context.starts_with("vim_operator == ") && !context.contains("helix")
+        || [
+            "VimControl && !menu",
+            "vim_mode == normal || vim_mode == visual || vim_mode == operator",
+            "vim_mode == normal",
+            "VimControl && VimCount",
+            "vim_mode == visual",
+            "vim_mode == insert",
+            "showing_completions",
+            "(vim_mode == normal || vim_mode == helix_normal) && !menu",
+            "Editor && mode == full && VimControl && vim_mode == normal && !menu && os == windows",
+            "vim_mode == insert && !(showing_code_actions || showing_completions)",
+            "(vim_mode == insert || vim_mode == normal) && showing_signature_help && !showing_completions",
+            "vim_mode == replace",
+            "vim_mode == waiting",
+            "Editor && vim_mode == waiting && (vim_operator == ys || vim_operator == cs)",
+            "vim_mode == operator",
+            "vim_operator == a || vim_operator == i || vim_operator == cs || vim_operator == helix_next || vim_operator == helix_previous",
+            "vim_mode == literal",
+            "BufferSearchBar && !in_replace",
+        ].contains(&context)
+}
+
+fn editor(
+    buffer: Entity<language::Buffer>,
+    window: &mut Window,
+    cx: &mut gpui::Context<Editor>,
+) -> Editor {
+    Editor::for_buffer(buffer, None, window, cx)
+}
+
+struct NotebookWindow {
+    source: Entity<Editor>,
+    second: Entity<Editor>,
+    mode: Entity<vim::ModeIndicator>,
+}
+
+impl NotebookWindow {
+    fn new(text: &str, window: &mut Window, cx: &mut gpui::Context<Self>) -> Self {
+        let mode = cx.new(|cx| vim::ModeIndicator::new(window, cx));
+        let buffer = cx.new(|cx| language::Buffer::local(text, cx));
+        let source = cx.new(|cx| editor(buffer.clone(), window, cx));
+        let second = cx.new(|cx| editor(buffer, window, cx));
+        window.focus(&source.focus_handle(cx), cx);
+        Self {
+            source,
+            second,
+            mode,
+        }
+    }
+}
+
+impl Render for NotebookWindow {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        gpui::div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(gpui::div().p_3().child("Welcome"))
+            .child(
+                gpui::div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(gpui::div().flex_1().min_w_0().child(self.source.clone()))
+                    .child(gpui::div().flex_1().min_w_0().child(self.second.clone())),
+            )
+            .child(gpui::div().p_2().child(self.mode.clone()))
+    }
+}
+
+pub fn run() {
+    gpui_platform::application().with_assets(assets::Assets).run(|cx| {
+        if let Err(error) = init(cx) {
+            eprintln!("{error}");
+            cx.quit();
+            return;
+        }
+        if let Err(error) = assets::Assets.load_fonts(cx) {
+            eprintln!("Cannot load Quire's bundled fonts: {error}. Rebuild the application assets.");
+            cx.quit();
+            return;
+        }
+        let options = gpui::WindowOptions {
+            window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(gpui::px(1100.), gpui::px(760.)), cx))),
+            ..Default::default()
+        };
+        match cx.open_window(options, |window, cx| {
+            window.set_window_title("Quire Native");
+            cx.new(|cx| NotebookWindow::new("# Welcome to Quire\n\n- Edit this note in either pane. ^b-welcome\n  - Both panes share the same document.\n- [ ] Try Vim, undo, and redo.\n", window, cx))
+        }) {
+            Ok(_) => cx.activate(true),
+            Err(error) => { eprintln!("Cannot open Quire's window: {error}. Check desktop and graphics access, then retry."); cx.quit(); }
+        }
+        cx.on_window_closed(|cx, _| { if cx.windows().is_empty() { cx.quit(); } }).detach();
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn window_hosts_two_editors_and_a_mode_indicator(cx: &mut TestAppContext) {
+        cx.update(|cx| init(cx).expect("editor initialization"));
+        let window = cx.add_window(|window, cx| NotebookWindow::new("hello", window, cx));
+        cx.simulate_keystrokes(window.into(), "i x escape");
+        window
+            .update(cx, |view, _, cx| {
+                assert_eq!(view.source.read(cx).text(cx), "xhello");
+                assert_eq!(view.second.read(cx).text(cx), "xhello");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn hosts_an_editor_without_a_project(cx: &mut TestAppContext) {
+        cx.update(|cx| init(cx).expect("editor initialization"));
+        let buffer = cx.new(|cx| language::Buffer::local("# Quire\n\n- A thought ^b-1\n", cx));
+        let window = cx.add_window(|window, cx| editor(buffer.clone(), window, cx));
+        window
+            .update(cx, |editor, _, cx| {
+                assert_eq!(editor.text(cx), "# Quire\n\n- A thought ^b-1\n");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn vim_keyboard_editing_shares_the_buffer(cx: &mut TestAppContext) {
+        cx.update(|cx| init(cx).expect("editor initialization"));
+        let buffer = cx.new(|cx| language::Buffer::local("hello", cx));
+        let source = cx.add_window(|window, cx| {
+            let editor = editor(buffer.clone(), window, cx);
+            window.focus(&editor.focus_handle(cx), cx);
+            editor
+        });
+        let other = cx.add_window(|window, cx| editor(buffer, window, cx));
+        cx.simulate_keystrokes(source.into(), "i x escape");
+        other
+            .update(cx, |editor, _, cx| assert_eq!(editor.text(cx), "xhello"))
+            .unwrap();
+        other
+            .update(cx, |editor, window, cx| {
+                window.focus(&editor.focus_handle(cx), cx)
+            })
+            .unwrap();
+        cx.simulate_keystrokes(other.into(), "u");
+        other
+            .update(cx, |editor, _, cx| assert_eq!(editor.text(cx), "hello"))
+            .unwrap();
+        cx.simulate_keystrokes(source.into(), "ctrl-r");
+        other
+            .update(cx, |editor, _, cx| assert_eq!(editor.text(cx), "xhello"))
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn vim_operators_and_multiline_insert_work(cx: &mut TestAppContext) {
+        cx.update(|cx| init(cx).expect("editor initialization"));
+        let buffer = cx.new(|cx| language::Buffer::local("one\ntwo\n", cx));
+        let source = cx.add_window(|window, cx| {
+            let editor = editor(buffer, window, cx);
+            window.focus(&editor.focus_handle(cx), cx);
+            editor
+        });
+        cx.simulate_keystrokes(source.into(), "d d");
+        source
+            .update(cx, |editor, _, cx| assert_eq!(editor.text(cx), "two\n"))
+            .unwrap();
+        cx.simulate_keystrokes(source.into(), "i x enter y escape");
+        source
+            .update(cx, |editor, _, cx| assert_eq!(editor.text(cx), "x\nytwo\n"))
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn normal_editing_and_clipboard_work_when_vim_is_disabled(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            init(cx).expect("editor initialization");
+            let result = settings::SettingsStore::update_global(cx, |store, cx| {
+                store.set_user_settings(
+                    r#"{"vim_mode":false,"session":{"restore_unsaved_buffers":false}}"#,
+                    cx,
+                )
+            });
+            assert!(!matches!(
+                result.parse_status,
+                settings::ParseStatus::Failed { .. }
+            ));
+        });
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let source = cx.add_window(|window, cx| {
+            let editor = editor(buffer, window, cx);
+            window.focus(&editor.focus_handle(cx), cx);
+            editor
+        });
+        cx.simulate_keystrokes(source.into(), "a enter b");
+        source
+            .update(cx, |editor, _, cx| assert_eq!(editor.text(cx), "a\nb"))
+            .unwrap();
+        let shortcuts = if cfg!(target_os = "macos") {
+            "cmd-a cmd-c right cmd-v"
+        } else {
+            "ctrl-a ctrl-c right ctrl-v"
+        };
+        cx.simulate_keystrokes(source.into(), shortcuts);
+        source
+            .update(cx, |editor, _, cx| assert_eq!(editor.text(cx), "a\nba\nb"))
+            .unwrap();
+    }
+}

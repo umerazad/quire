@@ -20,9 +20,10 @@ function visit(name: string) {
     else if ((value as any).path) throw new Error(`Review direct path dependency ${name}/${key} before copying.`);
   }
 }
-visit("gpui_platform");
-visit("text");
-required.add("text");
+for (const seed of ["gpui_platform", "text", "editor", "vim", "assets"]) {
+  visit(seed);
+  required.add(seed);
+}
 const destination = "vendor/zed";
 let modifications: unknown[] = [];
 if (existsSync(destination)) {
@@ -33,7 +34,7 @@ if (existsSync(destination)) {
 }
 mkdirSync(destination, { recursive: true });
 for (const { path } of selected.values()) if (!existsSync(`${destination}/${path}`)) cpSync(`${source}/${path}`, `${destination}/${path}`, { recursive: true, dereference: true });
-cpSync(`${source}/assets/fonts`, `${destination}/assets/fonts`, { recursive: true, dereference: true });
+cpSync(`${source}/assets`, `${destination}/assets`, { recursive: true, dereference: true });
 for (const license of ["LICENSE-APACHE", "LICENSE-GPL", "LICENSE-AGPL", "LICENSE-MIT"]) if (existsSync(`${source}/${license}`)) cpSync(`${source}/${license}`, `${destination}/${license}`);
 function toml(value: any): string {
   if (value === null || value === undefined) throw new Error("Unsupported TOML value");
@@ -45,7 +46,12 @@ const workspaceDependencies = Object.fromEntries([...required].sort().map(name =
   const value = dependencies[name];
   return [name, value?.path ? { ...value, path: `${destination}/${value.path}` } : value];
 }));
-const patches = Object.fromEntries(Object.entries(root.patch?.["crates-io"] ?? {}).filter(([name, value]: any) => required.has(name) && !value.path));
+const patches = Object.fromEntries(Object.entries(root.patch?.["crates-io"] ?? {}).map(([name, value]: any) => {
+  if (!value.path) return [name, value];
+  const path = `${destination}/${value.path}`;
+  if (!existsSync(path)) cpSync(`${source}/${value.path}`, path, { recursive: true, dereference: true });
+  return [name, { ...value, path }];
+}));
 const members = ["crates/quire", ...[...selected.values()].map(v => `${destination}/${v.path}`)];
 let output = `[workspace]\nresolver = "3"\nmembers = ${toml(members)}\ndefault-members = ["crates/quire"]\n\n[workspace.package]\n`;
 for (const [k,v] of Object.entries(root.workspace.package)) output += `${k} = ${toml(v)}\n`;
@@ -57,6 +63,10 @@ if (Object.keys(patches).length) {
   output += "\n[patch.crates-io]\n";
   for (const [k,v] of Object.entries(patches)) output += `${JSON.stringify(k)} = ${toml(v)}\n`;
 }
+output += "\n[profile.dev]\n";
+for (const [key, value] of Object.entries(root.profile.dev)) if (typeof value !== "object") output += `${key} = ${toml(value)}\n`;
+output += "\n[profile.dev.build-override]\n";
+for (const [key, value] of Object.entries(root.profile.dev["build-override"])) output += `${key} = ${toml(value)}\n`;
 writeFileSync("Cargo.toml", output);
 writeFileSync(`${destination}/UPSTREAM.json`, JSON.stringify({ repository: "https://github.com/zed-industries/zed", revision: execFileSync("git", ["-C", source, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(), crates: [...selected.keys()].sort(), modifications }, null, 2) + "\n");
 console.log(`Copied ${selected.size} crates into ${destination}.`);

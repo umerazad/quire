@@ -2,6 +2,9 @@
 
 mod document;
 
+#[cfg(feature = "full-editor")]
+mod editor_host;
+
 #[path = "example_support/fonts.rs"]
 mod example_support;
 
@@ -944,6 +947,11 @@ fn run_example() {
 
 #[cfg(not(target_family = "wasm"))]
 fn main() {
+    #[cfg(feature = "full-editor")]
+    if !std::env::args().any(|argument| argument == "--input-harness") {
+        editor_host::run();
+        return;
+    }
     run_example();
 }
 
