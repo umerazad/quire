@@ -1,7 +1,4 @@
-//! Experimental format 1 codec. NR07 tracks lossless support for JSON strings
-//! with unpaired UTF-16 surrogates and nesting beyond serde_json's default limit.
-
-use serde_json::{Value, json};
+use super::json::{JsString, Json, ValueRef};
 use sha2::{Digest, Sha256};
 use std::{collections::HashSet, fmt, io::Read};
 use unicode_normalization::UnicodeNormalization;
@@ -15,7 +12,6 @@ pub enum Kind {
     Batch,
     Checkpoint,
 }
-
 impl Kind {
     fn suffix(self) -> &'static str {
         match self {
@@ -30,13 +26,11 @@ pub struct Expected<'a> {
     pub notebook: &'a str,
     pub device: &'a str,
 }
-
 #[derive(Debug, PartialEq, Eq)]
 pub struct ParsedName<'a> {
     pub seq: u32,
     pub hash: &'a str,
 }
-
 #[derive(Debug)]
 pub struct Encoded {
     pub name: String,
@@ -44,10 +38,10 @@ pub struct Encoded {
     pub data: Vec<u8>,
 }
 
-/// Keeps unknown fields at every level within the currently supported JSON model.
+/// Retains unknown fields and UTF-16 strings without converting editor text.
 #[derive(Debug)]
 pub struct Decoded {
-    pub value: Value,
+    pub value: Json,
     pub hash: String,
 }
 
@@ -57,19 +51,21 @@ pub enum Error {
     NewerFormat(f64),
     Encode(String),
 }
-
 impl Error {
     pub fn reason(&self) -> String {
         match self {
             Self::Damaged(reason) | Self::Encode(reason) => reason.clone(),
             Self::NewerFormat(version) => {
                 let mut buffer = ryu_js::Buffer::new();
-                let version = buffer.format(*version);
+                let version = if *version == f64::INFINITY {
+                    "Infinity"
+                } else {
+                    buffer.format(*version)
+                };
                 format!("the file uses format {version}; update Quire to read it")
             }
         }
     }
-
     pub fn newer_format(&self) -> Option<f64> {
         match self {
             Self::NewerFormat(version) => Some(*version),
@@ -77,7 +73,6 @@ impl Error {
         }
     }
 }
-
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -95,111 +90,96 @@ impl fmt::Display for Error {
         }
     }
 }
-
 impl std::error::Error for Error {}
 
-/// Format 1 uses JavaScript Number rendering and UTF-16 key ordering.
-pub fn canonical(value: &Value) -> String {
-    fn append(value: &Value, output: &mut String) {
-        match value {
-            Value::Null => output.push_str("null"),
-            Value::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
-            Value::Number(value) => {
-                let number = value.as_f64().expect("JSON numbers are finite");
-                output.push_str(ryu_js::Buffer::new().format_finite(number));
-            }
-            Value::String(value) => output.push_str(&serde_json::to_string(value).unwrap()),
-            Value::Array(values) => {
-                output.push('[');
-                for (i, value) in values.iter().enumerate() {
-                    if i > 0 {
-                        output.push(',');
-                    }
-                    append(value, output);
-                }
-                output.push(']');
-            }
-            Value::Object(values) => {
-                let mut keys: Vec<_> = values.keys().collect();
-                keys.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
-                output.push('{');
-                for (i, key) in keys.into_iter().enumerate() {
-                    if i > 0 {
-                        output.push(',');
-                    }
-                    output.push_str(&serde_json::to_string(key).unwrap());
-                    output.push(':');
-                    append(&values[key], output);
-                }
-                output.push('}');
-            }
-        }
-    }
-    let mut output = String::new();
-    append(value, &mut output);
-    output
+pub fn canonical(value: impl Into<Json>) -> Result<String, Error> {
+    canonical_ref(value.into().root())
 }
-
+fn canonical_ref(value: ValueRef<'_>) -> Result<String, Error> {
+    value
+        .canonical()
+        .map_err(|error| Error::Encode(error.to_string()))
+}
 pub fn sha256(data: impl AsRef<[u8]>) -> String {
     format!("{:x}", Sha256::digest(data.as_ref()))
 }
-
 pub fn page_id_for_path(path: &str) -> String {
     let normalized = path.nfc().collect::<String>().to_lowercase();
     format!("p-{}", &sha256(normalized)[..32])
 }
 
-pub fn revision_id(fields: &Value) -> Result<String, Error> {
+pub fn revision_id(fields: impl Into<Json>) -> Result<String, Error> {
+    revision_id_ref(fields.into().root())
+}
+fn revision_id_ref(fields: ValueRef<'_>) -> Result<String, Error> {
     revision_content_problem(fields).map_err(damaged)?;
-    let mut parents = fields["parents"].as_array().unwrap().clone();
-    parents.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
-    Ok(sha256(canonical(&json!({
-        "format": FORMAT, "page": fields["page"], "parents": parents,
-        "generation": fields["generation"], "path": fields["path"],
-        "deleted": fields["deleted"], "text": fields["text"],
-    }))))
+    let mut parents: Vec<_> = fields
+        .field("parents")
+        .elements()
+        .unwrap()
+        .map(|id| id.as_str().unwrap())
+        .collect();
+    parents.sort_unstable();
+    let content = format!(
+        "{{\"deleted\":{},\"format\":{FORMAT},\"generation\":{},\"page\":{},\"parents\":{},\"path\":{},\"text\":{}}}",
+        canonical_ref(fields.field("deleted"))?,
+        canonical_ref(fields.field("generation"))?,
+        canonical_ref(fields.field("page"))?,
+        serde_json::to_string(&parents).unwrap(),
+        canonical_ref(fields.field("path"))?,
+        canonical_ref(fields.field("text"))?,
+    );
+    Ok(sha256(content))
 }
 
-pub fn validate_revision(value: &Value) -> Result<(), Error> {
+pub fn validate_revision(value: impl Into<Json>) -> Result<(), Error> {
+    validate_revision_ref(value.into().root())
+}
+fn validate_revision_ref(value: ValueRef<'_>) -> Result<(), Error> {
     revision_content_problem(value).map_err(damaged)?;
-    if !is_count(&value["created"]) || !value["device"].is_string() {
+    if !is_count(value.field("created")) || !value.field("device").is_string() {
         return Err(damaged("a revision has an invalid origin"));
     }
-    if value["id"].as_str() != Some(revision_id(value)?.as_str()) {
+    if value.field("id").as_str() != Some(revision_id_ref(value)?.as_str()) {
         return Err(damaged("a revision's id does not match its content"));
     }
     Ok(())
 }
-
-fn revision_content_problem(value: &Value) -> Result<(), &'static str> {
+fn revision_content_problem(value: ValueRef<'_>) -> Result<(), &'static str> {
     if !value.is_object() && !value.is_array() {
         return Err("a revision is not an object");
     }
-    if value["page"].as_str().is_none_or(str::is_empty) {
+    if value
+        .field("page")
+        .as_js_string()
+        .is_none_or(JsString::is_empty)
+    {
         return Err("a revision has no page");
     }
-    let Some(parents) = value["parents"].as_array() else {
+    let Some(mut parents) = value.field("parents").elements() else {
         return Err("a revision has invalid parents");
     };
     let mut seen = HashSet::new();
     if parents.len() > 16
-        || !parents.iter().all(|id| {
+        || !parents.all(|id| {
             id.as_str()
                 .is_some_and(|id| is_hex64(id) && seen.insert(id))
         })
     {
         return Err("a revision has invalid parents");
     }
-    if !is_count(&value["generation"]) {
+    if !is_count(value.field("generation")) {
         return Err("a revision has an invalid generation");
     }
-    if !value["path"].is_string() || !value["text"].is_string() || !value["deleted"].is_boolean() {
+    if !value.field("path").is_string()
+        || !value.field("text").is_string()
+        || !value.field("deleted").is_boolean()
+    {
         return Err("a revision has invalid content");
     }
     Ok(())
 }
-
-fn is_count(value: &Value) -> bool {
+fn is_count(value: ValueRef<'_>) -> bool {
     value
         .as_f64()
         .is_some_and(|n| (0.0..=MAX_SAFE_INTEGER).contains(&n) && n.fract() == 0.0)
@@ -225,7 +205,6 @@ pub fn parse_name(name: &str, kind: Kind) -> Option<ParsedName<'_>> {
         hash,
     })
 }
-
 pub fn attachment_hash(name: &str) -> Option<&str> {
     let (hash, extension) = name
         .split_once('.')
@@ -243,7 +222,6 @@ pub fn attachment_hash(name: &str) -> Option<&str> {
     }
     Some(hash)
 }
-
 pub fn attachment_file_name(data: &[u8], original: &str) -> String {
     let extension = original.rsplit_once('.').map(|(_, ext)| ext).filter(|ext| {
         !ext.is_empty() && ext.len() <= 10 && ext.bytes().all(|b| b.is_ascii_alphanumeric())
@@ -255,16 +233,18 @@ pub fn attachment_file_name(data: &[u8], original: &str) -> String {
     }
 }
 
-pub fn validate_status(value: &Value) -> Result<(), Error> {
+pub fn validate_status(value: impl Into<Json>) -> Result<(), Error> {
+    let json = value.into();
+    let value = json.root();
     if !value.is_object() && !value.is_array() {
         return Err(damaged("status is not an object"));
     }
     if ["format", "lastSeq", "outbox", "heartbeat"]
         .iter()
-        .all(|key| is_count(&value[key]))
+        .all(|key| is_count(value.field(key)))
         && ["app", "device", "label"]
             .iter()
-            .all(|key| value[key].is_string())
+            .all(|key| value.field(key).is_string())
     {
         Ok(())
     } else {
@@ -272,30 +252,39 @@ pub fn validate_status(value: &Value) -> Result<(), Error> {
     }
 }
 
-fn validate(value: &Value, kind: Kind, expected: Expected<'_>, seq: u32) -> Result<(), Error> {
-    if value["format"]
+fn validate(
+    value: ValueRef<'_>,
+    kind: Kind,
+    expected: Expected<'_>,
+    seq: u32,
+) -> Result<(), Error> {
+    if value
+        .field("format")
         .as_f64()
         .is_some_and(|v| v > f64::from(FORMAT))
     {
-        return Err(Error::NewerFormat(value["format"].as_f64().unwrap()));
+        return Err(Error::NewerFormat(value.field("format").as_f64().unwrap()));
     }
-    if value["format"].as_f64() != Some(f64::from(FORMAT)) {
+    if value.field("format").as_f64() != Some(f64::from(FORMAT)) {
         return Err(damaged("the file has an unknown format"));
     }
     for (valid, reason) in [
         (
-            value["notebook"].as_str() == Some(expected.notebook),
+            value.field("notebook").as_str() == Some(expected.notebook),
             "the file belongs to another notebook",
         ),
         (
-            value["device"].as_str() == Some(expected.device),
+            value.field("device").as_str() == Some(expected.device),
             "the file is in another computer's folder",
         ),
         (
-            value["seq"].as_f64() == Some(f64::from(seq)),
+            value.field("seq").as_f64() == Some(f64::from(seq)),
             "the file's number does not match its name",
         ),
-        (is_count(&value["created"]), "the file has no creation time"),
+        (
+            is_count(value.field("created")),
+            "the file has no creation time",
+        ),
     ] {
         if !valid {
             return Err(damaged(reason));
@@ -305,39 +294,43 @@ fn validate(value: &Value, kind: Kind, expected: Expected<'_>, seq: u32) -> Resu
         Kind::Batch => {
             let previous = value.get("previous");
             if !previous.is_some_and(|v| v.is_null() || v.as_str().is_some_and(is_hex64))
-                || (seq == 1) != previous.is_some_and(Value::is_null)
+                || (seq == 1) != previous.is_some_and(ValueRef::is_null)
             {
                 return Err(damaged("the file's link to the previous one is invalid"));
             }
-            if !value["attachments"].as_array().is_some_and(|items| {
-                items
-                    .iter()
-                    .all(|v| v.as_str().and_then(attachment_hash).is_some())
-            }) {
+            if !value
+                .field("attachments")
+                .elements()
+                .is_some_and(|mut items| {
+                    items.all(|v| v.as_str().and_then(attachment_hash).is_some())
+                })
+            {
                 return Err(damaged("the file lists invalid attachments"));
             }
-            value["revisions"]
-                .as_array()
+            value
+                .field("revisions")
+                .elements()
                 .ok_or_else(|| damaged("the file has no revisions"))?
         }
         Kind::Checkpoint => {
-            if !value["cursors"].as_object().is_some_and(|cursors| {
-                cursors.values().all(|cursor| {
+            if !value.field("cursors").members().is_some_and(|mut cursors| {
+                cursors.all(|(_, cursor)| {
                     cursor.is_object()
-                        && is_count(&cursor["seq"])
-                        && cursor["hash"].as_str().is_some_and(is_hex64)
+                        && is_count(cursor.field("seq"))
+                        && cursor.field("hash").as_str().is_some_and(is_hex64)
                 })
             }) {
                 return Err(damaged("the checkpoint's positions are invalid"));
             }
-            value["heads"]
-                .as_array()
+            value
+                .field("heads")
+                .elements()
                 .ok_or_else(|| damaged("the checkpoint has no pages"))?
         }
     };
     for revision in revisions {
-        validate_revision(revision)?;
-        if kind == Kind::Batch && revision["device"].as_str() != Some(expected.device) {
+        validate_revision_ref(revision)?;
+        if kind == Kind::Batch && revision.field("device").as_str() != Some(expected.device) {
             return Err(damaged("a revision names another computer"));
         }
     }
@@ -352,7 +345,6 @@ pub fn decode(
 ) -> Result<Decoded, Error> {
     decode_with_limit(name, data, kind, expected, MAX_BATCH_BYTES)
 }
-
 fn decode_with_limit(
     name: &str,
     data: &[u8],
@@ -380,12 +372,11 @@ fn decode_with_limit(
     if sha256(&text) != parsed.hash {
         return Err(damaged("the file's content does not match its name"));
     }
-    let value: Value =
-        serde_json::from_slice(&text).map_err(|_| damaged("the file is not valid JSON"))?;
-    if !value.is_object() {
+    let value = Json::parse(&text).map_err(|_| damaged("the file is not valid JSON"))?;
+    if !value.root().is_object() {
         return Err(damaged("the file does not hold a record"));
     }
-    validate(&value, kind, expected, parsed.seq)?;
+    validate(value.root(), kind, expected, parsed.seq)?;
     Ok(Decoded {
         value,
         hash: parsed.hash.into(),
@@ -393,28 +384,31 @@ fn decode_with_limit(
 }
 
 /// Validates before writing so locally produced records are readable by peers.
-pub fn encode(value: &Value, kind: Kind) -> Result<Encoded, Error> {
+pub fn encode(value: impl Into<Json>, kind: Kind) -> Result<Encoded, Error> {
     let fail = |reason: &str| Error::Encode(reason.into());
-    let mut value = value.clone();
-    let object = value
-        .as_object_mut()
-        .ok_or_else(|| fail("the value is not a record"))?;
-    object.insert("format".into(), FORMAT.into());
-    let seq = value["seq"]
+    let mut value = value.into();
+    if !value.set_number("format", f64::from(FORMAT)) {
+        return Err(fail("the value is not a record"));
+    }
+    let root = value.root();
+    let seq = root
+        .field("seq")
         .as_f64()
         .filter(|v| v.fract() == 0.0 && (0.0..=999_999_999.0).contains(v))
         .ok_or_else(|| fail("the sequence does not fit the nine-digit file name"))?
         as u32;
     let expected = Expected {
-        notebook: value["notebook"]
+        notebook: root
+            .field("notebook")
             .as_str()
             .ok_or_else(|| fail("the notebook is missing"))?,
-        device: value["device"]
+        device: root
+            .field("device")
             .as_str()
             .ok_or_else(|| fail("the device is missing"))?,
     };
-    validate(&value, kind, expected, seq).map_err(|error| Error::Encode(error.reason()))?;
-    let text = canonical(&value);
+    validate(root, kind, expected, seq).map_err(|error| Error::Encode(error.reason()))?;
+    let text = canonical_ref(value.root())?;
     if text.len() > MAX_BATCH_BYTES {
         return Err(fail("the record exceeds the decompressed size limit"));
     }
@@ -431,7 +425,6 @@ pub fn encode(value: &Value, kind: Kind) -> Result<Encoded, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn decompression_stops_at_the_limit() {
         let text = vec![b' '; 8192];

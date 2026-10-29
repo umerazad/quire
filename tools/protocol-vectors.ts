@@ -45,19 +45,21 @@ writeFileSync("tests/fixtures/protocol/vectors.json", JSON.stringify({
   attachment: { original: "IMAGE.PnG", bytes: [0, 1, 2, 255], name: attachmentFileName(Uint8Array.from([0, 1, 2, 255]), "IMAGE.PnG") }, failures,
 }, null, 2) + "\n");
 
-// These are accepted by the source app but exceed the current native JSON model.
-// Keep the mismatch visible until the native reader preserves them losslessly.
+// Preserve source-accepted strings and nesting outside Rust's ordinary JSON model.
 let deep: unknown = null;
 for (let i = 0; i < 140; i++) deep = [deep];
-for (const [label, future] of [
-  ["unpaired-surrogate", "\ud800"],
-  ["deep-json", deep],
+const surrogateFields = { ...fields, page: "p-\ud800", path: "bad\udc00.md", text: "- lone \ud800 and \udfff\n" };
+const surrogateRevision = { ...revision, ...surrogateFields, id: revisionId(surrogateFields) };
+for (const [label, value] of [
+  ["unpaired-surrogate", { ...batch, future: { "\ud800": "\udc00", "𐀀": 1, "\ue000": 2 } }],
+  ["surrogate-revision", { ...batch, revisions: [surrogateRevision] }],
+  ["deep-json", { ...batch, future: deep }],
 ] as const) {
-  const text = canonical({ ...batch, format: 1, future });
+  const text = canonical({ ...value, format: 1 });
   const data = zlib.zstdCompressSync(Buffer.from(text));
   const name = "000000001-" + sha256(text) + ".qlog.zst";
   const outcome = decodeBatch(name, data, { notebook: batch.notebook, device: batch.device });
-  if (!outcome.ok) throw new Error(`Unsupported fixture ${label} must be valid in the source reader.`);
+  if (!outcome.ok) throw new Error(`Lossless fixture ${label} must be valid in the source reader.`);
   writeFileSync(`tests/fixtures/protocol/${label}.zst`, data);
   writeFileSync(`tests/fixtures/protocol/${label}.json`, JSON.stringify({ name, sourceAccepts: outcome.ok }) + "\n");
 }

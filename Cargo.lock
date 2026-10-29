@@ -11360,6 +11360,7 @@ name = "quire_store"
 version = "0.1.0"
 dependencies = [
  "ryu-js",
+ "serde",
  "serde_json",
  "sha2",
  "unicode-normalization",

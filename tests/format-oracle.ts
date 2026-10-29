@@ -11,6 +11,9 @@ const input = JSON.parse(readFileSync(0, "utf8"));
 for (const test of input.values) {
   assert.equal(canonical(test.value), test.canonical);
 }
+for (const test of input.lossless ?? []) {
+  assert.equal(canonical(JSON.parse(test.json)), test.canonical);
+}
 for (const test of input.records) {
   const decode = test.kind === "batch" ? decodeBatch : decodeCheckpoint;
   const result = decode(test.name, Uint8Array.from(test.data), {
@@ -22,7 +25,14 @@ for (const test of input.records) {
     assert.equal(result.reason, test.error);
   } else {
     assert(result.ok);
-    assert.deepEqual(result.value, test.value);
+    if (test.overflow) {
+      assert.equal(result.value.future, Infinity);
+      assert.throws(() => canonical(result.value), /cannot hold infinite numbers/);
+    } else if (test.canonical !== undefined) {
+      assert.equal(canonical(result.value), test.canonical);
+    } else {
+      assert.deepEqual(result.value, test.value);
+    }
     assert.equal(result.hash, test.hash);
   }
 }
