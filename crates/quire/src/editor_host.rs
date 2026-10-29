@@ -485,3 +485,7 @@ mod search_tests;
 #[cfg(test)]
 #[path = "editor_command_tests.rs"]
 mod command_tests;
+
+#[cfg(test)]
+#[path = "editor_input_tests.rs"]
+mod input_tests;

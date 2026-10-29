@@ -131,6 +131,16 @@ The first recall test failed with empty input instead of the last command. A sec
 Sequential review checked history ownership, duplicate promotion, editable errors, weak targets, completion epochs, and preservation of the default copied initializer. Successful submission now also clears a prior prompt error. Native OS acceptance remains open; these results use headless GPUI contexts.
 Status: done
 
+##### NR03b.6: Verify composition in the shared full editor
+
+What to do: Exercise the copied editor's platform input interface inside the real notebook window, with UTF-16 replacement ranges, composition updates/commit, Vim input gating, and undo from the other view.
+Constraints: Use mixed Unicode fixtures and actual shared editors. These headless calls verify host integration; they do not establish native IME, font shaping, bidi, or accessibility acceptance.
+Verify: Composition across surrogate pairs preserves surrounding text, updates both panes, clears marked ranges on commit, and undoes/redoes as one edit from the other pane. Normal-mode input is disabled and Insert mode accepts composition. Run the application suite and scoped Clippy.
+Proof notes: `editor_input_tests.rs` calls the copied editor's `EntityInputHandler` inside the actual two-pane notebook window. One case replaces an emoji using UTF-16 offsets, updates Japanese preedit twice, checks marked/selected ranges, commits, and verifies shared text plus undo/redo from the other pane while preserving Arabic context. The second verifies normal-mode input gating and Insert-mode composition followed by Escape and shared Vim undo. Both tests pass against the existing copied implementation; no production adapter or vendor changes were needed.
+
+`cargo test -p quire --locked --features test-support` passes all 43 application tests. `cargo clippy -p quire --locked --features test-support --all-targets --no-deps -- -D warnings`, formatting, and authored whitespace checks pass. Sequential review checked the actual platform trait, surrogate-pair offsets, marked ranges, shared-buffer assertions, and separate Vim modes. The earlier build remains applicable because this slice changes only test code and test module registration. Native IME, bidi/shaping, OS/package, and full-workspace acceptance remain open under their existing gates.
+Status: done
+
 ### NR04: Prove Write and editable-embed mappings
 
 What to do: Implement the smallest projection showing hidden bullets/IDs, a task checkbox, a link, and an editable nested subtree in two places. Test Zed display-map/excerpt integration before broad UI work.
