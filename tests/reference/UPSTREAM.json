@@ -1,0 +1,16 @@
+{
+  "repository": "rt",
+  "revision": "e91f3e23603c76a1b1d824ec3dd64c60096e5d01",
+  "node": "26.3.0",
+  "files": {
+    "sync/format.ts": "2ca6aadd91c82e327c833aba4bbf50a78d9a998db1057f0b7f39a94d67c4286d",
+    "sync/graph.ts": "6ea8863244136ca980c7b79138aaee3e1c25da322cf47c048ad8822b9803bba2",
+    "sync/replica.ts": "868936de064b24a2a41a8e46be59daace6efa7118211dbaf21d97981f4ffa867",
+    "sync-format.test.ts": "5513f7bc56a49f9b8826cb5c24103ad0cecd071e8402b8e41c086d84511e0521",
+    "../../tools/synthetic-notebook.ts": "209c3bf86cef21f1d8f47d65bbd69fd2be17aa3b6566b15792fdfcd80cd0d52d"
+  },
+  "adaptations": [
+    "Test imports point to copied modules and the local Vitest package.",
+    "Node/Vitest must run the codec tests; Bun zstd truncation diagnostics differ."
+  ]
+}

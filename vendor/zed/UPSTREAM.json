@@ -1,0 +1,33 @@
+{
+  "repository": "https://github.com/zed-industries/zed",
+  "revision": "025d2a06ee7920777bf4947f11e46a1f52e62cbb",
+  "crates": [
+    "bench_metrics",
+    "collections",
+    "derive_refineable",
+    "gpui",
+    "gpui_apple",
+    "gpui_ios",
+    "gpui_linux",
+    "gpui_macos",
+    "gpui_macros",
+    "gpui_platform",
+    "gpui_shared_string",
+    "gpui_util",
+    "gpui_web",
+    "gpui_wgpu",
+    "gpui_windows",
+    "http_client",
+    "http_client_tls",
+    "perf",
+    "refineable",
+    "reqwest_client",
+    "scheduler",
+    "sum_tree",
+    "util_macros",
+    "zlog",
+    "ztracing",
+    "ztracing_macro"
+  ],
+  "modifications": []
+}

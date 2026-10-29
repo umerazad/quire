@@ -1,0 +1,4 @@
+- [ ] Read [[plans/native-rewrite|Native Quire architecture, reuse, storage, performance, and rollout plan]].
+- [ ] Read [[plans/native-rewrite-tasks|Native rewrite implementation queue and verification gates]].
+- [ ] Read [[plans/native-parity|Native rewrite feature parity ledger]].
+- [ ] Read [[README|Native Quire build, test, and desktop launch instructions]].

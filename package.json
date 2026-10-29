@@ -1,0 +1,12 @@
+{
+  "name": "quire-native-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun tools/run.ts",
+    "test:reference": "node node_modules/vitest/vitest.mjs run tests/reference"
+  },
+  "devDependencies": {
+    "vitest": "5.0.5"
+  }
+}
