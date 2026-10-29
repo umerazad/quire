@@ -1,5 +1,6 @@
 use editor::Editor;
 use gpui::{App, AppContext, Entity, Focusable, KeyBinding, UpdateGlobal, Window, prelude::*};
+use search::{BufferSearchBar, buffer_search::DivRegistrar};
 
 fn init(cx: &mut App) -> Result<(), String> {
     settings::init(cx);
@@ -78,6 +79,7 @@ fn init(cx: &mut App) -> Result<(), String> {
             ));
         }
     }
+    crate::editor_search::bind_keys(cx);
     Ok(())
 }
 
@@ -116,6 +118,8 @@ fn editor(
 struct NotebookWindow {
     source: Entity<Editor>,
     second: Entity<Editor>,
+    source_search: Entity<BufferSearchBar>,
+    second_search: Entity<BufferSearchBar>,
     mode: Entity<vim::ModeIndicator>,
 }
 
@@ -125,17 +129,49 @@ impl NotebookWindow {
         let buffer = crate::markdown::buffer(text, cx);
         let source = cx.new(|cx| editor(buffer.clone(), window, cx));
         let second = cx.new(|cx| editor(buffer, window, cx));
+        let source_search = crate::editor_search::new(&source, window, cx);
+        let second_search = crate::editor_search::new(&second, window, cx);
+        cx.observe(&source_search, |_, _, cx| cx.notify()).detach();
+        cx.observe(&second_search, |_, _, cx| cx.notify()).detach();
         window.focus(&source.focus_handle(cx), cx);
         Self {
             source,
             second,
+            source_search,
+            second_search,
             mode,
         }
     }
 }
 
 impl Render for NotebookWindow {
-    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let mut source =
+            DivRegistrar::new(|this: &Self, _, _| Some(this.source_search.clone()), cx);
+        BufferSearchBar::register(&mut source);
+        let source = source
+            .into_div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .when(!self.source_search.read(cx).is_dismissed(), |div| {
+                div.child(self.source_search.clone())
+            })
+            .child(gpui::div().flex_1().min_h_0().child(self.source.clone()));
+        let mut second =
+            DivRegistrar::new(|this: &Self, _, _| Some(this.second_search.clone()), cx);
+        BufferSearchBar::register(&mut second);
+        let second = second
+            .into_div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .when(!self.second_search.read(cx).is_dismissed(), |div| {
+                div.child(self.second_search.clone())
+            })
+            .child(gpui::div().flex_1().min_h_0().child(self.second.clone()));
         gpui::div()
             .size_full()
             .flex()
@@ -146,8 +182,8 @@ impl Render for NotebookWindow {
                     .flex()
                     .flex_1()
                     .min_h_0()
-                    .child(gpui::div().flex_1().min_w_0().child(self.source.clone()))
-                    .child(gpui::div().flex_1().min_w_0().child(self.second.clone())),
+                    .child(source)
+                    .child(second),
             )
             .child(gpui::div().p_2().child(self.mode.clone()))
     }
@@ -396,3 +432,7 @@ mod tests {
             .unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "editor_search_tests.rs"]
+mod search_tests;

@@ -8,6 +8,8 @@ Read formatted source in a completed tool call before preparing a patch, includi
 
 Shared acceptance rules: build independently of sibling repos; preserve source notices; keep failures actionable; no private notebook contents in fixtures; no silent reductions of feature or durability contracts. The task status field is authoritative. Gate descriptions do not grant release or publication authority.
 
+For GPUI tests, inspect the actual assertion APIs before writing them. Editor selections use `MultiBufferOffset` and a `DisplaySnapshot` obtained inside an entity update; `FocusHandle::is_focused` takes only the window. Keep these details in local helpers rather than repeating guessed calls. Find selects a range with Vim off and a cursor with Vim on; assert the intended mode explicitly.
+
 ## Foundation and feasibility
 
 ### NR01: Freeze source behavior and benchmark fixtures
@@ -68,6 +70,19 @@ Verify: A real notebook-window test observes heading/list syntax and inline emph
 Proof notes: The window-level test first failed because the buffer had no assigned language. `markdown.rs` now constructs Markdown and Markdown-Inline from the copied configs/queries and the already pinned `tree-sitter-md`, registers only those languages, and assigns them to the shared document. It follows active theme changes and constructs no LSP adapters or project. Quire already enables `util/debug-embed`; the copied `fs_embed!` macro embeds queries/configs in debug as well as release builds. The existing Cargo lock gains two direct application dependency edges without changing dependency versions.
 
 `cargo test -p quire --locked --features test-support` passes 16 tests. New cases assert shared buffer identity, heading/list/inline-emphasis trees, unchanged Arabic source, reparsing after Vim line deletion, and undo from the other pane restoring both text and syntax. A copied test binary run from a temporary directory containing only that binary passes all 16 tests too. `cargo build -p quire --locked`, scoped application Clippy with all targets/test support and `-D warnings`, and formatting pass. The debug linker retains its unwind-metadata warning. This closes the earlier Markdown setup item; parent NR03b still needs search/register/composition scenarios, Quire Vim overrides, package acceptance, and native OS verification.
+Status: done
+
+##### NR03b.2: Host local Find and Replace without a workspace
+
+What to do: Put the copied buffer search bar beside each editor and use its standalone registrar for Find, Replace, result navigation, and dismissal. Retain the current active editor and shared undo behavior.
+Constraints: No Zed workspace/project construction or project-search initialization. Query input must not enter the note. Keep each pane's target explicit.
+Verify: Real keyboard Find/Replace, next/previous, Escape focus restoration, live result updates after edits, and undo from the other pane. Existing tests and scoped build/Clippy gates pass.
+Proof notes: Each editor now owns a copied `BufferSearchBar` targeted through `ToolbarItemView`, with action routing through the existing `DivRegistrar`. Parent observers show/hide the bar when its state changes. No Zed workspace, project, or project-search service is constructed. `search` and `workspace` become direct application dependencies for these already copied interfaces; no dependency versions change.
+
+The first Find test reproduced a missing binding allowing query keystrokes to execute Vim edits in the note. After hosting the bar, another test caught Enter inserting a newline in the query because the generic Editor binding had a deeper context. Search-field navigation now uses `BufferSearchBar > Editor`, with replacement actions scoped to the replacement field. Tests explicitly distinguish Vim's match cursor from the normal editor's selected match range.
+
+`cargo test -p quire --locked --features test-support` passes 21 tests. Five new keyboard cases cover query isolation, next/previous, Escape focus, Vim cursor placement, per-pane query/selection isolation, live result updates, Replace Next, Replace All, field cycling, and undo of a multi-match replacement from the other pane. Scoped application Clippy with all targets/test support and `-D warnings` passes. Vim slash search still looks up its bar through a Zed pane and remains a separate adapter task. Native desktop and other-OS acceptance remain open; these are GPUI headless results.
+`cargo build -p quire --locked`, formatting, authored whitespace, vendor verification, and prose lint pass. The debug linker warning remains unchanged.
 Status: done
 
 ### NR04: Prove Write and editable-embed mappings

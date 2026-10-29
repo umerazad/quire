@@ -11345,6 +11345,7 @@ dependencies = [
  "grammars",
  "language",
  "release_channel",
+ "search",
  "semver",
  "settings",
  "text",
@@ -11354,6 +11355,7 @@ dependencies = [
  "unicode-segmentation",
  "util",
  "vim",
+ "workspace",
  "zed_actions",
 ]
 
