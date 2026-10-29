@@ -11356,6 +11356,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "quire_store"
+version = "0.1.0"
+dependencies = [
+ "ryu-js",
+ "serde_json",
+ "sha2",
+ "unicode-normalization",
+ "zstd",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"

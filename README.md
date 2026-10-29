@@ -9,6 +9,7 @@ bun install --frozen-lockfile
 bun run verify:vendor
 bun run test:reference
 cargo test -p quire --locked --features test-support
+cargo test -p quire_store --locked
 cargo build -p quire --locked
 bun run dev
 ```
@@ -18,6 +19,8 @@ bun run dev
 The native development app uses `QuireNative` data/config paths, separate from Zed and the Electron app. The earlier input harness is available through `cargo run -p quire -- --input-harness`. The current debug executable produces a macOS linker warning about large unwind metadata; release performance and native desktop acceptance remain unverified.
 
 Reference protocol tests deliberately run through Node/Vitest. Bun's zstd decoder reports a truncated frame differently, so running those tests with `bun test` would change the compatibility oracle.
+
+`quire_store` now contains an experimental format 1 codec. Its tests read Node-generated files, ask Node to read native files, and compare seeded number serialization. It preserves unknown fields within its supported JSON model. Unpaired UTF-16 surrogates and deeply nested JSON still need lossless handling before notebook migration is ready. These gaps have source-generated fixtures and remain open in NR07. Regenerate protocol fixtures with `node tools/protocol-vectors.ts`.
 
 Generate synthetic notebook fixtures with `bun tools/synthetic-notebook.ts <empty-folder> [pages] [seed]`. Defaults are 6,536 pages and seed 1. Generated notebooks and build output stay outside version control.
 

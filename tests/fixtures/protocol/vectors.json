@@ -1,0 +1,323 @@
+{
+  "source": "tests/reference/sync/format.ts",
+  "values": [
+    {
+      "value": null,
+      "canonical": "null"
+    },
+    {
+      "value": true,
+      "canonical": "true"
+    },
+    {
+      "value": false,
+      "canonical": "false"
+    },
+    {
+      "value": 0,
+      "canonical": "0"
+    },
+    {
+      "value": 0,
+      "canonical": "0"
+    },
+    {
+      "value": 1,
+      "canonical": "1"
+    },
+    {
+      "value": 1e-7,
+      "canonical": "1e-7"
+    },
+    {
+      "value": 0.000001,
+      "canonical": "0.000001"
+    },
+    {
+      "value": 100000000000000000000,
+      "canonical": "100000000000000000000"
+    },
+    {
+      "value": 1e+21,
+      "canonical": "1e+21"
+    },
+    {
+      "value": 333333333.3333333,
+      "canonical": "333333333.3333333"
+    },
+    {
+      "value": {
+        "": 1,
+        "𐀀": 2,
+        "a": [
+          "مرحبا",
+          "میٹنگ",
+          "🙂",
+          "\b\t\n\f\r\u0000",
+          "<>&/  "
+        ]
+      },
+      "canonical": "{\"a\":[\"مرحبا\",\"میٹنگ\",\"🙂\",\"\\b\\t\\n\\f\\r\\u0000\",\"<>&/  \"],\"𐀀\":2,\"\":1}"
+    },
+    {
+      "value": {
+        "z": {
+          "unknown": {
+            "b": 2,
+            "a": 1
+          }
+        },
+        "a": [
+          null,
+          1e-9
+        ]
+      },
+      "canonical": "{\"a\":[null,1e-9],\"z\":{\"unknown\":{\"a\":1,\"b\":2}}}"
+    }
+  ],
+  "revisions": [
+    {
+      "fields": {
+        "page": "p-example",
+        "parents": [],
+        "generation": 0,
+        "path": "مرحباً.md",
+        "deleted": false,
+        "text": "- hello\r\n- مرحبا\n- میٹنگ 🙂 ^b-1\n"
+      },
+      "id": "9c2a92e0f9645c087fd3304d0bd8233b5a4d78b1af3472d676afb9b2aafe4e9d"
+    },
+    {
+      "fields": {
+        "page": "p-example",
+        "parents": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ],
+        "generation": 2,
+        "path": "مرحباً.md",
+        "deleted": false,
+        "text": "- hello\r\n- مرحبا\n- میٹنگ 🙂 ^b-1\n"
+      },
+      "id": "a8e81f044ea90425507d6318c7dc7f9391c350ba6c062951ad21a685b3b7a3af"
+    }
+  ],
+  "paths": [
+    {
+      "path": "Café.md",
+      "id": "p-76610ba5324ebac79faeb36a2683ed13"
+    },
+    {
+      "path": "Café.md",
+      "id": "p-76610ba5324ebac79faeb36a2683ed13"
+    },
+    {
+      "path": "ΟΣ.md",
+      "id": "p-4593a9d7e2abe92a4487dead9a9224f2"
+    },
+    {
+      "path": "İ.md",
+      "id": "p-7f2c7babdef6f166a5d9ffc0b3be0f84"
+    },
+    {
+      "path": "People/ALICE.md",
+      "id": "p-741bf31cbf1583faaafe30b6cf81d923"
+    },
+    {
+      "path": "میٹنگ.md",
+      "id": "p-8ae4a45230d0ea6094c4f3c4e88659a7"
+    },
+    {
+      "path": "🙂.md",
+      "id": "p-835765d4ed0580379cc03c01fe4623d1"
+    }
+  ],
+  "batch": {
+    "value": {
+      "notebook": "nb-vectors",
+      "device": "office",
+      "seq": 1,
+      "previous": null,
+      "created": 1001,
+      "revisions": [
+        {
+          "page": "p-example",
+          "parents": [],
+          "generation": 0,
+          "path": "مرحباً.md",
+          "deleted": false,
+          "text": "- hello\r\n- مرحبا\n- میٹنگ 🙂 ^b-1\n",
+          "id": "9c2a92e0f9645c087fd3304d0bd8233b5a4d78b1af3472d676afb9b2aafe4e9d",
+          "created": 1000,
+          "device": "office",
+          "future": {
+            "colour": "jade",
+            "weight": 1e-7
+          }
+        }
+      ],
+      "attachments": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.pdf"
+      ],
+      "future": [
+        "retained",
+        {
+          "amount": 1e+21
+        }
+      ],
+      "format": 1
+    },
+    "name": "000000001-2673b93148ade20bc8f404c8f102162de3e5a08ecc3c3d206302c44f909b3b8e.qlog.zst",
+    "hash": "2673b93148ade20bc8f404c8f102162de3e5a08ecc3c3d206302c44f909b3b8e"
+  },
+  "checkpoint": {
+    "value": {
+      "notebook": "nb-vectors",
+      "device": "office",
+      "seq": 1,
+      "created": 1002,
+      "cursors": {
+        "office": {
+          "seq": 1,
+          "hash": "2673b93148ade20bc8f404c8f102162de3e5a08ecc3c3d206302c44f909b3b8e"
+        }
+      },
+      "heads": [
+        {
+          "page": "p-example",
+          "parents": [],
+          "generation": 0,
+          "path": "مرحباً.md",
+          "deleted": false,
+          "text": "- hello\r\n- مرحبا\n- میٹنگ 🙂 ^b-1\n",
+          "id": "9c2a92e0f9645c087fd3304d0bd8233b5a4d78b1af3472d676afb9b2aafe4e9d",
+          "created": 1000,
+          "device": "office",
+          "future": {
+            "colour": "jade",
+            "weight": 1e-7
+          }
+        }
+      ],
+      "future": {
+        "keep": true
+      },
+      "format": 1
+    },
+    "name": "000000001-89f2524541355bf1b1f731dcb258f3fb5f46ea5fa07cda2da5d023c5d45b9eec.qsnap.zst",
+    "hash": "89f2524541355bf1b1f731dcb258f3fb5f46ea5fa07cda2da5d023c5d45b9eec"
+  },
+  "names": [
+    {
+      "name": "000000001-2673b93148ade20bc8f404c8f102162de3e5a08ecc3c3d206302c44f909b3b8e.qlog.zst",
+      "valid": true
+    },
+    {
+      "name": "000000001-2673b93148ade20bc8f404c8f102162de3e5a08ecc3c3d206302c44f909b3b8e.qlog.zst.partial",
+      "valid": false
+    },
+    {
+      "name": "000000001-2673b93148ade20bc8f404c8f102162de3e5a08ecc3c3d206302c44f909b3b8e.qlog.zst\n",
+      "valid": false
+    },
+    {
+      "name": "000000001-2673b93148ade20bc8f404c8f102162de3e5a08ecc3c3d206302c44f909b3b8e (1).qlog.zst",
+      "valid": false
+    },
+    {
+      "name": "000000001-2673B93148ADE20BC8F404C8F102162DE3E5A08ECC3C3D206302C44F909B3B8E.QLOG.ZST",
+      "valid": false
+    },
+    {
+      "name": "000000000-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.qlog.zst",
+      "valid": true
+    }
+  ],
+  "attachments": [
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.pdf",
+      "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.PDF",
+      "hash": null
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.",
+      "hash": null
+    },
+    {
+      "name": "../x",
+      "hash": null
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+      "hash": null
+    }
+  ],
+  "attachment": {
+    "original": "IMAGE.PnG",
+    "bytes": [
+      0,
+      1,
+      2,
+      255
+    ],
+    "name": "3d1f57c984978ef98a18378c8166c1cb8ede02c03eeb6aee7e2f121dfeee3e56.png"
+  },
+  "failures": [
+    {
+      "label": "format",
+      "name": "000000001-2778fb1af3d8457813999be066ef3f7010f0de7d997aaa2981aa7e235f6773f6.qlog.zst",
+      "outcome": {
+        "ok": false,
+        "newer": 2,
+        "reason": "the file uses format 2; update Quire to read it"
+      }
+    },
+    {
+      "label": "foreign-notebook",
+      "name": "000000001-110793f930cb0a54c1e9f81f857ad117edc6684dbb8d3d3053deba9bee5a055b.qlog.zst",
+      "outcome": {
+        "ok": false,
+        "reason": "the file belongs to another notebook"
+      }
+    },
+    {
+      "label": "previous",
+      "name": "000000001-f419444e54ca5b5d7e0ab14d846061e144f29fc483dded2573017d4b3981712d.qlog.zst",
+      "outcome": {
+        "ok": false,
+        "reason": "the file's link to the previous one is invalid"
+      }
+    },
+    {
+      "label": "revision-id",
+      "name": "000000001-a3acb0547affcce1ede62c99afe0272cc249717a3e4f8632206de6e5af63800d.qlog.zst",
+      "outcome": {
+        "ok": false,
+        "reason": "a revision's id does not match its content"
+      }
+    },
+    {
+      "label": "foreign-revision",
+      "name": "000000001-766a8281e0ea83bcf7317c67f0ed79ba590dcac695fe31937767a114a0b871dd.qlog.zst",
+      "outcome": {
+        "ok": false,
+        "reason": "a revision names another computer"
+      }
+    },
+    {
+      "label": "attachments",
+      "name": "000000001-554eb1d63a9fc1196edc2edf6a30cfeb76039413716595b8044736cb6c6ac9c6.qlog.zst",
+      "outcome": {
+        "ok": false,
+        "reason": "the file lists invalid attachments"
+      }
+    }
+  ]
+}

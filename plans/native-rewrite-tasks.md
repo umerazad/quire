@@ -97,8 +97,14 @@ Constraints: Hash the same uncompressed bytes as the frozen TypeScript implement
 Write set: `crates/quire_store/src/sync/format.rs`, protocol fixtures.
 Dependencies: NR01.
 Verify: Cross-language decode/encode and pinned IDs for Unicode, CRLF, numbers, escaping, parents, settings, unknown fields, corruption, decompression bounds, and newer versions. Compression byte equality is not required.
-Proof notes: pending.
-Status: pending
+Proof notes: Added the UI-independent `quire_store` crate and its experimental format 1 codec. It implements JavaScript number rendering, UTF-16 object-key sorting, canonical SHA-256 identities, NFC/lowercase page IDs, revision validation, strict log/checkpoint/attachment names, zstd envelopes, bounded decompression, header/parent/cursor/status checks, and newer-format errors. Supported unknown fields survive decode/re-encode. Writers validate records and reject sequences that cannot fit the nine-digit name. Dependencies are pinned in the shared lock; no Node or sibling repository is needed by the native codec at runtime.
+
+The TDD red run failed on the initially empty module. The first implementation passed the Node golden fixtures. A later differential test caught Rust's different rendering of a large newer-format number; the regression now passes using JavaScript rendering. `cargo test -p quire_store --locked` passes 11 tests, including the explicit compatibility-gap test below. The Node subprocess checks native batches/checkpoints and seeded floating-point values against the frozen source implementation. `cargo test -p quire --locked --features test-support` still passes 14 tests, and `bun run test:reference` passes 8. The app test retains the documented macOS unwind-metadata linker warning. Full workspace and native desktop acceptance remain open.
+
+Fresh sequential review found a release-blocking JSON-model mismatch: Node accepts unpaired UTF-16 surrogates and nesting beyond serde_json's default recursion limit. `tools/protocol-vectors.ts` reproduces both as valid source envelopes. `source_accepted_json_outside_native_model_is_rejected_without_mutation` records their current native rejection; it is evidence of a gap, not parity. Preserve these envelopes and replace this test with successful lossless reads/round trips when the reader is repaired. NR07 remains in progress and notebook migration cannot pass until those cases and remaining hostile-input coverage are resolved. The native app does not yet use the codec or persist notebooks.
+
+Adding the application crate also required fixing `tools/vendor-zed.ts` to preserve application workspace/default members and local workspace dependencies. A rerun retained both application crates and the 179-crate vendor set without changing copied sources. The tool now rejects tracked source edits before copying. Review the source guard separately if vendoring policy changes.
+Status: in_progress
 
 ### NR08: Implement acknowledged local saves and recovery
 

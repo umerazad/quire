@@ -4,6 +4,10 @@ import { execFileSync } from "node:child_process";
 
 const source = resolve(process.argv[2] ?? "../zed");
 const root = Bun.TOML.parse(readFileSync(`${source}/Cargo.toml`, "utf8"));
+const current = Bun.TOML.parse(readFileSync("Cargo.toml", "utf8"));
+if (execFileSync("git", ["-C", source, "status", "--porcelain", "--untracked-files=no"], { encoding: "utf8" }).trim()) {
+  throw new Error("Zed has uncommitted changes. Use a clean pinned checkout before copying.");
+}
 const dependencies = root.workspace.dependencies;
 const selected = new Map<string, any>();
 const required = new Set<string>();
@@ -42,18 +46,20 @@ function toml(value: any): string {
   if (typeof value === "object") return `{ ${Object.entries(value).map(([k,v]) => `${JSON.stringify(k)} = ${toml(v)}`).join(", ")} }`;
   return JSON.stringify(value);
 }
-const workspaceDependencies = Object.fromEntries([...required].sort().map(name => {
+const localDependencies = Object.fromEntries(Object.entries(current.workspace.dependencies).filter(([name]) => !(name in dependencies)));
+const workspaceDependencies = { ...localDependencies, ...Object.fromEntries([...required].sort().map(name => {
   const value = dependencies[name];
   return [name, value?.path ? { ...value, path: `${destination}/${value.path}` } : value];
-}));
+})) };
 const patches = Object.fromEntries(Object.entries(root.patch?.["crates-io"] ?? {}).map(([name, value]: any) => {
   if (!value.path) return [name, value];
   const path = `${destination}/${value.path}`;
   if (!existsSync(path)) cpSync(`${source}/${value.path}`, path, { recursive: true, dereference: true });
   return [name, { ...value, path }];
 }));
-const members = ["crates/quire", ...[...selected.values()].map(v => `${destination}/${v.path}`)];
-let output = `[workspace]\nresolver = "3"\nmembers = ${toml(members)}\ndefault-members = ["crates/quire"]\n\n[workspace.package]\n`;
+const applicationMembers = current.workspace.members.filter((path: string) => !path.startsWith(`${destination}/`));
+const members = [...applicationMembers, ...[...selected.values()].map(v => `${destination}/${v.path}`)];
+let output = `[workspace]\nresolver = "3"\nmembers = ${toml(members)}\ndefault-members = ${toml(current.workspace["default-members"])}\n\n[workspace.package]\n`;
 for (const [k,v] of Object.entries(root.workspace.package)) output += `${k} = ${toml(v)}\n`;
 output += "\n[workspace.dependencies]\n";
 for (const [k,v] of Object.entries(workspaceDependencies)) output += `${JSON.stringify(k)} = ${toml(v)}\n`;

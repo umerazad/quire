@@ -1,0 +1,16 @@
+[package]
+name = "quire_store"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+license = "GPL-3.0-or-later"
+
+[lib]
+path = "src/quire_store.rs"
+
+[dependencies]
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+sha2.workspace = true
+zstd.workspace = true
+ryu-js = "=1.0.2"
+unicode-normalization = "=0.1.25"
