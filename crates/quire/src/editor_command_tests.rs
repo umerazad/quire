@@ -281,3 +281,136 @@ fn substitution_accepts_the_same_backreferences_as_the_copied_search_engine(
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn command_history_recalls_submitted_and_cancelled_commands_by_prefix(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let text = "one\ntwo\nthree\n";
+    let window = cx.add_window(|window, cx| NotebookWindow::new(text, window, cx));
+    cx.simulate_keystrokes(window.into(), ": 2 enter");
+    cx.executor().run_until_parked();
+    cx.simulate_keystrokes(window.into(), ": s o r t escape : 3 escape : up");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.commands.read(cx).input.read(cx).text(cx), "3");
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "up up");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.commands.read(cx).input.read(cx).text(cx), "2");
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "down down down");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.commands.read(cx).input.read(cx).text(cx), "");
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "escape");
+    window
+        .update(cx, |view, window, cx| {
+            window.focus(&view.second.focus_handle(cx), cx);
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), ": up enter");
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(selection(&view.source, cx), 4..4);
+            assert_eq!(selection(&view.second, cx), 8..8);
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), ": s up");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.commands.read(cx).input.read(cx).text(cx), "sort");
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "down");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.commands.read(cx).input.read(cx).text(cx), "s");
+            assert_eq!(view.source.read(cx).text(cx), text);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn command_history_uses_new_input_after_an_unsuccessful_prefix_lookup(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let window = cx.add_window(|window, cx| NotebookWindow::new("one\n", window, cx));
+    cx.simulate_keystrokes(window.into(), ": s o r t escape : z up backspace s up");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.commands.read(cx).input.read(cx).text(cx), "sort");
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "backspace up");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.commands.read(cx).input.read(cx).text(cx), "sort");
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "down");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.commands.read(cx).input.read(cx).text(cx), "sor");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn command_history_is_shared_between_windows_with_independent_navigation(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let first = cx.add_window(|window, cx| NotebookWindow::new("one\ntwo\n", window, cx));
+    cx.simulate_keystrokes(first.into(), ": 2 escape : s o r t escape : up");
+    let second = cx.add_window(|window, cx| NotebookWindow::new("other\n", window, cx));
+    cx.simulate_keystrokes(second.into(), ": up up");
+    second
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.commands.read(cx).input.read(cx).text(cx), "2");
+            assert_eq!(view.source.read(cx).text(cx), "other\n");
+        })
+        .unwrap();
+    first
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.commands.read(cx).input.read(cx).text(cx), "sort");
+        })
+        .unwrap();
+    cx.simulate_keystrokes(first.into(), "up");
+    first
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.commands.read(cx).input.read(cx).text(cx), "2");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn named_registers_survive_vim_toggles_and_paste_in_the_other_pane(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let text = "one\ntwo\n";
+    let window = cx.add_window(|window, cx| NotebookWindow::new(text, window, cx));
+    cx.simulate_keystrokes(window.into(), "\" a y y");
+    super::search_tests::set_vim_mode(cx, false);
+    super::search_tests::set_vim_mode(cx, true);
+    window
+        .update(cx, |view, window, cx| {
+            window.focus(&view.second.focus_handle(cx), cx);
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "j \" a p");
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(view.second.read(cx).text(cx), "one\ntwo\none\n");
+            assert_eq!(view.source.read(cx).text(cx), "one\ntwo\none\n");
+            window.focus(&view.source.focus_handle(cx), cx);
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "u");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.source.read(cx).text(cx), text);
+        })
+        .unwrap();
+}

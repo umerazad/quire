@@ -6,7 +6,7 @@ fn init_without_vim(cx: &mut TestAppContext) {
     set_vim_mode(cx, false);
 }
 
-fn set_vim_mode(cx: &mut TestAppContext, enabled: bool) {
+pub(super) fn set_vim_mode(cx: &mut TestAppContext, enabled: bool) {
     cx.update(|cx| {
         let result = settings::SettingsStore::update_global(cx, |store, cx| {
             store.set_user_settings(

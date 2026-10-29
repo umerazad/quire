@@ -285,7 +285,16 @@ actions!(
 
 /// Initializes the `vim` crate.
 pub fn init(cx: &mut App) {
-    VimGlobals::register(cx);
+    init_inner(cx, false);
+}
+
+/// Initializes an embedded host whose registers survive disabling and re-enabling Vim.
+pub fn init_with_register_retention(cx: &mut App) {
+    init_inner(cx, true);
+}
+
+fn init_inner(cx: &mut App, retain_registers: bool) {
+    VimGlobals::register(cx, retain_registers);
 
     cx.observe_new(Vim::register).detach();
 

@@ -755,7 +755,7 @@ impl MarksState {
 impl Global for VimGlobals {}
 
 impl VimGlobals {
-    pub(crate) fn register(cx: &mut App) {
+    pub(crate) fn register(cx: &mut App, retain_registers: bool) {
         cx.set_global(VimGlobals::default());
 
         cx.observe_keystrokes(|event, _, cx| {
@@ -807,7 +807,12 @@ impl VimGlobals {
                 }
             } else {
                 KeyBinding::set_vim_mode(cx, false);
-                *Vim::globals(cx) = VimGlobals::default();
+                let old = std::mem::take(Vim::globals(cx));
+                if retain_registers {
+                    let globals = Vim::globals(cx);
+                    globals.registers = old.registers;
+                    globals.last_yank = old.last_yank;
+                }
                 GlobalCommandPaletteInterceptor::clear(cx);
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.hide_namespace(Vim::NAMESPACE);

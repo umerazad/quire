@@ -19,7 +19,7 @@ fn init(cx: &mut App) -> Result<(), String> {
     crate::markdown::init(cx)?;
     release_channel::init(semver::Version::new(0, 1, 0), cx);
     editor::init(cx);
-    vim::init(cx);
+    vim::init_with_register_retention(cx);
     cx.on_action(|_: &super::Quit, cx| cx.quit());
     cx.bind_keys([KeyBinding::new(
         if cfg!(target_os = "macos") {

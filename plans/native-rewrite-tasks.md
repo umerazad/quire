@@ -117,6 +117,20 @@ Parent NR03 remains open. Before closing it, compare the legacy register/mark an
 Fresh review reopened the task after finding that the new validator used a simpler regex engine than the copied search bar. A native backreference test reproduced a rejected valid pattern. Find/substitution validation now calls the same `SearchQuery::regex` builder; global commands retain their original engine. Pattern errors have an explicit category independent of library wording. The final 37 application tests, 25 copied command tests, combined Clippy, and build pass after this repair. Sequential review also checked capability recursion, stale completion cancellation, range errors, focus targeting, and the unchanged workspace parser entry point.
 Status: done
 
+##### NR03b.5: Preserve command history and verify shared registers
+
+What to do: Add in-memory Ex history with Up/Down prefix navigation and draft restoration. Verify named registers across panes and Vim toggles through real keyboard input.
+Constraints: Reuse the copied command-palette navigation approach without its database, telemetry, or workspace. Keep submitted and cancelled nonempty commands in application-session history, as the legacy adapter does. Keep navigation cursors local to each prompt. Use the copied palette's 1,000-entry retention bound; do not persist notebook command text.
+Verify: Submit/cancel recall, prefix filtering, draft restoration, edits during navigation, cross-pane/window recall, register paste, and shared undo. Run application tests, formatting, scoped Clippy, and build. Record provenance and review completion/error interactions.
+Proof notes: Legacy `codemirror-vim-core/vim.js` stores Ex history and registers globally; its prompt remembers submitted/cancelled input and navigates by the original prefix. `editor_command.rs` adapts Zed's `command_palette::QueryHistory` navigation and duplicate promotion, using an application global for entries and a cursor per prompt. Its history DB is unnecessary for this session-only host. No new dependencies are added.
+
+The first recall test failed with empty input instead of the last command. A second regression caught an unsuccessful prefix lookup retaining the old prefix after typing. Both pass after history routing and cursor validation. The register test separately reproduced loss of a named register after disabling Vim: the copied global-settings observer reset all state. The native host now calls an opt-in initializer retaining text registers and clipboard provenance while resetting transient operators. Original `vim::init` retains its original reset behavior. Macro recording retention, search-history parity, and mark lifetime remain separate parent checks.
+
+`cargo test -p quire --locked --features test-support` passes 41 tests. Four new cases cover submitted/cancelled recall, prefix filtering/draft restoration, edits after a missed lookup and while navigating, independent cursors in two windows, recall targeting the second pane, and named-register paste after a Vim toggle with undo from the other pane. `cargo test -p vim --locked --features util/debug-embed --lib test::test_toggle_through_settings -- --exact` passes the original toggle scenario. Combined app/Vim Clippy with all targets/test support and `-D warnings`, application build, and formatting pass. Source comparison verifies 3,028 unchanged files and eight recorded source forks. The debug linker warning and full-workspace sandbox failure remain open.
+
+Sequential review checked history ownership, duplicate promotion, editable errors, weak targets, completion epochs, and preservation of the default copied initializer. Successful submission now also clears a prior prompt error. Native OS acceptance remains open; these results use headless GPUI contexts.
+Status: done
+
 ### NR04: Prove Write and editable-embed mappings
 
 What to do: Implement the smallest projection showing hidden bullets/IDs, a task checkbox, a link, and an editable nested subtree in two places. Test Zed display-map/excerpt integration before broad UI work.

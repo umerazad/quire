@@ -204,7 +204,7 @@
     },
     {
       "path": "crates/vim/src/vim.rs",
-      "change": "Add editor-local weak search-bar association, targeted submission and command-prefix hooks for embedded hosts; retain workspace lookup and preserve the bar association across Vim toggles. Keep embedded visual/local marks in the Vim session when no workspace exists."
+      "change": "Add editor-local weak search-bar association, targeted submission and command-prefix hooks for embedded hosts; retain workspace lookup and preserve the bar association across Vim toggles. Keep embedded visual/local marks in the Vim session when no workspace exists. Expose initialization with session register retention while leaving default initialization unchanged."
     },
     {
       "path": "crates/vim/src/normal/search.rs",
@@ -217,6 +217,10 @@
     {
       "path": "crates/vim/src/normal/mark.rs",
       "change": "Use Vim-session-local marks when an embedded editor has no workspace, allowing visual Ex ranges and local mark lookup. The original workspace mark storage remains unchanged."
+    },
+    {
+      "path": "crates/vim/src/state.rs",
+      "change": "Allow an embedded host to retain register contents and clipboard provenance when Vim is disabled. The original initializer still resets all state; transient operators and recording state reset in both paths."
     },
     {
       "dependency": "libsqlite3-sys",
