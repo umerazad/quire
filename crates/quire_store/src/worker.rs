@@ -278,6 +278,30 @@ impl StorageClient {
     pub fn heads(&self, page: String) -> std::result::Result<Reply<Vec<String>>, QueueError> {
         self.request(128 + page.capacity(), move |store| store.heads(&page))
     }
+    pub fn attach(
+        &self,
+        data: Vec<u8>,
+        original: String,
+    ) -> std::result::Result<Reply<String>, QueueError> {
+        self.request(
+            128usize
+                .saturating_add(data.capacity())
+                .saturating_add(original.capacity()),
+            move |store| store.attach(&data, &original),
+        )
+    }
+    pub fn cache_attachment(
+        &self,
+        name: String,
+        data: Vec<u8>,
+    ) -> std::result::Result<Reply<()>, QueueError> {
+        self.request(
+            128usize
+                .saturating_add(name.capacity())
+                .saturating_add(data.capacity()),
+            move |store| store.cache_attachment(&name, &data),
+        )
+    }
     pub fn prepare_publication(
         &self,
         created: u64,

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -48,15 +48,19 @@ function inspect() {
 }
 
 try {
-  const first = await killAfterAck("save", "1", "acknowledged مرحبا 🙂");
+  const attached = await killAfterAck("attach", "1", "durable attachment bytes");
+  assert.match(attached.reference, /^attachments\/[a-f0-9]{64}\.bin$/);
+  assert.equal(readFileSync(join(folder, attached.reference), "utf8"), "durable attachment bytes");
+  const initialText = `acknowledged مرحبا 🙂 ![](${attached.reference})`;
+  const first = await killAfterAck("save", "1", initialText);
   let state = inspect();
-  assert.equal(state.text, "acknowledged مرحبا 🙂");
+  assert.equal(state.text, initialText);
   assert.equal(state.draft, null);
   assert.deepEqual(state.outbox, [first.id]);
 
   await killAfterAck("draft", "2", "newer recovery میٹنگ");
   state = inspect();
-  assert.equal(state.text, "acknowledged مرحبا 🙂");
+  assert.equal(state.text, initialText);
   assert.equal(state.draft.text, "newer recovery میٹنگ");
 
   const latest = await killAfterAck("save", "3", "latest acknowledged");
@@ -74,7 +78,7 @@ try {
   assert.equal(state.text, "latest acknowledged");
   assert.equal(state.pending, selected.name);
   assert(state.outbox.includes(latest.id));
-  console.log("Storage crash checks passed: saved/recovery acknowledgments, frozen publication, interrupted transaction.");
+  console.log("Storage crash checks passed: attachment/save/recovery acknowledgments, frozen publication, interrupted transaction.");
 } finally {
   rmSync(folder, { recursive: true, force: true });
 }

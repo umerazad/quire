@@ -10,11 +10,8 @@ use anyhow::{Context as _, Result, ensure};
 use regex::bytes::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeSet, HashSet},
-    fs,
-    io::Read,
     sync::OnceLock,
 };
 use unicode_normalization::UnicodeNormalization;
@@ -393,33 +390,7 @@ impl NotebookStore {
                 .context("Revision text is not a string.")?
                 .as_bytes(),
         ) {
-            let row = self.connection.select_row_bound::<_, (String, i64)>(
-                "SELECT hash,size FROM attachments WHERE name=?",
-            )?(name.as_str())?;
-            let (expected, size) = row.with_context(|| format!("Attachment {name} has no durable local copy. Download or attach it before saving."))?;
-            let path = self.directory.join("attachments").join(&name);
-            let metadata = fs::symlink_metadata(&path).with_context(|| {
-                format!("Local attachment {name} is missing. Download it before saving.")
-            })?;
-            ensure!(
-                metadata.is_file() && i64::try_from(metadata.len())? == size,
-                "Local attachment {name} changed. Restore its original bytes before saving."
-            );
-            let mut file = fs::File::open(path)?;
-            let mut hash = Sha256::new();
-            let mut buffer = [0; 65536];
-            loop {
-                let read = file.read(&mut buffer)?;
-                if read == 0 {
-                    break;
-                }
-                hash.update(&buffer[..read]);
-            }
-            ensure!(
-                format!("{:x}", hash.finalize()) == expected
-                    && format::attachment_hash(&name) == Some(expected.as_str()),
-                "Local attachment {name} failed its hash check. Restore its original bytes before saving."
-            );
+            self.require_attachment(&name)?;
         }
         Ok(())
     }

@@ -19,6 +19,4 @@ sha2.workspace = true
 zstd.workspace = true
 ryu-js = "=1.0.2"
 unicode-normalization = "=0.1.25"
-
-[dev-dependencies]
 tempfile.workspace = true

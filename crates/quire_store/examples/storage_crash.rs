@@ -11,9 +11,9 @@ use std::{
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let mode = args
-        .get(1)
-        .context("Specify save, draft, select, interrupt, or inspect and a database path.")?;
+    let mode = args.get(1).context(
+        "Specify attach, save, draft, select, interrupt, or inspect and a database path.",
+    )?;
     let path = Path::new(
         args.get(2)
             .context("Specify an absolute test database path.")?,
@@ -27,6 +27,10 @@ fn main() -> Result<()> {
     let store = NotebookStore::open(path, "nb-crash", "device-crash")?;
     let page = "p-process";
     let ready = match mode.as_str() {
+        "attach" => {
+            let reference = store.attach(text.as_bytes(), "probe.bin")?;
+            json!({"mode":mode,"reference":reference})
+        }
         "save" | "draft" => {
             let base = store.heads(page)?;
             let stamp = DraftStamp {
@@ -97,7 +101,9 @@ fn main() -> Result<()> {
             );
             return Ok(());
         }
-        _ => bail!("Unknown crash probe mode. Use save, draft, select, interrupt, or inspect."),
+        _ => bail!(
+            "Unknown crash probe mode. Use attach, save, draft, select, interrupt, or inspect."
+        ),
     };
     println!("{ready}");
     io::stdout().flush()?;

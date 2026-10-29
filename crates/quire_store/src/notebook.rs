@@ -9,6 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod attachment;
 mod publication;
 mod recovery;
 mod revision;
