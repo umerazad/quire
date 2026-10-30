@@ -42,7 +42,7 @@ type LinkRow = (
     (String, String, String, Option<String>, Option<String>),
     (u32, u32, String),
 );
-const LINK_SELECT: &str = "SELECT p.revision,p.page,p.path,p.title,l.kind,l.syntax,l.target,l.label,l.media,l.start,l.finish,l.text FROM links l JOIN pages p ON p.revision=l.revision WHERE p.deleted=0 AND ";
+const LINK_SELECT: &str = "SELECT p.revision,p.page,p.path,p.title,l.kind,l.syntax,l.target,l.label,l.media,l.start,l.finish,l.text FROM live_links l JOIN live_pages p ON p.revision=l.revision WHERE p.deleted=0 AND ";
 
 fn page_ref((revision, page, path, title): PageRow) -> Result<PageRef> {
     let page = Json::parse(page.as_bytes())
@@ -86,7 +86,7 @@ impl QueryIndex {
 
     fn pages_where(&self, clause: &str, value: &str) -> Result<Vec<PageRef>> {
         let rows: Vec<PageRow> = self.connection.select_bound(&format!(
-            "SELECT {PAGE_COLUMNS} FROM pages p WHERE p.deleted=0 AND {clause}"
+            "SELECT {PAGE_COLUMNS} FROM live_pages p WHERE p.deleted=0 AND {clause}"
         ))?(value)?;
         rows.into_iter().map(page_ref).collect()
     }
@@ -160,7 +160,7 @@ impl QueryIndex {
             None => None,
         };
         let rows: Vec<(PageRow, i64)> = self.connection.select_bound(&format!(
-            "SELECT {PAGE_COLUMNS},count(*) FROM blocks b JOIN pages p ON p.revision=b.revision WHERE p.deleted=0 AND b.id=? GROUP BY p.revision"
+            "SELECT {PAGE_COLUMNS},count(*) FROM live_blocks b JOIN live_pages p ON p.revision=b.revision WHERE p.deleted=0 AND b.id=? GROUP BY p.revision"
         ))?(block_key(target))?;
         let mut matches: Vec<(PageRow, i64)> = rows
             .into_iter()
@@ -232,10 +232,9 @@ impl QueryIndex {
                 }
             }
         }
-        let ids: Vec<String> =
-            self.connection.select_bound(
-                "SELECT DISTINCT id FROM blocks WHERE revision=? AND id IS NOT NULL",
-            )?(this.revision.as_str())?;
+        let ids: Vec<String> = self.connection.select_bound(
+            "SELECT DISTINCT id FROM live_blocks WHERE revision=? AND id IS NOT NULL",
+        )?(this.revision.as_str())?;
         for id in ids {
             for link in self.links_where("l.block_key=?", &id)? {
                 if self
@@ -264,7 +263,7 @@ impl QueryIndex {
         self.refresh()?;
         type Row = (PageRow, (String, u32, Option<String>, String));
         let rows: Vec<Row> = self.connection.select_bound(&format!(
-            "SELECT {PAGE_COLUMNS},t.tag,t.start,t.block_id,t.snippet FROM tagged t JOIN pages p ON p.revision=t.revision WHERE p.deleted=0 AND t.tag_key=?"
+            "SELECT {PAGE_COLUMNS},t.tag,t.start,t.block_id,t.snippet FROM live_tagged t JOIN live_pages p ON p.revision=t.revision WHERE p.deleted=0 AND t.tag_key=?"
         ))?(tag_key(tag))?;
         let mut tagged = rows
             .into_iter()
@@ -291,7 +290,7 @@ impl QueryIndex {
     pub fn tag_names(&self) -> Result<Vec<TagCount>> {
         self.refresh()?;
         let rows: Vec<(String, String, String, u32)> = self.connection.select(
-            "SELECT t.tag_key,t.tag,p.path,t.start FROM tagged t JOIN pages p ON p.revision=t.revision WHERE p.deleted=0",
+            "SELECT t.tag_key,t.tag,p.path,t.start FROM live_tagged t JOIN live_pages p ON p.revision=t.revision WHERE p.deleted=0",
         )?()?;
         let mut groups: HashMap<String, (String, String, u32, usize)> = HashMap::new();
         for (key, tag, path, from) in rows {

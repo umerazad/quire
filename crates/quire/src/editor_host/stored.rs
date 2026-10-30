@@ -162,6 +162,12 @@ impl StoredWindow {
             .map_err(gpui::SharedString::from);
         if let Ok(index) = &index {
             cx.observe(index, |_, _, cx| cx.notify()).detach();
+            let pages = session.borrow().open_pages();
+            index.update(cx, |index, cx| {
+                for page in pages {
+                    index.track(page, cx);
+                }
+            });
         }
         let mut this = Self {
             session,

@@ -4,9 +4,11 @@
 //! cache: deleting it loses nothing, and any version, identity, or corruption mismatch rebuilds it.
 //! Rows are keyed by immutable revision IDs, so a row is either complete or absent, never stale.
 
+mod overlay;
 mod query;
 mod schema;
 
+pub use overlay::Overlay;
 pub use query::{Backlink, PageRef, SearchHit, TagCount, TaggedBlock};
 
 use crate::notebook::{PageMetadata, read_revision, revision_metadata};
@@ -17,7 +19,8 @@ use quire_core::daily::{DailyCalendar, DailyLayout, DailyParser, write_settings}
 use serde::{Deserialize, Serialize};
 use sqlez::connection::Connection;
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
+    collections::BTreeSet,
     path::{Path, PathBuf},
 };
 
@@ -100,6 +103,8 @@ pub struct QueryIndex {
     calendar: DailyCalendar,
     parser: DailyParser,
     seen_version: Cell<Option<i64>>,
+    generation: Cell<u64>,
+    releasing: RefCell<BTreeSet<String>>,
     collator: icu_collator::CollatorBorrowed<'static>,
 }
 
@@ -159,7 +164,10 @@ impl QueryIndex {
             layout: config.layout,
             calendar: config.calendar,
             seen_version: Cell::new(None),
+            generation: Cell::new(0),
+            releasing: RefCell::default(),
         };
+        overlay::create(&index.connection)?;
         index.apply_layout()?;
         Ok(index)
     }
@@ -246,6 +254,10 @@ impl QueryIndex {
             Ok(!stale.is_empty() || !missing.is_empty())
         })?;
         self.seen_version.set(Some(version));
+        if changed {
+            self.bump();
+            self.settle_releases()?;
+        }
         Ok(changed)
     }
 
@@ -302,35 +314,64 @@ impl QueryIndex {
     /// Records analysis for one revision. Returns false when the revision is no longer a selected
     /// head, so the caller can drop the work.
     pub fn put(&self, revision: &str, analysis: &PageIndex) -> Result<bool> {
-        self.transaction(|| {
-            let row: Option<(bool, String)> = self
-                .connection
-                .select_row_bound("SELECT analyzed,title FROM pages WHERE revision=?")?(revision)?;
-            let title = match row {
-                None => return Ok(false),
-                Some((true, _)) => return Ok(true),
-                Some((false, title)) => title,
-            };
-            let mut search = self.connection.exec_bound(
-                "INSERT INTO search_rows(revision,title,text,block_id) VALUES (?,?,?,?)",
-            )?;
-            search((revision, title.as_str(), "", None::<&str>))?;
-            for block in &analysis.blocks {
-                search((revision, title.as_str(), block.text.as_str(), block.id.as_deref()))?;
-            }
-            for (ordinal, block) in analysis.blocks.iter().enumerate() {
-                self.connection.exec_bound(
-                    "INSERT INTO blocks(revision,ordinal,key,id,start,finish,content_from,content_to,subtree_to,depth,kind,parent,text) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        let stored =
+            self.transaction(|| {
+                let row: Option<(bool, String)> = self
+                    .connection
+                    .select_row_bound("SELECT analyzed,title FROM pages WHERE revision=?")?(
+                    revision,
+                )?;
+                let title = match row {
+                    None => return Ok(false),
+                    Some((true, _)) => return Ok(true),
+                    Some((false, title)) => title,
+                };
+                let mut search = self.connection.exec_bound(
+                    "INSERT INTO search_rows(revision,title,text,block_id) VALUES (?,?,?,?)",
+                )?;
+                search((revision, title.as_str(), "", None::<&str>))?;
+                for block in &analysis.blocks {
+                    search((
+                        revision,
+                        title.as_str(),
+                        block.text.as_str(),
+                        block.id.as_deref(),
+                    ))?;
+                }
+                self.insert_rows("main.", revision, analysis)?;
+                for (ordinal, tag) in analysis.front_tags.iter().enumerate() {
+                    self.connection.exec_bound(
+                        "INSERT INTO front_tags(revision,ordinal,tag) VALUES (?,?,?)",
+                    )?((revision, ordinal as u32, tag.as_str()))?;
+                }
+                self.connection
+                    .exec_bound("UPDATE pages SET analyzed=1 WHERE revision=?")?(
+                    revision
+                )?;
+                Ok(true)
+            })?;
+        if stored {
+            self.bump();
+            self.settle_releases()?;
+        }
+        Ok(stored)
+    }
+
+    /// Writes block, link, and tag rows into `main.` tables or the `temp.overlay_` copies.
+    fn insert_rows(&self, tables: &str, revision: &str, analysis: &PageIndex) -> Result<()> {
+        for (ordinal, block) in analysis.blocks.iter().enumerate() {
+            self.connection.exec_bound(
+                    &format!("INSERT INTO {tables}blocks(revision,ordinal,key,id,start,finish,content_from,content_to,subtree_to,depth,kind,parent,text) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"),
                 )?((
                     (revision, ordinal as u32, block.key.as_str(), block.id.as_deref()),
                     (block.from, block.to, block.content_from, block.content_to),
                     (block.subtree_to, block.depth, block.kind.as_str(), block.parent.as_deref(), block.text.as_str()),
                 ))?;
-            }
-            for (ordinal, link) in analysis.links.iter().enumerate() {
-                let page = link.is_page_reference();
-                self.connection.exec_bound(
-                    "INSERT INTO links(revision,ordinal,kind,syntax,target,label,media,start,finish,text,page_key,block_key,date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        }
+        for (ordinal, link) in analysis.links.iter().enumerate() {
+            let page = link.is_page_reference();
+            self.connection.exec_bound(
+                    &format!("INSERT INTO {tables}links(revision,ordinal,kind,syntax,target,label,media,start,finish,text,page_key,block_key,date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"),
                 )?((
                     (revision, ordinal as u32, link.kind.as_str(), link.syntax.as_str(), link.target.as_str()),
                     (link.label.as_deref(), link.media.as_deref(), link.from, link.to, link.text.as_str()),
@@ -340,10 +381,10 @@ impl QueryIndex {
                         page.then(|| self.date(&link.target)).flatten(),
                     ),
                 ))?;
-            }
-            for (ordinal, tag) in analysis.tagged.iter().enumerate() {
-                self.connection.exec_bound(
-                    "INSERT INTO tagged(revision,ordinal,tag,tag_key,start,block_id,snippet) VALUES (?,?,?,?,?,?,?)",
+        }
+        for (ordinal, tag) in analysis.tagged.iter().enumerate() {
+            self.connection.exec_bound(
+                    &format!("INSERT INTO {tables}tagged(revision,ordinal,tag,tag_key,start,block_id,snippet) VALUES (?,?,?,?,?,?,?)"),
                 )?((
                     revision,
                     ordinal as u32,
@@ -353,16 +394,8 @@ impl QueryIndex {
                     tag.block_id.as_deref(),
                     tag.snippet.as_str(),
                 ))?;
-            }
-            for (ordinal, tag) in analysis.front_tags.iter().enumerate() {
-                self.connection.exec_bound(
-                    "INSERT INTO front_tags(revision,ordinal,tag) VALUES (?,?,?)",
-                )?((revision, ordinal as u32, tag.as_str()))?;
-            }
-            self.connection
-                .exec_bound("UPDATE pages SET analyzed=1 WHERE revision=?")?(revision)?;
-            Ok(true)
-        })
+        }
+        Ok(())
     }
 }
 
@@ -415,6 +448,23 @@ impl Client<QueryIndex> {
     }
     pub fn search(&self, query: String) -> Answer<Vec<SearchHit>> {
         self.request(128 + query.len(), move |index| index.search(&query))
+    }
+    pub fn set_overlay(&self, page: JsString, overlay: Overlay) -> Answer<()> {
+        let bytes = 256 + serde_json::to_vec(&overlay.index).map_or(0, |data| data.len());
+        self.request(bytes, move |index| index.set_overlay(&page, &overlay))
+    }
+    pub fn release_overlay(&self, page: JsString) -> Answer<()> {
+        self.request(128, move |index| index.release_overlay(&page))
+    }
+    /// Runs a query and returns it with the generation it observed, in one worker step.
+    pub fn with_generation<T: Send + 'static>(
+        &self,
+        query: impl FnOnce(&QueryIndex) -> Result<T> + Send + 'static,
+    ) -> Answer<(u64, T)> {
+        self.request(128, move |index| {
+            let value = query(index)?;
+            Ok((index.generation(), value))
+        })
     }
 }
 
@@ -514,23 +564,23 @@ mod tests {
                 "pages_by_date",
             ),
             (
-                "SELECT * FROM links l JOIN pages p ON p.revision=l.revision WHERE p.deleted=0 AND l.page_key=?",
+                "SELECT * FROM live_links l JOIN live_pages p ON p.revision=l.revision WHERE p.deleted=0 AND l.page_key=?",
                 "links_by_page",
             ),
             (
-                "SELECT * FROM links l JOIN pages p ON p.revision=l.revision WHERE p.deleted=0 AND l.block_key=?",
+                "SELECT * FROM live_links l JOIN live_pages p ON p.revision=l.revision WHERE p.deleted=0 AND l.block_key=?",
                 "links_by_block",
             ),
             (
-                "SELECT * FROM links l JOIN pages p ON p.revision=l.revision WHERE p.deleted=0 AND l.date=?",
+                "SELECT * FROM live_links l JOIN live_pages p ON p.revision=l.revision WHERE p.deleted=0 AND l.date=?",
                 "links_by_date",
             ),
             (
-                "SELECT * FROM blocks b JOIN pages p ON p.revision=b.revision WHERE p.deleted=0 AND b.id=?",
+                "SELECT * FROM live_blocks b JOIN live_pages p ON p.revision=b.revision WHERE p.deleted=0 AND b.id=?",
                 "blocks_by_id",
             ),
             (
-                "SELECT * FROM tagged t JOIN pages p ON p.revision=t.revision WHERE p.deleted=0 AND t.tag_key=?",
+                "SELECT * FROM live_tagged t JOIN live_pages p ON p.revision=t.revision WHERE p.deleted=0 AND t.tag_key=?",
                 "tagged_by_key",
             ),
         ] {

@@ -289,3 +289,73 @@ fn damaged_foreign_or_outdated_indexes_rebuild_without_touching_notes() -> Resul
     assert!(store.get(&store.heads("a")?[0])?.is_some());
     Ok(())
 }
+
+#[test]
+fn overlays_shadow_committed_rows_and_release_after_the_final_analysis() -> Result<()> {
+    use quire_store::index::Overlay;
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "s", "Source.md", "old")?;
+    save(&store, "x", "X.md", "")?;
+    save(&store, "y", "Y.md", "")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    let to = |target: &str| PageIndex {
+        links: vec![link("page", target, 2)],
+        ..Default::default()
+    };
+    analyze_all(&index, &[("Source.md", to("X"))])?;
+    let count = |page: &str| -> Result<usize> { Ok(index.backlinks(&JsString::from(page))?.len()) };
+    assert_eq!((count("x")?, count("y")?), (1, 0));
+    let generation = index.generation();
+    let overlay = |target: &str| Overlay {
+        path: "Source.md".into(),
+        title: "Source".into(),
+        index: to(target),
+    };
+    index.set_overlay(&JsString::from("s"), &overlay("Y"))?;
+    assert!(index.generation() > generation);
+    assert_eq!(
+        (count("x")?, count("y")?),
+        (0, 1),
+        "the overlay replaces, never adds"
+    );
+    index.set_overlay(&JsString::from("s"), &overlay("Y"))?;
+    assert_eq!(count("y")?, 1, "replacing an overlay does not duplicate it");
+
+    index.set_overlay(
+        &JsString::from("new"),
+        &Overlay {
+            path: "Fresh.md".into(),
+            title: "Fresh".into(),
+            index: to("X"),
+        },
+    )?;
+    assert_eq!(
+        index.find_page("fresh")?.map(|page| page.path),
+        Some("Fresh.md".into())
+    );
+    assert_eq!(count("x")?, 1, "an unsaved page links like a saved one");
+    index.release_overlay(&JsString::from("new"))?;
+    assert_eq!(
+        index.find_page("fresh")?,
+        None,
+        "a never-saved page leaves on release"
+    );
+
+    save(&store, "s", "Source.md", "new")?;
+    index.release_overlay(&JsString::from("s"))?;
+    assert_eq!(index.unanalyzed()?, 1);
+    assert_eq!(
+        count("y")?,
+        1,
+        "the overlay stays until the final save is analyzed"
+    );
+    analyze_all(&index, &[("Source.md", to("Y"))])?;
+    assert_eq!(count("y")?, 1);
+    let source = index.find_page("Source")?.unwrap();
+    assert!(
+        !source.revision.starts_with("overlay:"),
+        "committed rows took over"
+    );
+    Ok(())
+}

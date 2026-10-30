@@ -865,7 +865,7 @@ Constraints: Disk reads, parsing, hashing, and database waits stay off the UI th
 Write set: `quire_store` index/query modules, live-overlay coordinator, performance fixtures.
 Dependencies: NR10, NR11.
 Verify: Differential results against the reference for committed and unsaved edits; deterministic invalidation/race tests; SQL plan inspection and 1x/5x work-count checks. Search/backlinks do not enumerate all page bodies.
-Proof notes: pending; this completes the unresolved intent of source storage task 6.
+Proof notes: NR12.1 through NR12.4 deliver metadata, the query index, search, and the live overlay. Remaining before done: NR10.8 block parity (the index inherits native block boundaries), and the 1x and 5x work-count checks with `tools/synthetic-notebook.ts`, which belong with NR34 budgets. This completes the unresolved intent of source storage task 6 once those land.
 Status: in_progress
 
 #### NR12.1: Index lossless revision metadata atomically
@@ -905,8 +905,8 @@ What to do: Let open dirty buffers replace their page's committed contribution i
 Constraints: Never count a page's committed and unsaved versions together. Pin overlay snapshots while a query runs; bound overlay memory to open buffers. Reject results computed against an older generation.
 Write set: live-overlay coordinator in `crates/quire`, query merge logic, tests.
 Verify: Differential results against the reference store with unsaved edits applied; deterministic invalidation and race tests (save during query, close dirty buffer, external import).
-Proof notes: pending. Task, template, and daily-date catalogues reuse this mechanism once NR18, NR20, and NR16 port their analyzers.
-Status: pending
+Proof notes: `crates/quire_store/src/index/overlay.rs` keeps overlays in TEMP tables and serves lookups through `live_pages`, `live_blocks`, `live_links`, and `live_tagged` views. A page's committed rows drop out of `live_pages`, and the joins then drop its blocks, links, and tags, so old and new versions never count together. Every open page is overlaid, not only dirty ones, which removes the save-to-analysis gap; `release_overlay` refreshes the catalogue and waits until the page's committed head is analyzed. `IndexSync::track` subscribes to each open page's buffer, analyzes the live text 150 ms after the last edit through the same detached analyzer, holds pages weakly, and releases on entity release; the stored window tracks its open pages. `QueryIndex::generation` moves on catalogue changes, stored analysis, and overlay changes, and `IndexClient::with_generation` returns a result and its generation from one worker step. Because the worker is serialized, a save cannot interleave with a query. Search remains committed-only, matching the reference `SearchIndex`, which reads saved files. Evidence: `overlays_shadow_committed_rows_and_release_after_the_final_analysis` (replacement without double counting, idempotent replacement, unsaved new pages found by title and linking like saved ones, release of never-saved pages, release waiting for the final save's analysis) and `overlay_tests::unsaved_edits_reach_queries_and_closing_falls_back_to_saved_rows` (live buffer edits reach backlinks, generation advances, and closing a dirty, unsaved page returns to committed rows); query plans through the live views still use indexes with no scans. Task, template, and daily-date catalogues reuse this mechanism once NR18, NR20, and NR16 port their analyzers.
+Status: done
 
 ### NR13: Open existing Markdown folder notebooks
 

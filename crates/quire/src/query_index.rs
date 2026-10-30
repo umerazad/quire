@@ -1,21 +1,38 @@
 //! Keeps the notebook's query index current: pulls unanalyzed heads from the index worker,
 //! parses them on the background executor, and stores the rows.
 
+use crate::notebook_session::OpenPage;
 use crate::page_index::{ANALYZER_VERSION, analyze, editor_text};
-use gpui::{App, AppContext, Context, Entity, SharedString, Task};
+use gpui::{
+    App, AppContext, Context, Entity, EntityId, SharedString, Subscription, Task, WeakEntity,
+};
 use quire_core::daily::{DailyCalendar, DailyLayout};
+use quire_core::{json::JsString, markdown::page_title_for_editor};
+use quire_store::index::Overlay;
 use quire_store::index::{IndexClient, IndexConfig, IndexWorker};
+use std::collections::HashMap;
 use std::{path::PathBuf, time::Duration};
 
 const BATCH: usize = 16;
 const IDLE: Duration = Duration::from_secs(1);
 const RETRY: Duration = Duration::from_secs(5);
+/// Coalesces typing into one overlay analysis.
+const DEBOUNCE: Duration = Duration::from_millis(150);
 
 pub struct IndexSync {
     client: IndexClient,
     remaining: usize,
     error: Option<SharedString>,
+    tracked: HashMap<EntityId, Tracked>,
     _task: Task<()>,
+}
+
+/// An open page feeding its live analysis to the index.
+struct Tracked {
+    page: WeakEntity<OpenPage>,
+    buffer: Option<EntityId>,
+    update: Option<Task<()>>,
+    _subscriptions: Vec<Subscription>,
 }
 
 /// The standard daily layout until notebook settings reach the app (NR16).
@@ -29,6 +46,16 @@ pub fn default_config(calendar: DailyCalendar) -> IndexConfig {
 
 fn describe(error: impl std::fmt::Display) -> String {
     format!("{error:#}")
+}
+
+/// Sends a request to the index worker and waits for its reply, as one error message.
+async fn ask<T>(
+    request: Result<quire_store::worker::Reply<T>, quire_store::worker::QueueError>,
+) -> Result<T, String> {
+    request
+        .map_err(|error| error.to_string())?
+        .await
+        .map_err(describe)
 }
 
 impl IndexSync {
@@ -77,6 +104,7 @@ impl IndexSync {
                 client: worker.client.clone(),
                 remaining: 0,
                 error: None,
+                tracked: HashMap::new(),
                 _task: task,
             }
         }))
@@ -84,27 +112,15 @@ impl IndexSync {
 
     /// Analyzes one batch and returns how many pages still need analysis.
     async fn step(client: &IndexClient, cx: &mut gpui::AsyncApp) -> Result<usize, String> {
-        let pending = client
-            .pending(BATCH)
-            .map_err(|error| error.to_string())?
-            .await
-            .map_err(describe)?;
+        let pending = ask(client.pending(BATCH)).await?;
         for page in pending {
             let work = cx.update(|cx| analyze(editor_text(&page.text), cx));
             let Some(analysis) = cx.background_spawn(work).await else {
                 return Err("Cannot analyze pages because the Markdown grammar is unavailable. Rebuild Quire with its bundled grammars.".into());
             };
-            client
-                .put(page.revision, analysis)
-                .map_err(|error| error.to_string())?
-                .await
-                .map_err(describe)?;
+            ask(client.put(page.revision, analysis)).await?;
         }
-        client
-            .unanalyzed()
-            .map_err(|error| error.to_string())?
-            .await
-            .map_err(describe)
+        ask(client.unanalyzed()).await
     }
 
     fn set_error(&mut self, error: Option<String>, cx: &mut Context<Self>) {
@@ -122,6 +138,96 @@ impl IndexSync {
 
     pub fn error(&self) -> Option<&SharedString> {
         self.error.as_ref()
+    }
+
+    /// Feeds an open page's live analysis to the index until the page entity is released, so
+    /// queries see unsaved edits without counting the committed version as well.
+    pub fn track(&mut self, page: Entity<OpenPage>, cx: &mut Context<Self>) {
+        let id = page.entity_id();
+        if self.tracked.contains_key(&id) {
+            return;
+        }
+        let subscriptions = vec![
+            cx.observe(&page, move |this, _, cx| this.attach(id, cx)),
+            cx.observe_release(&page, move |this, page, cx| {
+                this.tracked.remove(&id);
+                let release = this.client.release_overlay(JsString::from(page.id()));
+                cx.background_spawn(async move { ask(release).await.ok() })
+                    .detach();
+            }),
+        ];
+        self.tracked.insert(
+            id,
+            Tracked {
+                page: page.downgrade(),
+                buffer: None,
+                update: None,
+                _subscriptions: subscriptions,
+            },
+        );
+        self.attach(id, cx);
+    }
+
+    fn attach(&mut self, id: EntityId, cx: &mut Context<Self>) {
+        let Some(tracked) = self.tracked.get_mut(&id) else {
+            return;
+        };
+        let Some(buffer) = tracked.page.upgrade().and_then(|page| {
+            page.read(cx)
+                .loaded()
+                .map(|loaded| loaded.analysis.read(cx).source.clone())
+        }) else {
+            return;
+        };
+        if tracked.buffer == Some(buffer.entity_id()) {
+            return;
+        }
+        tracked.buffer = Some(buffer.entity_id());
+        tracked
+            ._subscriptions
+            .push(cx.subscribe(&buffer, move |this, _, event, cx| {
+                if matches!(event, language::BufferEvent::Edited { .. }) {
+                    this.schedule(id, DEBOUNCE, cx);
+                }
+            }));
+        self.schedule(id, Duration::ZERO, cx);
+    }
+
+    fn schedule(&mut self, id: EntityId, delay: Duration, cx: &mut Context<Self>) {
+        let Some(tracked) = self.tracked.get_mut(&id) else {
+            return;
+        };
+        let page = tracked.page.clone();
+        let client = self.client.clone();
+        tracked.update = Some(cx.spawn(async move |this: gpui::WeakEntity<Self>, cx| {
+            if !delay.is_zero() {
+                cx.background_executor().timer(delay).await;
+            }
+            let Ok(Some((key, path, text))) = page.read_with(cx, |page, cx| {
+                page.loaded().map(|loaded| {
+                    let text = loaded.analysis.read(cx).source.read(cx).text();
+                    (
+                        page.id().to_owned(),
+                        loaded.path.clone().unwrap_or_default(),
+                        text,
+                    )
+                })
+            }) else {
+                return;
+            };
+            let title = page_title_for_editor(&path.as_str().into(), &text.as_str().into())
+                .to_lossy_string();
+            let work = cx.update(|cx| analyze(text, cx));
+            let Some(index) = cx.background_spawn(work).await else {
+                return;
+            };
+            let result =
+                ask(client
+                    .set_overlay(JsString::from(key.as_str()), Overlay { path, title, index }))
+                .await;
+            this.update(cx, |this, cx| this.set_error(result.err(), cx))
+                .ok();
+        }));
     }
 
     /// Progress for the window status, while pages are still being indexed.
@@ -321,5 +427,98 @@ mod search_tests {
             }
         }
         assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+    }
+}
+
+#[cfg(test)]
+mod overlay_tests {
+    use super::*;
+    use crate::notebook_session::NotebookSession;
+    use gpui::TestAppContext;
+    use quire_store::notebook::{Edit, NotebookStore};
+
+    #[gpui::test]
+    async fn unsaved_edits_reach_queries_and_closing_falls_back_to_saved_rows(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("local.sqlite");
+        let store = NotebookStore::open(&database, "nb", "local").unwrap();
+        for (page, text) in [
+            ("Target", ""),
+            ("Other", ""),
+            ("Source", "- see [[Target]]\n"),
+        ] {
+            store
+                .save(&Edit {
+                    page: page.into(),
+                    path: format!("{page}.md"),
+                    text: text.into(),
+                    base: vec![],
+                    deleted: false,
+                    created: 1,
+                    recovery: None,
+                })
+                .unwrap();
+        }
+        let sync = cx
+            .update(|cx| {
+                IndexSync::spawn(database.clone(), default_config(DailyCalendar::utc()), cx)
+            })
+            .unwrap();
+        let client = cx.read(|cx| sync.read(cx).client().clone());
+        super::tests::settle(&client, cx).await;
+        let mut session =
+            NotebookSession::open(database.clone(), "nb".into(), "local".into()).unwrap();
+        let page = cx.update(|cx| session.open_page("Source".into(), cx));
+        crate::notebook_session::tests::wait(&page, cx);
+        sync.update(cx, |sync, cx| sync.track(page.clone(), cx));
+        let backlinks = async |page: &str, cx: &mut TestAppContext| {
+            cx.executor().advance_clock(DEBOUNCE);
+            cx.run_until_parked();
+            client
+                .with_generation({
+                    let page = JsString::from(page);
+                    move |index| index.backlinks(&page)
+                })
+                .unwrap()
+                .await
+                .unwrap()
+        };
+        let (opened, links) = backlinks("Target", cx).await;
+        assert_eq!(links.len(), 1, "an open page counts once");
+        let buffer = cx.read(|cx| {
+            page.read(cx)
+                .loaded()
+                .unwrap()
+                .analysis
+                .read(cx)
+                .source
+                .clone()
+        });
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_capability(language::Capability::ReadWrite, cx);
+            buffer.edit([(8..14, "Other")], None, cx);
+        });
+        let (edited, links) = backlinks("Other", cx).await;
+        assert!(edited > opened, "an overlay change moves the generation");
+        assert_eq!(
+            links[0].link.text, "see [[Other]]",
+            "queries see unsaved text"
+        );
+        assert!(backlinks("Target", cx).await.1.is_empty());
+        drop(session);
+        drop(page);
+        drop(buffer);
+        cx.update(|_| {});
+        cx.run_until_parked();
+        assert_eq!(
+            backlinks("Target", cx).await.1.len(),
+            1,
+            "a closed page without a save falls back to its committed rows"
+        );
+        assert!(backlinks("Other", cx).await.1.is_empty());
     }
 }

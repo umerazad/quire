@@ -134,6 +134,9 @@ pub struct OpenPage {
 }
 
 impl OpenPage {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
     pub fn is_loading(&self) -> bool {
         matches!(self.state, LoadState::Loading)
     }
