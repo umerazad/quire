@@ -4,11 +4,13 @@
 //! cache: deleting it loses nothing, and any version, identity, or corruption mismatch rebuilds it.
 //! Rows are keyed by immutable revision IDs, so a row is either complete or absent, never stale.
 
+mod catalog;
 mod overlay;
 mod query;
 mod references;
 mod schema;
 
+pub use catalog::{ListedPage, SETTINGS_PAGE};
 pub use overlay::Overlay;
 pub use query::{Backlink, PageRef, SearchHit, TagCount, TaggedBlock};
 pub use references::{Facet, FacetKind, ReferenceBlock};

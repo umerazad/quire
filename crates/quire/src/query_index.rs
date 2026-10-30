@@ -131,7 +131,6 @@ impl IndexSync {
         }
     }
 
-    #[cfg(test)]
     pub fn client(&self) -> &IndexClient {
         &self.client
     }

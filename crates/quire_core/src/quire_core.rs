@@ -5,3 +5,4 @@ pub mod merge;
 pub mod reference_filter;
 pub mod source_text;
 pub mod tag_edits;
+pub mod workspace;

@@ -73,6 +73,10 @@ impl NotebookSession {
             .clone()
     }
 
+    pub fn storage(&self) -> StorageClient {
+        self.client.clone()
+    }
+
     pub fn open_pages(&self) -> Vec<Entity<OpenPage>> {
         self.pages.values().cloned().collect()
     }
