@@ -5,6 +5,7 @@ use std::ops::Range;
 #[derive(Default)]
 pub(super) struct Exclusions {
     pub code: Vec<Range<usize>>,
+    pub code_blocks: Vec<Range<usize>>,
     pub tags: Vec<Range<usize>>,
     #[cfg(test)]
     pub inline_reparses: usize,
@@ -207,6 +208,25 @@ fn inline_exclusions(
     Some(())
 }
 
+/// A code block as the reference parser bounds it: from its first non-blank character to its
+/// closing fence or last code line, or to the end of its container when a fence never closes.
+fn code_block(node: &tree_sitter::Node, text: &str) -> Range<usize> {
+    let range = node.byte_range();
+    let source = &text[range.clone()];
+    let start = range.end - source.trim_start_matches([' ', '\t']).len();
+    let mut cursor = node.walk();
+    let fences = node
+        .children(&mut cursor)
+        .filter(|child| child.kind() == "fenced_code_block_delimiter")
+        .count();
+    let end = if node.kind() == "fenced_code_block" && fences < 2 {
+        range.end
+    } else {
+        range.start + source.trim_end().len()
+    };
+    start..end.max(start)
+}
+
 pub(super) fn exclusions(snapshot: &BufferSnapshot, text: &str) -> Option<Exclusions> {
     let mut result = Exclusions::default();
     let mut primary = false;
@@ -225,6 +245,7 @@ pub(super) fn exclusions(snapshot: &BufferSnapshot, text: &str) -> Option<Exclus
             match node.kind() {
                 "fenced_code_block" | "indented_code_block" => {
                     result.code.push(range.clone());
+                    result.code_blocks.push(code_block(&node, text));
                     result.tags.push(range);
                 }
                 "html_block" => {

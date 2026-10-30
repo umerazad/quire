@@ -167,6 +167,21 @@ fn same_syntax(a: &BufferSnapshot, b: &BufferSnapshot) -> bool {
     same_source(a, b) && a.syntax_update_count() == b.syntax_update_count()
 }
 
+/// What task analysis reads from the syntax tree.
+pub(crate) struct TaskSyntax {
+    /// Ranges where tags are not recognized.
+    pub tags: Vec<std::ops::Range<usize>>,
+    /// Fenced and indented code blocks, bounded as the reference parser bounds them.
+    pub code_blocks: Vec<std::ops::Range<usize>>,
+}
+
+pub(crate) fn task_syntax(snapshot: &BufferSnapshot, text: &str) -> Option<TaskSyntax> {
+    syntax::exclusions(snapshot, text).map(|excluded| TaskSyntax {
+        tags: excluded.tags,
+        code_blocks: excluded.code_blocks,
+    })
+}
+
 pub(crate) fn analyze_inline(snapshot: &BufferSnapshot) -> Option<InlineAnalysis> {
     let text = snapshot.text();
     let excluded = syntax::exclusions(snapshot, &text)?;
