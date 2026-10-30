@@ -11,6 +11,7 @@ mod checkout;
 mod delivery;
 mod folder;
 mod import;
+mod merge;
 mod metadata;
 mod migration;
 mod publication;
@@ -20,6 +21,7 @@ mod revision;
 pub use checkout::PageCheckout;
 pub use folder::{RescanCursor, RescanLimits, RescanProblem, RescanReport, RescanWait};
 pub use import::{BatchImport, ImportedBatch, ImportedPage};
+pub use merge::{MergeFailure, MergeReport, MergedPage};
 pub use metadata::{MetadataLimits, PageMetadata};
 pub use publication::PendingPublication;
 pub use publisher::PublicationAck;
@@ -34,10 +36,30 @@ pub struct NotebookStore {
     device: String,
     poisoned: Cell<bool>,
     directory: PathBuf,
+    clock: Clock,
+}
+
+/// Milliseconds stamped on merge revisions that rescans make.
+pub type Clock = Box<dyn Fn() -> u64>;
+
+fn system_clock() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis() as u64)
 }
 
 impl NotebookStore {
     pub fn open(path: &Path, notebook: &str, device: &str) -> Result<Self> {
+        Self::open_with_clock(path, notebook, device, Box::new(system_clock))
+    }
+
+    /// Opens the store with the clock that stamps merges made by later rescans.
+    pub fn open_with_clock(
+        path: &Path,
+        notebook: &str,
+        device: &str,
+        clock: Clock,
+    ) -> Result<Self> {
         ensure!(
             !notebook.is_empty() && !device.is_empty(),
             "Notebook and writer identities are required. Choose a notebook and retry."
@@ -52,6 +74,7 @@ impl NotebookStore {
                 .parent()
                 .context("Database path has no parent folder.")?
                 .to_owned(),
+            clock,
         };
         store.preflight().context("Cannot open this notebook database. Preserve it and use a compatible Quire version or a verified backup.")?;
         database::configure(&store.connection).context("Cannot configure durable notebook storage. Keep the editor contents and check the database folder's write permissions and available space.")?;

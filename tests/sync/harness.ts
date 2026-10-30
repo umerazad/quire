@@ -253,6 +253,14 @@ export class Computer {
     if (result.saved) saved.set(result.revision.id, result.revision);
     if (result.replaced) saved.delete(result.replaced);
     buffer.base = [result.revision.id];
+    // Saved from a version another computer moved past: the editor shows
+    // the merge and continues from it.
+    if (result.merged) {
+      saved.set(result.merged.id, result.merged);
+      buffer.base = [result.merged.id];
+      buffer.text = result.merged.text;
+      buffer.path = result.merged.path;
+    }
     buffer.dirty = false;
     return result;
   }
@@ -387,10 +395,16 @@ export async function runSchedule(
   // Settle: everyone saves, publishes and imports until nothing moves.
   for (const computer of computers)
     for (const page of computer.buffers.keys()) computer.save(page, saved);
-  for (let round = 0; round < 4; round++) {
+  // Merges made while settling are themselves published and imported.
+  for (let round = 0; round < 12; round++) {
     for (const computer of computers) await computer.publish();
     network.deliverAll();
     for (const computer of computers) await computer.sync();
+    if (
+      round >= 3 &&
+      computers.every((computer) => !computer.store.outbox().length)
+    )
+      break;
   }
   return { computers, saved, network, idleSaves, mode };
 }
@@ -399,10 +413,11 @@ export async function runSchedule(
 export function check({
   computers,
   saved,
-  mode,
 }: Awaited<ReturnType<typeof runSchedule>>) {
-  if (mode === "careful" && computers.some((c) => c.replica.conflicts().length))
-    return "a careful hand-over produced a conflict";
+  // Competing versions always merge.
+  for (const computer of computers)
+    if (computer.replica.conflicts().length)
+      return `${computer.name} kept competing versions of ${computer.replica.conflicts().join(", ")}`;
   for (const computer of computers) {
     if (computer.store.outbox().length)
       return `${computer.name} still has unpublished revisions`;

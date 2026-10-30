@@ -4,15 +4,18 @@
   "node": "26.3.0",
   "files": {
     "sync/format.ts": "2ca6aadd91c82e327c833aba4bbf50a78d9a998db1057f0b7f39a94d67c4286d",
-    "sync/graph.ts": "6ea8863244136ca980c7b79138aaee3e1c25da322cf47c048ad8822b9803bba2",
-    "sync/replica.ts": "868936de064b24a2a41a8e46be59daace6efa7118211dbaf21d97981f4ffa867",
+    "sync/graph.ts": "05aeda526c2cdd0027ba555f214048e7e412b060fa39aa9ed7d76bd45398892c",
+    "sync/replica.ts": "750dc218d5b1628a3b45b3ebec190cae71943c07e35c01f67310a3c6b3433bd8",
     "sync-format.test.ts": "5513f7bc56a49f9b8826cb5c24103ad0cecd071e8402b8e41c086d84511e0521",
     "../../tools/synthetic-notebook.ts": "209c3bf86cef21f1d8f47d65bbd69fd2be17aa3b6566b15792fdfcd80cd0d52d",
     "markdown/markdown.ts": "ed2023610b8b3fbb9302fd81af889bf0fb4da6fa8b7932bf592de3d914466bb7",
     "markdown/range-set.ts": "f38e035299fb90fe0e8bc9c1b945b58d03a85dc9078dc59bb3281b7ee34b8a6c",
     "daily/daily-layout.ts": "32a3eccd9eea5de811a321f74d930788453ceb4f3d309421acd4bc7ca1bb4e24",
     "daily/workspace.ts": "b9c05efe0846973676ce8e666f87657e091a69f732741ad933148c4110bd000e",
-    "daily/local-date.ts": "0786f47b120ae1a8759ea1cbdc840fecc82f24ab3aecb183f77d8f5e681806f6"
+    "daily/local-date.ts": "0786f47b120ae1a8759ea1cbdc840fecc82f24ab3aecb183f77d8f5e681806f6",
+    "core/merge.ts": "dd7607dfa2f855db33d5491393bc51a5c991ebccc45230f86571a50c665d5398",
+    "merge.test.ts": "349044ad750a310b6597aee9898abd488f9c2d72f6ce04f068bcadb36310f197",
+    "../fixtures/merges.json": "24d3c2831229a01c0c776b44b961d62d8df48a645c11801720b3e6accd970332"
   },
   "daily_extractions": [
     {
@@ -36,18 +39,50 @@
   ],
   "schedule_harness": {
     "repository": "rt",
-    "revision": "4985e4080d2302b2abb416f2db7fa390080786c8",
+    "revision": "5ea5c22310fff0c3d97f069930500fd85067fa96",
     "source": "tests/sync/harness.ts",
-    "sha256": "7103ecc3abe4761d7629b587b135c4653d09f58f67eedbb404b120f3c65cf6d6",
+    "sha256": "f89b0868a5c89c952aad58704caf1bcf4cff4a244d843731b1184532c22b09b4",
     "destination": "../sync/harness.ts",
     "adaptations": [
       "Imports use the existing frozen protocol, graph, and replica snapshot.",
       "Engine/store interfaces contain only methods the scheduler uses; TypeScript backing stores retain the full mutation interface.",
-      "The ancestry traversal is copied unchanged from the frozen graph with a read-only get interface."
+      "The ancestry traversal is copied unchanged from the frozen graph with a read-only get interface.",
+      "Refreshed from 4985e4080d23: stale saves continue from the reported merge, settling runs up to 12 rounds, and any computer left with competing versions fails the schedule."
     ]
   },
   "markdown_dependencies": {
     "@lezer/common": "1.5.4",
     "@lezer/markdown": "1.8.1"
+  },
+  "merge_refresh": {
+    "repository": "rt",
+    "revision": "5ea5c22310fff0c3d97f069930500fd85067fa96",
+    "files": {
+      "sync/graph.ts": "src/desktop/sync/graph.ts",
+      "sync/replica.ts": "src/desktop/sync/replica.ts",
+      "core/merge.ts": "src/core/merge.ts",
+      "merge.test.ts": "tests/merge.test.ts",
+      "../fixtures/merges.json": "tests/fixtures/merges.json"
+    },
+    "unchanged_since_base": [
+      "sync/format.ts",
+      "sync-format.test.ts",
+      "markdown/markdown.ts",
+      "markdown/range-set.ts",
+      "daily/daily-layout.ts",
+      "daily/local-date.ts"
+    ],
+    "adaptations": [
+      "graph.ts imports mergeText from ../core/merge instead of ../../core/merge; nothing else changed.",
+      "merge.test.ts imports ../fixtures/merges.json and ./core/merge.",
+      "core/merge.ts, replica.ts, and merges.json are copied unchanged.",
+      "daily/workspace.ts stays at the base revision; namespaceOf and projectStatus changed later and belong to NR16."
+    ],
+    "vectors": {
+      "tool": "tools/merge-vectors.ts",
+      "output": "tests/fixtures/merge-vectors.json",
+      "source": "Page and edit generators copied from rt tests/merge-go.test.ts at this revision (seed 42), plus edge cases and 300 seeded head graphs passed through the frozen mergeHeads.",
+      "bun": "1.4.2"
+    }
   }
 }

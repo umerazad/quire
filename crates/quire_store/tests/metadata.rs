@@ -7,6 +7,8 @@ use quire_store::{
 };
 use sqlez::connection::Connection;
 
+mod common;
+
 fn edit(page: &str, text: &str, base: Vec<String>) -> Edit {
     Edit {
         page: page.into(),
@@ -128,7 +130,7 @@ fn metadata_tracks_coalescing_conflicts_and_tombstones() -> Result<()> {
             .as_str(),
         Some("second")
     );
-    store.save(&edit("p", "---\ntitle: branch\n---\n", vec![]))?;
+    common::import_branch(&store, "peer", "p", &[], "---\ntitle: branch\n---\n", false)?;
     let heads = store.heads("p")?;
     let pages = store.page_metadata(None, MetadataLimits::default())?;
     assert_eq!(pages[0].heads, 2);

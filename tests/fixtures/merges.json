@@ -1,0 +1,162 @@
+[
+  {
+    "name": "edits to different lines both apply",
+    "base": "- one\n- two\n- three\n",
+    "first": "- one!\n- two\n- three\n",
+    "second": "- one\n- two\n- three?\n",
+    "text": "- one!\n- two\n- three?\n",
+    "overlaps": 0
+  },
+  {
+    "name": "edits to adjacent lines both apply",
+    "base": "- one\n- two\n",
+    "first": "- one!\n- two\n",
+    "second": "- one\n- two?\n",
+    "text": "- one!\n- two?\n",
+    "overlaps": 0
+  },
+  {
+    "name": "both add lines at the end: all are kept, the first side's first, without an overlap",
+    "base": "- one\n",
+    "first": "- one\n- from first\n",
+    "second": "- one\n- from second\n",
+    "text": "- one\n- from first\n- from second\n",
+    "overlaps": 0
+  },
+  {
+    "name": "a ticked task and a reworded task on one line merge word by word",
+    "base": "- [ ] buy milk\n",
+    "first": "- [x] buy milk\n",
+    "second": "- [ ] buy oat milk\n",
+    "text": "- [x] buy oat milk\n",
+    "overlaps": 0
+  },
+  {
+    "name": "changed time and added words on one line merge",
+    "base": "- meeting at 3pm\n",
+    "first": "- meeting at 4pm\n",
+    "second": "- meeting at 3pm with the team\n",
+    "text": "- meeting at 4pm with the team\n",
+    "overlaps": 0
+  },
+  {
+    "name": "the same word changed two ways keeps both lines and one block id",
+    "base": "- call Sam ^b-1\n",
+    "first": "- call Alex ^b-1\n",
+    "second": "- call Robin ^b-1\n",
+    "text": "- call Alex ^b-1\n- call Robin\n",
+    "overlaps": 1
+  },
+  {
+    "name": "identical changes apply once",
+    "base": "- a\n- b\n",
+    "first": "- a\n- B\n- c\n",
+    "second": "- a\n- B\n- c\n",
+    "text": "- a\n- B\n- c\n",
+    "overlaps": 0
+  },
+  {
+    "name": "an edit wins over a deletion of the same line",
+    "base": "- a\n- b\n- c\n",
+    "first": "- a\n- c\n",
+    "second": "- a\n- b edited\n- c\n",
+    "text": "- a\n- b edited\n- c\n",
+    "overlaps": 1
+  },
+  {
+    "name": "a deletion and an edit elsewhere both apply",
+    "base": "- a\n- b\n- c\n",
+    "first": "- a\n- c\n",
+    "second": "- a\n- b\n- c!\n",
+    "text": "- a\n- c!\n",
+    "overlaps": 0
+  },
+  {
+    "name": "pages started separately keep both texts",
+    "base": "",
+    "first": "- from first",
+    "second": "- from second",
+    "text": "- from first\n- from second",
+    "overlaps": 1
+  },
+  {
+    "name": "a child added under one block and text added to another",
+    "base": "- Plan\n  - step one\n- Notes\n",
+    "first": "- Plan\n  - step one\n  - step two\n- Notes\n",
+    "second": "- Plan\n  - step one\n- Notes about the launch\n",
+    "text": "- Plan\n  - step one\n  - step two\n- Notes about the launch\n",
+    "overlaps": 0
+  },
+  {
+    "name": "Arabic words merge like any others",
+    "base": "- اجتماع غدا\n",
+    "first": "- اجتماع اليوم\n",
+    "second": "- اجتماع غدا مع الفريق\n",
+    "text": "- اجتماع اليوم مع الفريق\n",
+    "overlaps": 0
+  },
+  {
+    "name": "one side unchanged takes the other",
+    "base": "- a\n",
+    "first": "- a\n",
+    "second": "- b\n",
+    "text": "- b\n",
+    "overlaps": 0
+  },
+  {
+    "name": "both sides typed into an empty bullet",
+    "base": "- one\n- \n",
+    "first": "- one\n- first words\n",
+    "second": "- one\n- second words\n",
+    "text": "- one\n- first words\n- second words\n",
+    "overlaps": 1
+  },
+  {
+    "name": "a block id kept by only the second copy stays",
+    "base": "- note\n",
+    "first": "- note one\n",
+    "second": "- note two ^b-2\n",
+    "text": "- note one\n- note two ^b-2\n",
+    "overlaps": 1
+  },
+  {
+    "name": "a removed trailing newline and an edit both apply",
+    "base": "- a\n- b\n",
+    "first": "- a\n- b",
+    "second": "- A\n- b\n",
+    "text": "- A\n- b",
+    "overlaps": 0
+  },
+  {
+    "name": "a line added above a line the other side changed: both apply",
+    "base": "- one\n- two\n",
+    "first": "- zero\n- one\n- two\n",
+    "second": "- one!\n- two\n",
+    "text": "- zero\n- one!\n- two\n",
+    "overlaps": 0
+  },
+  {
+    "name": "a line changed below a line the other side added: both apply",
+    "base": "- one\n- two\n",
+    "first": "- one!\n- two\n",
+    "second": "- zero\n- one\n- two\n",
+    "text": "- zero\n- one!\n- two\n",
+    "overlaps": 0
+  },
+  {
+    "name": "words added before a word the other side changed merge",
+    "base": "- call Sam\n",
+    "first": "- [ ] call Sam\n",
+    "second": "- email Sam\n",
+    "text": "- [ ] email Sam\n",
+    "overlaps": 0
+  },
+  {
+    "name": "a line added above a line the other side removed: the addition stays",
+    "base": "- one\n- two\n",
+    "first": "- zero\n- one\n- two\n",
+    "second": "- two\n",
+    "text": "- zero\n- two\n",
+    "overlaps": 0
+  }
+]

@@ -4,10 +4,12 @@ use quire_store::sync::format::{self, Expected, Kind};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
+    cell::Cell,
     collections::{BTreeSet, HashMap},
     fs::{self, File, OpenOptions},
     io::{BufRead as _, BufReader, Write as _},
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 #[derive(Deserialize)]
@@ -47,6 +49,7 @@ impl Peer {
         let mut batches = 0;
         let mut problems = Vec::new();
         let mut waiting = Vec::new();
+        let mut overlapped = BTreeSet::new();
         for _ in 0..1024 {
             let report = self.store.rescan(
                 &self.directory.join(name),
@@ -73,10 +76,19 @@ impl Peer {
                 };
                 json!({"device":device,"reason":format!("{wait:?}")})
             }));
+            for merged in report.merged.iter().filter(|merged| merged.overlaps > 0) {
+                overlapped.insert(
+                    merged
+                        .page
+                        .as_str()
+                        .context("Schedule page identity is not valid UTF-8.")?
+                        .to_owned(),
+                );
+            }
             continuation = report.continuation;
             if continuation.is_none() {
                 return Ok(
-                    json!({"applied":applied,"batches":batches,"pages":pages,"problems":problems,"waiting":waiting,"missingAttachments":self.store.pending_attachments(None,2000)?}),
+                    json!({"applied":applied,"batches":batches,"pages":pages,"problems":problems,"waiting":waiting,"missingAttachments":self.store.pending_attachments(None,2000)?,"overlapped":overlapped}),
                 );
             }
         }
@@ -84,7 +96,20 @@ impl Peer {
     }
 }
 
-fn execute(root: &Path, peers: &mut HashMap<String, Peer>, request: Request) -> Result<Value> {
+fn clock(now: &Rc<Cell<u64>>) -> quire_store::notebook::Clock {
+    let now = now.clone();
+    Box::new(move || now.get())
+}
+
+fn execute(
+    root: &Path,
+    peers: &mut HashMap<String, Peer>,
+    now: &Rc<Cell<u64>>,
+    request: Request,
+) -> Result<Value> {
+    if request.now > 0 {
+        now.set(request.now);
+    }
     match request.op.as_str() {
         "reset" => {
             peers.clear();
@@ -115,10 +140,11 @@ fn execute(root: &Path, peers: &mut HashMap<String, Peer>, request: Request) -> 
                     serde_json::to_vec(&json!({"format":1,"id":request.notebook,"created":1}))?,
                 )?;
             }
-            let store = NotebookStore::open(
+            let store = NotebookStore::open_with_clock(
                 &directory.join("local.sqlite"),
                 &request.notebook,
                 &request.device,
+                clock(now),
             )?;
             let result = json!({"directory":directory});
             peers.insert(request.peer, Peer { store, directory });
@@ -150,7 +176,12 @@ fn execute(root: &Path, peers: &mut HashMap<String, Peer>, request: Request) -> 
                     Err(error) => return Err(error.into()),
                 }
             }
-            let store = NotebookStore::open(&directory.join("local.sqlite"), &notebook, &device)?;
+            let store = NotebookStore::open_with_clock(
+                &directory.join("local.sqlite"),
+                &notebook,
+                &device,
+                clock(now),
+            )?;
             peers.insert(request.peer, Peer { store, directory });
             return Ok(Value::Null);
         }
@@ -186,7 +217,7 @@ fn execute(root: &Path, peers: &mut HashMap<String, Peer>, request: Request) -> 
                 .edit
                 .context("Schedule save has no edit. Include a complete Edit value.")?;
             let result = store.save(&edit)?;
-            json!({"revision":result.revision.canonical()?,"heads":result.heads,"conflict":result.conflict,"saved":result.changed,"replaced":result.replaced})
+            json!({"revision":result.revision.canonical()?,"heads":result.heads,"conflict":result.conflict,"saved":result.changed,"replaced":result.replaced,"merged":result.merged.map(|merged| merged.canonical()).transpose()?,"overlaps":result.overlaps})
         }
         "select" => {
             let report = peer.scan("outgoing")?;
@@ -263,6 +294,7 @@ fn main() -> Result<()> {
     fs::create_dir(&root)
         .context("Cannot claim the schedule peers directory. Use a fresh fixture root.")?;
     let mut peers = HashMap::new();
+    let now = Rc::new(Cell::new(1));
     for line in BufReader::new(input).lines() {
         let line = line?;
         let request = serde_json::from_str::<Request>(&line);
@@ -273,7 +305,7 @@ fn main() -> Result<()> {
         }
         let result = request
             .map_err(anyhow::Error::from)
-            .and_then(|request| execute(&root, &mut peers, request));
+            .and_then(|request| execute(&root, &mut peers, &now, request));
         let reply = match result {
             Ok(result) => json!({"result":result}),
             Err(error) => json!({"error":format!("{error:#}")}),

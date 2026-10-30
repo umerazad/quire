@@ -827,10 +827,19 @@ mod tests {
         edit.deleted = true;
         edit.text.clear();
         store.save(&edit).unwrap();
-        edit.base.clear();
-        edit.deleted = false;
-        edit.text = "other branch".into();
-        store.save(&edit).unwrap();
+        // A save would merge a second head at once, so the competing version arrives by import.
+        let mut other = serde_json::json!({"page":"p","parents":[],"generation":0,"path":"Note.md","text":"other branch","deleted":false,"created":1,"device":"peer"});
+        other["id"] = quire_store::sync::format::revision_id(&other)
+            .unwrap()
+            .into();
+        let batch = quire_store::sync::format::encode(
+            &serde_json::json!({"notebook":"nb","device":"peer","seq":1,"previous":null,"created":1,"revisions":[other],"attachments":[]}),
+            quire_store::sync::format::Kind::Batch,
+        )
+        .unwrap();
+        store
+            .import_batch("peer", &batch.name, &batch.data)
+            .unwrap();
         let text = "- [ ] recovered اردو #work ^b-one\r\n- end\r";
         let normalized = "- [ ] recovered اردو #work ^b-one\n- end\n";
         let draft = Draft {
