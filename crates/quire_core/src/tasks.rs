@@ -17,7 +17,7 @@ pub use commands::{
     created_stamp, task_at, tasks_in,
 };
 pub use dates::{add_days, date_phrase, is_due, is_upcoming, short_date, task_date_label};
-pub use filter::{TaskFilter, project_membership};
+pub use filter::{TaskFilter, memberships, project_membership};
 
 use crate::daily::{DailyCalendar, DailyLayout, DailyParser, format_daily};
 use crate::markdown::{Reference, ReferenceKind, TagToken, js_space};
@@ -522,7 +522,7 @@ fn owned(items: Vec<&str>) -> Vec<String> {
 /// Where a task's created and due dates come from: its stamps' targets, its own page links
 /// other than the created stamp, and its ancestors' links. The daily layout turns them into
 /// dates; a task on a daily page falls back to that page's date.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DateSources {
     pub created: Option<String>,
     pub due: Option<String>,

@@ -108,7 +108,7 @@ pub fn init(cx: &mut App) {
 }
 
 /// The page's native analysis, as task semantics read it.
-struct Analysis {
+pub(crate) struct Analysis {
     text: String,
     blocks: Vec<Block>,
     references: Vec<quire_core::markdown::Reference>,
@@ -118,7 +118,7 @@ struct Analysis {
 }
 
 impl Analysis {
-    fn read(snapshot: &BufferSnapshot) -> Option<Self> {
+    pub(crate) fn read(snapshot: &BufferSnapshot) -> Option<Self> {
         let text = snapshot.text();
         let blocks = crate::markdown_blocks::current_blocks(snapshot)?;
         let inline = crate::page_analysis::analyze_inline(snapshot)?;
@@ -133,7 +133,7 @@ impl Analysis {
         })
     }
 
-    fn with_page<R>(&self, title: &str, run: impl FnOnce(&Page) -> R) -> R {
+    pub(crate) fn with_page<R>(&self, title: &str, run: impl FnOnce(&Page) -> R) -> R {
         let blocks: Vec<PageBlock> = self
             .blocks
             .iter()

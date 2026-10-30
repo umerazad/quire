@@ -1,7 +1,9 @@
 use anyhow::Result;
 use quire_core::daily::{DailyCalendar, DailyLayout};
 use quire_store::{
-    index::{IndexConfig, IndexedBlock, IndexedLink, IndexedTag, PageIndex, QueryIndex},
+    index::{
+        IndexConfig, IndexedBlock, IndexedLink, IndexedTag, IndexedTask, PageIndex, QueryIndex,
+    },
     notebook::{Edit, NotebookStore},
     sync::json::JsString,
 };
@@ -356,6 +358,134 @@ fn overlays_shadow_committed_rows_and_release_after_the_final_analysis() -> Resu
     assert!(
         !source.revision.starts_with("overlay:"),
         "committed rows took over"
+    );
+    Ok(())
+}
+
+fn task(text: &str, state: &str, dates: quire_core::tasks::DateSources) -> IndexedTask {
+    IndexedTask {
+        key: text.into(),
+        raw: format!("[ ] {text}"),
+        text: text.into(),
+        state: state.into(),
+        dates,
+        ..Default::default()
+    }
+}
+
+fn due_by_link(target: &str) -> quire_core::tasks::DateSources {
+    quire_core::tasks::DateSources {
+        links: vec![target.into()],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn task_rows_keep_date_sources_through_layout_changes_and_overlays() -> Result<()> {
+    use quire_store::index::{Overlay, TaskQuery};
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "w", "Work.md", "tasks")?;
+    save(&store, "d", "daily/28.10.2026.md", "daily")?;
+    let analyses = [
+        (
+            "Work.md",
+            PageIndex {
+                tasks: vec![
+                    task("Dotted", "next", due_by_link("30.10.2026")),
+                    task("Iso", "next", due_by_link("2026-10-31")),
+                ],
+                ..Default::default()
+            },
+        ),
+        (
+            "daily/28.10.2026.md",
+            PageIndex {
+                tasks: vec![task("On the day", "inbox", Default::default())],
+                ..Default::default()
+            },
+        ),
+    ];
+    let dues = |index: &QueryIndex| -> Result<Vec<(String, Option<String>)>> {
+        Ok(index
+            .tasks()?
+            .into_iter()
+            .map(|task| (task.text, task.due))
+            .collect())
+    };
+    {
+        let index = QueryIndex::open(&database, config(1))?;
+        analyze_all(&index, &analyses)?;
+        assert_eq!(
+            dues(&index)?,
+            [
+                ("On the day".into(), None),
+                ("Dotted".into(), None),
+                ("Iso".into(), Some("2026-10-31".into())),
+            ]
+        );
+    }
+    let dotted = IndexConfig {
+        layout: DailyLayout {
+            folder: "daily".into(),
+            title: "{DD}.{MM}.{YYYY}".into(),
+        },
+        ..config(1)
+    };
+    let index = QueryIndex::open(&database, dotted)?;
+    assert_eq!(index.unanalyzed()?, 0, "a layout change reparses nothing");
+    assert_eq!(
+        dues(&index)?,
+        [
+            ("On the day".into(), Some("2026-10-28".into())),
+            ("Dotted".into(), Some("2026-10-30".into())),
+            ("Iso".into(), Some("2026-10-31".into())),
+        ],
+        "dates come from the stored sources and the daily page under the new layout"
+    );
+    let board = |index: &QueryIndex| {
+        index.task_board(&TaskQuery {
+            view: quire_core::workspace::TaskView::Next,
+            today: "2026-10-30".into(),
+            limit: 40,
+            ..Default::default()
+        })
+    };
+    assert_eq!(board(&index)?.counts.due, 2);
+    let overlay = |tasks: Vec<IndexedTask>| Overlay {
+        path: "Work.md".into(),
+        title: "Work".into(),
+        index: PageIndex {
+            tasks,
+            front_tags: vec!["project".into()],
+            ..Default::default()
+        },
+    };
+    index.set_overlay(
+        &JsString::from("w"),
+        &overlay(vec![task("Typed", "next", Default::default())]),
+    )?;
+    index.set_overlay(
+        &JsString::from("w"),
+        &overlay(vec![
+            task("Typed", "next", Default::default()),
+            task("More", "waiting", Default::default()),
+        ]),
+    )?;
+    let shown = board(&index)?;
+    assert_eq!(
+        shown
+            .rows
+            .iter()
+            .map(|task| task.text.as_str())
+            .collect::<Vec<_>>(),
+        ["Typed"],
+        "unsaved tasks replace the page's saved ones"
+    );
+    assert_eq!((shown.counts.next, shown.counts.waiting), (1, 1));
+    assert_eq!(
+        shown.projects[0].open, 2,
+        "front matter overlays replace each other instead of colliding"
     );
     Ok(())
 }

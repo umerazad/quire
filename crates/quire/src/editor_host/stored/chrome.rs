@@ -53,6 +53,9 @@ impl StoredWindow {
             Destination::Browser {
                 view: BrowserView::Tags,
             } => "Tags".into(),
+            Destination::Browser {
+                view: BrowserView::Tasks,
+            } => "Tasks".into(),
             Destination::Tag { tag } => tag.clone().into(),
             Destination::Page { page } => self
                 .nav
@@ -175,7 +178,7 @@ impl StoredWindow {
                     })
                     .collect()
             }
-            Some(BrowserView::Tags) | None => Vec::new(),
+            Some(BrowserView::Tags | BrowserView::Tasks) | None => Vec::new(),
         }
     }
 
@@ -663,6 +666,7 @@ impl StoredWindow {
             BrowserView::Pages => "Pages",
             BrowserView::Daily => "Daily notes",
             BrowserView::Tags => "Tags",
+            BrowserView::Tasks => "Tasks",
         };
         let chips: Vec<_> = match view {
             BrowserView::Pages => namespaces(
@@ -687,7 +691,7 @@ impl StoredWindow {
             })
             .collect(),
             BrowserView::Daily => vec![self.render_daily_settings(cx).into_any_element()],
-            BrowserView::Tags => Vec::new(),
+            BrowserView::Tags | BrowserView::Tasks => Vec::new(),
         };
         let rows =
             v_flex()

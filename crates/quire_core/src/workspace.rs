@@ -17,6 +17,82 @@ pub enum BrowserView {
     Pages,
     Daily,
     Tags,
+    Tasks,
+}
+
+/// The list the Tasks browser shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskView {
+    Due,
+    Upcoming,
+    #[default]
+    Inbox,
+    Next,
+    Waiting,
+    Someday,
+    Projects,
+    Done,
+}
+
+impl TaskView {
+    pub const ALL: [Self; 8] = [
+        Self::Due,
+        Self::Upcoming,
+        Self::Inbox,
+        Self::Next,
+        Self::Waiting,
+        Self::Someday,
+        Self::Projects,
+        Self::Done,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Due => "Due",
+            Self::Upcoming => "Upcoming",
+            Self::Inbox => "Inbox",
+            Self::Next => "Next",
+            Self::Waiting => "Waiting",
+            Self::Someday => "Someday",
+            Self::Projects => "Projects",
+            Self::Done => "Done",
+        }
+    }
+}
+
+/// Which projects the Projects list shows: with an open action, without one, or every one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectStatus {
+    #[default]
+    Active,
+    Inactive,
+    All,
+}
+
+impl ProjectStatus {
+    pub const ALL: [Self; 3] = [Self::Active, Self::Inactive, Self::All];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Active => "Active",
+            Self::Inactive => "Inactive",
+            Self::All => "All",
+        }
+    }
+}
+
+/// The Tasks browser's remembered choices: the list, the project filter (a page identity), and
+/// the Projects status filter.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskChoices {
+    #[serde(default)]
+    pub view: TaskView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub project_status: ProjectStatus,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -57,6 +133,8 @@ pub struct Workspace {
     /// Pages whose linked references list the oldest daily pages first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub oldest_first: Vec<String>,
+    #[serde(default)]
+    pub tasks: TaskChoices,
 }
 
 fn destinations(value: Option<&Value>) -> Vec<Destination> {
@@ -111,6 +189,10 @@ impl Workspace {
                         .filter_map(|item| item.as_str().map(str::to_owned))
                         .collect()
                 })
+                .unwrap_or_default(),
+            tasks: value
+                .get("tasks")
+                .and_then(|tasks| serde_json::from_value(tasks.clone()).ok())
                 .unwrap_or_default(),
         }
     }
@@ -190,6 +272,14 @@ impl Workspace {
             self.side = None;
         }
         self.oldest_first.retain(|page| exists(page));
+        if self
+            .tasks
+            .project
+            .as_deref()
+            .is_some_and(|page| !exists(page))
+        {
+            self.tasks.project = None;
+        }
     }
 
     pub fn is_oldest_first(&self, page: &str) -> bool {
