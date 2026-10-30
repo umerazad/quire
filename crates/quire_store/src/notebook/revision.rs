@@ -10,6 +10,7 @@ use anyhow::{Context as _, Result, ensure};
 use regex::bytes::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sqlez::connection::Connection;
 use std::{
     collections::{BTreeSet, HashSet},
     sync::OnceLock,
@@ -134,9 +135,19 @@ impl NotebookStore {
     }
 
     pub fn get(&self, id: &str) -> Result<Option<Json>> {
-        type Row = (String, String, i64, i64, bool, String, String, Vec<u8>);
-        let row = self.connection.select_row_bound::<_, Row>("SELECT id,page,generation,created,deleted,path,body_hash,body FROM revisions WHERE id=?")?(id)?;
-        row.map(|(stored_id, page, generation, created, deleted, path, hash, body)| {
+        read_revision(&self.connection, "main", id)
+    }
+}
+
+/// Reads and validates one revision from `schema` (the store's own or an attached read-only copy).
+pub(crate) fn read_revision(
+    connection: &Connection,
+    schema: &str,
+    id: &str,
+) -> Result<Option<Json>> {
+    type Row = (String, String, i64, i64, bool, String, String, Vec<u8>);
+    let row = connection.select_row_bound::<_, Row>(&format!("SELECT id,page,generation,created,deleted,path,body_hash,body FROM {schema}.revisions WHERE id=?"))?(id)?;
+    row.map(|(stored_id, page, generation, created, deleted, path, hash, body)| {
             let record = Json::parse(&unpack(&hash, &body)?)?;
             let value = record.root();
             format::validate_revision_ref(value)?;
@@ -148,8 +159,9 @@ impl NotebookStore {
                 "Revision metadata does not match its body. Preserve the database and use a verified backup.");
             Ok(record)
         }).transpose()
-    }
+}
 
+impl NotebookStore {
     /// Returns only after all page, outbox, and recovery changes are committed.
     pub fn save(&self, edit: &Edit) -> Result<SaveAck> {
         Ok(self.save_many(std::slice::from_ref(edit))?.remove(0))

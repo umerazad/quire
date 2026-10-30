@@ -56,3 +56,14 @@ fn new_buffer(create: impl FnOnce(&mut Context<Buffer>) -> Buffer, cx: &mut App)
         buffer
     })
 }
+
+/// Parses `text` as Quire Markdown without creating a buffer entity. The returned future does the
+/// parse and may run on the background executor.
+pub fn detached_snapshot(
+    text: &str,
+    cx: &mut App,
+) -> impl std::future::Future<Output = language::BufferSnapshot> + Send + use<> {
+    let languages = cx.global::<MarkdownLanguages>();
+    let (registry, markdown) = (languages.registry.clone(), languages.markdown.clone());
+    Buffer::build_snapshot(text.into(), Some(markdown), Some(registry), None, cx)
+}

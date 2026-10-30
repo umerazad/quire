@@ -1,6 +1,8 @@
 use super::*;
 use crate::editor_command::{SaveAndClosePage, SavePage};
 use crate::notebook_session::{NotebookSession, OpenPage};
+use crate::query_index::{IndexSync, default_config};
+use quire_core::daily::DailyCalendar;
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -93,6 +95,7 @@ impl OpenOptions {
     }
 
     pub fn open(self, cx: &mut App) -> Result<(), String> {
+        let database = self.database.clone();
         let mut session = NotebookSession::open(self.database, self.notebook, self.writer)?;
         let page = session.open_page(self.page, cx);
         let options = gpui::WindowOptions {
@@ -105,7 +108,7 @@ impl OpenOptions {
         };
         cx.open_window(options, move |window, cx| {
             window.set_window_title("Quire Native");
-            cx.new(|cx| StoredWindow::new(session, page, window, cx))
+            cx.new(|cx| StoredWindow::new(session, page, database, window, cx))
         }).map_err(|error| format!("Cannot open Quire's window: {error}. Check desktop and graphics access, then retry."))?;
         cx.activate(true);
         Ok(())
@@ -121,12 +124,14 @@ struct StoredWindow {
     editor: Option<Entity<NotebookWindow>>,
     copy_task: Option<gpui::Task<()>>,
     copy_error: Option<gpui::SharedString>,
+    index: Result<Entity<IndexSync>, gpui::SharedString>,
 }
 
 impl StoredWindow {
     fn new(
         session: NotebookSession,
         page: Entity<OpenPage>,
+        database: std::path::PathBuf,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> Self {
@@ -151,6 +156,13 @@ impl StoredWindow {
             .detach();
         }
         session.borrow().enable_editing(cx);
+        let index = DailyCalendar::system()
+            .map_err(|error| format!("Cannot read the system time zone for daily pages: {error}. Set a valid time zone and reopen the notebook."))
+            .and_then(|calendar| IndexSync::spawn(database, default_config(calendar), cx))
+            .map_err(gpui::SharedString::from);
+        if let Ok(index) = &index {
+            cx.observe(index, |_, _, cx| cx.notify()).detach();
+        }
         let mut this = Self {
             session,
             closing,
@@ -160,9 +172,20 @@ impl StoredWindow {
             editor: None,
             copy_task: None,
             copy_error: None,
+            index,
         };
         this.attach_editor(window, cx);
         this
+    }
+
+    fn index_status(&self, cx: &gpui::App) -> Option<gpui::SharedString> {
+        match &self.index {
+            Ok(index) => {
+                let index = index.read(cx);
+                index.error().cloned().or_else(|| index.status())
+            }
+            Err(error) => Some(error.clone()),
+        }
     }
 
     fn attach_editor(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
@@ -340,6 +363,9 @@ impl Render for StoredWindow {
             .when_some(self.copy_error.clone(), |div, error| {
                 div.child(gpui::div().p_2().child(error))
             })
+            .when_some(self.index_status(cx), |div, error| {
+                div.child(gpui::div().p_2().child(error))
+            })
             .when(page.is_loading(), |div| {
                 div.child(gpui::div().p_2().child("Opening notebook storage…"))
             })
@@ -380,8 +406,9 @@ mod tests {
         drop(store);
         let mut session = NotebookSession::open(path.clone(), "nb".into(), "local".into()).unwrap();
         let page = cx.update(|cx| session.open_page("p".into(), cx));
-        let window =
-            cx.add_window(|window, cx| StoredWindow::new(session, page.clone(), window, cx));
+        let window = cx.add_window(|window, cx| {
+            StoredWindow::new(session, page.clone(), path.clone(), window, cx)
+        });
         crate::notebook_session::tests::wait(&page, cx);
         cx.executor().run_until_parked();
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
@@ -850,8 +877,9 @@ mod tests {
         drop(store);
         let mut session = NotebookSession::open(path.clone(), "nb".into(), "local".into()).unwrap();
         let page = cx.update(|cx| session.open_page("p".into(), cx));
-        let window =
-            cx.add_window(|window, cx| StoredWindow::new(session, page.clone(), window, cx));
+        let window = cx.add_window(|window, cx| {
+            StoredWindow::new(session, page.clone(), path.clone(), window, cx)
+        });
         crate::notebook_session::tests::wait(&page, cx);
         cx.executor().run_until_parked();
         window

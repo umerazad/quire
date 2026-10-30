@@ -102,26 +102,35 @@ impl Budget {
         })
     }
 }
-type Work = Box<dyn FnOnce(&NotebookStore) + Send>;
-struct Request {
-    run: Work,
+type Work<S> = Box<dyn FnOnce(&S) + Send>;
+struct Request<S> {
+    run: Work<S>,
     admission: Admission,
 }
-struct Shared {
-    sender: Mutex<Option<SyncSender<Request>>>,
+struct Shared<S> {
+    sender: Mutex<Option<SyncSender<Request<S>>>>,
     budget: Arc<Budget>,
 }
-#[derive(Clone)]
-pub struct StorageClient {
-    shared: Arc<Shared>,
+pub struct Client<S> {
+    shared: Arc<Shared<S>>,
 }
-pub struct StorageWorker {
-    pub client: StorageClient,
+impl<S> Clone for Client<S> {
+    fn clone(&self) -> Self {
+        Self {
+            shared: self.shared.clone(),
+        }
+    }
+}
+pub type StorageClient = Client<NotebookStore>;
+pub struct Worker<S> {
+    pub client: Client<S>,
     pub ready: Reply<()>,
     pub stopped: Reply<()>,
 }
 
-impl StorageWorker {
+pub type StorageWorker = Worker<NotebookStore>;
+
+impl Worker<NotebookStore> {
     /// Starts without performing filesystem work on the calling thread.
     pub fn spawn(
         path: PathBuf,
@@ -129,18 +138,33 @@ impl StorageWorker {
         device: String,
         limits: QueueLimits,
     ) -> Result<Self> {
+        Self::spawn_with("quire-storage", limits, move || {
+            NotebookStore::open(&path, &notebook, &device)
+        })
+        .context(
+            "Cannot start notebook storage worker. Keep the buffer and retry after freeing process resources.",
+        )
+    }
+}
+
+impl<S: 'static> Worker<S> {
+    pub(crate) fn spawn_with(
+        name: &str,
+        limits: QueueLimits,
+        open: impl FnOnce() -> Result<S> + Send + 'static,
+    ) -> Result<Self> {
         ensure!(
             limits.requests > 0 && limits.bytes > 0,
             "Storage queue limits must be positive. Correct the limits before starting the worker."
         );
-        let (sender, receiver) = mpsc::sync_channel::<Request>(limits.requests);
+        let (sender, receiver) = mpsc::sync_channel::<Request<S>>(limits.requests);
         let budget = Arc::new(Budget {
             limit: limits.bytes,
             requests: AtomicUsize::new(0),
             bytes: AtomicUsize::new(0),
             active: AtomicBool::new(false),
         });
-        let client = StorageClient {
+        let client = Client {
             shared: Arc::new(Shared {
                 sender: Mutex::new(Some(sender)),
                 budget: budget.clone(),
@@ -148,25 +172,31 @@ impl StorageWorker {
         };
         let (ready_send, ready) = oneshot::channel();
         let (stopped_send, stopped) = oneshot::channel();
-        let thread = std::thread::Builder::new().name("quire-storage".into()).spawn(move || {
-            match NotebookStore::open(&path, &notebook, &device) {
-                Ok(store) => {
-                    let _ = ready_send.send(Ok(()));
-                    for request in receiver {
-                        budget.active.store(true, Ordering::Release);
-                        (request.run)(&store);
-                        budget.active.store(false, Ordering::Release);
-                        drop(request.admission);
+        let name = name.to_owned();
+        let thread = std::thread::Builder::new()
+            .name(name.clone())
+            .spawn(move || {
+                match open() {
+                    Ok(store) => {
+                        let _ = ready_send.send(Ok(()));
+                        for request in receiver {
+                            budget.active.store(true, Ordering::Release);
+                            (request.run)(&store);
+                            budget.active.store(false, Ordering::Release);
+                            drop(request.admission);
+                        }
+                        drop(store);
                     }
-                    drop(store);
+                    Err(error) => {
+                        let _ = ready_send.send(Err(error));
+                        drop(receiver);
+                    }
                 }
-                Err(error) => {
-                    let _ = ready_send.send(Err(error));
-                    drop(receiver);
-                }
-            }
-            let _ = stopped_send.send(Ok(()));
-        }).context("Cannot start notebook storage worker. Keep the buffer and retry after freeing process resources.")?;
+                let _ = stopped_send.send(Ok(()));
+            })
+            .with_context(|| {
+                format!("Cannot start the {name} worker. Retry after freeing process resources.")
+            })?;
         // Completion is reported after the connection is dropped, without joining on the UI thread.
         drop(thread);
         Ok(Self {
@@ -195,19 +225,19 @@ fn edit_size(edit: &Edit) -> usize {
                 .map_or(0, |stamp| stamp.session.capacity()),
         )
 }
-fn gate_error(
-    error: TryLockError<std::sync::MutexGuard<'_, Option<SyncSender<Request>>>>,
+fn gate_error<S>(
+    error: TryLockError<std::sync::MutexGuard<'_, Option<SyncSender<Request<S>>>>>,
 ) -> QueueError {
     match error {
         TryLockError::WouldBlock => QueueError::Busy,
         TryLockError::Poisoned(_) => QueueError::Stopped,
     }
 }
-impl StorageClient {
-    fn request<T: Send + 'static>(
+impl<S: 'static> Client<S> {
+    pub(crate) fn request<T: Send + 'static>(
         &self,
         bytes: usize,
-        work: impl FnOnce(&NotebookStore) -> Result<T> + Send + 'static,
+        work: impl FnOnce(&S) -> Result<T> + Send + 'static,
     ) -> std::result::Result<Reply<T>, QueueError> {
         let gate = self.shared.sender.try_lock().map_err(gate_error)?;
         let sender = gate.as_ref().ok_or(QueueError::Stopped)?;
@@ -237,6 +267,9 @@ impl StorageClient {
             active: self.shared.budget.active.load(Ordering::Acquire),
         }
     }
+}
+
+impl Client<NotebookStore> {
     pub fn save(&self, edit: Edit) -> std::result::Result<Reply<SaveAck>, QueueError> {
         self.request(edit_size(&edit), move |store| store.save(&edit))
     }

@@ -31,6 +31,18 @@ impl JsString {
         Self(bytes)
     }
 
+    /// Native text with each unpaired surrogate replaced by U+FFFD, so UTF-16 offsets are unchanged.
+    pub fn to_lossy_string(&self) -> String {
+        self.as_str().map_or_else(
+            || {
+                char::decode_utf16(self.utf16_units())
+                    .map(|c| c.unwrap_or('\u{fffd}'))
+                    .collect()
+            },
+            str::to_owned,
+        )
+    }
+
     /// A JSON string literal preserving every JavaScript UTF-16 code unit.
     pub fn to_json(&self) -> String {
         let mut output = String::new();

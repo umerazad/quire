@@ -6,7 +6,7 @@ use crate::sync::{
 use anyhow::{Context as _, Result, ensure};
 use quire_core::markdown::page_title_for_editor;
 use serde::Serialize;
-use sqlez::{bindable::Column, statement::Statement};
+use sqlez::{bindable::Column, connection::Connection, statement::Statement};
 
 const VERSION: i64 = 1;
 const INDEX_ERROR: &str = "The notebook metadata index is missing, damaged, or out of date. Rebuild the metadata index before querying pages; your revisions are preserved.";
@@ -194,6 +194,19 @@ impl MetadataRow {
             heads: heads.try_into().context(INDEX_ERROR)?,
         })
     }
+}
+
+const REVISION_QUERY: &str = "SELECT r.page,r.id,r.path,m.title,m.version,r.body_hash,m.hash,r.generation,r.created,r.deleted,1,0
+ FROM revisions r LEFT JOIN revision_metadata m ON m.revision=r.id WHERE r.id=?";
+
+/// Checksummed metadata for one revision, from whichever schema holds unqualified `revisions`
+/// and `revision_metadata` on this connection. `heads` is not meaningful here.
+pub(crate) fn revision_metadata(
+    connection: &Connection,
+    revision: &str,
+) -> Result<Option<PageMetadata>> {
+    let row: Option<MetadataRow> = connection.select_row_bound(REVISION_QUERY)?(revision)?;
+    row.map(MetadataRow::into_page).transpose()
 }
 
 impl NotebookStore {

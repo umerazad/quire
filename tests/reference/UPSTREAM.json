@@ -12,7 +12,8 @@
     "markdown/range-set.ts": "f38e035299fb90fe0e8bc9c1b945b58d03a85dc9078dc59bb3281b7ee34b8a6c",
     "daily/daily-layout.ts": "32a3eccd9eea5de811a321f74d930788453ceb4f3d309421acd4bc7ca1bb4e24",
     "daily/workspace.ts": "b9c05efe0846973676ce8e666f87657e091a69f732741ad933148c4110bd000e",
-    "daily/local-date.ts": "0786f47b120ae1a8759ea1cbdc840fecc82f24ab3aecb183f77d8f5e681806f6"
+    "daily/local-date.ts": "0786f47b120ae1a8759ea1cbdc840fecc82f24ab3aecb183f77d8f5e681806f6",
+    "index/page-analysis.ts": "b93c2341736ba3fadeb6d65eb73c8e270127277eef04290f993b78efff08711e"
   },
   "daily_extractions": [
     {
@@ -49,5 +50,14 @@
   "markdown_dependencies": {
     "@lezer/common": "1.5.4",
     "@lezer/markdown": "1.8.1"
-  }
+  },
+  "index_extractions": [
+    {
+      "source": "src/core/page-analysis.ts",
+      "source_revision": "5ea5c22310ff",
+      "source_sha256": "f639198dd689540eb71dcd35b3d773b7c90362368fd6cd60e91b31c88b96d690",
+      "destination": "index/page-analysis.ts",
+      "change": "Keep tagKey, blockAt, and the link and tagged-block composition of analyzePage; drop task and template analysis (ported separately) and the Backlink/TaggedBlock type imports."
+    }
+  ]
 }

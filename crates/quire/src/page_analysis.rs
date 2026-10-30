@@ -167,7 +167,7 @@ fn same_syntax(a: &BufferSnapshot, b: &BufferSnapshot) -> bool {
     same_source(a, b) && a.syntax_update_count() == b.syntax_update_count()
 }
 
-fn analyze_inline(snapshot: &BufferSnapshot) -> Option<InlineAnalysis> {
+pub(crate) fn analyze_inline(snapshot: &BufferSnapshot) -> Option<InlineAnalysis> {
     let text = snapshot.text();
     let excluded = syntax::exclusions(snapshot, &text)?;
     let references = quire_core::markdown::references(&text, &excluded.code);

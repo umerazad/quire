@@ -156,6 +156,15 @@ fn parse_tree(
     )
 }
 
+/// The reference block text: content without its trailing ID, trimmed.
+pub fn block_text(snapshot: &BufferSnapshot, block: &Block) -> String {
+    let content: String = snapshot
+        .text_for_range(block.content_from..block.content_to)
+        .collect();
+    let end = id_tail(&content).map_or(content.len(), |(range, _)| range.start);
+    content[..end].trim_end_matches(js_space).to_owned()
+}
+
 pub fn id_tail(text: &str) -> Option<(Range<usize>, &str)> {
     let tail = text.trim_end_matches([' ', '\t']);
     let caret = tail.rfind('^')?;
@@ -523,8 +532,7 @@ mod tests {
             }
             let actual: Vec<_> = native_blocks.into_iter().map(|block| {
                 let to_utf16 = |offset| snapshot.text.offset_to_offset_utf16(offset).0;
-                let content: String = snapshot.text_for_range(block.content_from..block.content_to).collect();
-                let text = id_tail(&content).map_or(content.as_str(), |(range, _)| &content[..range.start]).trim_end_matches(js_space);
+                let text = block_text(&snapshot, &block);
                 let mut value = json!({"key":block.key,"from":to_utf16(block.from),"to":to_utf16(block.content_to),"contentFrom":to_utf16(block.content_from),"contentTo":to_utf16(block.content_to),"subtreeTo":to_utf16(block.subtree_to),"depth":block.depth,"kind":block.kind,"text":text});
                 if let Some(id) = block.id { value["id"] = json!(id); }
                 if let Some(parent) = block.parent { value["parent"] = json!(parent); }

@@ -18,6 +18,12 @@ mod editor_excerpt;
 mod page_analysis;
 
 #[cfg(feature = "full-editor")]
+mod page_index;
+
+#[cfg(feature = "full-editor")]
+mod query_index;
+
+#[cfg(feature = "full-editor")]
 mod notebook_session;
 
 #[cfg(feature = "full-editor")]

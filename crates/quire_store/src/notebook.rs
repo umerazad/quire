@@ -20,10 +20,12 @@ mod revision;
 pub use checkout::PageCheckout;
 pub use folder::{RescanCursor, RescanLimits, RescanProblem, RescanReport, RescanWait};
 pub use import::{BatchImport, ImportedBatch, ImportedPage};
+pub(crate) use metadata::revision_metadata;
 pub use metadata::{MetadataLimits, PageMetadata};
 pub use publication::PendingPublication;
 pub use publisher::PublicationAck;
 pub use recovery::{Draft, DraftStamp};
+pub(crate) use revision::read_revision;
 pub use revision::{CheckedSave, Cursor, Edit, SaveAck};
 
 pub use crate::schema::{APPLICATION_ID, SCHEMA_VERSION};

@@ -11390,6 +11390,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.34",
+ "icu_collator",
  "quire_core",
  "regex",
  "ryu-js",
