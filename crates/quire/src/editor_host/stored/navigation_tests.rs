@@ -80,6 +80,9 @@ pub(super) fn open_notebook(
 }
 
 pub(super) fn settle(notebook: &Notebook, cx: &mut TestAppContext) {
+    wait_until(cx, "the index to start", |cx| {
+        read(notebook, cx, |view, cx| view.index_client(cx).is_some())
+    });
     let client = read(notebook, cx, |view, cx| view.index_client(cx).unwrap());
     wait_until(cx, "indexing", |_| {
         futures::executor::block_on(client.unanalyzed().unwrap()).unwrap() == 0
@@ -139,11 +142,15 @@ fn type_in_palette(notebook: &Notebook, text: &str, cx: &mut TestAppContext) {
     });
 }
 
-const PAGES: [(&str, &str, &str); 4] = [
+pub(super) const PAGES: [(&str, &str, &str); 4] = [
     ("a", "Alpha.md", "- apple pie\n"),
     ("b", "Beta.md", "- banana bread with apple\n"),
     ("d", "Daily/2026-10-30.md", "- worked\n"),
-    ("n", "roam/js/clock.md", "- tick\n"),
+    (
+        "n",
+        "roam/js/clock.md",
+        "---\ntitle: roam/js/clock\n---\n- tick\n",
+    ),
 ];
 
 #[gpui::test]

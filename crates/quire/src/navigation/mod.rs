@@ -86,6 +86,14 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("shift-enter", menu::SecondaryConfirm, Some("QuireList")),
         KeyBinding::new("right", menu::SelectChild, Some("QuireList")),
         KeyBinding::new("left", menu::SelectParent, Some("QuireList")),
+        KeyBinding::new("up", menu::SelectPrevious, Some("QuireList > Editor")),
+        KeyBinding::new("down", menu::SelectNext, Some("QuireList > Editor")),
+        KeyBinding::new("enter", menu::Confirm, Some("QuireList > Editor")),
+        KeyBinding::new(
+            "shift-enter",
+            menu::SecondaryConfirm,
+            Some("QuireList > Editor"),
+        ),
     ];
     if cfg!(target_os = "macos") {
         bindings.push(KeyBinding::new("cmd-[", GoBack, context));
@@ -149,10 +157,10 @@ impl WorkspaceFile {
     }
 }
 
-fn now() -> u64 {
+pub fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_millis() as u64)
+        .map_or(0, |elapsed| elapsed.as_millis() as i64)
 }
 
 /// The reference `notebook.create`: a validated title in `folder`, refused when any page already
@@ -198,7 +206,7 @@ pub async fn create_page(
             path,
             text: NEW_PAGE_TEXT.into(),
             deleted: false,
-            created: now(),
+            created: now_millis() as u64,
             recovery: None,
         })
         .map_err(|error| error.to_string())?

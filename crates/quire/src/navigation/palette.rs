@@ -159,6 +159,7 @@ impl PagePalette {
         }
     }
 
+    #[cfg(test)]
     pub fn items(&self) -> &[PaletteItem] {
         &self.items
     }
@@ -169,6 +170,7 @@ impl PagePalette {
     }
 
     /// Whether the rows answer the latest query.
+    #[cfg(test)]
     pub fn settled(&self) -> bool {
         self.applied == self.requested
     }

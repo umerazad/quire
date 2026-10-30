@@ -1,7 +1,7 @@
 use super::*;
 use crate::editor_command::{SaveAndClosePage, SavePage};
 use crate::notebook_session::{NotebookSession, OpenPage};
-use crate::query_index::{IndexSync, default_config};
+use crate::query_index::IndexSync;
 use quire_core::daily::DailyCalendar;
 use std::{
     cell::{Cell, RefCell},
@@ -153,18 +153,13 @@ impl StoredWindow {
             move |_, cx| allow_close(session.clone(), closing.clone(), CloseIntent::Window, cx)
         });
         session.borrow().enable_editing(cx);
-        let nav = navigation::Navigation::new(&database, &notebook);
-        let index = DailyCalendar::system()
-            .map_err(|error| format!("Cannot read the system time zone for daily pages: {error}. Set a valid time zone and reopen the notebook."))
-            .and_then(|calendar| IndexSync::spawn(database, default_config(calendar), cx))
-            .map_err(gpui::SharedString::from);
-        if let Ok(index) = &index {
-            cx.observe(index, |this, _, cx| {
-                this.refresh_catalogue(cx);
-                cx.notify();
-            })
-            .detach();
-        }
+        let calendar = DailyCalendar::system()
+            .map_err(|error| gpui::SharedString::from(format!("Cannot read the system time zone for daily pages: {error}. Set a valid time zone and reopen the notebook.")));
+        let index = match &calendar {
+            Ok(_) => Err("Reading notebook settings…".into()),
+            Err(error) => Err(error.clone()),
+        };
+        let nav = navigation::Navigation::new(&database, &notebook, calendar.ok());
         let id = page.read(cx).id().to_owned();
         let mut this = Self {
             session,
@@ -183,7 +178,10 @@ impl StoredWindow {
             this.watch(&observed, window, cx);
         }
         this.visit(quire_core::workspace::Destination::page(id), window, cx);
-        this.refresh_catalogue(cx);
+        if let Some(side) = this.nav.workspace.side.clone() {
+            this.place_beside(side, false, window, cx);
+        }
+        this.load_settings(cx);
         this
     }
 
@@ -219,6 +217,7 @@ impl StoredWindow {
             loaded.load_time.as_secs_f64() * 1000.
         );
         let writes_enabled = loaded.persistence.is_some();
+        let previous = window.focused(cx);
         let editor = cx.new(|cx| {
             let editor = NotebookWindow::for_page(analysis, None, window, cx);
             if writes_enabled {
@@ -228,6 +227,9 @@ impl StoredWindow {
             }
             editor
         });
+        if let Some(previous) = previous {
+            window.focus(&previous, cx);
+        }
         self.cache_editor(page, editor.clone());
         Some(editor)
     }
