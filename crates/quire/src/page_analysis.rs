@@ -192,7 +192,7 @@ pub(crate) fn analyze_inline(snapshot: &BufferSnapshot) -> Option<InlineAnalysis
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use gpui::{AppContext, TestAppContext};
     use serde_json::{Value, json};
@@ -267,7 +267,12 @@ mod tests {
         });
     }
 
-    fn edit_to(source: &Entity<Buffer>, before: &str, after: &str, cx: &mut TestAppContext) {
+    pub(crate) fn edit_to(
+        source: &Entity<Buffer>,
+        before: &str,
+        after: &str,
+        cx: &mut TestAppContext,
+    ) {
         let mut start = before
             .bytes()
             .zip(after.bytes())

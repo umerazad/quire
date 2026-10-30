@@ -103,32 +103,32 @@ module.exports = grammar({
         _atx_heading1: $ => prec(1, seq(
             $.atx_h1_marker,
             optional($._atx_heading_content),
-            $._newline
+            choice($._newline, $._eof)
         )),
         _atx_heading2: $ => prec(1, seq(
             $.atx_h2_marker,
             optional($._atx_heading_content),
-            $._newline
+            choice($._newline, $._eof)
         )),
         _atx_heading3: $ => prec(1, seq(
             $.atx_h3_marker,
             optional($._atx_heading_content),
-            $._newline
+            choice($._newline, $._eof)
         )),
         _atx_heading4: $ => prec(1, seq(
             $.atx_h4_marker,
             optional($._atx_heading_content),
-            $._newline
+            choice($._newline, $._eof)
         )),
         _atx_heading5: $ => prec(1, seq(
             $.atx_h5_marker,
             optional($._atx_heading_content),
-            $._newline
+            choice($._newline, $._eof)
         )),
         _atx_heading6: $ => prec(1, seq(
             $.atx_h6_marker,
             optional($._atx_heading_content),
-            $._newline
+            choice($._newline, $._eof)
         )),
         _atx_heading_content: $ => prec(1, seq(
             optional($._whitespace),
@@ -244,6 +244,7 @@ module.exports = grammar({
         //
         // https://github.github.com/gfm/#link-reference-definitions
         link_reference_definition: $ => prec.dynamic(PRECEDENCE_LEVEL_LINK, seq(
+            optional($._paragraph_pipe_check),
             optional($._whitespace),
             $.link_label,
             ':',
@@ -279,7 +280,7 @@ module.exports = grammar({
         // related to paragraphs ending does not grow.
         //
         // https://github.github.com/gfm/#paragraphs
-        paragraph: $ => seq(alias(repeat1(choice($._line, $._soft_line_break)), $.inline), choice($._newline, $._eof)),
+        paragraph: $ => seq(alias(repeat1(choice($._line, $._soft_line_break, $._paragraph_pipe_check)), $.inline), choice($._newline, $._eof)),
 
         // A blank line including the following newline.
         //
@@ -581,6 +582,7 @@ module.exports = grammar({
 
         $._pipe_table_start,
         $._pipe_table_line_ending,
+        $._paragraph_pipe_check,
     ],
     precedences: $ => [
         [$._setext_heading1, $._block],
@@ -591,6 +593,7 @@ module.exports = grammar({
         [$.link_reference_definition],
         [$.link_label, $._line],
         [$.link_reference_definition, $._line],
+        [$.link_reference_definition, $.paragraph],
     ],
     extras: $ => [],
 });

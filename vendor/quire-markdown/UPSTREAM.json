@@ -15,11 +15,11 @@
     },
     {
       "path": "tree-sitter-markdown/src/parser.c",
-      "reason": "Regenerate the namespaced block grammar with CLI 0.26.11 and ABI 14 after excluding > from HTML declaration body lines."
+      "reason": "Regenerate the namespaced block grammar with CLI 0.26.11 and ABI 14 after excluding > from HTML declaration body lines, ending ATX headings at EOF, and adding the paragraph pipe check token."
     },
     {
       "path": "tree-sitter-markdown/src/scanner.c",
-      "reason": "Namespace exported C symbols so the original Zed grammar can coexist. Match the frozen Quire dialect: no setext headings and tables cannot interrupt paragraphs."
+      "reason": "Namespace exported C symbols so the original Zed grammar can coexist. Match the frozen Quire dialect: no setext headings; a bare # at EOF is a heading; a table interrupts a paragraph only under Lezer GFM endLeaf rules (unescaped pipe, raw delimiter row with equal cell counts, first paragraph line without a pipe), tracked by a zero-width paragraph pipe check."
     },
     {
       "path": "tree-sitter-markdown-inline/src/parser.c",
@@ -43,7 +43,7 @@
     },
     {
       "path": "tree-sitter-markdown/grammar.js",
-      "reason": "Namespace the block grammar and prevent HTML declaration body lines from consuming their closing >. Retain the upstream helper for other HTML block forms."
+      "reason": "Namespace the block grammar and prevent HTML declaration body lines from consuming their closing >. Retain the upstream helper for other HTML block forms. ATX headings may end at EOF. Add a hidden zero-width external token that paragraphs and link reference definitions accept, recording whether the first paragraph line has a pipe."
     },
     {
       "path": "tree-sitter-markdown/src/grammar.json",

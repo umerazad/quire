@@ -12,7 +12,7 @@ use quire_store::index::{IndexedBlock, IndexedLink, IndexedTag, PageIndex, tag_k
 use std::{collections::HashSet, future::Future};
 
 /// Bump whenever analysis output changes; the index then rebuilds itself.
-pub const ANALYZER_VERSION: i64 = 2;
+pub const ANALYZER_VERSION: i64 = 3;
 
 /// The editor's view of stored text: every line break becomes `\n`. Unpaired surrogates become
 /// U+FFFD, which keeps UTF-16 offsets unchanged.
@@ -126,44 +126,62 @@ mod tests {
             "../../../tests/fixtures/markdown/page-index-vectors.json"
         ))
         .unwrap();
-        // Known native block-boundary gaps (NR10.8). This list may only shrink: a listed vector
-        // that starts matching, or a new divergence, fails the test.
-        let known: std::collections::BTreeSet<String> = serde_json::from_str(include_str!(
-            "../../../tests/fixtures/markdown/page-index-block-divergences.json"
-        ))
-        .unwrap();
         let mut failures = Vec::new();
-        let mut diverged = std::collections::BTreeSet::new();
         for vector in &vectors {
-            let name = vector["name"].as_str().unwrap().to_owned();
             let source = JsString::from(vector["source"].as_str().unwrap());
-            let text = editor_text(&source);
-            let work = cx.update(|cx| analyze(text, cx));
+            let work = cx.update(|cx| analyze(editor_text(&source), cx));
             let actual = rows(&cx.background_executor.spawn(work).await.unwrap());
             let expected = json!({
                 "blocks": vector["blocks"], "links": vector["links"],
                 "tagged": vector["tagged"], "frontTags": vector["frontTags"],
             });
-            if actual["blocks"] != expected["blocks"] {
-                diverged.insert(name);
-            } else if actual != expected {
-                failures.push(format!("{name}\nexpected={expected}\nactual={actual}"));
+            if actual != expected {
+                failures.push(format!(
+                    "{} source={}\nexpected={expected}\nactual={actual}",
+                    vector["name"], vector["source"]
+                ));
             }
         }
         assert!(
             failures.is_empty(),
-            "links, tags, or front tags differ despite matching blocks:\n{}",
+            "{} of {} page-index vectors differ from the reference parseBlocks:\n{}",
+            failures.len(),
+            vectors.len(),
             failures.join("\n\n")
         );
-        assert_eq!(
-            diverged.difference(&known).collect::<Vec<_>>(),
-            Vec::<&String>::new(),
-            "new block divergences"
-        );
-        assert_eq!(
-            known.difference(&diverged).collect::<Vec<_>>(),
-            Vec::<&String>::new(),
-            "fixed divergences: remove them from page-index-block-divergences.json"
+    }
+
+    #[gpui::test]
+    fn incrementally_edited_blocks_match_the_frozen_page_index_vectors(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let vectors: Vec<Value> = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/markdown/page-index-vectors.json"
+        ))
+        .unwrap();
+        let buffer = cx.update(|cx| crate::markdown::buffer("", cx));
+        let mut previous = String::new();
+        let mut failures = Vec::new();
+        for vector in &vectors {
+            let text = editor_text(&JsString::from(vector["source"].as_str().unwrap()));
+            crate::page_analysis::tests::edit_to(&buffer, &previous, &text, cx);
+            cx.executor().run_until_parked();
+            let snapshot = cx.update(|cx| buffer.read(cx).snapshot());
+            assert_eq!(snapshot.text(), text);
+            let actual = rows(&index_snapshot(&snapshot, &text).unwrap());
+            if actual["blocks"] != vector["blocks"] {
+                failures.push(format!(
+                    "{} after editing from {previous:?}\nexpected={}\nactual={}",
+                    vector["name"], vector["blocks"], actual["blocks"]
+                ));
+            }
+            previous = text;
+        }
+        assert!(
+            failures.is_empty(),
+            "{} of {} incrementally parsed pages differ from the reference parseBlocks:\n{}",
+            failures.len(),
+            vectors.len(),
+            failures.join("\n\n")
         );
     }
 }
