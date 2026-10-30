@@ -1,4 +1,4 @@
-use quire_store::sync::json::Json;
+use quire_core::json::Json;
 
 #[test]
 fn utf16_strings_are_lossless_and_keys_use_utf16_order() {
@@ -58,7 +58,7 @@ fn duplicates_use_the_last_value_and_utf8_decoding_matches_node() {
 
 #[test]
 fn byte_deserialization_rejects_invalid_wtf8() {
-    use quire_store::sync::json::JsString;
+    use quire_core::json::JsString;
     use serde::{
         Deserialize,
         de::value::{BorrowedBytesDeserializer, Error},

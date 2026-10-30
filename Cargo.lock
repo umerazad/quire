@@ -11369,6 +11369,8 @@ dependencies = [
 name = "quire_core"
 version = "0.1.0"
 dependencies = [
+ "ryu-js",
+ "serde",
  "serde_json",
  "unicode-normalization",
 ]
@@ -11379,6 +11381,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.34",
+ "quire_core",
  "regex",
  "ryu-js",
  "serde",

@@ -10,6 +10,6 @@ path = "src/quire_core.rs"
 
 [dependencies]
 unicode-normalization = "=0.1.25"
-
-[dev-dependencies]
+serde.workspace = true
 serde_json.workspace = true
+ryu-js = "=1.0.2"

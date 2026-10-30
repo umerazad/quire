@@ -521,6 +521,28 @@ Two new native fixtures reproduced the prior editor scanner treating the first b
 Sequential review checked frozen-source provenance, new versus existing path semantics, percent decoding/traversal, UTF-8/UTF-16 bounds, Unicode trimming/NFC/reserved names, streamed delimiter state and early termination, editor feature gating, native regressions, and dependency changes. The simplification pass keeps one streaming metadata implementation shared by text and rope callers. Full page-title/frontmatter tags, references, identity operations, incremental semantic analysis, notebook page creation/navigation, native lone-surrogate editing policy, and the rest of NR10 remain open. The 10,000 sync schedule run continues independently.
 Status: done
 
+#### NR10.2: Share the existing lossless JavaScript JSON implementation
+
+What to do: Move the storage-owned pure JSON arena and JavaScript string type into `quire_core`, retaining the existing `quire_store::sync::json` import path through a re-export. Move its pure tests to the owning crate without weakening their assertions. Metadata titles need the same numbers, Unicode, deep-value handling, and invalid-surrogate preservation as sync records.
+Constraints: Keep codec bytes, compatibility of existing Rust imports, parsing/serialization algorithms, schema, and storage behavior unchanged. Retain one shared type behind both import paths. Reuse the existing serde/serde_json/ryu-js versions. Document the WTF-8 read boundary and numeric mutation contract needed by the existing codec.
+Verify: Existing deep/lossless/grammar tests, codec cross-runtime checks, full native/storage/core tests, process-kill tests, Clippy, build, and dependency/rename review. Confirm old imports still use the same core types.
+Proof notes: Moved the existing JSON arena/string implementation into `quire_core::json` and retained `quire_store::sync::json` as a public re-export. A byte comparison with the prior Git version proves every parsing/serialization/comparison algorithm is unchanged; only `as_bytes` and `set_number` visibility and boundary documentation differ. All six pure JSON tests moved intact, with only their import paths adjusted. They retain 20,000-level parse/serialize/clone/drop, WTF-8 validation, lone-surrogate ordering/round trips, duplicate keys, malformed grammar, Node-compatible UTF-8 replacement, and overflowing-number assertions. Existing storage consumers compile through the old import path against the same core definitions.
+
+The core reuses the already pinned serde/serde_json/ryu-js packages, with no new package version. Storage retains its direct ryu-js edge because codec error formatting still uses it. Core does not request an additional serde_json feature; storage retains its existing float-roundtrip setting. The lockfile changes only local dependency edges. No schema, wire format, vendor file, or database behavior changed.
+
+`CARGO_HOME=/private/tmp/quire-cargo cargo test -p quire -p quire_core -p quire_store --offline --features quire/test-support` passes all 210 tests: 99 app, eight core, and 103 storage. The prior six storage-owned JSON tests are now counted under core, with no assertions removed. `bun run test:reference` passes 57 tests, and `CARGO_HOME=/private/tmp/quire-cargo bun run test:storage-crash` passes all 12 process-kill checks. Combined all-target Clippy with test support and `-D warnings`, native build, formatting, prose lint, and scoped whitespace pass. The existing debug unwind warning remains.
+
+Sequential review checked byte-identical algorithms, preserved tests, source-import compatibility, crate layering without cycles, exposed WTF-8/numeric contracts, dependency versions/features, codec outputs, and worker/publication/import regressions. The simplification pass leaves one representation shared by metadata and storage, with a one-line compatibility module. Page-title/tag extraction and native display policy remain NR10.3/NR11 work; the long sync run continues independently against the same storage algorithms.
+Status: done
+
+#### NR10.3: Port page titles and frontmatter tags
+
+What to do: Add lossless page-title extraction and ordered frontmatter tag extraction using the frozen Markdown module as the oracle. Reuse the shared envelope scanner and JSON/string representation.
+Constraints: Preserve fallback filename behavior, JSON-to-JavaScript-string semantics, quoted/raw titles, multiline/Unicode whitespace, duplicate tag order, and the legacy lightweight tag forms. Parse data only. Keep original source untouched and distinguish lossless metadata from native display strings.
+Verify: Differential fixed and seeded fixtures including surrogate escapes, non-finite JSON numbers, nested values, object conversion failures, CRLF/BOM, raw quoting, inline/list tags, duplicate fields, and malformed/incomplete metadata. Record any verified behavior gap before claiming the parent complete.
+Proof notes: pending.
+Status: pending
+
 ### NR11: Complete one native daily-page workflow
 
 What to do: Wire the editor to the native service: create/open a daily page, edit in either presentation, record recovery, save, close, restart, and show a peer's update or conflict.
