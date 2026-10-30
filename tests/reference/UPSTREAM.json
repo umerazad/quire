@@ -145,5 +145,44 @@
       "bun": "1.4.2",
       "source": "48 handwritten pages (the rt tasks.test.ts inputs plus marker, stamp, inherited date, Roam, Unicode, quote, code and table edges) and 120 seeded pages, under the default and a {MMMM} {DD}, {YYYY} daily layout."
     }
+  },
+  "task_query_extractions": {
+    "repository": "rt",
+    "revision": "5ea5c22310fff0c3d97f069930500fd85067fa96",
+    "files": [
+      {
+        "source": "src/core/task-query.ts",
+        "source_sha256": "05eb901ec83148a38b6293e305d2a2e193a2161a827dd2038892dd222ac70dab",
+        "destination": "core/task-query.ts",
+        "sha256": "2b22ac3d8e5ced91c76cc098364fa9480527ac48fe92538d075a45fb9d795d71",
+        "change": "Copied unchanged except the Notebook type import, which points to core/query-notebook.ts."
+      },
+      {
+        "source": "src/core/projects.ts",
+        "source_sha256": "515ef60aeb47f7c16f6c8823e0f2edce98d51764a39249396e2560e641614d71",
+        "destination": "core/projects.ts",
+        "sha256": "fc6827dfa1692c4a2f4affbee2a147a680183ce7439fce21c0213a29c07e2d68",
+        "change": "Copied unchanged except the Notebook type import, which points to core/query-notebook.ts."
+      },
+      {
+        "source": "src/core/store.ts",
+        "destination": "core/query-notebook.ts",
+        "sha256": "10bba8df1ff7f0862898d8ad884f0ca0be5b291b7269dac30bd72c51ca59936d",
+        "change": "A type naming only the Notebook members the two modules read: documents, tasks, title, findPage, taggedBlocks and frontTags."
+      }
+    ],
+    "fixture": {
+      "source": "tests/fixtures/task-queries.json",
+      "destination": "../fixtures/task-queries.json",
+      "sha256": "6cdc45c43d678fbbc2048cb63f44f13426cee0370c92641a2d71ddf8f0d85977",
+      "note": "Shared task query cases, also run by the rt Go terminal app; copied unchanged and run through the production analyzer and index."
+    },
+    "vectors": {
+      "tool": "tools/task-query-vectors.ts",
+      "output": "tests/fixtures/task-query-vectors.json",
+      "bun": "1.4.2",
+      "today": "2026-10-29",
+      "source": "A synthetic notebook of 11 pages (project blocks, a Projects/ title, project front matter tags, Unicode titles) and 90 seeded tasks, with 338 queries (handwritten edges for every term, JavaScript Number limits, JavaScript whitespace, plus 300 seeded) and 22 query lines. Pages resolve by case-insensitive title or path on both sides. Output is byte-identical in UTC and America/New_York."
+    }
   }
 }

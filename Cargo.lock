@@ -11381,6 +11381,7 @@ dependencies = [
 name = "quire_core"
 version = "0.1.0"
 dependencies = [
+ "icu_collator",
  "jiff",
  "regex",
  "ryu-js",
