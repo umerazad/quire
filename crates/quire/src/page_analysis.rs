@@ -2,19 +2,26 @@ mod syntax;
 
 use gpui::{App, AppContext, Context, Entity, Subscription, Task};
 use language::{Buffer, BufferEvent, BufferSnapshot};
-use quire_core::markdown::Reference;
-use std::sync::Arc;
+use quire_core::markdown::{Reference, TagToken};
+use std::{cell::RefCell, sync::Arc};
 
 pub struct ParsedBlocks {
     pub snapshot: BufferSnapshot,
     pub blocks: Arc<[crate::markdown_blocks::Block]>,
 }
 
+#[derive(Clone)]
+pub struct InlineAnalysis {
+    pub references: Arc<[Reference]>,
+    pub tags: Arc<[TagToken]>,
+    pub tag_summary: gpui::SharedString,
+}
+
 pub struct PageAnalysis {
     pub source: Entity<Buffer>,
-    parsed: Option<ParsedBlocks>,
-    references: Option<(BufferSnapshot, Arc<[Reference]>)>,
-    reference_task: Option<(BufferSnapshot, Task<()>)>,
+    parsed: RefCell<Option<Arc<ParsedBlocks>>>,
+    inline: Option<(BufferSnapshot, InlineAnalysis)>,
+    inline_task: Option<(BufferSnapshot, Task<()>)>,
     _subscription: Subscription,
 }
 
@@ -32,92 +39,109 @@ impl PageAnalysis {
         });
         let mut this = Self {
             source,
-            parsed: None,
-            references: None,
-            reference_task: None,
+            parsed: RefCell::new(None),
+            inline: None,
+            inline_task: None,
             _subscription: subscription,
         };
         this.refresh(cx);
         this
     }
 
-    pub fn current(&self, cx: &App) -> Option<&ParsedBlocks> {
-        let parsed = self.parsed.as_ref()?;
+    /// Computes block analysis lazily and shares it for the current source version.
+    /// Metadata rendering uses current_inline instead to avoid foreground block work.
+    pub fn current(&self, cx: &App) -> Option<Arc<ParsedBlocks>> {
         let source = self.source.read(cx);
         let snapshot = source.snapshot();
-        // Blocks come from the pinned grammar over these bytes, independently of highlighting.
-        same_source(&snapshot, &parsed.snapshot).then_some(parsed)
+        if let Some(parsed) = self.parsed.borrow().as_ref()
+            && same_source(&snapshot, &parsed.snapshot)
+        {
+            return Some(parsed.clone());
+        }
+        let parsed = crate::markdown_blocks::current_blocks(&snapshot).map(|blocks| {
+            Arc::new(ParsedBlocks {
+                snapshot,
+                blocks: blocks.into(),
+            })
+        });
+        *self.parsed.borrow_mut() = parsed.clone();
+        parsed
     }
 
     pub fn current_references(&self, cx: &App) -> Option<&Arc<[Reference]>> {
-        let (snapshot, references) = self.references.as_ref()?;
+        self.current_inline(cx).map(|inline| &inline.references)
+    }
+
+    pub fn current_inline(&self, cx: &App) -> Option<&InlineAnalysis> {
+        let (snapshot, inline) = self.inline.as_ref()?;
         let source = self.source.read(cx);
         (*source.parse_status().borrow() == language::ParseStatus::Idle
             && same_syntax(snapshot, &source.snapshot()))
-        .then_some(references)
+        .then_some(inline)
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        if self.current(cx).is_none() {
-            let snapshot = self.source.read(cx).snapshot();
-            let blocks = crate::markdown_blocks::current_blocks(&snapshot);
-            self.parsed = blocks.map(|blocks| ParsedBlocks {
-                snapshot,
-                blocks: blocks.into(),
-            });
+        let snapshot = self.source.read(cx).snapshot();
+        if self
+            .parsed
+            .get_mut()
+            .as_ref()
+            .is_some_and(|parsed| !same_source(&snapshot, &parsed.snapshot))
+        {
+            *self.parsed.get_mut() = None;
         }
-        self.refresh_references(cx);
+        self.refresh_inline(cx);
         cx.notify();
     }
 
-    fn refresh_references(&mut self, cx: &mut Context<Self>) {
+    fn refresh_inline(&mut self, cx: &mut Context<Self>) {
         if self.current_references(cx).is_some() {
             return;
         }
-        self.references = None;
+        self.inline = None;
         let source = self.source.read(cx);
         if *source.parse_status().borrow() != language::ParseStatus::Idle
             || source
                 .language()
                 .is_none_or(|language| language.name().as_ref() != "Markdown")
         {
-            self.reference_task = None;
+            self.inline_task = None;
             return;
         }
         let snapshot = source.snapshot();
         if self
-            .reference_task
+            .inline_task
             .as_ref()
             .is_some_and(|(pending, _)| same_syntax(pending, &snapshot))
         {
             return;
         }
-        self.reference_task = None;
+        self.inline_task = None;
         let input = snapshot.clone();
-        let work = cx.background_spawn(async move { analyze_references(&input) });
+        let work = cx.background_spawn(async move { analyze_inline(&input) });
         let pending = snapshot.clone();
         let task = cx.spawn(async move |this, cx| {
             let result = work.await;
             this.update(cx, |this, cx| {
-                if let Some(references) = result {
-                    this.finish_references(snapshot, references, cx);
+                if let Some(inline) = result {
+                    this.finish_inline(snapshot, inline, cx);
                 } else if this
-                    .reference_task
+                    .inline_task
                     .as_ref()
                     .is_some_and(|(pending, _)| same_syntax(pending, &snapshot))
                 {
-                    this.reference_task = None;
+                    this.inline_task = None;
                 }
             })
             .ok();
         });
-        self.reference_task = Some((pending, task));
+        self.inline_task = Some((pending, task));
     }
 
-    fn finish_references(
+    fn finish_inline(
         &mut self,
         snapshot: BufferSnapshot,
-        references: Arc<[Reference]>,
+        inline: InlineAnalysis,
         cx: &mut Context<Self>,
     ) {
         let source = self.source.read(cx);
@@ -126,8 +150,8 @@ impl PageAnalysis {
         {
             return;
         }
-        self.references = Some((snapshot, references));
-        self.reference_task = None;
+        self.inline = Some((snapshot, inline));
+        self.inline_task = None;
         cx.notify();
     }
 }
@@ -143,10 +167,28 @@ fn same_syntax(a: &BufferSnapshot, b: &BufferSnapshot) -> bool {
     same_source(a, b) && a.syntax_update_count() == b.syntax_update_count()
 }
 
-fn analyze_references(snapshot: &BufferSnapshot) -> Option<Arc<[Reference]>> {
+fn analyze_inline(snapshot: &BufferSnapshot) -> Option<InlineAnalysis> {
     let text = snapshot.text();
     let excluded = syntax::exclusions(snapshot, &text)?;
-    Some(quire_core::markdown::references(&text, &excluded.code).into())
+    let references = quire_core::markdown::references(&text, &excluded.code);
+    let tags = quire_core::markdown::tags(&text, &excluded.tags, &references);
+    let mut inline = InlineAnalysis {
+        references: references.into(),
+        tags: tags.into(),
+        tag_summary: gpui::SharedString::default(),
+    };
+    let mut seen = std::collections::HashSet::new();
+    let labels: Vec<_> = inline
+        .tags
+        .iter()
+        .filter_map(|tag| seen.insert(tag.text.as_str()).then_some(tag.text.as_str()))
+        .collect();
+    inline.tag_summary = if labels.is_empty() {
+        gpui::SharedString::default()
+    } else {
+        format!("Inline tags: {}", labels.join(" · ")).into()
+    };
+    Some(inline)
 }
 
 #[cfg(test)]
@@ -154,6 +196,76 @@ mod tests {
     use super::*;
     use gpui::{AppContext, TestAppContext};
     use serde_json::{Value, json};
+
+    #[gpui::test]
+    fn inline_metadata_is_atomic_current_and_does_not_eagerly_parse_blocks(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let before = "#old [[Old]] `prefix #hidden`";
+        let after = "#new [[New]] `prefix #hidden`";
+        let source = cx.update(|cx| crate::markdown::buffer(before, cx));
+        let page = cx.new(|cx| PageAnalysis::new(source.clone(), cx));
+        cx.update(|cx| assert!(page.read(cx).current_inline(cx).is_none()));
+        cx.executor().run_until_parked();
+        let (old_snapshot, old) = cx.update(|cx| {
+            let page = page.read(cx);
+            let data = page.current_inline(cx).unwrap().clone();
+            assert_eq!(data.references.len(), 1);
+            assert_eq!(data.references[0].target, "Old");
+            assert_eq!(data.tags.len(), 1);
+            assert_eq!(data.tags[0].text, "#old");
+            assert!(page.parsed.borrow().is_none());
+            let blocks = page.current(cx).unwrap();
+            assert!(Arc::ptr_eq(&blocks, &page.current(cx).unwrap()));
+            (source.read(cx).snapshot(), data)
+        });
+        edit_to(&source, before, after, cx);
+        cx.update(|cx| assert!(page.read(cx).current_inline(cx).is_none()));
+        page.update(cx, |page, cx| {
+            page.finish_inline(old_snapshot, old.clone(), cx)
+        });
+        cx.update(|cx| assert!(page.read(cx).current_inline(cx).is_none()));
+        cx.executor().run_until_parked();
+        let (snapshot, current) = cx.update(|cx| {
+            let page = page.read(cx);
+            let data = page.current_inline(cx).unwrap().clone();
+            assert_eq!(data.references[0].target, "New");
+            assert_eq!(data.tags[0].text, "#new");
+            assert!(!Arc::ptr_eq(&data.tags, &old.tags));
+            assert!(page.parsed.borrow().is_none());
+            (source.read(cx).snapshot(), data)
+        });
+        source.update(cx, |source, cx| source.reparse(cx, false));
+        cx.update(|cx| assert!(page.read(cx).current_inline(cx).is_none()));
+        cx.executor().run_until_parked();
+        let ready = cx.update(|cx| page.read(cx).current_inline(cx).unwrap().clone());
+        assert!(!Arc::ptr_eq(&current.tags, &ready.tags));
+        page.update(cx, |page, cx| page.finish_inline(snapshot, current, cx));
+        cx.update(|cx| {
+            assert!(Arc::ptr_eq(
+                &ready.tags,
+                &page.read(cx).current_inline(cx).unwrap().tags
+            ))
+        });
+        let (snapshot, language) = cx.update(|cx| {
+            (
+                source.read(cx).snapshot(),
+                source.read(cx).language().unwrap().clone(),
+            )
+        });
+        source.update(cx, |source, cx| source.set_language(None, cx));
+        page.update(cx, |page, cx| page.finish_inline(snapshot, ready, cx));
+        cx.executor().run_until_parked();
+        cx.update(|cx| assert!(page.read(cx).current_inline(cx).is_none()));
+        source.update(cx, |source, cx| source.set_language(Some(language), cx));
+        cx.executor().run_until_parked();
+        cx.update(|cx| {
+            let data = page.read(cx).current_inline(cx).unwrap();
+            assert_eq!(data.tags[0].text, "#new");
+            assert_eq!(data.references[0].target, "New");
+        });
+    }
 
     fn edit_to(source: &Entity<Buffer>, before: &str, after: &str, cx: &mut TestAppContext) {
         let mut start = before
@@ -211,7 +323,7 @@ mod tests {
                 ("incremental", &incremental, &incremental_page),
             ] {
                 cx.executor().run_until_parked();
-                let (snapshot, references) = cx.update(|cx| {
+                let (snapshot, references, tags) = cx.update(|cx| {
                     assert_eq!(
                         *source.read(cx).parse_status().borrow(),
                         language::ParseStatus::Idle
@@ -219,11 +331,12 @@ mod tests {
                     (
                         source.read(cx).snapshot(),
                         page.read(cx).current_references(cx).unwrap().clone(),
+                        page.read(cx).current_inline(cx).unwrap().tags.clone(),
                     )
                 });
                 assert_eq!(snapshot.text(), text);
                 let excluded = syntax::exclusions(&snapshot, text).unwrap().tags;
-                let actual: Vec<_> = quire_core::markdown::tags(text, &excluded, &references)
+                let actual: Vec<_> = tags
                     .iter()
                     .map(|tag| {
                         json!({
@@ -343,10 +456,10 @@ mod tests {
         let source = cx.update(|cx| crate::markdown::buffer("[[Page]] `[[Code]]`", cx));
         let page = cx.new(|cx| PageAnalysis::new(source.clone(), cx));
         cx.executor().run_until_parked();
-        let (old_snapshot, old_references) = cx.update(|cx| {
+        let (old_snapshot, old_inline) = cx.update(|cx| {
             (
                 source.read(cx).snapshot(),
-                page.read(cx).current_references(cx).unwrap().clone(),
+                page.read(cx).current_inline(cx).unwrap().clone(),
             )
         });
         source.update(cx, |source, cx| source.reparse(cx, false));
@@ -360,11 +473,11 @@ mod tests {
                 old_snapshot.syntax_update_count()
             );
             let references = page.read(cx).current_references(cx).unwrap().clone();
-            assert!(!Arc::ptr_eq(&old_references, &references));
+            assert!(!Arc::ptr_eq(&old_inline.references, &references));
             references
         });
         page.update(cx, |page, cx| {
-            page.finish_references(old_snapshot, old_references, cx)
+            page.finish_inline(old_snapshot, old_inline, cx)
         });
         page.update(cx, |page, cx| page.refresh(cx));
         cx.executor().run_until_parked();
@@ -392,7 +505,10 @@ mod tests {
             let references = page.current_references(cx).unwrap().clone();
             assert_eq!(references.len(), 1);
             assert_eq!(references[0].target, "Old");
-            (source.read(cx).snapshot(), references)
+            (
+                source.read(cx).snapshot(),
+                page.current_inline(cx).unwrap().clone(),
+            )
         });
         source.update(cx, |source, cx| {
             source.set_sync_parse_timeout(None);
@@ -400,7 +516,7 @@ mod tests {
         });
         cx.update(|cx| assert!(page.read(cx).current_references(cx).is_none()));
         page.update(cx, |page, cx| {
-            page.finish_references(old.0.clone(), old.1.clone(), cx)
+            page.finish_inline(old.0.clone(), old.1.clone(), cx)
         });
         cx.update(|cx| assert!(page.read(cx).current_references(cx).is_none()));
         cx.executor().run_until_parked();
@@ -410,18 +526,23 @@ mod tests {
             assert_eq!(references[0].target, "مرحبا🙂");
             references
         });
-        page.update(cx, |page, cx| page.finish_references(old.0, old.1, cx));
+        page.update(cx, |page, cx| page.finish_inline(old.0, old.1, cx));
         cx.update(|cx| {
             assert!(Arc::ptr_eq(
                 &current,
                 page.read(cx).current_references(cx).unwrap()
             ))
         });
-        let before_language_change = cx.update(|cx| (source.read(cx).snapshot(), current));
+        let before_language_change = cx.update(|cx| {
+            (
+                source.read(cx).snapshot(),
+                page.read(cx).current_inline(cx).unwrap().clone(),
+            )
+        });
         source.update(cx, |source, cx| source.set_language(None, cx));
         cx.update(|cx| assert!(page.read(cx).current_references(cx).is_none()));
         page.update(cx, |page, cx| {
-            page.finish_references(before_language_change.0, before_language_change.1, cx)
+            page.finish_inline(before_language_change.0, before_language_change.1, cx)
         });
         cx.executor().run_until_parked();
         cx.update(|cx| assert!(page.read(cx).current_references(cx).is_none()));

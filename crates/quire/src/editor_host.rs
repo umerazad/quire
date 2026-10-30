@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{App, AppContext, Entity, Focusable, KeyBinding, UpdateGlobal, Window, prelude::*};
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
-use ui::{Button, ButtonCommon, Clickable, Tooltip};
+use ui::{Button, ButtonCommon, Clickable, Label, LabelCommon, Tooltip};
 
 gpui::actions!(quire, [TogglePresentation]);
 
@@ -140,6 +140,7 @@ fn editor(
 }
 
 struct NotebookWindow {
+    analysis: Entity<crate::page_analysis::PageAnalysis>,
     source: Entity<Editor>,
     second: Entity<Editor>,
     source_search: Entity<BufferSearchBar>,
@@ -151,6 +152,14 @@ struct NotebookWindow {
 }
 
 impl NotebookWindow {
+    fn tag_summary(&self, cx: &App) -> gpui::SharedString {
+        self.analysis
+            .read(cx)
+            .current_inline(cx)
+            .map(|inline| inline.tag_summary.clone())
+            .unwrap_or_default()
+    }
+
     fn change_presentation(
         &mut self,
         editor: &Entity<Editor>,
@@ -259,12 +268,24 @@ impl NotebookWindow {
         Self::for_buffer(buffer, None, window, cx)
     }
 
+    #[cfg(test)]
     fn for_buffer(
         buffer: Entity<language::Buffer>,
         excerpt: Option<Entity<multi_buffer::MultiBuffer>>,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> Self {
+        let analysis = cx.new(|cx| crate::page_analysis::PageAnalysis::new(buffer, cx));
+        Self::for_page(analysis, excerpt, window, cx)
+    }
+
+    fn for_page(
+        analysis: Entity<crate::page_analysis::PageAnalysis>,
+        excerpt: Option<Entity<multi_buffer::MultiBuffer>>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> Self {
+        let buffer = analysis.read(cx).source.clone();
         let mode = cx.new(|cx| vim::ModeIndicator::new(window, cx));
         let source = cx.new(|cx| editor(buffer.clone(), window, cx));
         let second = cx.new(|cx| match excerpt {
@@ -277,8 +298,10 @@ impl NotebookWindow {
         cx.observe(&commands, |_, _, cx| cx.notify()).detach();
         cx.observe(&source_search, |_, _, cx| cx.notify()).detach();
         cx.observe(&second_search, |_, _, cx| cx.notify()).detach();
+        cx.observe(&analysis, |_, _, cx| cx.notify()).detach();
         window.focus(&source.focus_handle(cx), cx);
         Self {
+            analysis,
             source,
             second,
             source_search,
@@ -296,10 +319,10 @@ impl NotebookWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> Self {
-        let source = page.read(cx).source.clone();
-        let model = cx.new(|cx| crate::semantic_excerpt::SemanticExcerpt::new(page, id.into(), cx));
+        let model =
+            cx.new(|cx| crate::semantic_excerpt::SemanticExcerpt::new(page.clone(), id.into(), cx));
         let excerpt = model.read(cx).buffer.clone();
-        let mut view = Self::for_buffer(source, Some(excerpt), window, cx);
+        let mut view = Self::for_page(page, Some(excerpt), window, cx);
         crate::semantic_excerpt::attach(&view.second, &model, window, cx);
         cx.observe(&model, |_, _, cx| cx.notify()).detach();
         view.semantic_excerpt = Some(model);
@@ -366,7 +389,21 @@ impl Render for NotebookWindow {
             .when_some(self.presentation_error.as_ref(), |div, error| {
                 div.child(gpui::div().p_2().child(error.clone()))
             })
-            .child(gpui::div().p_2().child(self.mode.clone()))
+            .child(
+                gpui::div()
+                    .h_10()
+                    .p_2()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(self.mode.clone())
+                    .child(
+                        gpui::div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(Label::new(self.tag_summary(cx)).truncate()),
+                    ),
+            )
     }
 }
 
@@ -392,7 +429,7 @@ pub fn run() {
         let block = "- Edit this note in either pane. ^b-welcome\n  - Both panes share the same document.";
         let text = format!("{prefix}{block}\n- [ ] Try Vim, undo, and redo.\n");
         let buffer = crate::markdown::buffer(&text, cx);
-        let page = excerpt_demo.then(|| cx.new(|cx| crate::page_analysis::PageAnalysis::new(buffer.clone(), cx)));
+        let page = cx.new(|cx| crate::page_analysis::PageAnalysis::new(buffer, cx));
         let options = gpui::WindowOptions {
             window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(gpui::px(1100.), gpui::px(760.)), cx))),
             ..Default::default()
@@ -400,9 +437,10 @@ pub fn run() {
         match cx.open_window(options, move |window, cx| {
             window.set_window_title("Quire Native");
             cx.new(|cx| {
-                let view = match page {
-                    Some(page) => NotebookWindow::for_block(page, "b-welcome", window, cx),
-                    None => NotebookWindow::for_buffer(buffer, None, window, cx),
+                let view = if excerpt_demo {
+                    NotebookWindow::for_block(page, "b-welcome", window, cx)
+                } else {
+                    NotebookWindow::for_page(page, None, window, cx)
                 };
                 if write_demo
                     && let Err(error) = crate::editor_projection::bind(&view.second, window, cx) {
@@ -422,6 +460,50 @@ pub fn run() {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn shared_page_tags_update_both_windows_without_changing_source(cx: &mut TestAppContext) {
+        cx.update(|cx| init(cx).unwrap());
+        let text = "#one #عربي #one [[#hidden]] `prefix #code`\n";
+        let source = cx.update(|cx| crate::markdown::buffer(text, cx));
+        let page = cx.new(|cx| crate::page_analysis::PageAnalysis::new(source.clone(), cx));
+        let first =
+            cx.add_window(|window, cx| NotebookWindow::for_page(page.clone(), None, window, cx));
+        let second =
+            cx.add_window(|window, cx| NotebookWindow::for_page(page.clone(), None, window, cx));
+        cx.executor().run_until_parked();
+        for window in [first, second] {
+            window
+                .update(cx, |view, _, cx| {
+                    assert_eq!(view.analysis.entity_id(), page.entity_id());
+                    assert_eq!(view.tag_summary(cx), "Inline tags: #one · #عربي");
+                })
+                .unwrap();
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+        }
+        cx.update(|cx| assert_eq!(source.read(cx).snapshot().text(), text));
+        source.update(cx, |source, cx| {
+            source.set_sync_parse_timeout(None);
+            source.edit([(0..source.len(), "#new #new\n")], None, cx);
+        });
+        for window in [first, second] {
+            window
+                .update(cx, |view, _, cx| assert!(view.tag_summary(cx).is_empty()))
+                .unwrap();
+        }
+        cx.executor().run_until_parked();
+        for window in [first, second] {
+            window
+                .update(cx, |view, _, cx| {
+                    assert_eq!(view.tag_summary(cx), "Inline tags: #new")
+                })
+                .unwrap();
+            cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+        }
+        cx.update(|cx| assert_eq!(source.read(cx).snapshot().text(), "#new #new\n"));
+    }
 
     #[gpui::test]
     fn window_hosts_two_editors_and_a_mode_indicator(cx: &mut TestAppContext) {
