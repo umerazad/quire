@@ -33,7 +33,7 @@ pub fn init(cx: &mut App) -> Result<(), String> {
     Ok(())
 }
 
-pub fn buffer(text: &str, cx: &mut App) -> Entity<Buffer> {
+pub fn buffer(text: impl Into<String>, cx: &mut App) -> Entity<Buffer> {
     let languages = cx.global::<MarkdownLanguages>();
     let registry = languages.registry.clone();
     let markdown = languages.markdown.clone();

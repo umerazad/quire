@@ -3,6 +3,8 @@ use gpui::{App, AppContext, Entity, Focusable, KeyBinding, UpdateGlobal, Window,
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use ui::{Button, ButtonCommon, Clickable, Label, LabelCommon, Tooltip};
 
+mod stored;
+
 gpui::actions!(quire, [TogglePresentation]);
 
 pub(super) const EDITOR_CONTEXT: &str = "Editor && !QuireControl";
@@ -374,7 +376,6 @@ impl Render for NotebookWindow {
             .on_action(cx.listener(Self::toggle_presentation))
             .flex()
             .flex_col()
-            .child(gpui::div().p_3().child("Welcome"))
             .child(
                 gpui::div()
                     .flex()
@@ -408,6 +409,17 @@ impl Render for NotebookWindow {
 }
 
 pub fn run() {
+    let stored = match stored::OpenOptions::parse(std::env::args().skip(1).collect()) {
+        Ok(options) => options,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+    };
+    if std::env::args().any(|argument| argument == "--input-harness") {
+        super::run_example();
+        return;
+    }
     let excerpt_demo = std::env::args().any(|argument| argument == "--excerpt-harness");
     let write_demo = std::env::args().any(|argument| argument == "--write-harness");
     if excerpt_demo && write_demo {
@@ -423,6 +435,14 @@ pub fn run() {
         if let Err(error) = assets::Assets.load_fonts(cx) {
             eprintln!("Cannot load Quire's bundled fonts: {error}. Rebuild the application assets.");
             cx.quit();
+            return;
+        }
+        cx.on_window_closed(|cx, _| { if cx.windows().is_empty() { cx.quit(); } }).detach();
+        if let Some(options) = stored {
+            if let Err(error) = options.open(cx) {
+                eprintln!("{error}");
+                cx.quit();
+            }
             return;
         }
         let prefix = "# Welcome to Quire\n\n";
@@ -452,7 +472,6 @@ pub fn run() {
             Ok(_) => cx.activate(true),
             Err(error) => { eprintln!("Cannot open Quire's window: {error}. Check desktop and graphics access, then retry."); cx.quit(); }
         }
-        cx.on_window_closed(|cx, _| { if cx.windows().is_empty() { cx.quit(); } }).detach();
     });
 }
 

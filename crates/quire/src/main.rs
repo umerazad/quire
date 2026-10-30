@@ -18,6 +18,9 @@ mod editor_excerpt;
 mod page_analysis;
 
 #[cfg(feature = "full-editor")]
+mod notebook_session;
+
+#[cfg(feature = "full-editor")]
 mod semantic_excerpt;
 
 #[cfg(feature = "full-editor")]
@@ -978,10 +981,8 @@ fn run_example() {
 #[cfg(not(target_family = "wasm"))]
 fn main() {
     #[cfg(feature = "full-editor")]
-    if !std::env::args().any(|argument| argument == "--input-harness") {
-        editor_host::run();
-        return;
-    }
+    editor_host::run();
+    #[cfg(not(feature = "full-editor"))]
     run_example();
 }
 

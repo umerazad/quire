@@ -691,7 +691,7 @@ Constraints: Shared buffers keyed by notebook/page identity; expected-version ch
 Write set: notebook session/buffer registry, service command types, native vertical-slice tests.
 Dependencies: NR04, NR05, NR08, NR09, NR10.
 Verify: An end-to-end native test covers editing through an embed, undo, crash recovery, local save, publication, remote update, and a refused stale write. Measure first-editable latency and loaded body count.
-Proof notes: Implementation starts with the transactional page boundary below. The native window still opens an in-memory example; parent acceptance remains open.
+Proof notes: The transactional page boundary and asynchronous native page registry are implemented below. The default editor remains an in-memory example; explicit native database arguments open stored-page previews. Persistent editing and parent acceptance remain open.
 Status: in_progress
 
 #### NR11.1: Check out one page and refuse a stale native save
@@ -710,6 +710,32 @@ The initial focused test build failed for the missing API, then the six initial 
 
 This completes only the storage boundary. Canonical native buffer registration, recovery/save acknowledgments tied to buffer versions, daily-page routing, rescan refresh after both success and error, and end-to-end UI/performance acceptance remain NR11 work.
 Status: done
+
+#### NR11.2: Open stored pages through one native buffer registry
+
+What to do: Add a notebook-owned page registry that deduplicates concurrent opens, waits for storage startup asynchronously, prepares selected content off the foreground thread, and shares one PageAnalysis/Buffer across views. Expose stored-page previews through explicit database/notebook/writer/page arguments while persistent editing is being connected.
+Constraints: Keep previews read-only until recovery, save, and close guards are wired. Do not silently replace unrepresentable UTF-16 strings. Preserve storage failures and allow retry on the same page model. Retain visited models for shared history; bounded eviction remains an explicit later policy. Load one selected revision plus optional recovery, not the notebook.
+Write set: notebook session model, native loading/preview host, application dependencies, focused native tests, README.
+Verify: Duplicate pending/loaded opens share identity; notebooks isolate the same page ID; recovery takes precedence without losing original storage; tombstones/conflicts are visible; startup and representation failures remain actionable; retries do not replace existing loaded buffers. Draw the stored page with two read-only editor views. Run app/storage tests, Clippy, build, formatting, and prose lint.
+Proof notes: `notebook_session.rs` owns one bounded storage client and a registry of retained page entities per opened notebook. Repeated pending or completed opens return the same entity, buffer, and analysis model. Storage readiness uses a shared asynchronous future. Checkout, lossless-field validation, content extraction, and status preparation run in a background task. The foreground installs the owned text into the copied editor and one PageAnalysis; no full-notebook body list is requested. Buffer construction still performs the copied editor's rope/line-ending work on the foreground thread, which remains a performance and persistence integration concern rather than a measured acceptance result.
+
+`editor_host/stored.rs` adds an asynchronous loading/preview host and explicit database/notebook/writer/page arguments. It constructs the existing two-pane editor only after a successful checkout. Read-only source capability prevents typing, Vim deletion, and projected controls from changing persisted-preview content. It shows recovery, conflicts, selected tombstones, and retryable read errors. Recoverable read failures retry on the same registered page; startup or stopped-worker failures require reopening. Loaded buffers cannot be replaced by Retry. Unrepresentable path/text strings fail without a replacement buffer; original lossless records remain in storage. This is an explicit interim display limitation, not complete UTF-16 parity.
+
+Ten new tests cover concurrent-open identity, same page IDs in different notebooks, recovery precedence and retained originals, missing-page zero-body loading, startup/stopped errors, repaired-body retry, unrepresentable strings/unknown fields without storage changes, option validation, and a real headless draw of a recovered two-pane page with both conflicts and a selected tombstone. The draw test activates Write in the second pane, attempts Vim edits, and verifies unchanged buffer text, heads, outbox, and recovery. Argument parsing now precedes input-harness selection; mixed stored/input arguments cannot silently open the memory harness. The hardcoded Welcome header was removed from the shared editor host.
+
+The initial focused test build failed for the missing model; the first four registry cases then passed. Final `CARGO_HOME=/private/tmp/quire-cargo cargo test -p quire -p quire_store --locked --features quire/test-support` passes 229 tests (118 app and 111 storage, `/private/tmp/quire-session-final-tests.log`). All-target app Clippy with test support and -D warnings passes (`/private/tmp/quire-session-final-clippy.log`); the locked native build passes (`/private/tmp/quire-session-build.log`). The input-only configuration passes `cargo check -p quire --locked --no-default-features`. Two built-binary CLI smoke cases exit 2 with actionable errors before desktop initialization. Formatting, prose lint, and staged whitespace pass. Cargo.lock only gains four direct application edges to existing packages, with no version changes. The existing linker unwind-size warning remains.
+
+Sequential review checked pending-open deduplication, notebook scoping, source/analysis identity, task ownership, failed startup versus missing pages, retry races, lossless storage preservation, capability propagation through projections, argument routing before window/storage startup, and accurate status/timing claims. The simplification pass reuses the existing worker, shared futures, Markdown setup, and editor window. Native desktop rendering, first-editable/release timings, persistent edits, live rescan refresh, and global notebook-open ownership remain parent work. No new vendored code or schema was introduced.
+Status: done
+
+#### NR11.3: Enable durable native editing
+
+What to do: Retain opening revision/draft ancestry and recovery stamps in the native page model, then connect versioned recovery and checked saves to the shared editors. Protect close/quit before allowing stored pages to become editable. Keep distinct edited, recovery-recorded, saved-locally, and published states.
+Constraints: Capture cheap immutable buffer snapshots on the foreground; copy/normalize/serialize text off it. Preserve original line-ending content when persisting, and keep unrepresentable originals lossless. Serialize per-page persistence without blocking new typing; delayed acknowledgments must not mark later edits as saved. Refused stale writes and queue/storage errors retain the buffer and durable recovery. Reuse one notebook owner across additional views. Inspect actual native quit/close hooks before choosing interception; a fixed shutdown grace period alone cannot establish durability.
+Write set: notebook session model and persistence commands, save actions/status, close/quit coordination, native storage/editor integration tests.
+Verify: Edit either view and a semantic excerpt, undo across views, record recovery, save/reopen, keep later typing dirty after an earlier acknowledgment, refuse stale heads, and retain text after busy/full/failed storage. Close/restart restores acknowledged work; close/quit failures keep work accessible. Measure foreground work and first-editable/body counts without presenting debug or preview timings as release acceptance.
+Proof notes: pending; daily-page routing, publication/rescan UI integration, refresh after rescan errors, and the complete parent end-to-end test still remain afterward.
+Status: pending
 
 ### NR12: Serve indexed queries with a live overlay
 

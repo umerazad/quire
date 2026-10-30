@@ -291,6 +291,7 @@ edition = "2024"
 "proxyvars" = "0.2"
 "pulldown-cmark" = { "version" = "0.13.0", "default-features" = false }
 "quire_core" = { "path" = "crates/quire_core" }
+"quire_store" = { "path" = "crates/quire_store" }
 "tree-sitter-quire-markdown" = { "path" = "vendor/quire-markdown" }
 "quick-xml" = "0.41"
 "quote" = "1.0.9"
