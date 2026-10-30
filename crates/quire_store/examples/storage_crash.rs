@@ -128,7 +128,7 @@ fn main() -> Result<()> {
                 .collect::<Result<Vec<_>>>()?;
             println!(
                 "{}",
-                json!({"text":text,"versions":versions,"draft":store.draft(page)?,"outbox":store.outbox()?,"pending":store.pending_publication()?.map(|pending| pending.name),"cursor":store.cursor(store.device_id())?,"peerCursor":store.cursor("peer-crash")?})
+                json!({"text":text,"versions":versions,"draft":store.draft(page)?,"outbox":store.outbox()?,"pending":store.pending_publication()?.map(|pending| pending.name),"cursor":store.cursor(store.device_id())?,"peerCursor":store.cursor("peer-crash")?,"peerBatchHash":store.batch_hash("peer-crash",1)?,"pendingAttachments":store.pending_attachments(None,100)?})
             );
             return Ok(());
         }

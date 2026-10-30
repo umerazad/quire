@@ -328,8 +328,12 @@ fn worker_imports_before_a_queued_head_query() -> Result<()> {
         .client
         .import_batch("office".into(), incoming.name, incoming.data)?;
     let heads = worker.client.heads("p".into())?;
+    let requests = worker.client.pending_attachments(None, 100)?;
+    let history = worker.client.batch_hash("office".into(), 1)?;
     assert!(matches!(block_on(imported)?, BatchImport::Applied(_)));
     assert_eq!(block_on(heads)?.len(), 1);
+    assert!(block_on(requests)?.is_empty());
+    assert_eq!(block_on(history)?, Some(incoming.hash));
     worker.client.close()?;
     block_on(worker.stopped)?;
     Ok(())
@@ -352,6 +356,58 @@ fn newer_format_is_reported_without_advancing_any_local_state() -> Result<()> {
     ));
     assert!(store.cursor("office")?.is_none());
     assert!(store.outbox()?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn pending_attachment_requests_survive_import_acknowledgment_and_reopen() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let path = root.path().join("local.sqlite");
+    let name = format::attachment_file_name(b"late", "image.png");
+    let encoded = format::encode(
+        &json!({"notebook":"nb","device":"office","seq":1,"previous":null,"created":1,"revisions":[],"attachments":[name]}),
+        Kind::Batch,
+    )?;
+    let store = NotebookStore::open(&path, "nb", "local")?;
+    assert!(matches!(
+        store.import_batch("office", &encoded.name, &encoded.data)?,
+        BatchImport::Applied(_)
+    ));
+    assert_eq!(
+        store.pending_attachments(None, 100)?,
+        std::slice::from_ref(&name)
+    );
+    assert_eq!(store.batch_hash("office", 1)?, Some(encoded.hash));
+    drop(store);
+    let store = NotebookStore::open(&path, "nb", "local")?;
+    assert_eq!(
+        store.pending_attachments(None, 100)?,
+        std::slice::from_ref(&name)
+    );
+    store.cache_attachment(&name, b"late")?;
+    assert!(store.pending_attachments(None, 100)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn known_historical_batch_hash_rejects_a_single_old_fork_after_later_imports() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let path = root.path().join("local.sqlite");
+    let one = batch("office", 1, None, &[]);
+    let two = batch("office", 2, Some(&one.hash), &[]);
+    let store = NotebookStore::open(&path, "nb", "local")?;
+    store.import_batch("office", &one.name, &one.data)?;
+    store.import_batch("office", &two.name, &two.data)?;
+    drop(store);
+    let store = NotebookStore::open(&path, "nb", "local")?;
+    let fork = batch("office", 1, None, &[revision("p", "fork", "office", &[])]);
+    assert!(matches!(
+        store.import_batch("office", &fork.name, &fork.data)?,
+        BatchImport::Rejected { .. }
+    ));
+    assert_eq!(store.cursor("office")?.unwrap().hash, two.hash);
+    assert_eq!(store.batch_hash("office", 1)?, Some(one.hash));
+    assert!(store.heads("p")?.is_empty());
     Ok(())
 }
 
@@ -478,6 +534,7 @@ fn seeded_native_import_schedules_match_the_frozen_graph_and_chain_oracle() -> R
         Kind::Batch,
     )?;
     let mut chains = Vec::new();
+    let mut known = std::collections::BTreeMap::<u32, String>::new();
     let gap = batch("chain", 3, Some(&two.hash), &[]);
     let wrong_previous = batch("chain", 2, Some(&"a".repeat(64)), &[]);
     let fork_two = batch(
@@ -513,7 +570,13 @@ fn seeded_native_import_schedules_match_the_frozen_graph_and_chain_oracle() -> R
             BatchImport::Rejected { .. } => "fork",
             other => panic!("unexpected chain result: {other:?}"),
         };
-        chains.push(json!({"cursor":before,"batch":{"seq":decoded.value.root().field("seq").as_f64(),"previous":decoded.value.root().field("previous").as_str()},"hash":incoming.hash,"kind":kind}));
+        chains.push(json!({"cursor":before,"known":known,"batch":{"seq":decoded.value.root().field("seq").as_f64(),"previous":decoded.value.root().field("previous").as_str()},"hash":incoming.hash,"kind":kind}));
+        if kind == "apply" {
+            known.insert(
+                decoded.value.root().field("seq").as_f64().unwrap() as u32,
+                incoming.hash.clone(),
+            );
+        }
     }
     let script =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/graph-oracle.ts");

@@ -76,6 +76,7 @@ impl NotebookStore {
             } else {
                 self.connection.exec_bound("INSERT INTO attachments(name,hash,size) VALUES (?,?,?)")?((name, hash.as_str(), size))?;
             }
+            self.connection.exec_bound("DELETE FROM attachment_needs WHERE name=?")?(name)?;
             Ok(())
         })
     }

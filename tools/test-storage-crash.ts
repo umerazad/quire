@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import { encodeBatch, revisionId } from "../tests/reference/sync/format.ts";
+import { attachmentFileName, encodeBatch, revisionId } from "../tests/reference/sync/format.ts";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 execFileSync("cargo", ["build", "-p", "quire_store", "--example", "storage_crash", "--locked"], { cwd: root, stdio: "inherit" });
@@ -99,18 +99,27 @@ try {
   assert.deepEqual(state.outbox, []);
   assert.notEqual(afterPublication.id, latest.id);
   assert(readFileSync(log).length > 0);
-  const fields = { page: "p-process", parents: [], generation: 0, path: "Crash.md", deleted: false, text: "peer update مرحبا 🙂" };
+  const lateBytes = "late peer attachment";
+  const lateName = attachmentFileName(Buffer.from(lateBytes), "probe.bin");
+  const fields = { page: "p-process", parents: [], generation: 0, path: "Crash.md", deleted: false, text: `peer update مرحبا 🙂 ![](attachments/${lateName})` };
   const revision = { ...fields, id: revisionId(fields), created: 99, device: "peer-crash" };
-  const incoming = encodeBatch({ notebook: "nb-crash", device: "peer-crash", seq: 1, previous: null, created: 99, revisions: [revision], attachments: [] });
+  const incoming = encodeBatch({ notebook: "nb-crash", device: "peer-crash", seq: 1, previous: null, created: 99, revisions: [revision], attachments: [lateName] });
   const incomingFile = join(folder, incoming.name);
   writeFileSync(incomingFile, incoming.data);
   const imported = await killAfterAck("import", "1", incomingFile);
   state = inspect();
   assert.equal(imported.applied, 1);
   assert.deepEqual(state.peerCursor, { seq: imported.seq, hash: imported.hash });
+  assert.equal(state.peerBatchHash, imported.hash);
+  assert.deepEqual(state.pendingAttachments, [lateName]);
   assert.deepEqual(new Map(state.versions.map((version: { id: string; text: string }) => [version.id, version.text])), new Map([[afterPublication.id, "after folder acknowledgment"], [revision.id, fields.text]]));
   assert.deepEqual(state.outbox, []);
-  console.log("Storage crash checks passed: attachment/save/recovery, frozen publication, interrupted transaction, folder publication/reopen, and atomic peer import.");
+  const late = await killAfterAck("attach", "1", lateBytes);
+  assert.equal(late.reference, `attachments/${lateName}`);
+  state = inspect();
+  assert.deepEqual(state.pendingAttachments, []);
+  assert.equal(state.peerBatchHash, imported.hash);
+  console.log("Storage crash checks passed: attachment/save/recovery, frozen publication, interrupted transaction, folder publication/reopen, atomic peer import, and late attachment requests.");
 } finally {
   rmSync(folder, { recursive: true, force: true });
 }

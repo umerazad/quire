@@ -28,7 +28,7 @@ fn notebook_schema_is_initialized_once_and_reopens() {
                 .select_row::<i32>("SELECT COUNT(*) FROM schema_history")
                 .unwrap()()
             .unwrap(),
-            Some(1)
+            Some(2)
         );
     }
 }
@@ -64,6 +64,28 @@ fn notebook_and_writer_identity_cannot_be_reassigned() {
     assert!(NotebookStore::open(&path, "other", "office").is_err());
     assert!(NotebookStore::open(&path, "nb", "home").is_err());
     assert!(NotebookStore::open(&path, "nb", "office").is_ok());
+}
+
+#[test]
+fn cursor_history_disagreement_is_rejected_before_journal_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("local.sqlite");
+    let store = NotebookStore::open(&path, "nb", "office").unwrap();
+    let encoded = quire_store::sync::format::encode(&serde_json::json!({"notebook":"nb","device":"peer","seq":1,"previous":null,"created":1,"revisions":[],"attachments":[]}), quire_store::sync::format::Kind::Batch).unwrap();
+    store
+        .import_batch("peer", &encoded.name, &encoded.data)
+        .unwrap();
+    drop(store);
+    let connection = Connection::try_open_file(path.to_str().unwrap()).unwrap();
+    connection
+        .exec_bound("UPDATE batch_hashes SET hash=?")
+        .unwrap()("a".repeat(64))
+    .unwrap();
+    connection.exec("PRAGMA journal_mode=DELETE").unwrap()().unwrap();
+    drop(connection);
+    let original = fs::read(&path).unwrap();
+    assert!(NotebookStore::open(&path, "nb", "office").is_err());
+    assert_eq!(fs::read(&path).unwrap(), original);
 }
 
 #[test]

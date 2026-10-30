@@ -1,5 +1,5 @@
 pub const APPLICATION_ID: i32 = i32::from_be_bytes(*b"QURE");
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
 
 // Keep version 1 immutable. Later schemas need an explicit migration and its own checksum.
 pub(crate) const SCHEMA_V1: &[(&str, &str)] = &[
@@ -53,9 +53,28 @@ pub(crate) const SCHEMA_V1: &[(&str, &str)] = &[
     ),
 ];
 
-pub(crate) fn checksum() -> String {
+pub(crate) const SCHEMA_V2: &[(&str, &str)] = &[
+    (
+        "batch_hashes",
+        "CREATE TABLE batch_hashes (device TEXT NOT NULL, seq INTEGER NOT NULL CHECK(seq BETWEEN 1 AND 999999999), hash TEXT NOT NULL CHECK(length(hash)=64 AND hash NOT GLOB '*[^0-9a-f]*'), PRIMARY KEY(device,seq))",
+    ),
+    (
+        "attachment_needs",
+        "CREATE TABLE attachment_needs (name TEXT PRIMARY KEY NOT NULL)",
+    ),
+];
+
+pub(crate) fn migration(version: i32) -> &'static [(&'static str, &'static str)] {
+    match version {
+        1 => SCHEMA_V1,
+        2 => SCHEMA_V2,
+        _ => unreachable!("preflight must validate schema versions"),
+    }
+}
+
+pub(crate) fn checksum(version: i32) -> String {
     super::sync::format::sha256(
-        SCHEMA_V1
+        migration(version)
             .iter()
             .map(|(_, sql)| *sql)
             .collect::<Vec<_>>()

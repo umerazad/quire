@@ -48,7 +48,7 @@ fn rejected(reason: impl Into<String>) -> BatchImport {
 impl NotebookStore {
     /// Applies an incoming batch and its cursor in one local transaction.
     /// Does not acknowledge folder durability or consume a frozen own publication.
-    /// Older batches are duplicates; folder scans must detect historical filename collisions.
+    /// Known historical hashes detect forks; older unknown batches retain duplicate semantics.
     pub fn import_batch(&self, device: &str, name: &str, data: &[u8]) -> Result<BatchImport> {
         let decoded = match format::decode(
             name,
@@ -73,7 +73,8 @@ impl NotebookStore {
             let at = self.cursor(device)?;
             let next = at.as_ref().map_or(1, |cursor| cursor.seq + 1);
             if seq < next {
-                if at.as_ref().is_some_and(|cursor| cursor.seq == seq && cursor.hash != decoded.hash) {
+                let known = if let Some(cursor) = &at && cursor.seq == seq { Some(cursor.hash.clone()) } else { self.batch_hash(device, seq)? };
+                if known.is_some_and(|hash| hash != decoded.hash) {
                     return Ok(rejected("This device has conflicting change files. Preserve both copies and restore a distinct writer identity before importing."));
                 }
                 return Ok(BatchImport::Duplicate);
@@ -108,9 +109,11 @@ impl NotebookStore {
                 Ok(ImportedPage { page, heads: self.heads_key(&key)? })
             }).collect::<Result<Vec<_>>>()?;
             let cursor = Cursor { seq, hash: decoded.hash.clone() };
+            self.record_batch_hash(device, seq, &cursor.hash)?;
             self.connection.exec_bound("INSERT INTO cursors(device,seq,hash) VALUES (?,?,?) ON CONFLICT(device) DO UPDATE SET seq=excluded.seq,hash=excluded.hash")?((device, seq, cursor.hash.as_str()))?;
-            let attachments = batch.field("attachments").elements().unwrap()
+            let attachments: Vec<String> = batch.field("attachments").elements().unwrap()
                 .map(|name| name.as_str().unwrap().to_owned()).collect::<BTreeSet<_>>().into_iter().collect();
+            for name in &attachments { self.queue_attachment(name)?; }
             Ok(BatchImport::Applied(ImportedBatch { cursor, applied, pages, attachments }))
         })
     }
@@ -168,30 +171,36 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn cursor_failure_rolls_back_the_entire_import_and_allows_retry() -> Result<()> {
-        let root = tempfile::tempdir()?;
-        let store = NotebookStore::open(&root.path().join("local.sqlite"), "nb", "local")?;
-        let mut revision = json!({"page":"p","text":"one","path":"A.md","deleted":false,"parents":[],"generation":0,"created":1,"device":"office"});
-        revision["id"] = format::revision_id(&revision)?.into();
-        let id = revision["id"].as_str().unwrap().to_owned();
-        let batch = Json::from(
-            &json!({"notebook":"nb","device":"office","seq":1,"previous":null,"created":1,"revisions":[revision],"attachments":[]}),
-        );
-        let encoded = format::encode(&batch, Kind::Batch)?;
-        store.connection.exec("CREATE TEMP TRIGGER fail_import BEFORE INSERT ON cursors BEGIN SELECT RAISE(ABORT,'injected cursor failure'); END")?()?;
-        assert!(
-            store
-                .import_batch("office", &encoded.name, &encoded.data)
-                .is_err()
-        );
-        assert!(store.get(&id)?.is_none());
-        assert!(store.heads("p")?.is_empty());
-        assert!(store.cursor("office")?.is_none());
-        store.connection.exec("DROP TRIGGER fail_import")?()?;
-        assert!(matches!(
-            store.import_batch("office", &encoded.name, &encoded.data)?,
-            BatchImport::Applied(_)
-        ));
+    fn metadata_failure_rolls_back_the_entire_import_and_allows_retry() -> Result<()> {
+        for table in ["cursors", "attachment_needs"] {
+            let root = tempfile::tempdir()?;
+            let store = NotebookStore::open(&root.path().join("local.sqlite"), "nb", "local")?;
+            let mut revision = json!({"page":"p","text":"one","path":"A.md","deleted":false,"parents":[],"generation":0,"created":1,"device":"office"});
+            revision["id"] = format::revision_id(&revision)?.into();
+            let id = revision["id"].as_str().unwrap().to_owned();
+            let name = format::attachment_file_name(b"late", "a.bin");
+            let batch = Json::from(
+                &json!({"notebook":"nb","device":"office","seq":1,"previous":null,"created":1,"revisions":[revision],"attachments":[name]}),
+            );
+            let encoded = format::encode(&batch, Kind::Batch)?;
+            store.connection.exec(&format!("CREATE TEMP TRIGGER fail_import BEFORE INSERT ON {table} BEGIN SELECT RAISE(ABORT,'injected metadata failure'); END"))?()?;
+            assert!(
+                store
+                    .import_batch("office", &encoded.name, &encoded.data)
+                    .is_err()
+            );
+            assert!(store.get(&id)?.is_none());
+            assert!(store.heads("p")?.is_empty());
+            assert!(store.cursor("office")?.is_none());
+            assert!(store.batch_hash("office", 1)?.is_none());
+            assert!(store.pending_attachments(None, 100)?.is_empty());
+            store.connection.exec("DROP TRIGGER fail_import")?()?;
+            assert!(matches!(
+                store.import_batch("office", &encoded.name, &encoded.data)?,
+                BatchImport::Applied(_)
+            ));
+            assert_eq!(store.pending_attachments(None, 100)?, [name]);
+        }
         Ok(())
     }
 }

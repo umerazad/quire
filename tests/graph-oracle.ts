@@ -13,6 +13,6 @@ for (const scenario of input.graphs) {
   }
 }
 for (const operation of input.chains) {
-  const result = chainStep(operation.cursor ?? undefined, operation.batch, operation.hash);
+  const result = chainStep(operation.cursor ?? undefined, operation.batch, operation.hash, (seq) => operation.known?.[seq]);
   assert.equal(result.kind, operation.kind);
 }

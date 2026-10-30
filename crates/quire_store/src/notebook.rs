@@ -1,7 +1,4 @@
-use crate::{
-    database,
-    schema::{self, SCHEMA_V1},
-};
+use crate::{database, schema};
 use anyhow::{Context as _, Result, bail, ensure};
 use sqlez::connection::Connection;
 use std::{
@@ -10,7 +7,9 @@ use std::{
 };
 
 mod attachment;
+mod delivery;
 mod import;
+mod migration;
 mod publication;
 mod publisher;
 mod recovery;
@@ -51,28 +50,7 @@ impl NotebookStore {
         store.preflight().context("Cannot open this notebook database. Preserve it and use a compatible Quire version or a verified backup.")?;
         database::configure(&store.connection).context("Cannot configure durable notebook storage. Keep the editor contents and check the database folder's write permissions and available space.")?;
         store.transaction(|| {
-            if store.preflight()? == 0 {
-                for (_, sql) in SCHEMA_V1 {
-                    store.connection.exec(sql)?()?;
-                }
-                store
-                    .connection
-                    .exec_bound("INSERT INTO schema_history(version,checksum) VALUES (?,?)")?(
-                    (
-                    SCHEMA_VERSION,
-                    schema::checksum(),
-                )
-                )?;
-                store.connection.exec_bound(
-                    "INSERT INTO meta(singleton,notebook,device,uncertain) VALUES (1,?,?,1)",
-                )?((notebook, device))?;
-                store
-                    .connection
-                    .exec(&format!("PRAGMA application_id={APPLICATION_ID}"))?()?;
-                store
-                    .connection
-                    .exec(&format!("PRAGMA user_version={SCHEMA_VERSION}"))?()?;
-            }
+            store.migrate(store.preflight()?)?;
             store
                 .connection
                 .exec("UPDATE meta SET uncertain=1 WHERE singleton=1")?()?;
@@ -112,21 +90,24 @@ impl NotebookStore {
             "This database uses schema {version}. Update Quire before opening it."
         );
         ensure!(
-            version == SCHEMA_VERSION,
+            version >= 1,
             "This database has an unsupported schema. Preserve it and use a compatible Quire version."
         );
         let history = self.connection.select::<(i32, String)>(
             "SELECT version,checksum FROM schema_history ORDER BY version",
         )?()?;
         ensure!(
-            history == vec![(SCHEMA_VERSION, schema::checksum())],
+            history
+                == (1..=version)
+                    .map(|version| (version, schema::checksum(version)))
+                    .collect::<Vec<_>>(),
             "Database schema history changed. Preserve the database and restore a verified backup."
         );
         let actual = self.connection.select::<(String, String)>(
             "SELECT name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY name",
         )?()?;
-        let mut expected: Vec<_> = SCHEMA_V1
-            .iter()
+        let mut expected: Vec<_> = (1..=version)
+            .flat_map(|version| schema::migration(version).iter())
             .map(|(name, sql)| (name.to_string(), sql.to_string()))
             .collect();
         expected.sort_by(|a, b| a.0.cmp(&b.0));
@@ -142,6 +123,13 @@ impl NotebookStore {
             identity.0 == self.notebook && identity.1 == self.device,
             "This database belongs to another notebook or writer. Open it on its original device or migrate its local work into a new database."
         );
+        if version >= 2 {
+            let mismatches = self.connection.select_row::<i64>("SELECT COUNT(*) FROM cursors c LEFT JOIN batch_hashes b ON b.device=c.device AND b.seq=c.seq WHERE b.hash IS NULL OR b.hash<>c.hash")?()?;
+            ensure!(
+                mismatches == Some(0),
+                "Notebook cursors disagree with their recorded batch history. Preserve the database and restore a verified backup before syncing."
+            );
+        }
         Ok(version)
     }
 

@@ -76,6 +76,7 @@ impl NotebookStore {
         self.transaction(|| {
             let actual = self.pending_publication()?.context("The selected publication is no longer pending. Reconcile the writer's folder before completing it.")?;
             ensure!(actual == *expected, "Publication changed while writing its file. Keep the pending revisions and reconcile the writer's folder.");
+            self.record_batch_hash(&self.device, expected.seq, &expected.hash)?;
             self.connection.exec_bound("INSERT INTO cursors(device,seq,hash) VALUES (?,?,?) ON CONFLICT(device) DO UPDATE SET seq=excluded.seq,hash=excluded.hash")?((self.device.as_str(), expected.seq, expected.hash.as_str()))?;
             self.connection.exec("DELETE FROM outbox WHERE batch=1")?()?;
             self.connection.exec("DELETE FROM publication WHERE singleton=1")?()?;

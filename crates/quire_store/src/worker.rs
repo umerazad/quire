@@ -354,4 +354,23 @@ impl StorageClient {
             move |store| store.import_batch(&device, &name, &data),
         )
     }
+    pub fn pending_attachments(
+        &self,
+        after: Option<String>,
+        limit: usize,
+    ) -> std::result::Result<Reply<Vec<String>>, QueueError> {
+        self.request(
+            128 + after.as_ref().map_or(0, String::capacity),
+            move |store| store.pending_attachments(after.as_deref(), limit),
+        )
+    }
+    pub fn batch_hash(
+        &self,
+        device: String,
+        seq: u32,
+    ) -> std::result::Result<Reply<Option<String>>, QueueError> {
+        self.request(128 + device.capacity(), move |store| {
+            store.batch_hash(&device, seq)
+        })
+    }
 }
