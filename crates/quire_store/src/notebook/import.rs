@@ -47,6 +47,7 @@ fn rejected(reason: impl Into<String>) -> BatchImport {
 
 impl NotebookStore {
     /// Applies an incoming batch and its cursor in one local transaction.
+    /// Removes unselected local outbox entries the batch already publishes.
     /// Does not acknowledge folder durability or consume a frozen own publication.
     /// Known historical hashes detect forks; older unknown batches retain duplicate semantics.
     pub fn import_batch(&self, device: &str, name: &str, data: &[u8]) -> Result<BatchImport> {
@@ -99,7 +100,11 @@ impl NotebookStore {
             let mut applied = 0;
             let mut changed = BTreeMap::new();
             for revision in batch.field("revisions").elements().unwrap() {
-                self.connection.exec_bound("INSERT OR IGNORE INTO observed_revisions(revision) SELECT revision FROM outbox WHERE revision=?")?(revision.field("id").as_str().unwrap())?;
+                let id = revision.field("id").as_str().unwrap();
+                // Another computer published it, so it is no longer ours to publish or replace.
+                // A frozen selection keeps its exact bytes and stays protected until acknowledged.
+                self.connection.exec_bound("INSERT OR IGNORE INTO observed_revisions(revision) SELECT revision FROM outbox WHERE revision=? AND batch IS NOT NULL")?(id)?;
+                self.connection.exec_bound("DELETE FROM outbox WHERE revision=? AND batch IS NULL")?(id)?;
                 if self.insert_revision(revision)? {
                     applied += 1;
                     let page = revision.field("page");
@@ -172,8 +177,8 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn failed_peer_import_does_not_leave_observation_metadata_and_retry_protects_the_parent()
-    -> Result<()> {
+    fn failed_peer_import_keeps_the_outbox_and_retry_hands_the_revision_to_the_peer() -> Result<()>
+    {
         let root = tempfile::tempdir()?;
         let store = NotebookStore::open(&root.path().join("local.sqlite"), "nb", "local")?;
         store.mark_reconciled(None)?;
@@ -212,11 +217,12 @@ mod tests {
             store.import_batch("peer", &encoded.name, &encoded.data)?,
             BatchImport::Applied(_)
         ));
+        assert!(store.outbox()?.is_empty());
         assert_eq!(
             store
                 .connection
-                .select::<String>("SELECT revision FROM observed_revisions")?()?,
-            [first.revision_id()]
+                .select_row::<i64>("SELECT COUNT(*) FROM observed_revisions")?()?,
+            Some(0)
         );
         let next = store.save(&Edit {
             page: "p".into(),
@@ -232,6 +238,7 @@ mod tests {
             store.get(first.revision_id())?.unwrap().canonical()?,
             record
         );
+        assert_eq!(store.outbox()?, [next.revision_id()]);
         Ok(())
     }
 
