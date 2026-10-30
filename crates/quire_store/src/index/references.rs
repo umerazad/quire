@@ -24,7 +24,17 @@ pub struct ReferenceBlock {
     pub block_id: Option<String>,
     pub snippet: String,
     pub context: ReferenceContext,
+    /// The block's parents, outermost first, at most four, as the reference shows them.
+    pub ancestors: Vec<String>,
+    /// The first blocks nested under it, with their depth below it (1 for a direct child).
+    pub children: Vec<(u32, String)>,
+    /// How many more nested blocks follow `children`.
+    pub more_children: usize,
 }
+
+/// Nested blocks listed under a reference before the rest are counted instead.
+pub const SHOWN_CHILDREN: usize = 8;
+const SHOWN_ANCESTORS: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FacetKind {
@@ -75,6 +85,42 @@ fn page_names(page: &PageRef) -> [String; 2] {
         page.title.to_lowercase(),
         strip_markdown(&page.path).to_lowercase(),
     ]
+}
+
+/// A block's parents (nearest four, outermost first) and its first nested blocks with their
+/// depth below it, plus how many nested blocks are left out.
+fn outline(page: &Page, block: &Block) -> (Vec<String>, Vec<(u32, String)>, usize) {
+    let parent = |item: &Block| Some(&page.blocks[*page.by_key.get(item.parent.as_deref()?)?]);
+    let mut ancestors = Vec::new();
+    let mut up = parent(block);
+    while let Some(ancestor) = up.filter(|_| ancestors.len() < SHOWN_ANCESTORS) {
+        ancestors.insert(0, ancestor.content.clone());
+        up = parent(ancestor);
+    }
+    let depth = |item: &Block| {
+        let mut depth = 0;
+        let mut up = Some(item);
+        while let Some(current) = up.filter(|current| current.key != block.key) {
+            depth += 1;
+            up = parent(current);
+        }
+        depth
+    };
+    let nested: Vec<&Block> = page
+        .blocks
+        .iter()
+        .filter(|item| item.from > block.from && item.from < block.subtree_to)
+        .collect();
+    let children = nested
+        .iter()
+        .take(SHOWN_CHILDREN)
+        .map(|item| (depth(item), item.content.clone()))
+        .collect();
+    (
+        ancestors,
+        children,
+        nested.len().saturating_sub(SHOWN_CHILDREN),
+    )
 }
 
 impl QueryIndex {
@@ -201,8 +247,13 @@ impl QueryIndex {
             if !seen.insert((revision, from)) {
                 continue;
             }
+            let (ancestors, children, more_children) =
+                block.map(|block| outline(rows, block)).unwrap_or_default();
             blocks.push(ReferenceBlock {
                 context: Self::context(&link.source, rows, from),
+                ancestors,
+                children,
+                more_children,
                 block_id: block.and_then(|block| block.id.clone()),
                 snippet: link.link.text,
                 source: link.source,

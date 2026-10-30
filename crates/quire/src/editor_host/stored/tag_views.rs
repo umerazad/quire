@@ -81,6 +81,7 @@ impl StoredWindow {
     /// Re-runs every query shown on screen, after the index changed or restarted.
     pub(in crate::editor_host::stored) fn refresh_queries(&mut self, cx: &mut gpui::Context<Self>) {
         self.refresh_tags(cx);
+        self.refresh_references(cx);
     }
 
     /// Re-runs the queries of the tag views on screen.

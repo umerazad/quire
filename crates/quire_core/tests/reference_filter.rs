@@ -1,6 +1,22 @@
 use quire_core::reference_filter::{
-    ReferenceContext, ReferenceFilter, UNCLOSED_QUOTE, query_tokens,
+    ReferenceContext, ReferenceFilter, TermState, UNCLOSED_QUOTE, query_tokens, term_state,
+    toggle_term,
 };
+
+#[test]
+fn chips_toggle_terms_the_reference_way() {
+    assert_eq!(toggle_term("", "#idea", false), "#idea");
+    assert_eq!(toggle_term("#idea", "#idea", false), "");
+    assert_eq!(toggle_term("#idea words", "#idea", true), "words -#idea");
+    assert_eq!(toggle_term("-#Idea", "#idea", true), "");
+    assert_eq!(toggle_term("x", "[[Book A]]", false), "x [[Book A]]");
+    assert_eq!(term_state("x -#Idea", "#idea"), Some(TermState::Exclude));
+    assert_eq!(
+        term_state("[[book a]]", "[[Book A]]"),
+        Some(TermState::Include)
+    );
+    assert_eq!(term_state("#ideas", "#idea"), None);
+}
 
 #[test]
 fn tokens_keep_pages_and_quotes_whole_and_split_on_javascript_whitespace() {

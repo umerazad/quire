@@ -3,8 +3,9 @@
 
 use super::*;
 use crate::navigation::{
-    CloseTab, FindPage, FocusFiles, GoBack, GoForward, NewPage, NextTab, OpenToday, PreviousTab,
-    ShowDaily, ShowPages, ShowTags, ToggleFavorite, ToggleSidePane, WorkspaceFile, create_page,
+    CloseTab, FindPage, FocusFiles, FocusReferences, GoBack, GoForward, NewPage, NextTab,
+    OpenToday, PreviousTab, ShowDaily, ShowPages, ShowTags, ToggleFavorite, ToggleSidePane,
+    WorkspaceFile, create_page,
     palette::{PagePalette, PaletteChoice, PaletteMode},
 };
 use gpui::{DismissEvent, EntityId, SharedString, Task};
@@ -17,6 +18,8 @@ use std::collections::HashSet;
 mod chrome;
 #[path = "daily.rs"]
 mod daily;
+#[path = "reference_views.rs"]
+mod reference_views;
 #[path = "tag_views.rs"]
 mod tag_views;
 
@@ -39,6 +42,8 @@ pub(super) struct Navigation {
     pub(super) daily: daily::DailyState,
     pub(super) database: std::path::PathBuf,
     pub(super) tags: tag_views::TagViews,
+    /// Linked reference panels by page, kept for the session so each keeps its filter.
+    pub(super) references: HashMap<String, Entity<crate::navigation::references::ReferencesView>>,
 }
 
 impl Navigation {
@@ -67,6 +72,7 @@ impl Navigation {
             daily: daily::DailyState::new(calendar),
             database: database.to_owned(),
             tags: tag_views::TagViews::default(),
+            references: HashMap::new(),
         }
     }
 
@@ -245,6 +251,7 @@ impl StoredWindow {
                 window.focus(&focus, cx);
             }
             self.update_title(window, cx);
+            self.show_references(window, cx);
         }
         cx.notify();
     }
@@ -419,6 +426,9 @@ impl StoredWindow {
                     window,
                     cx,
                 )
+            }))
+            .on_action(cx.listener(|this, _: &FocusReferences, window, cx| {
+                this.focus_references(window, cx)
             }))
             .on_action(cx.listener(|this, _: &FocusFiles, window, cx| this.focus_files(window, cx)))
             .on_action(cx.listener(|this, _: &OpenToday, window, cx| this.open_today(window, cx)))
@@ -620,7 +630,10 @@ impl StoredWindow {
             .min_w_0()
             .min_h_0()
             .child(self.render_tabs(cx))
-            .child(content);
+            .child(content)
+            .when_some(self.shown_references(cx), |main, references| {
+                main.child(references)
+            });
         let side = self.nav.side.as_ref().and_then(|side| side.editor.clone());
         gpui::div()
             .flex()
@@ -657,3 +670,7 @@ mod daily_tests;
 #[cfg(test)]
 #[path = "tags_tests.rs"]
 mod tags_tests;
+
+#[cfg(test)]
+#[path = "references_tests.rs"]
+mod references_tests;

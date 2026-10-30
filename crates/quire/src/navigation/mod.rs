@@ -3,6 +3,7 @@
 
 pub mod live;
 pub mod palette;
+pub mod references;
 pub mod tag_edits;
 pub mod tag_page;
 pub mod tags;
@@ -41,6 +42,8 @@ gpui::actions!(
         ShowTags,
         /// Moves focus to the Files tree.
         FocusFiles,
+        /// Moves focus to the linked references under the page.
+        FocusReferences,
         /// Adds the highlighted tag to the selection for bulk rename or delete, or takes it out.
         ToggleTagSelected,
     ]
@@ -97,6 +100,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-shift-tab", PreviousTab, context),
         KeyBinding::new(primary!("\\"), ToggleSidePane, context),
         KeyBinding::new(primary!("shift-e"), FocusFiles, context),
+        KeyBinding::new(primary!("shift-r"), FocusReferences, context),
         KeyBinding::new("enter", menu::Confirm, Some("Picker > Editor")),
         KeyBinding::new(
             "shift-enter",
@@ -130,6 +134,7 @@ pub fn bind_keys(cx: &mut App) {
             Some("QuireList > Editor"),
         ),
         KeyBinding::new("enter", menu::Confirm, Some("QuireTagEdit > Editor")),
+        KeyBinding::new("escape", menu::Cancel, Some("QuireReferences > Editor")),
         KeyBinding::new(primary!("enter"), ToggleTagSelected, Some("QuireTags")),
         KeyBinding::new(
             primary!("enter"),
