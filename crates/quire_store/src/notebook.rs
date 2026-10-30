@@ -11,9 +11,11 @@ use std::{
 
 mod attachment;
 mod publication;
+mod publisher;
 mod recovery;
 mod revision;
 pub use publication::PendingPublication;
+pub use publisher::PublicationAck;
 pub use recovery::{Draft, DraftStamp};
 pub use revision::{Cursor, Edit, SaveAck};
 

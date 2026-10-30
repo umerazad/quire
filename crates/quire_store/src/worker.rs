@@ -1,5 +1,5 @@
 use crate::notebook::{
-    Cursor, Draft, DraftStamp, Edit, NotebookStore, PendingPublication, SaveAck,
+    Cursor, Draft, DraftStamp, Edit, NotebookStore, PendingPublication, PublicationAck, SaveAck,
 };
 use crate::sync::json::Json;
 use anyhow::{Context as _, Result, anyhow, ensure};
@@ -329,5 +329,14 @@ impl StorageClient {
             128 + cursor.as_ref().map_or(0, |cursor| cursor.hash.capacity()),
             move |store| store.mark_reconciled(cursor.as_ref()),
         )
+    }
+    pub fn publish_to(
+        &self,
+        root: PathBuf,
+        created: u64,
+    ) -> std::result::Result<Reply<Option<PublicationAck>>, QueueError> {
+        self.request(128 + root.as_os_str().len(), move |store| {
+            store.publish_to(&root, created)
+        })
     }
 }

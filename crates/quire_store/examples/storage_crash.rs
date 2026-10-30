@@ -12,7 +12,7 @@ use std::{
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let mode = args.get(1).context(
-        "Specify attach, save, draft, select, interrupt, or inspect and a database path.",
+        "Specify attach, save, draft, select, publish, interrupt, or inspect and a database path.",
     )?;
     let path = Path::new(
         args.get(2)
@@ -71,6 +71,16 @@ fn main() -> Result<()> {
                 .context("No revision to select.")?;
             json!({"mode":mode,"name":selected.name})
         }
+        "publish" => {
+            let folder = path
+                .parent()
+                .context("Database has no parent folder.")?
+                .join("notebook");
+            let published = store
+                .publish_to(&folder, version)?
+                .context("No revision to publish.")?;
+            json!({"mode":mode,"name":published.name,"seq":published.cursor.seq,"hash":published.cursor.hash})
+        }
         "interrupt" => {
             let connection = open_writable(path)?;
             connection.exec("BEGIN IMMEDIATE")?()?;
@@ -97,12 +107,12 @@ fn main() -> Result<()> {
                 .flatten();
             println!(
                 "{}",
-                json!({"text":text,"draft":store.draft(page)?,"outbox":store.outbox()?,"pending":store.pending_publication()?.map(|pending| pending.name)})
+                json!({"text":text,"draft":store.draft(page)?,"outbox":store.outbox()?,"pending":store.pending_publication()?.map(|pending| pending.name),"cursor":store.cursor(store.device_id())?})
             );
             return Ok(());
         }
         _ => bail!(
-            "Unknown crash probe mode. Use attach, save, draft, select, interrupt, or inspect."
+            "Unknown crash probe mode. Use attach, save, draft, select, publish, interrupt, or inspect."
         ),
     };
     println!("{ready}");

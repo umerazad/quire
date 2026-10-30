@@ -1,37 +1,17 @@
 use super::NotebookStore;
-use crate::sync::format;
+use crate::{
+    durable_files::{self, ordinary_directory},
+    sync::format,
+};
 use anyhow::{Context as _, Result, ensure};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},
-    io::{self, Read, Write},
+    io::{Read, Write},
     path::Path,
 };
 
-fn sync_directory(path: &Path) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        File::open(path)?.sync_all()
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Durable directory synchronization is not implemented on this platform",
-        ))
-    }
-}
-
-fn ordinary_directory(path: &Path) -> Result<()> {
-    ensure!(
-        fs::symlink_metadata(path)?.is_dir(),
-        "Attachment cache is not an ordinary directory. Preserve its contents and restore the local cache directory before retrying."
-    );
-    Ok(())
-}
-
-fn verify_file(path: &Path, name: &str) -> Result<(String, i64)> {
+pub(super) fn verify_file(path: &Path, name: &str) -> Result<(String, i64)> {
     let expected = format::attachment_hash(name)
         .context("Invalid attachment name. Use a content-hashed attachment filename.")?;
     let metadata = fs::symlink_metadata(path).with_context(|| {
@@ -77,40 +57,15 @@ impl NotebookStore {
             format::sha256(data) == expected,
             "Attachment {name} does not match its content hash. Keep the source and retry the download."
         );
-        let directory = self.directory.join("attachments");
-        match fs::create_dir(&directory) {
-            Ok(()) => {},
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {},
-            Err(error) => return Err(error).context("Cannot create the local attachment cache. Check folder permissions and available space before retrying."),
-        }
-        ordinary_directory(&directory)?;
-        sync_directory(&self.directory).context("Cannot synchronize the attachment cache directory. Keep the source and retry on a supported local filesystem.")?;
+        let directory = durable_files::directory_below(&self.directory, "attachments")?;
         let path = directory.join(name);
-        match fs::symlink_metadata(&path) {
-            Ok(_) => {
-                verify_file(&path, name)?;
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                let mut temporary = tempfile::Builder::new().prefix(".quire-attachment-").tempfile_in(&directory)
-                    .context("Cannot create a temporary attachment. Check available space and cache permissions before retrying.")?;
-                temporary.write_all(data).context("Cannot write the local attachment. Keep the source and check available space before retrying.")?;
-                temporary.as_file().sync_all().context("Cannot synchronize the local attachment. Keep the source and retry on a supported local filesystem.")?;
-                match temporary.persist_noclobber(&path) {
-                    Ok(_) => {},
-                    Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => { verify_file(&path, name)?; },
-                    Err(error) => return Err(error.error).context("Cannot install the local attachment. Keep the source and check cache permissions before retrying."),
-                }
-            }
-            Err(error) => {
-                return Err(error).context(
-                    "Cannot inspect the local attachment. Check cache permissions before retrying.",
-                );
-            }
-        }
-        // Re-sync adopted files too: a prior attempt may have stopped before its catalog commit.
-        File::open(&path)?.sync_all().context("Cannot synchronize the installed attachment. Keep the source and retry before saving its reference.")?;
-        sync_directory(&directory).context("Cannot synchronize the attachment filename. Keep the source and retry before saving its reference.")?;
-        let (hash, size) = verify_file(&path, name)?;
+        let (hash, size) = durable_files::install(
+            &path,
+            |file| {
+                file.write_all(data).context("Cannot write the local attachment. Keep the source and check available space before retrying.")
+            },
+            |path| verify_file(path, name),
+        )?;
         ensure!(
             size == i64::try_from(data.len())?,
             "Attachment size changed during installation. Preserve the source and retry."

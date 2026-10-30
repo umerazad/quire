@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -78,7 +78,27 @@ try {
   assert.equal(state.text, "latest acknowledged");
   assert.equal(state.pending, selected.name);
   assert(state.outbox.includes(latest.id));
-  console.log("Storage crash checks passed: attachment/save/recovery acknowledgments, frozen publication, interrupted transaction.");
+  const notebook = join(folder, "notebook");
+  mkdirSync(notebook);
+  writeFileSync(join(notebook, "quire-notebook.json"), JSON.stringify({ format: 1, id: "nb-crash", created: 1 }));
+  const published = await killAfterAck("publish");
+  state = inspect();
+  assert.equal(published.name, selected.name);
+  assert.deepEqual(state.outbox, []);
+  assert.equal(state.pending, null);
+  assert.deepEqual(state.cursor, { seq: published.seq, hash: published.hash });
+  const log = join(notebook, "devices/device-crash/log", published.name);
+  assert(readFileSync(log).length > 0);
+
+  const afterPublication = await killAfterAck("save", "4", "after folder acknowledgment");
+  const next = await killAfterAck("publish", "2");
+  state = inspect();
+  assert.equal(state.text, "after folder acknowledgment");
+  assert.equal(next.seq, 2);
+  assert.deepEqual(state.outbox, []);
+  assert.notEqual(afterPublication.id, latest.id);
+  assert(readFileSync(log).length > 0);
+  console.log("Storage crash checks passed: attachment/save/recovery acknowledgments, frozen publication, interrupted transaction, and folder publication/reopen.");
 } finally {
   rmSync(folder, { recursive: true, force: true });
 }
