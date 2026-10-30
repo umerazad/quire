@@ -816,7 +816,16 @@ Write set: `quire_store` index/query modules, live-overlay coordinator, performa
 Dependencies: NR10, NR11.
 Verify: Differential results against the reference for committed and unsaved edits; deterministic invalidation/race tests; SQL plan inspection and 1x/5x work-count checks. Search/backlinks do not enumerate all page bodies.
 Proof notes: pending; this completes the unresolved intent of source storage task 6.
-Status: pending
+Status: in_progress
+
+#### NR12.1: Index lossless revision metadata atomically
+
+What to do: Extract titles from lossless stored path/text, add rebuildable revision metadata with a versioned schema upgrade, and expose bounded metadata reads without loading revision bodies. Maintain rows in the same transactions as local saves, imports, and coalescing.
+Constraints: Preserve raw UTF-16 strings, unknown wire fields, conflicts, and tombstones. Keep existing schemas immutable. Upgrade existing stores atomically with bounded body-at-a-time backfill of current heads; do not read unrelated historical bodies during a schema-3 upgrade. Historical metadata remains an optional cache and history reads stay on demand. Rollback must preserve authoritative data. Metadata corruption cannot manufacture an empty title or silently change the selected revision. Recovery/live overlays and indexed date selection remain explicit parent work.
+Write set: core lossless title/JSON string boundary, frozen fixtures, storage schema/migration/index/query/worker APIs, focused tests and docs.
+Verify: Differential UTF-16 titles, valid native fast path, source preservation, save/import/coalescing consistency, rollback on derived-write failure, old-store upgrade and offline rollback, conflict/tombstone ordering, bounded pages, corrupted-body nonreads, SQL query plans, worker integration, and broad native/storage checks.
+Proof notes: Titles are extracted at a lossless UTF-16 boundary (`crates/quire_core/tests/lossless_titles.rs` against `tests/fixtures/markdown/lossless-title-vectors.json` from `tools/lossless-title-vectors.ts`). Schema 4 adds `revision_metadata`, maintained inside save, import, and coalescing transactions (`crates/quire_store/src/notebook/metadata.rs`). `crates/quire_store/tests/metadata.rs` covers body-free head reads with zeroed bodies, editor line-break titles without source rewrites, malformed numeric head columns, coalescing/conflict/tombstone ordering, raw UTF-16 import with rollback on failure, row and byte page limits with an oversized row progressing alone, corruption requiring rebuild, and `StorageClient::page_metadata`. Migration unit tests cover schema-3 upgrade with offline rollback, current-head-only backfill, failed-backfill retry, and corrupt-head abort; query-plan tests reject full `revisions` scans. Passing on 2026-10-30: `CARGO_HOME=/private/tmp/quire-cargo cargo clippy -p quire_core -p quire_store --locked --all-targets --no-deps -- -D warnings`, `CARGO_HOME=/private/tmp/quire-cargo cargo test -p quire -p quire_core -p quire_store --locked --features quire/test-support`, and `bun run test:reference` (57 tests). `cargo clippy -p quire` could not run on this host because the Metal Toolchain is missing (`xcodebuild -downloadComponent MetalToolchain`).
+Status: done
 
 ### NR13: Open existing Markdown folder notebooks
 

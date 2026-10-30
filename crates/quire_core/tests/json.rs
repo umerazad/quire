@@ -1,6 +1,22 @@
 use quire_core::json::Json;
 
 #[test]
+fn constructing_and_serializing_every_utf16_unit_preserves_the_string_boundary() {
+    use quire_core::json::JsString;
+    let units: Vec<_> = (0..=u16::MAX).collect();
+    let string = JsString::from_utf16(&units);
+    assert_eq!(string.utf16_units().collect::<Vec<_>>(), units);
+    assert!(string.as_str().is_none());
+    let json = Json::parse(string.to_json().as_bytes()).unwrap();
+    assert_eq!(json.root().as_js_string().unwrap(), &string);
+    let native = "اردو 🙂\u{fffd}";
+    assert_eq!(
+        JsString::from_utf16(&native.encode_utf16().collect::<Vec<_>>()).as_str(),
+        Some(native)
+    );
+}
+
+#[test]
 fn utf16_strings_are_lossless_and_keys_use_utf16_order() {
     for (input, expected) in [
         (r#""\ud800""#, r#""\ud800""#),

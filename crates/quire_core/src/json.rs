@@ -12,6 +12,32 @@ mod coercion;
 pub struct JsString(Vec<u8>);
 
 impl JsString {
+    pub fn from_utf16(units: &[u16]) -> Self {
+        let mut bytes = Vec::new();
+        let mut buffer = [0; 4];
+        for decoded in char::decode_utf16(units.iter().copied()) {
+            match decoded {
+                Ok(c) => bytes.extend_from_slice(c.encode_utf8(&mut buffer).as_bytes()),
+                Err(error) => {
+                    let unit = error.unpaired_surrogate();
+                    bytes.extend_from_slice(&[
+                        0xe0 | (unit >> 12) as u8,
+                        0x80 | ((unit >> 6) & 0x3f) as u8,
+                        0x80 | (unit & 0x3f) as u8,
+                    ]);
+                }
+            }
+        }
+        Self(bytes)
+    }
+
+    /// A JSON string literal preserving every JavaScript UTF-16 code unit.
+    pub fn to_json(&self) -> String {
+        let mut output = String::new();
+        self.write_json(&mut output);
+        output
+    }
+
     /// Validated WTF-8 bytes, which can contain unpaired surrogates. Use as_str for native UTF-8.
     pub fn as_bytes(&self) -> &[u8] {
         &self.0

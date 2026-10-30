@@ -394,7 +394,8 @@ impl NotebookStore {
         let path_key = path
             .as_str()
             .map(|path| path.nfc().collect::<String>().to_lowercase());
-        self.connection.exec_bound("INSERT INTO revisions(id,page,path,path_key,generation,created,deleted,body_hash,body) VALUES (?,?,?,?,?,?,?,?,?)")?((id, page.as_str(), path.canonical()?, path_key, generation, value.field("created").as_f64().unwrap() as u64, value.field("deleted").canonical()? == "true", hash, body))?;
+        self.connection.exec_bound("INSERT INTO revisions(id,page,path,path_key,generation,created,deleted,body_hash,body) VALUES (?,?,?,?,?,?,?,?,?)")?((id, page.as_str(), path.canonical()?, path_key, generation, value.field("created").as_f64().unwrap() as u64, value.field("deleted").canonical()? == "true", hash.as_str(), body))?;
+        self.index_revision(value, &hash)?;
         for parent in parents {
             self.connection
                 .exec_bound("INSERT INTO parents(child,parent) VALUES (?,?)")?((

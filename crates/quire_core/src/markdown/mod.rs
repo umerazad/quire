@@ -7,7 +7,7 @@ mod autolinks;
 pub use autolinks::{angle_autolink_end, bare_url_end};
 
 mod frontmatter;
-pub use frontmatter::{frontmatter_tags, page_title};
+pub use frontmatter::{frontmatter_tags, page_title, page_title_for_editor, page_title_lossless};
 
 mod ranges;
 

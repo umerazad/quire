@@ -1,8 +1,9 @@
 use crate::notebook::{
-    BatchImport, CheckedSave, Cursor, Draft, DraftStamp, Edit, NotebookStore, PageCheckout,
-    PendingPublication, PublicationAck, RescanCursor, RescanLimits, RescanReport, SaveAck,
+    BatchImport, CheckedSave, Cursor, Draft, DraftStamp, Edit, MetadataLimits, NotebookStore,
+    PageCheckout, PageMetadata, PendingPublication, PublicationAck, RescanCursor, RescanLimits,
+    RescanReport, SaveAck,
 };
-use crate::sync::json::Json;
+use crate::sync::json::{JsString, Json};
 use anyhow::{Context as _, Result, anyhow, ensure};
 use futures::channel::oneshot;
 use std::{
@@ -238,6 +239,19 @@ impl StorageClient {
     }
     pub fn save(&self, edit: Edit) -> std::result::Result<Reply<SaveAck>, QueueError> {
         self.request(edit_size(&edit), move |store| store.save(&edit))
+    }
+    pub fn page_metadata(
+        &self,
+        after: Option<JsString>,
+        limits: MetadataLimits,
+    ) -> std::result::Result<Reply<Vec<PageMetadata>>, QueueError> {
+        self.request(
+            128usize.saturating_add(after.as_ref().map_or(0, |page| page.as_bytes().len())),
+            move |store| store.page_metadata(after.as_ref(), limits),
+        )
+    }
+    pub fn rebuild_metadata(&self) -> std::result::Result<Reply<usize>, QueueError> {
+        self.request(128, NotebookStore::rebuild_metadata)
     }
     pub fn save_if_heads(
         &self,

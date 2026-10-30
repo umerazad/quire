@@ -9,6 +9,11 @@ impl NotebookStore {
         self.transaction(|| {
             let version = self.preflight()?;
             ensure!(version >= 2, "This rollback requires an upgraded schema. Preserve the database and use the matching Quire version.");
+            if version >= 4 {
+                self.connection.exec("DROP INDEX heads_by_revision")?()?;
+                self.connection.exec("DROP TABLE revision_metadata")?()?;
+                self.connection.exec("DELETE FROM schema_history WHERE version=4")?()?;
+            }
             if version >= 3 {
                 let exposed = self.connection.select_row::<i64>("SELECT COUNT(*) FROM observed_revisions r JOIN outbox o ON o.revision=r.revision WHERE o.batch IS NULL")?()?;
                 ensure!(exposed == Some(0), "Peer-observed saves are still pending publication. Publish them durably before rolling back this schema upgrade.");
@@ -74,6 +79,8 @@ impl NotebookStore {
                 self.connection.exec(
                     "INSERT INTO observed_revisions(revision) SELECT revision FROM outbox",
                 )?()?;
+            } else if version == 4 {
+                self.backfill_metadata()?;
             }
             self.connection
                 .exec_bound("INSERT INTO schema_history(version,checksum) VALUES (?,?)")?(
@@ -97,33 +104,49 @@ mod tests {
         notebook::{Draft, DraftStamp, Edit},
         sync::{format, json::Json},
     };
-    use std::{cell::Cell, collections::BTreeSet, path::Path};
+    use std::{collections::BTreeSet, path::Path};
 
-    fn legacy_store(path: &Path) -> Result<NotebookStore> {
+    fn fixture_store(path: &Path) -> Result<NotebookStore> {
         assert_eq!(
             schema::checksum(1),
             "92d718278b41f834c594bbce9683f9af1a02017500cb3c9ae9a71e7e45fdb25f",
             "schema 1 must remain byte-compatible with the committed storage format"
         );
-        let connection = database::open_writable(path)?;
-        for (_, sql) in schema::SCHEMA_V1 {
-            connection.exec(sql)?()?;
-        }
-        connection.exec_bound("INSERT INTO schema_history(version,checksum) VALUES (1,?)")?(
-            schema::checksum(1),
-        )?;
-        connection.exec(
-            "INSERT INTO meta(singleton,notebook,device,uncertain) VALUES (1,'nb','office',1)",
-        )?()?;
-        connection.exec(&format!("PRAGMA application_id={APPLICATION_ID}"))?()?;
-        connection.exec("PRAGMA user_version=1")?()?;
-        Ok(NotebookStore {
-            connection,
-            notebook: "nb".into(),
-            device: "office".into(),
-            poisoned: Cell::new(false),
-            directory: path.parent().unwrap().into(),
-        })
+        assert_eq!(
+            schema::checksum(2),
+            "0d2e8502c075f2879626b7b1149b32cab02f4d74f748e10650d84158c4293f76"
+        );
+        assert_eq!(
+            schema::checksum(3),
+            "df0e18953510c1a6e0229f376da75dc67c9bab4e5d19381d443b3b31acbfd5c4"
+        );
+        NotebookStore::open(path, "nb", "office")
+    }
+
+    // Populate authoritative rows first, then materialize the exact older schema.
+    // Current save/import code must never skip mandatory metadata writes for fixtures.
+    fn freeze_schema(store: &NotebookStore, wanted: i32) -> Result<()> {
+        assert!((1..SCHEMA_VERSION).contains(&wanted));
+        store.transaction(|| {
+            for version in (wanted + 1..=SCHEMA_VERSION).rev() {
+                for (name, sql) in schema::migration(version).iter().rev() {
+                    let kind = if sql.starts_with("CREATE TABLE") { "TABLE" } else if sql.starts_with("CREATE INDEX") { "INDEX" } else { anyhow::bail!("Fixture schema freezing needs an explicit rule for this additive object."); };
+                    store.connection.exec(&format!("DROP {kind} {name}"))?()?;
+                }
+                store
+                    .connection
+                    .exec_bound("DELETE FROM schema_history WHERE version=?")?(
+                    version
+                )?;
+            }
+            store
+                .connection
+                .exec(&format!("PRAGMA user_version={wanted}"))?()?;
+            assert_eq!(store.preflight()?, wanted);
+            Ok(())
+        })?;
+        store.connection.exec("VACUUM")?()?;
+        Ok(())
     }
 
     fn edit(base: Vec<String>, text: &str) -> Edit {
@@ -138,31 +161,14 @@ mod tests {
         }
     }
 
-    fn schema_two_store(path: &Path) -> Result<NotebookStore> {
-        assert_eq!(
-            schema::checksum(2),
-            "0d2e8502c075f2879626b7b1149b32cab02f4d74f748e10650d84158c4293f76"
-        );
-        let store = legacy_store(path)?;
-        for (_, sql) in schema::SCHEMA_V2 {
-            store.connection.exec(sql)?()?;
-        }
-        store
-            .connection
-            .exec_bound("INSERT INTO schema_history(version,checksum) VALUES (2,?)")?(
-            schema::checksum(2),
-        )?;
-        store.connection.exec("PRAGMA user_version=2")?()?;
-        Ok(store)
-    }
-
     #[test]
     fn schema_two_upgrade_protects_existing_unselected_saves_and_refuses_unsafe_rollback()
     -> Result<()> {
         let root = tempfile::tempdir()?;
         let path = root.path().join("local.sqlite");
-        let store = schema_two_store(&path)?;
+        let store = fixture_store(&path)?;
         let saved = store.save(&edit(vec![], "legacy pending save"))?;
+        freeze_schema(&store, 2)?;
         drop(store);
         let store = NotebookStore::open(&path, "nb", "office")?;
         assert_eq!(
@@ -199,8 +205,9 @@ mod tests {
     fn failed_schema_two_upgrade_rolls_back_observation_backfill_and_can_retry() -> Result<()> {
         let root = tempfile::tempdir()?;
         let path = root.path().join("local.sqlite");
-        let store = schema_two_store(&path)?;
+        let store = fixture_store(&path)?;
         let saved = store.save(&edit(vec![], "keep pending"))?;
+        freeze_schema(&store, 2)?;
         store.connection.exec("CREATE TEMP TRIGGER fail_upgrade BEFORE INSERT ON schema_history WHEN NEW.version=3 BEGIN SELECT RAISE(ABORT,'injected schema history failure'); END")?()?;
         assert!(store.transaction(|| store.migrate(2)).is_err());
         assert_eq!(store.preflight()?, 2);
@@ -231,7 +238,7 @@ mod tests {
     -> Result<()> {
         let root = tempfile::tempdir()?;
         let path = root.path().join("local.sqlite");
-        let store = legacy_store(&path)?;
+        let store = fixture_store(&path)?;
         let first = store.save(&edit(vec![], "first مرحبا 🙂"))?;
         store.mark_reconciled(None)?;
         let pending = store.prepare_publication(100)?.unwrap();
@@ -282,10 +289,19 @@ mod tests {
             format::sha256(b"image 0"),
             7i64,
         ))?;
+        freeze_schema(&store, 1)?;
         drop(store);
         let store = NotebookStore::open(&path, "nb", "office")?;
         assert_eq!(store.preflight()?, SCHEMA_VERSION);
         assert_eq!(store.pending_publication()?, Some(pending.clone()));
+        assert_eq!(
+            store
+                .connection
+                .select_row::<i64>("SELECT COUNT(*) FROM revision_metadata")?()?,
+            store
+                .connection
+                .select_row::<i64>("SELECT COUNT(*) FROM heads")?()?
+        );
         assert_eq!(store.outbox()?, [first.revision_id(), second.revision_id()]);
         assert_eq!(store.draft("p-one")?, Some(draft));
         store.require_attachment(&cached)?;
@@ -325,8 +341,9 @@ mod tests {
     {
         let root = tempfile::tempdir()?;
         let path = root.path().join("local.sqlite");
-        let store = legacy_store(&path)?;
+        let store = fixture_store(&path)?;
         let saved = store.save(&edit(vec![], "acknowledged"))?;
+        freeze_schema(&store, 1)?;
         let pages = store.connection.select_row::<i64>("PRAGMA page_count")?()?.unwrap();
         store
             .connection
@@ -355,8 +372,9 @@ mod tests {
     fn damaged_legacy_body_aborts_upgrade_without_repairing_or_discarding_it() -> Result<()> {
         let root = tempfile::tempdir()?;
         let path = root.path().join("local.sqlite");
-        let store = legacy_store(&path)?;
+        let store = fixture_store(&path)?;
         let saved = store.save(&edit(vec![], "keep original"))?;
+        freeze_schema(&store, 1)?;
         store
             .connection
             .exec("UPDATE revisions SET body_hash='damaged'")?()?;
@@ -389,10 +407,11 @@ mod tests {
     fn reversible_upgrade_preserves_local_work_through_down_and_up() -> Result<()> {
         let root = tempfile::tempdir()?;
         let path = root.path().join("local.sqlite");
-        let store = legacy_store(&path)?;
+        let store = fixture_store(&path)?;
         let saved = store.save(&edit(vec![], "keep local work"))?;
         store.mark_reconciled(None)?;
         let pending = store.prepare_publication(100)?.unwrap();
+        freeze_schema(&store, 1)?;
         drop(store);
         NotebookStore::open(&path, "nb", "office")?.rollback_schema_upgrade()?;
         let connection = database::open_writable(&path)?;
@@ -408,6 +427,178 @@ mod tests {
         );
         assert_eq!(store.outbox()?, [saved.revision_id()]);
         assert_eq!(store.pending_publication()?, Some(pending));
+        Ok(())
+    }
+
+    #[test]
+    fn schema_three_metadata_upgrade_preserves_local_work_through_rollback() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("local.sqlite");
+        let store = fixture_store(&path)?;
+        let first = store.save(&edit(vec![], "first"))?;
+        store.mark_reconciled(None)?;
+        let pending = store.prepare_publication(10)?.unwrap();
+        let second = store.save(&edit(
+            vec![first.revision_id().into()],
+            "---\ntitle: second\n---\n",
+        ))?;
+        let draft = Draft {
+            page: "p-one".into(),
+            path: "A.md".into(),
+            text: "unsaved".into(),
+            base: vec![second.revision_id().into()],
+            created: 11,
+            stamp: DraftStamp {
+                session: "editor".into(),
+                version: 1,
+            },
+        };
+        store.put_draft(&draft, None)?;
+        let bodies = store.connection.select::<(String, String, Vec<u8>)>(
+            "SELECT id,body_hash,body FROM revisions ORDER BY id",
+        )?()?;
+        freeze_schema(&store, 3)?;
+        drop(store);
+        let store = NotebookStore::open(&path, "nb", "office")?;
+        assert_eq!(
+            store.page_metadata(None, Default::default())?[0]
+                .title
+                .as_str(),
+            Some("second")
+        );
+        assert_eq!(
+            store.connection.select::<(String, String, Vec<u8>)>(
+                "SELECT id,body_hash,body FROM revisions ORDER BY id"
+            )?()?,
+            bodies
+        );
+        assert_eq!(store.pending_publication()?, Some(pending.clone()));
+        assert_eq!(store.draft("p-one")?, Some(draft.clone()));
+        assert_eq!(store.outbox()?, [first.revision_id(), second.revision_id()]);
+        store.rollback_schema_upgrade()?;
+        let connection = database::open_writable(&path)?;
+        assert_eq!(
+            connection.select_row::<i32>("PRAGMA user_version")?()?,
+            Some(1)
+        );
+        assert_eq!(connection.select_row::<i64>("SELECT COUNT(*) FROM sqlite_schema WHERE name IN ('revision_metadata','heads_by_revision')")?()?, Some(0));
+        drop(connection);
+        let store = NotebookStore::open(&path, "nb", "office")?;
+        assert_eq!(
+            store.connection.select::<(String, String, Vec<u8>)>(
+                "SELECT id,body_hash,body FROM revisions ORDER BY id"
+            )?()?,
+            bodies
+        );
+        assert_eq!(store.pending_publication()?, Some(pending));
+        assert_eq!(store.draft("p-one")?, Some(draft));
+        assert_eq!(
+            store.page_metadata(None, Default::default())?[0].revision,
+            second.revision_id()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn metadata_upgrade_reads_current_heads_without_opening_historical_bodies() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("local.sqlite");
+        let store = fixture_store(&path)?;
+        let first = store.save(&edit(vec![], "old history"))?;
+        store.mark_reconciled(None)?;
+        store.prepare_publication(10)?;
+        let second = store.save(&edit(vec![first.revision_id().into()], "current"))?;
+        freeze_schema(&store, 3)?;
+        store
+            .connection
+            .exec_bound("UPDATE revisions SET body=X'00' WHERE id=?")?(first.revision_id())?;
+        drop(store);
+        let store = NotebookStore::open(&path, "nb", "office")?;
+        assert_eq!(
+            store.page_metadata(None, Default::default())?[0].revision,
+            second.revision_id()
+        );
+        assert!(store.get(first.revision_id()).is_err());
+        assert_eq!(
+            store
+                .connection
+                .select_row::<i64>("SELECT COUNT(*) FROM revision_metadata")?()?,
+            Some(1)
+        );
+        assert_eq!(store.rebuild_metadata()?, 1);
+        assert_eq!(
+            store
+                .connection
+                .select_row_bound::<_, Vec<u8>>("SELECT body FROM revisions WHERE id=?")?(
+                first.revision_id()
+            )?,
+            Some(vec![0])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn failed_metadata_backfill_preserves_schema_three_and_retries() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("local.sqlite");
+        let store = fixture_store(&path)?;
+        let saved = store.save(&edit(vec![], "keep"))?;
+        freeze_schema(&store, 3)?;
+        store.connection.exec("CREATE TEMP TRIGGER fail_metadata_upgrade BEFORE INSERT ON schema_history WHEN NEW.version=4 BEGIN SELECT RAISE(ABORT,'injected metadata upgrade failure'); END")?()?;
+        assert!(store.transaction(|| store.migrate(3)).is_err());
+        assert_eq!(store.preflight()?, 3);
+        assert_eq!(store.connection.select_row::<i64>("SELECT COUNT(*) FROM sqlite_schema WHERE name IN ('revision_metadata','heads_by_revision')")?()?, Some(0));
+        assert_eq!(
+            store.get(saved.revision_id())?.unwrap().canonical()?,
+            saved.revision.canonical()?
+        );
+        store
+            .connection
+            .exec("DROP TRIGGER fail_metadata_upgrade")?()?;
+        store.transaction(|| store.migrate(3))?;
+        assert_eq!(store.preflight()?, SCHEMA_VERSION);
+        assert_eq!(
+            store.page_metadata(None, Default::default())?[0].revision,
+            saved.revision_id()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn corrupt_head_body_aborts_metadata_upgrade_without_repair_or_data_loss() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("local.sqlite");
+        let store = fixture_store(&path)?;
+        let saved = store.save(&edit(vec![], "keep"))?;
+        freeze_schema(&store, 3)?;
+        let original = store
+            .connection
+            .select_row::<Vec<u8>>("SELECT body FROM revisions")?()?
+        .unwrap();
+        store.connection.exec("UPDATE revisions SET body=X'00'")?()?;
+        drop(store);
+        assert!(NotebookStore::open(&path, "nb", "office").is_err());
+        let connection = database::open_writable(&path)?;
+        assert_eq!(
+            connection.select_row::<i32>("PRAGMA user_version")?()?,
+            Some(3)
+        );
+        assert_eq!(connection.select_row::<i64>("SELECT COUNT(*) FROM sqlite_schema WHERE name IN ('revision_metadata','heads_by_revision')")?()?, Some(0));
+        assert_eq!(
+            connection.select_row::<Vec<u8>>("SELECT body FROM revisions")?()?,
+            Some(vec![0])
+        );
+        assert_eq!(
+            connection.select::<String>("SELECT revision FROM outbox")?()?,
+            [saved.revision_id()]
+        );
+        connection.exec_bound("UPDATE revisions SET body=?")?(original)?;
+        drop(connection);
+        let store = NotebookStore::open(&path, "nb", "office")?;
+        assert_eq!(
+            store.page_metadata(None, Default::default())?[0].revision,
+            saved.revision_id()
+        );
         Ok(())
     }
 

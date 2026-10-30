@@ -136,14 +136,21 @@ impl SourceText {
 }
 
 fn normalized_chars(text: &str) -> impl Iterator<Item = char> + '_ {
-    let mut chars = text.chars().peekable();
+    normalized_line_units(text.chars(), true)
+}
+
+pub(crate) fn normalized_line_units<T: Copy + PartialEq + From<u8>>(
+    units: impl Iterator<Item = T>,
+    normalize: bool,
+) -> impl Iterator<Item = T> {
+    let mut chars = units.peekable();
     std::iter::from_fn(move || {
         let next = chars.next()?;
-        if next == '\r' {
-            if chars.peek() == Some(&'\n') {
+        if normalize && next == T::from(b'\r') {
+            if chars.peek() == Some(&T::from(b'\n')) {
                 chars.next();
             }
-            Some('\n')
+            Some(T::from(b'\n'))
         } else {
             Some(next)
         }

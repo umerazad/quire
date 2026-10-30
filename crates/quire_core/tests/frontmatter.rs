@@ -1,4 +1,4 @@
-use quire_core::markdown::{frontmatter_tags, page_title};
+use quire_core::markdown::{frontmatter_tags, page_title, page_title_lossless};
 use serde_json::Value;
 
 #[test]
@@ -12,6 +12,10 @@ fn title_and_tag_metadata_match_the_frozen_markdown_oracle_losslessly() {
         let name = case["name"].as_str().unwrap();
         let source = case["text"].as_str().unwrap();
         let title = page_title(case["path"].as_str().unwrap(), source);
+        assert_eq!(
+            page_title_lossless(&case["path"].as_str().unwrap().into(), &source.into()),
+            title
+        );
         let expected: Vec<u16> = case["titleUtf16"]
             .as_array()
             .unwrap()

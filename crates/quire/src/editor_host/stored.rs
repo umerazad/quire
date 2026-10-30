@@ -176,7 +176,7 @@ impl StoredWindow {
         let title = page.path.as_deref().unwrap_or("Unsaved page");
         window.set_window_title(&format!("{title} · Quire Native"));
         eprintln!(
-            "Quire page buffer ready: {} revision bodies, {} source bytes, {} heads, recovery={}, deleted={}, {:.1} ms to buffer ready.",
+            "Quire page buffer ready: {} checkout revision bodies, {} source bytes, {} heads, recovery={}, deleted={}, {:.1} ms to buffer ready.",
             page.loaded_revision_bodies,
             page.source.original_len(),
             page.heads.len(),
