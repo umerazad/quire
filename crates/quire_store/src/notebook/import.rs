@@ -99,6 +99,7 @@ impl NotebookStore {
             let mut applied = 0;
             let mut changed = BTreeMap::new();
             for revision in batch.field("revisions").elements().unwrap() {
+                self.connection.exec_bound("INSERT OR IGNORE INTO observed_revisions(revision) SELECT revision FROM outbox WHERE revision=?")?(revision.field("id").as_str().unwrap())?;
                 if self.insert_revision(revision)? {
                     applied += 1;
                     let page = revision.field("page");
@@ -167,8 +168,72 @@ impl NotebookStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sync::json::Json;
+    use crate::{notebook::Edit, sync::json::Json};
     use serde_json::json;
+
+    #[test]
+    fn failed_peer_import_does_not_leave_observation_metadata_and_retry_protects_the_parent()
+    -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let store = NotebookStore::open(&root.path().join("local.sqlite"), "nb", "local")?;
+        store.mark_reconciled(None)?;
+        let first = store.save(&Edit {
+            page: "p".into(),
+            base: vec![],
+            path: "A.md".into(),
+            text: "first".into(),
+            created: 1,
+            deleted: false,
+            recovery: None,
+        })?;
+        let record = first.revision.canonical()?;
+        let mut observed: serde_json::Value = serde_json::from_str(&record)?;
+        observed["device"] = "peer".into();
+        let batch = Json::from(
+            &json!({"notebook":"nb","device":"peer","seq":1,"previous":null,"created":1,"revisions":[observed],"attachments":[]}),
+        );
+        let encoded = format::encode(&batch, Kind::Batch)?;
+        store.connection.exec("CREATE TEMP TRIGGER fail_cursor BEFORE INSERT ON cursors BEGIN SELECT RAISE(ABORT,'injected cursor failure'); END")?()?;
+        assert!(
+            store
+                .import_batch("peer", &encoded.name, &encoded.data)
+                .is_err()
+        );
+        assert_eq!(
+            store
+                .connection
+                .select_row::<i64>("SELECT COUNT(*) FROM observed_revisions")?()?,
+            Some(0)
+        );
+        assert!(store.cursor("peer")?.is_none());
+        assert_eq!(store.outbox()?, [first.revision_id()]);
+        store.connection.exec("DROP TRIGGER fail_cursor")?()?;
+        assert!(matches!(
+            store.import_batch("peer", &encoded.name, &encoded.data)?,
+            BatchImport::Applied(_)
+        ));
+        assert_eq!(
+            store
+                .connection
+                .select::<String>("SELECT revision FROM observed_revisions")?()?,
+            [first.revision_id()]
+        );
+        let next = store.save(&Edit {
+            page: "p".into(),
+            base: vec![first.revision_id().into()],
+            path: "A.md".into(),
+            text: "next".into(),
+            created: 2,
+            deleted: false,
+            recovery: None,
+        })?;
+        assert!(next.replaced.is_none());
+        assert_eq!(
+            store.get(first.revision_id())?.unwrap().canonical()?,
+            record
+        );
+        Ok(())
+    }
 
     #[test]
     fn metadata_failure_rolls_back_the_entire_import_and_allows_retry() -> Result<()> {

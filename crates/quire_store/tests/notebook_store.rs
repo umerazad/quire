@@ -28,7 +28,7 @@ fn notebook_schema_is_initialized_once_and_reopens() {
                 .select_row::<i32>("SELECT COUNT(*) FROM schema_history")
                 .unwrap()()
             .unwrap(),
-            Some(2)
+            Some(SCHEMA_VERSION)
         );
     }
 }

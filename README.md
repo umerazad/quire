@@ -56,7 +56,9 @@ The storage library reuses Zed's `sqlez` with a fallible file-open path, WAL/FUL
 
 Schema 2 retains attachment requests and known batch hashes across restart. Requests clear with a verified attachment's catalog commit; historical hashes detect older writer forks. Schema 1 upgrades atomically while preserving drafts, local revisions, pending publication, and the attachment catalog. The one-time upgrade reads legacy bodies individually through pages of 128 IDs to reconstruct dependencies. Migrated hash history starts at recorded cursors; unavailable earlier hashes remain unknown. Routine metadata queries use bounded pages without reading page bodies.
 
-The library's offline `rollback_schema_upgrade` consumes its store handle and restores schema 1 only when the added metadata is reconstructable from existing cursors and no attachment requests remain. It refuses a rollback that would lose those protections. Stop storage workers before using this maintenance operation; normal opening only upgrades.
+Schema 3 prevents coalescing a local pending revision after it appears in an imported peer batch. Peer observation commits with the imported cursor without consuming the local outbox or changing revision provenance. Upgrades from schemas 1 and 2 conservatively protect all existing pending revisions because those databases did not record peer observation. This prevents future deletion; it cannot reconstruct a revision already removed by an older build.
+
+The library's offline `rollback_schema_upgrade` consumes its store handle and restores schema 1 only when the added metadata is reconstructable from existing cursors, no attachment requests remain, and peer-observed saves are durably published or already frozen for publication. It refuses a rollback that would lose those protections. Stop storage workers before using this maintenance operation; normal opening only upgrades.
 
 Generate synthetic notebook fixtures with `bun tools/synthetic-notebook.ts <empty-folder> [pages] [seed]`. Defaults are 6,536 pages and seed 1. Generated notebooks and build output stay outside version control.
 

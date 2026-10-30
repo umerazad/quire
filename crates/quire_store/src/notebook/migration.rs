@@ -3,15 +3,22 @@ use crate::schema;
 use anyhow::{Context as _, Result, ensure};
 
 impl NotebookStore {
-    /// Offline rollback of the additive schema 2 upgrade. Stop other storage workers first.
+    /// Offline rollback of the additive upgrades to schema 1. Stop other storage workers first.
     /// Consumes this handle and refuses to discard metadata unavailable in schema 1.
     pub fn rollback_schema_upgrade(self) -> Result<()> {
         self.transaction(|| {
-            ensure!(self.preflight()? == 2, "This rollback requires schema 2. Preserve the database and use the matching Quire version.");
+            let version = self.preflight()?;
+            ensure!(version >= 2, "This rollback requires an upgraded schema. Preserve the database and use the matching Quire version.");
+            if version >= 3 {
+                let exposed = self.connection.select_row::<i64>("SELECT COUNT(*) FROM observed_revisions r JOIN outbox o ON o.revision=r.revision WHERE o.batch IS NULL")?()?;
+                ensure!(exposed == Some(0), "Peer-observed saves are still pending publication. Publish them durably before rolling back this schema upgrade.");
+                self.connection.exec("DROP TABLE observed_revisions")?()?;
+                self.connection.exec("DELETE FROM schema_history WHERE version=3")?()?;
+            }
             let requests = self.connection.select_row::<i64>("SELECT COUNT(*) FROM attachment_needs")?()?;
             ensure!(requests == Some(0), "Attachment requests are still pending. Finish their verified delivery before rolling back this schema upgrade.");
             let history = self.connection.select_row::<i64>("SELECT COUNT(*) FROM batch_hashes b LEFT JOIN cursors c ON c.device=b.device AND c.seq=b.seq AND c.hash=b.hash WHERE c.device IS NULL")?()?;
-            ensure!(history == Some(0), "Historical batch hashes cannot be represented in schema 1. Keep schema 2 and use a compatible Quire version.");
+            ensure!(history == Some(0), "Historical batch hashes cannot be represented in schema 1. Keep the upgraded database and use a compatible Quire version.");
             self.connection.exec("DROP TABLE attachment_needs")?()?;
             self.connection.exec("DROP TABLE batch_hashes")?()?;
             self.connection.exec("DELETE FROM schema_history WHERE version=2")?()?;
@@ -62,6 +69,11 @@ impl NotebookStore {
                     }
                     after = ids.last().unwrap().clone();
                 }
+            } else if version == 3 {
+                // Older stores did not record peer observation. Protect every pending save.
+                self.connection.exec(
+                    "INSERT INTO observed_revisions(revision) SELECT revision FROM outbox",
+                )?()?;
             }
             self.connection
                 .exec_bound("INSERT INTO schema_history(version,checksum) VALUES (?,?)")?(
@@ -126,6 +138,94 @@ mod tests {
         }
     }
 
+    fn schema_two_store(path: &Path) -> Result<NotebookStore> {
+        assert_eq!(
+            schema::checksum(2),
+            "0d2e8502c075f2879626b7b1149b32cab02f4d74f748e10650d84158c4293f76"
+        );
+        let store = legacy_store(path)?;
+        for (_, sql) in schema::SCHEMA_V2 {
+            store.connection.exec(sql)?()?;
+        }
+        store
+            .connection
+            .exec_bound("INSERT INTO schema_history(version,checksum) VALUES (2,?)")?(
+            schema::checksum(2),
+        )?;
+        store.connection.exec("PRAGMA user_version=2")?()?;
+        Ok(store)
+    }
+
+    #[test]
+    fn schema_two_upgrade_protects_existing_unselected_saves_and_refuses_unsafe_rollback()
+    -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("local.sqlite");
+        let store = schema_two_store(&path)?;
+        let saved = store.save(&edit(vec![], "legacy pending save"))?;
+        drop(store);
+        let store = NotebookStore::open(&path, "nb", "office")?;
+        assert_eq!(
+            store
+                .connection
+                .select::<String>("SELECT revision FROM observed_revisions")?()?,
+            [saved.revision_id()]
+        );
+        assert!(store.rollback_schema_upgrade().is_err());
+        let store = NotebookStore::open(&path, "nb", "office")?;
+        store.mark_reconciled(None)?;
+        let next = store.save(&edit(vec![saved.revision_id().into()], "new contents"))?;
+        assert!(next.replaced.is_none());
+        assert_eq!(store.outbox()?, [saved.revision_id(), next.revision_id()]);
+        assert_eq!(
+            store.get(saved.revision_id())?.unwrap().canonical()?,
+            saved.revision.canonical()?
+        );
+        let pending = store.prepare_publication(2)?.unwrap();
+        store.rollback_schema_upgrade()?;
+        let store = NotebookStore::open(&path, "nb", "office")?;
+        assert_eq!(store.pending_publication()?, Some(pending));
+        assert_eq!(store.outbox()?, [saved.revision_id(), next.revision_id()]);
+        assert_eq!(
+            store
+                .connection
+                .select_row::<i32>("SELECT COUNT(*) FROM observed_revisions")?()?,
+            Some(2)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn failed_schema_two_upgrade_rolls_back_observation_backfill_and_can_retry() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("local.sqlite");
+        let store = schema_two_store(&path)?;
+        let saved = store.save(&edit(vec![], "keep pending"))?;
+        store.connection.exec("CREATE TEMP TRIGGER fail_upgrade BEFORE INSERT ON schema_history WHEN NEW.version=3 BEGIN SELECT RAISE(ABORT,'injected schema history failure'); END")?()?;
+        assert!(store.transaction(|| store.migrate(2)).is_err());
+        assert_eq!(store.preflight()?, 2);
+        assert_eq!(
+            store.connection.select_row::<i32>(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE name='observed_revisions'"
+            )?()?,
+            Some(0)
+        );
+        assert_eq!(store.outbox()?, [saved.revision_id()]);
+        assert_eq!(
+            store.get(saved.revision_id())?.unwrap().canonical()?,
+            saved.revision.canonical()?
+        );
+        drop(store);
+        let store = NotebookStore::open(&path, "nb", "office")?;
+        assert_eq!(
+            store
+                .connection
+                .select::<String>("SELECT revision FROM observed_revisions")?()?,
+            [saved.revision_id()]
+        );
+        Ok(())
+    }
+
     #[test]
     fn populated_schema_one_upgrade_preserves_local_state_and_pages_attachment_reconstruction()
     -> Result<()> {
@@ -184,7 +284,7 @@ mod tests {
         ))?;
         drop(store);
         let store = NotebookStore::open(&path, "nb", "office")?;
-        assert_eq!(store.preflight()?, 2);
+        assert_eq!(store.preflight()?, SCHEMA_VERSION);
         assert_eq!(store.pending_publication()?, Some(pending.clone()));
         assert_eq!(store.outbox()?, [first.revision_id(), second.revision_id()]);
         assert_eq!(store.draft("p-one")?, Some(draft));
@@ -215,7 +315,7 @@ mod tests {
             reopened
                 .connection
                 .select_row::<i32>("SELECT COUNT(*) FROM schema_history")?()?,
-            Some(2)
+            Some(SCHEMA_VERSION)
         );
         Ok(())
     }
@@ -246,7 +346,7 @@ mod tests {
         assert_eq!(store.connection.select_row::<i32>("SELECT COUNT(*) FROM sqlite_schema WHERE name IN ('batch_hashes','attachment_needs')")?()?, Some(0));
         drop(store);
         let reopened = NotebookStore::open(&path, "nb", "office")?;
-        assert_eq!(reopened.preflight()?, 2);
+        assert_eq!(reopened.preflight()?, SCHEMA_VERSION);
         assert_eq!(reopened.outbox()?, [saved.revision_id()]);
         Ok(())
     }
@@ -334,7 +434,7 @@ mod tests {
             })?;
             assert!(store.rollback_schema_upgrade().is_err());
             let store = NotebookStore::open(&path, "nb", "office")?;
-            assert_eq!(store.preflight()?, 2);
+            assert_eq!(store.preflight()?, SCHEMA_VERSION);
             if with_request {
                 assert_eq!(store.pending_attachments(None, 100)?, [name]);
             } else {

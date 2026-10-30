@@ -235,9 +235,18 @@ impl NotebookStore {
             } else {
                 false
             };
+            let observed = if pending {
+                self.connection.select_row_bound::<_, i32>(
+                    "SELECT 1 FROM observed_revisions WHERE revision=?",
+                )?(base[0].as_str())?
+                .is_some()
+            } else {
+                false
+            };
             let replaces = previous.as_ref().filter(|previous| {
                 certain
                     && pending
+                    && !observed
                     && heads == base
                     && previous.root().field("device").as_str() == Some(self.device.as_str())
             });

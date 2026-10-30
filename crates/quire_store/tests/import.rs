@@ -451,6 +451,73 @@ fn a_duplicate_revision_from_a_peer_cannot_consume_the_local_frozen_outbox() -> 
 }
 
 #[test]
+fn a_peer_observed_revision_cannot_be_coalesced_out_of_the_local_graph() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let path = root.path().join("local.sqlite");
+    let store = NotebookStore::open(&path, "nb", "local")?;
+    store.mark_reconciled(None)?;
+    let first = store.save(&Edit {
+        page: "p".into(),
+        base: vec![],
+        path: "A.md".into(),
+        text: "same content".into(),
+        created: 1,
+        deleted: false,
+        recovery: None,
+    })?;
+    let mut observed: Value = serde_json::from_str(&first.revision.canonical()?)?;
+    observed["device"] = "peer".into();
+    let incoming = batch("peer", 1, None, std::slice::from_ref(&observed));
+    assert!(matches!(
+        store.import_batch("peer", &incoming.name, &incoming.data)?,
+        BatchImport::Applied(_)
+    ));
+    assert_eq!(store.outbox()?, [first.revision_id()]);
+    assert_eq!(
+        store.get(first.revision_id())?.unwrap().canonical()?,
+        first.revision.canonical()?
+    );
+    drop(store);
+    let store = NotebookStore::open(&path, "nb", "local")?;
+    store.mark_reconciled(None)?;
+    let second = store.save(&Edit {
+        page: "p".into(),
+        base: vec![first.revision_id().into()],
+        path: "A.md".into(),
+        text: "new local content".into(),
+        created: 2,
+        deleted: false,
+        recovery: None,
+    })?;
+    assert!(
+        second.replaced.is_none(),
+        "a revision already observed in a peer batch must remain available to later descendants"
+    );
+    assert!(store.get(first.revision_id())?.is_some());
+    assert_eq!(store.outbox()?, [first.revision_id(), second.revision_id()]);
+    let descendant = revision("p", "later peer edit", "peer", &[&observed]);
+    let next = batch(
+        "peer",
+        2,
+        Some(&incoming.hash),
+        std::slice::from_ref(&descendant),
+    );
+    assert!(matches!(
+        store.import_batch("peer", &next.name, &next.data)?,
+        BatchImport::Applied(_)
+    ));
+    let mut heads = store.heads("p")?;
+    heads.sort();
+    let mut expected = vec![
+        second.revision_id().to_owned(),
+        descendant["id"].as_str().unwrap().to_owned(),
+    ];
+    expected.sort();
+    assert_eq!(heads, expected);
+    Ok(())
+}
+
+#[test]
 fn seeded_native_import_schedules_match_the_frozen_graph_and_chain_oracle() -> Result<()> {
     use std::{
         io::Write,

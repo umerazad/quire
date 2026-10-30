@@ -1,5 +1,5 @@
 pub const APPLICATION_ID: i32 = i32::from_be_bytes(*b"QURE");
-pub const SCHEMA_VERSION: i32 = 2;
+pub const SCHEMA_VERSION: i32 = 3;
 
 // Keep version 1 immutable. Later schemas need an explicit migration and its own checksum.
 pub(crate) const SCHEMA_V1: &[(&str, &str)] = &[
@@ -64,10 +64,16 @@ pub(crate) const SCHEMA_V2: &[(&str, &str)] = &[
     ),
 ];
 
+pub(crate) const SCHEMA_V3: &[(&str, &str)] = &[(
+    "observed_revisions",
+    "CREATE TABLE observed_revisions (revision TEXT PRIMARY KEY NOT NULL REFERENCES revisions(id) ON DELETE RESTRICT)",
+)];
+
 pub(crate) fn migration(version: i32) -> &'static [(&'static str, &'static str)] {
     match version {
         1 => SCHEMA_V1,
         2 => SCHEMA_V2,
+        3 => SCHEMA_V3,
         _ => unreachable!("preflight must validate schema versions"),
     }
 }
