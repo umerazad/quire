@@ -1,0 +1,14 @@
+{
+  "package": "@lezer/markdown",
+  "version": "1.8.1",
+  "repository": "https://code.haverbeke.berlin/lezer/markdown.git",
+  "source": "dist/index.js",
+  "source_sha256": "38706e0e3a27bcc959f8c811aeb2e9d24289565494f35ca6c5742f0425b23733",
+  "license_sha256": "54bd812a6d334e0c438b78a43cea74b67e882739fd3450115ddc7c52be5706c1",
+  "adaptations": [
+    {
+      "path": "crates/quire_core/src/markdown/autolinks.rs",
+      "description": "Rust port of GFM bare URL/email scanning and angle autolink recognition. ASCII character classes and explicit JavaScript whitespace preserve original regex semantics. A running parenthesis balance avoids repeated rescans while stripping excess closing parentheses. Native parsing remains responsible for inline context and precedence."
+    }
+  ]
+}

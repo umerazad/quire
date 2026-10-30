@@ -3,6 +3,9 @@
 use std::fmt;
 use unicode_normalization::UnicodeNormalization as _;
 
+mod autolinks;
+pub use autolinks::{angle_autolink_end, bare_url_end};
+
 mod frontmatter;
 pub use frontmatter::{frontmatter_tags, page_title};
 
