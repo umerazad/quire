@@ -35,8 +35,8 @@ pub struct TagCount {
     pub count: usize,
 }
 
-const PAGE_COLUMNS: &str = "p.revision,p.page,p.path,p.title";
-type PageRow = (String, String, String, String);
+pub(super) const PAGE_COLUMNS: &str = "p.revision,p.page,p.path,p.title";
+pub(super) type PageRow = (String, String, String, String);
 type LinkRow = (
     PageRow,
     (String, String, String, Option<String>, Option<String>),
@@ -44,7 +44,7 @@ type LinkRow = (
 );
 const LINK_SELECT: &str = "SELECT p.revision,p.page,p.path,p.title,l.kind,l.syntax,l.target,l.label,l.media,l.start,l.finish,l.text FROM live_links l JOIN live_pages p ON p.revision=l.revision WHERE p.deleted=0 AND ";
 
-fn page_ref((revision, page, path, title): PageRow) -> Result<PageRef> {
+pub(super) fn page_ref((revision, page, path, title): PageRow) -> Result<PageRef> {
     let page = Json::parse(page.as_bytes())
         .ok()
         .and_then(|json| json.root().as_js_string().cloned())
@@ -84,7 +84,7 @@ impl QueryIndex {
         self.collator.compare(a, b)
     }
 
-    fn pages_where(&self, clause: &str, value: &str) -> Result<Vec<PageRef>> {
+    pub(super) fn pages_where(&self, clause: &str, value: &str) -> Result<Vec<PageRef>> {
         let rows: Vec<PageRow> = self.connection.select_bound(&format!(
             "SELECT {PAGE_COLUMNS} FROM live_pages p WHERE p.deleted=0 AND {clause}"
         ))?(value)?;
@@ -112,7 +112,7 @@ impl QueryIndex {
         self.resolve_page(target)
     }
 
-    fn resolve_page(&self, target: &str) -> Result<Option<PageRef>> {
+    pub(super) fn resolve_page(&self, target: &str) -> Result<Option<PageRef>> {
         let name = page_key(target);
         let mut exact = self.pages_where("p.name_key=?", &name)?;
         if !exact.is_empty() {

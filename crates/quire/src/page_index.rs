@@ -12,7 +12,7 @@ use quire_store::index::{IndexedBlock, IndexedLink, IndexedTag, PageIndex, tag_k
 use std::{collections::HashSet, future::Future};
 
 /// Bump whenever analysis output changes; the index then rebuilds itself.
-pub const ANALYZER_VERSION: i64 = 1;
+pub const ANALYZER_VERSION: i64 = 2;
 
 /// The editor's view of stored text: every line break becomes `\n`. Unpaired surrogates become
 /// U+FFFD, which keeps UTF-16 offsets unchanged.
@@ -57,6 +57,9 @@ pub fn index_snapshot(snapshot: &BufferSnapshot, text: &str) -> Option<PageIndex
             kind: block.kind.into(),
             parent: block.parent.clone(),
             text: markdown_blocks::block_text(snapshot, block),
+            content: snapshot
+                .text_for_range(block.content_from..block.content_to)
+                .collect(),
         })
         .collect();
     let inline = analyze_inline(snapshot)?;

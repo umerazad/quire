@@ -67,5 +67,14 @@
       "destination": "index/search-index.ts",
       "change": "Unchanged SearchIndex class; import paths adjusted and SearchHit inlined from src/core/types.ts."
     }
+  ],
+  "fixtures": [
+    {
+      "source": "tests/fixtures/reference-filters.json",
+      "source_revision": "5ea5c22310ff",
+      "destination": "../fixtures/reference-filters.json",
+      "sha256": "bbb34e5c4d47f2796a68672016da9dddd78de237e0c44faf8577f759a3b75561",
+      "note": "Shared linked-reference filter cases, also run by the rt Go terminal app; copied unchanged."
+    }
   ]
 }

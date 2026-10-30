@@ -256,7 +256,10 @@ mod tests {
                 return;
             }
         }
-        panic!("indexing did not finish");
+        panic!(
+            "indexing did not finish: {:?}",
+            client.pending(4).unwrap().await.map(|pages| pages.len())
+        );
     }
 
     fn save(store: &NotebookStore, page: &str, text: &str) {
@@ -520,5 +523,93 @@ mod overlay_tests {
             "a closed page without a save falls back to its committed rows"
         );
         assert!(backlinks("Other", cx).await.1.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod reference_filter_tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use quire_core::reference_filter::ReferenceFilter;
+    use quire_store::notebook::{Edit, NotebookStore};
+    use serde_json::Value;
+
+    #[gpui::test]
+    async fn linked_reference_filters_match_the_shared_fixture(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/reference-filters.json"
+        ))
+        .unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("local.sqlite");
+        let store = NotebookStore::open(&database, "nb", "local").unwrap();
+        for (path, text) in fixture["pages"].as_object().unwrap() {
+            store
+                .save(&Edit {
+                    page: path.clone(),
+                    path: path.clone(),
+                    text: text.as_str().unwrap().into(),
+                    base: vec![],
+                    deleted: false,
+                    created: 1,
+                    recovery: None,
+                })
+                .unwrap();
+        }
+        let sync = cx
+            .update(|cx| IndexSync::spawn(database, default_config(DailyCalendar::utc()), cx))
+            .unwrap();
+        let client = cx.read(|cx| sync.read(cx).client().clone());
+        super::tests::settle(&client, cx).await;
+        let shown = JsString::from(fixture["page"].as_str().unwrap());
+        let references = client
+            .linked_references(shown.clone(), false)
+            .unwrap()
+            .await
+            .unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let source = case["filter"].as_str().unwrap();
+            let filter = ReferenceFilter::parse(source);
+            if let Some(error) = case["error"].as_str() {
+                assert_eq!(filter, Err(error), "{source:?}");
+                continue;
+            }
+            let filter = filter.unwrap();
+            let names = client.filter_names(filter.clone()).unwrap().await.unwrap();
+            let mut actual: Vec<_> = references
+                .iter()
+                .filter(|reference| filter.matches(&names, &reference.context))
+                .map(|reference| reference.snippet.clone())
+                .collect();
+            let mut expected: Vec<String> = case["expect"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_str().unwrap().to_owned())
+                .collect();
+            actual.sort();
+            expected.sort();
+            assert_eq!(actual, expected, "filter {source:?}");
+        }
+        let contexts = references
+            .iter()
+            .map(|reference| reference.context.clone())
+            .collect();
+        let facets = client
+            .reference_facets(shown, contexts, 8)
+            .unwrap()
+            .await
+            .unwrap();
+        let labels: Vec<_> = facets
+            .iter()
+            .map(|facet| (facet.label.as_str(), facet.count))
+            .collect();
+        assert!(labels.contains(&("Launch", 2)), "{labels:?}");
+        assert!(
+            !labels.iter().any(|(label, _)| *label == "Ana"),
+            "the shown page is not a facet"
+        );
     }
 }

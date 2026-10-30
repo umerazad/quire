@@ -14,7 +14,7 @@ mod ranges;
 mod tags;
 pub use tags::{TagToken, tag_completion_range, tags};
 
-const JS_SPACE: &str = r"[\t\n\x0b\x0c\r \u{00a0}\u{1680}\u{2000}-\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}\u{feff}]";
+pub(crate) const JS_SPACE: &str = r"[\t\n\x0b\x0c\r \u{00a0}\u{1680}\u{2000}-\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}\u{feff}]";
 
 mod references;
 pub use references::{Reference, ReferenceKind, ReferenceMedia, ReferenceSyntax, references};
@@ -41,7 +41,7 @@ impl fmt::Display for PageNameError {
 }
 impl std::error::Error for PageNameError {}
 
-fn js_space(c: char) -> bool {
+pub(crate) fn js_space(c: char) -> bool {
     (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}'
 }
 

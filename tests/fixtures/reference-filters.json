@@ -1,0 +1,82 @@
+{
+  "page": "Ana.md",
+  "pages": {
+    "Ana.md": "- A person page\n",
+    "Daily/2026-10-28.md": "- Met [[Ana]] about [[Launch]] #meeting\n  - she asked about pricing #question\n- [[Ana]] sent the deck\n",
+    "Notes.md": "---\ntags: [learning]\n---\n- Reading list from [[Ana]]\n  - [[Book A]] #book\n",
+    "Launch.md": "- #project\n- [[Ana]] owns the venue #waiting\n",
+    "Garden.md": "- #project\n- Ask [[Ana]] about seeds\n",
+    "Book A.md": "- A book\n"
+  },
+  "note": "References are named by their block's text and compared in sorted order.",
+  "cases": [
+    {
+      "filter": "",
+      "expect": [
+        "Met [[Ana]] about [[Launch]] #meeting",
+        "[[Ana]] sent the deck",
+        "Reading list from [[Ana]]",
+        "[[Ana]] owns the venue #waiting",
+        "Ask [[Ana]] about seeds"
+      ]
+    },
+    {
+      "filter": "#question",
+      "expect": ["Met [[Ana]] about [[Launch]] #meeting"]
+    },
+    { "filter": "#learning", "expect": ["Reading list from [[Ana]]"] },
+    {
+      "filter": "-#meeting",
+      "expect": [
+        "[[Ana]] sent the deck",
+        "Reading list from [[Ana]]",
+        "[[Ana]] owns the venue #waiting",
+        "Ask [[Ana]] about seeds"
+      ]
+    },
+    {
+      "filter": "[[Launch]]",
+      "expect": [
+        "Met [[Ana]] about [[Launch]] #meeting",
+        "[[Ana]] owns the venue #waiting"
+      ]
+    },
+    {
+      "filter": "-[[Launch]]",
+      "expect": [
+        "[[Ana]] sent the deck",
+        "Reading list from [[Ana]]",
+        "Ask [[Ana]] about seeds"
+      ]
+    },
+    {
+      "filter": "project:Launch",
+      "expect": [
+        "Met [[Ana]] about [[Launch]] #meeting",
+        "[[Ana]] owns the venue #waiting"
+      ]
+    },
+    { "filter": "project:garden", "expect": ["Ask [[Ana]] about seeds"] },
+    {
+      "filter": "-project:Launch -project:Garden",
+      "expect": ["[[Ana]] sent the deck", "Reading list from [[Ana]]"]
+    },
+    {
+      "filter": "pricing",
+      "expect": ["Met [[Ana]] about [[Launch]] #meeting"]
+    },
+    {
+      "filter": "\"the venue\"",
+      "expect": ["[[Ana]] owns the venue #waiting"]
+    },
+    { "filter": "seeds -ask", "expect": [] },
+    { "filter": "[[Book A]] #book", "expect": ["Reading list from [[Ana]]"] },
+    { "filter": "#mee", "expect": [] },
+    { "filter": "garden", "expect": ["Ask [[Ana]] about seeds"] },
+    { "filter": "[[Nowhere]]", "expect": [] },
+    {
+      "filter": "\"oops",
+      "error": "A quote is not closed. Add the closing \"."
+    }
+  ]
+}

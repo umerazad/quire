@@ -12,7 +12,7 @@ pub(super) const TABLES: &[&str] = &[
     "CREATE INDEX temp.overlay_pages_by_name ON overlay_pages(name_key)",
     "CREATE INDEX temp.overlay_pages_by_title ON overlay_pages(title_key)",
     "CREATE INDEX temp.overlay_pages_by_date ON overlay_pages(date)",
-    "CREATE TEMP TABLE overlay_blocks (revision TEXT NOT NULL, ordinal INTEGER NOT NULL, key TEXT NOT NULL, id TEXT, start INTEGER NOT NULL, finish INTEGER NOT NULL, content_from INTEGER NOT NULL, content_to INTEGER NOT NULL, subtree_to INTEGER NOT NULL, depth INTEGER NOT NULL, kind TEXT NOT NULL, parent TEXT, text TEXT NOT NULL, UNIQUE(revision, ordinal))",
+    "CREATE TEMP TABLE overlay_blocks (revision TEXT NOT NULL, ordinal INTEGER NOT NULL, key TEXT NOT NULL, id TEXT, start INTEGER NOT NULL, finish INTEGER NOT NULL, content_from INTEGER NOT NULL, content_to INTEGER NOT NULL, subtree_to INTEGER NOT NULL, depth INTEGER NOT NULL, kind TEXT NOT NULL, parent TEXT, text TEXT NOT NULL, content TEXT NOT NULL, UNIQUE(revision, ordinal))",
     "CREATE INDEX temp.overlay_blocks_by_id ON overlay_blocks(id)",
     "CREATE TEMP TABLE overlay_links (revision TEXT NOT NULL, ordinal INTEGER NOT NULL, kind TEXT NOT NULL, syntax TEXT NOT NULL, target TEXT NOT NULL, label TEXT, media TEXT, start INTEGER NOT NULL, finish INTEGER NOT NULL, text TEXT NOT NULL, page_key TEXT, block_key TEXT, date TEXT, UNIQUE(revision, ordinal))",
     "CREATE INDEX temp.overlay_links_by_page ON overlay_links(page_key)",
@@ -20,19 +20,23 @@ pub(super) const TABLES: &[&str] = &[
     "CREATE INDEX temp.overlay_links_by_date ON overlay_links(date)",
     "CREATE TEMP TABLE overlay_tagged (revision TEXT NOT NULL, ordinal INTEGER NOT NULL, tag TEXT NOT NULL, tag_key TEXT NOT NULL, start INTEGER NOT NULL, block_id TEXT, snippet TEXT NOT NULL, UNIQUE(revision, ordinal))",
     "CREATE INDEX temp.overlay_tagged_by_key ON overlay_tagged(tag_key)",
+    "CREATE TEMP TABLE overlay_front_tags (revision TEXT NOT NULL, ordinal INTEGER NOT NULL, tag TEXT NOT NULL, UNIQUE(revision, ordinal))",
     "CREATE TEMP VIEW live_pages AS
        SELECT revision,page,path,name_key,title,title_key,date,deleted,analyzed FROM main.pages
          WHERE page NOT IN (SELECT page FROM temp.overlay_pages)
        UNION ALL SELECT revision,page,path,name_key,title,title_key,date,deleted,analyzed FROM temp.overlay_pages",
     "CREATE TEMP VIEW live_blocks AS
-       SELECT revision,ordinal,key,id,start,finish,content_from,content_to,subtree_to,depth,kind,parent,text FROM main.blocks
-       UNION ALL SELECT revision,ordinal,key,id,start,finish,content_from,content_to,subtree_to,depth,kind,parent,text FROM temp.overlay_blocks",
+       SELECT revision,ordinal,key,id,start,finish,content_from,content_to,subtree_to,depth,kind,parent,text,content FROM main.blocks
+       UNION ALL SELECT revision,ordinal,key,id,start,finish,content_from,content_to,subtree_to,depth,kind,parent,text,content FROM temp.overlay_blocks",
     "CREATE TEMP VIEW live_links AS
        SELECT revision,ordinal,kind,syntax,target,label,media,start,finish,text,page_key,block_key,date FROM main.links
        UNION ALL SELECT revision,ordinal,kind,syntax,target,label,media,start,finish,text,page_key,block_key,date FROM temp.overlay_links",
     "CREATE TEMP VIEW live_tagged AS
        SELECT revision,ordinal,tag,tag_key,start,block_id,snippet FROM main.tagged
        UNION ALL SELECT revision,ordinal,tag,tag_key,start,block_id,snippet FROM temp.overlay_tagged",
+    "CREATE TEMP VIEW live_front_tags AS
+       SELECT revision,ordinal,tag FROM main.front_tags
+       UNION ALL SELECT revision,ordinal,tag FROM temp.overlay_front_tags",
 ];
 
 pub(super) fn create(connection: &Connection) -> Result<()> {

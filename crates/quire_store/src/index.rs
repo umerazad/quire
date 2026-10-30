@@ -6,16 +6,19 @@
 
 mod overlay;
 mod query;
+mod references;
 mod schema;
 
 pub use overlay::Overlay;
 pub use query::{Backlink, PageRef, SearchHit, TagCount, TaggedBlock};
+pub use references::{Facet, FacetKind, ReferenceBlock};
 
 use crate::notebook::{PageMetadata, read_revision, revision_metadata};
 use crate::sync::json::JsString;
 use crate::worker::{Client, QueueError, QueueLimits, Reply, Worker};
 use anyhow::{Context as _, Result, bail, ensure};
 use quire_core::daily::{DailyCalendar, DailyLayout, DailyParser, write_settings};
+use quire_core::reference_filter::{FilterNames, ReferenceContext, ReferenceFilter};
 use serde::{Deserialize, Serialize};
 use sqlez::connection::Connection;
 use std::{
@@ -40,6 +43,8 @@ pub struct IndexedBlock {
     pub kind: String,
     pub parent: Option<String>,
     pub text: String,
+    /// The raw content, ID included, as linked-reference filters read it.
+    pub content: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -314,42 +319,34 @@ impl QueryIndex {
     /// Records analysis for one revision. Returns false when the revision is no longer a selected
     /// head, so the caller can drop the work.
     pub fn put(&self, revision: &str, analysis: &PageIndex) -> Result<bool> {
-        let stored =
-            self.transaction(|| {
-                let row: Option<(bool, String)> = self
-                    .connection
-                    .select_row_bound("SELECT analyzed,title FROM pages WHERE revision=?")?(
+        let stored = self.transaction(|| {
+            let row: Option<(bool, String)> = self
+                .connection
+                .select_row_bound("SELECT analyzed,title FROM pages WHERE revision=?")?(
+                revision
+            )?;
+            let title = match row {
+                None => return Ok(false),
+                Some((true, _)) => return Ok(true),
+                Some((false, title)) => title,
+            };
+            let mut search = self.connection.exec_bound(
+                "INSERT INTO search_rows(revision,title,text,block_id) VALUES (?,?,?,?)",
+            )?;
+            search((revision, title.as_str(), "", None::<&str>))?;
+            for block in &analysis.blocks {
+                search((
                     revision,
-                )?;
-                let title = match row {
-                    None => return Ok(false),
-                    Some((true, _)) => return Ok(true),
-                    Some((false, title)) => title,
-                };
-                let mut search = self.connection.exec_bound(
-                    "INSERT INTO search_rows(revision,title,text,block_id) VALUES (?,?,?,?)",
-                )?;
-                search((revision, title.as_str(), "", None::<&str>))?;
-                for block in &analysis.blocks {
-                    search((
-                        revision,
-                        title.as_str(),
-                        block.text.as_str(),
-                        block.id.as_deref(),
-                    ))?;
-                }
-                self.insert_rows("main.", revision, analysis)?;
-                for (ordinal, tag) in analysis.front_tags.iter().enumerate() {
-                    self.connection.exec_bound(
-                        "INSERT INTO front_tags(revision,ordinal,tag) VALUES (?,?,?)",
-                    )?((revision, ordinal as u32, tag.as_str()))?;
-                }
-                self.connection
-                    .exec_bound("UPDATE pages SET analyzed=1 WHERE revision=?")?(
-                    revision
-                )?;
-                Ok(true)
-            })?;
+                    title.as_str(),
+                    block.text.as_str(),
+                    block.id.as_deref(),
+                ))?;
+            }
+            self.insert_rows("main.", revision, analysis)?;
+            self.connection
+                .exec_bound("UPDATE pages SET analyzed=1 WHERE revision=?")?(revision)?;
+            Ok(true)
+        })?;
         if stored {
             self.bump();
             self.settle_releases()?;
@@ -359,13 +356,19 @@ impl QueryIndex {
 
     /// Writes block, link, and tag rows into `main.` tables or the `temp.overlay_` copies.
     fn insert_rows(&self, tables: &str, revision: &str, analysis: &PageIndex) -> Result<()> {
+        for (ordinal, tag) in analysis.front_tags.iter().enumerate() {
+            self.connection.exec_bound(&format!(
+                "INSERT INTO {tables}front_tags(revision,ordinal,tag) VALUES (?,?,?)"
+            ))?((revision, ordinal as u32, tag.as_str()))?;
+        }
         for (ordinal, block) in analysis.blocks.iter().enumerate() {
             self.connection.exec_bound(
-                    &format!("INSERT INTO {tables}blocks(revision,ordinal,key,id,start,finish,content_from,content_to,subtree_to,depth,kind,parent,text) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"),
+                    &format!("INSERT INTO {tables}blocks(revision,ordinal,key,id,start,finish,content_from,content_to,subtree_to,depth,kind,parent,text,content) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"),
                 )?((
                     (revision, ordinal as u32, block.key.as_str(), block.id.as_deref()),
                     (block.from, block.to, block.content_from, block.content_to),
                     (block.subtree_to, block.depth, block.kind.as_str(), block.parent.as_deref(), block.text.as_str()),
+                    block.content.as_str(),
                 ))?;
         }
         for (ordinal, link) in analysis.links.iter().enumerate() {
@@ -448,6 +451,31 @@ impl Client<QueryIndex> {
     }
     pub fn search(&self, query: String) -> Answer<Vec<SearchHit>> {
         self.request(128 + query.len(), move |index| index.search(&query))
+    }
+    pub fn linked_references(
+        &self,
+        page: JsString,
+        oldest_first: bool,
+    ) -> Answer<Vec<ReferenceBlock>> {
+        self.request(128 + page.as_bytes().len(), move |index| {
+            index.linked_references(&page, oldest_first)
+        })
+    }
+    pub fn filter_names(&self, filter: ReferenceFilter) -> Answer<FilterNames> {
+        self.request(256, move |index| index.filter_names(&filter))
+    }
+    pub fn reference_facets(
+        &self,
+        shown: JsString,
+        contexts: Vec<ReferenceContext>,
+        limit: usize,
+    ) -> Answer<Vec<Facet>> {
+        let bytes = contexts
+            .iter()
+            .fold(256, |size, context| size + context.text.len());
+        self.request(bytes, move |index| {
+            index.reference_facets(&shown, &contexts, limit)
+        })
     }
     pub fn set_overlay(&self, page: JsString, overlay: Overlay) -> Answer<()> {
         let bytes = 256 + serde_json::to_vec(&overlay.index).map_or(0, |data| data.len());

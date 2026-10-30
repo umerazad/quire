@@ -4,7 +4,7 @@ use sqlez::connection::Connection;
 use std::path::Path;
 
 /// Bump when the index tables change; a mismatch rebuilds the index.
-const FORMAT: i32 = 2;
+const FORMAT: i32 = 3;
 
 const TABLES: &[&str] = &[
     "CREATE TABLE meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1), notebook TEXT NOT NULL, analyzer INTEGER NOT NULL, layout TEXT NOT NULL)",
@@ -14,7 +14,7 @@ const TABLES: &[&str] = &[
     "CREATE INDEX pages_by_date ON pages(date) WHERE date IS NOT NULL",
     "CREATE INDEX pages_by_page ON pages(page)",
     "CREATE INDEX pages_pending ON pages(analyzed, deleted, revision)",
-    "CREATE TABLE blocks (revision TEXT NOT NULL REFERENCES pages(revision) ON DELETE CASCADE, ordinal INTEGER NOT NULL, key TEXT NOT NULL, id TEXT, start INTEGER NOT NULL, finish INTEGER NOT NULL, content_from INTEGER NOT NULL, content_to INTEGER NOT NULL, subtree_to INTEGER NOT NULL, depth INTEGER NOT NULL, kind TEXT NOT NULL, parent TEXT, text TEXT NOT NULL, UNIQUE(revision, ordinal))",
+    "CREATE TABLE blocks (revision TEXT NOT NULL REFERENCES pages(revision) ON DELETE CASCADE, ordinal INTEGER NOT NULL, key TEXT NOT NULL, id TEXT, start INTEGER NOT NULL, finish INTEGER NOT NULL, content_from INTEGER NOT NULL, content_to INTEGER NOT NULL, subtree_to INTEGER NOT NULL, depth INTEGER NOT NULL, kind TEXT NOT NULL, parent TEXT, text TEXT NOT NULL, content TEXT NOT NULL, UNIQUE(revision, ordinal))",
     "CREATE INDEX blocks_by_id ON blocks(id) WHERE id IS NOT NULL",
     "CREATE TABLE links (revision TEXT NOT NULL REFERENCES pages(revision) ON DELETE CASCADE, ordinal INTEGER NOT NULL, kind TEXT NOT NULL, syntax TEXT NOT NULL, target TEXT NOT NULL, label TEXT, media TEXT, start INTEGER NOT NULL, finish INTEGER NOT NULL, text TEXT NOT NULL, page_key TEXT, block_key TEXT, date TEXT, UNIQUE(revision, ordinal))",
     "CREATE INDEX links_by_page ON links(page_key) WHERE page_key IS NOT NULL",
