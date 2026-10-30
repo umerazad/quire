@@ -49,6 +49,21 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
         KeyBinding::new("right", editor::actions::MoveRight, Some(EDITOR_CONTEXT)),
         KeyBinding::new("up", zed_actions::editor::MoveUp, Some(EDITOR_CONTEXT)),
         KeyBinding::new("down", zed_actions::editor::MoveDown, Some(EDITOR_CONTEXT)),
+        KeyBinding::new(
+            "home",
+            editor::actions::MoveToBeginningOfLine {
+                stop_at_soft_wraps: true,
+                stop_at_indent: true,
+            },
+            Some(EDITOR_CONTEXT),
+        ),
+        KeyBinding::new(
+            "end",
+            editor::actions::MoveToEndOfLine {
+                stop_at_soft_wraps: true,
+            },
+            Some(EDITOR_CONTEXT),
+        ),
         KeyBinding::new("tab", editor::actions::Tab, Some(EDITOR_CONTEXT)),
         KeyBinding::new("shift-tab", editor::actions::Outdent, Some(EDITOR_CONTEXT)),
     ]);
@@ -97,6 +112,7 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     }
     crate::editor_search::bind_keys(cx);
     crate::editor_command::bind_keys(cx);
+    crate::outline::init(cx);
     stored::bind_keys(cx);
     cx.bind_keys([KeyBinding::new(
         if cfg!(target_os = "macos") {
@@ -302,6 +318,8 @@ impl NotebookWindow {
         cx.observe(&source_search, |_, _, cx| cx.notify()).detach();
         cx.observe(&second_search, |_, _, cx| cx.notify()).detach();
         cx.observe(&analysis, |_, _, cx| cx.notify()).detach();
+        cx.observe_global::<crate::outline::Notice>(|_, cx| cx.notify())
+            .detach();
         window.focus(&source.focus_handle(cx), cx);
         Self {
             analysis,
@@ -390,6 +408,9 @@ impl Render for NotebookWindow {
             })
             .when_some(self.presentation_error.as_ref(), |div, error| {
                 div.child(gpui::div().p_2().child(error.clone()))
+            })
+            .when_some(crate::outline::notice(cx), |div, notice| {
+                div.child(gpui::div().p_2().child(notice))
             })
             .child(
                 gpui::div()

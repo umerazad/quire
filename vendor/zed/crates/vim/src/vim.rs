@@ -565,6 +565,34 @@ pub fn submit_search(editor: &Entity<Editor>, window: &mut Window, cx: &mut App)
     true
 }
 
+/// Starts Insert mode for a host editing command, recording it so `.` repeats the command and
+/// the text typed after it. Returns false when Vim is off for the editor.
+pub fn begin_host_insert(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> bool {
+    let Some(vim) = editor
+        .read(cx)
+        .addon::<VimAddon>()
+        .map(|addon| addon.entity.clone())
+    else {
+        return false;
+    };
+    vim.update(cx, |vim, cx| {
+        vim.start_recording(cx);
+        vim.switch_mode(Mode::Insert, false, window, cx);
+    });
+    true
+}
+
+/// Records a host editing command so `.` repeats it. Does nothing when Vim is off.
+pub fn record_host_command(editor: &Entity<Editor>, cx: &mut App) {
+    if let Some(vim) = editor
+        .read(cx)
+        .addon::<VimAddon>()
+        .map(|addon| addon.entity.clone())
+    {
+        vim.update(cx, |vim, cx| vim.record_current_action(cx));
+    }
+}
+
 impl editor::Addon for VimAddon {
     fn extend_key_context(&self, key_context: &mut KeyContext, cx: &App) {
         self.entity.read(cx).extend_key_context(key_context, cx)
