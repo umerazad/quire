@@ -190,19 +190,183 @@ fn js_space(c: char) -> bool {
     c.is_whitespace() && c != '\u{85}' || c == '\u{feff}'
 }
 
-fn trim_end(snapshot: &BufferSnapshot, start: usize, end: usize, whitespace: bool) -> usize {
+fn trim_end(snapshot: &BufferSnapshot, start: usize, end: usize) -> usize {
     let removed: usize = snapshot
         .reversed_chars_at(end)
-        .take_while(|c| {
-            if whitespace {
-                js_space(*c)
-            } else {
-                matches!(c, '\r' | '\n')
-            }
-        })
+        .take_while(|c| js_space(*c))
         .map(char::len_utf8)
         .sum();
     end.saturating_sub(removed).max(start)
+}
+
+fn skip_blanks(snapshot: &BufferSnapshot, offset: usize, limit: usize) -> usize {
+    offset
+        + snapshot
+            .chars_at(offset)
+            .take_while(|c| matches!(c, ' ' | '\t'))
+            .map(char::len_utf8)
+            .sum::<usize>()
+            .min(limit.saturating_sub(offset))
+}
+
+/// The end of a block's last line, as Lezer ends blocks: trailing blank lines are excluded,
+/// trailing spaces on the last line are kept.
+fn line_end(snapshot: &BufferSnapshot, start: usize, end: usize) -> usize {
+    let removed: usize = snapshot
+        .reversed_chars_at(end)
+        .take_while(|c| matches!(c, ' ' | '\t' | '\r' | '\n'))
+        .map(char::len_utf8)
+        .sum();
+    let trimmed = end.saturating_sub(removed).max(start);
+    skip_blanks(snapshot, trimmed, end)
+}
+
+fn is_block(node: &language::Node<'_>) -> bool {
+    let kind = node.kind();
+    !kind.starts_with("list_marker_")
+        && !matches!(kind, "block_continuation" | "block_quote_marker")
+}
+
+fn block_end(snapshot: &BufferSnapshot, node: language::Node<'_>, source_len: usize) -> usize {
+    let start = node.start_byte().min(source_len);
+    let end = node.end_byte().min(source_len);
+    let mut cursor = node.walk();
+    match node.kind() {
+        "list" | "list_item" | "block_quote" | "section" => node
+            .named_children(&mut cursor)
+            .filter(is_block)
+            .map(|child| block_end(snapshot, child, source_len))
+            .max(),
+        // An unclosed fence keeps every line up to the block that ends it, blank ones included.
+        "fenced_code_block"
+            if node
+                .named_children(&mut cursor)
+                .filter(|child| child.kind() == "fenced_code_block_delimiter")
+                .count()
+                < 2 =>
+        {
+            Some(if end < source_len {
+                let mut chars = snapshot.reversed_chars_at(end);
+                match (chars.next(), chars.next()) {
+                    (Some('\n'), Some('\r')) => end - 2,
+                    (Some('\n'), _) => end - 1,
+                    _ => end,
+                }
+                .max(start)
+            } else {
+                end
+            })
+        }
+        _ => None,
+    }
+    .unwrap_or_else(|| line_end(snapshot, start, end))
+}
+
+fn next_column(column: usize, c: char) -> usize {
+    if c == '\t' {
+        column + 4 - column % 4
+    } else {
+        column + 1
+    }
+}
+
+fn line_start(snapshot: &BufferSnapshot, offset: usize) -> usize {
+    let row = snapshot.text.offset_to_point(offset).row;
+    snapshot.text.point_to_offset(language::Point::new(row, 0))
+}
+
+fn column(snapshot: &BufferSnapshot, offset: usize) -> usize {
+    snapshot
+        .text_for_range(line_start(snapshot, offset)..offset)
+        .flat_map(str::chars)
+        .fold(0, next_column)
+}
+
+/// The offset where `line_start`'s line reaches `target` columns, stopping at its end.
+fn offset_at_column(snapshot: &BufferSnapshot, line_start: usize, target: usize) -> usize {
+    let mut column = 0;
+    line_start
+        + snapshot
+            .chars_at(line_start)
+            .take_while(|c| {
+                let inside = column < target && !matches!(c, '\r' | '\n');
+                column = next_column(column, *c);
+                inside
+            })
+            .map(char::len_utf8)
+            .sum::<usize>()
+}
+
+/// The column where a list item's content starts, as Lezer indents continuation lines.
+fn content_column(snapshot: &BufferSnapshot, item: language::Node<'_>) -> Option<usize> {
+    let mut cursor = item.walk();
+    let marker = item
+        .named_children(&mut cursor)
+        .find(|child| child.kind().starts_with("list_marker_"))?;
+    let marker_start = skip_blanks(snapshot, marker.start_byte(), marker.end_byte());
+    let marker_end = marker_start
+        + snapshot
+            .chars_at(marker_start)
+            .take_while(|c| !matches!(c, ' ' | '\t' | '\r' | '\n'))
+            .map(char::len_utf8)
+            .sum::<usize>();
+    let marker_column = column(snapshot, marker_end);
+    let content = skip_blanks(snapshot, marker_end, usize::MAX);
+    let spaces = column(snapshot, content) - marker_column;
+    let blank = matches!(snapshot.chars_at(content).next(), None | Some('\r' | '\n'));
+    Some(if blank || spaces > 4 {
+        marker_column + 1
+    } else {
+        marker_column + spaces
+    })
+}
+
+/// The node, or the blocks of a heading section, which Lezer does not nest.
+fn unsectioned(node: language::Node<'_>) -> Vec<language::Node<'_>> {
+    if node.kind() != "section" {
+        return vec![node];
+    }
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .flat_map(unsectioned)
+        .collect()
+}
+
+fn enclosing(node: language::Node<'_>) -> Option<language::Node<'_>> {
+    std::iter::successors(node.parent(), language::Node::parent)
+        .find(|parent| matches!(parent.kind(), "list_item" | "block_quote"))
+}
+
+/// Where Lezer starts a block on `line_start`'s line: after the prefixes of its containers.
+fn container_prefix_end(
+    snapshot: &BufferSnapshot,
+    container: Option<language::Node<'_>>,
+    line_start: usize,
+) -> usize {
+    let Some(container) = container else {
+        return line_start;
+    };
+    match container.kind() {
+        "list_item" => offset_at_column(
+            snapshot,
+            line_start,
+            content_column(snapshot, container).unwrap_or(0),
+        ),
+        "block_quote" => {
+            let start = skip_blanks(
+                snapshot,
+                container_prefix_end(snapshot, enclosing(container), line_start),
+                usize::MAX,
+            );
+            let mut chars = snapshot.chars_at(start);
+            match (chars.next(), chars.next()) {
+                (Some('>'), Some(' ' | '\t')) => start + 2,
+                (Some('>'), _) => start + 1,
+                _ => start,
+            }
+        }
+        _ => line_start,
+    }
 }
 
 pub fn blocks(snapshot: &BufferSnapshot) -> Option<Vec<Block>> {
@@ -291,12 +455,8 @@ fn collect_blocks(
                 }
                 from += c.len_utf8();
             }
-        } else if kind == "paragraph" {
-            from += snapshot
-                .chars_at(from)
-                .take_while(|c| matches!(c, ' ' | '\t'))
-                .map(char::len_utf8)
-                .sum::<usize>();
+        } else {
+            from = skip_blanks(snapshot, from, source_len);
         }
         if kind == "paragraph"
             && from == '\u{feff}'.len_utf8()
@@ -308,21 +468,21 @@ fn collect_blocks(
         let mut content_from = from;
         let nested: Vec<_> = children
             .iter()
+            .flat_map(|child| unsectioned(*child))
             .filter(|child| child.kind() == "list")
-            .copied()
             .collect();
         if kind == "list"
             && let Some(marker) = children
                 .iter()
                 .find(|child| child.kind().starts_with("list_marker_"))
         {
-            from = marker.start_byte();
-            content_from = marker.end_byte().min(source_len);
-            content_from += snapshot
-                .chars_at(content_from)
-                .take_while(|c| matches!(c, ' ' | '\t'))
-                .map(char::len_utf8)
-                .sum::<usize>();
+            let line = line_start(snapshot, marker.start_byte());
+            from = container_prefix_end(snapshot, enclosing(node), line).min(skip_blanks(
+                snapshot,
+                marker.start_byte(),
+                source_len,
+            ));
+            content_from = skip_blanks(snapshot, marker.end_byte().min(source_len), source_len);
         }
         let setext_rule = node.kind() == "setext_heading"
             && children.iter().any(|child| {
@@ -336,25 +496,23 @@ fn collect_blocks(
                     .count()
                     >= 3
             });
-        let end = if setext_rule {
-            children
-                .iter()
-                .find(|child| child.kind() == "paragraph")
-                .map_or(node.end_byte(), |child| child.end_byte())
+        let subtree_to = children
+            .iter()
+            .find(|child| setext_rule && child.kind() == "paragraph")
+            .map_or_else(
+                || block_end(snapshot, node, source_len),
+                |child| block_end(snapshot, *child, source_len),
+            )
+            .max(from);
+        let content_to = if kind == "list" {
+            trim_end(
+                snapshot,
+                content_from,
+                nested.first().map_or(subtree_to, |node| node.start_byte()),
+            )
         } else {
-            node.end_byte()
+            subtree_to
         };
-        let subtree_to = trim_end(snapshot, from, end.min(source_len), false);
-        let content_to = trim_end(
-            snapshot,
-            content_from,
-            if kind == "list" {
-                nested.first().map_or(subtree_to, |node| node.start_byte())
-            } else {
-                subtree_to
-            },
-            kind == "list",
-        );
         let id = if matches!(kind, "code" | "paragraph") {
             None
         } else {
