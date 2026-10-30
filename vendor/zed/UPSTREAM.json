@@ -287,6 +287,10 @@
       "change": "Lay out addon text regions over native shaped and wrapped source fragments, excluding folded text and clipping to the viewport. Reuse the navigation overlay lifecycle and element namespace; test resize, clipping, stateful elements, removal, and unchanged source text."
     },
     {
+      "path": "crates/editor/src/completions.rs",
+      "change": "Make disable_word_completions public (it was test-only) so a host completion provider for page and block references does not fall back to buffer words when no page or block matches."
+    },
+    {
       "path": "crates/gpui/src/app.rs",
       "change": "Add opt-in cancellable quit-request subscriptions before programmatic/native termination, with all-guard evaluation and reentrancy protection; preserve the final shutdown handler lifecycle."
     },

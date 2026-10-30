@@ -433,6 +433,11 @@ impl Client<QueryIndex> {
     pub fn find_page(&self, target: String) -> Answer<Option<PageRef>> {
         self.request(128 + target.len(), move |index| index.find_page(&target))
     }
+    pub fn resolve_block(&self, target: String) -> Answer<Option<PageRef>> {
+        self.request(128 + target.len(), move |index| {
+            index.resolve_block(&target)
+        })
+    }
     pub fn backlinks(&self, page: JsString) -> Answer<Vec<Backlink>> {
         self.request(128 + page.as_bytes().len(), move |index| {
             index.backlinks(&page)

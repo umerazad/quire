@@ -11338,6 +11338,7 @@ dependencies = [
 name = "quire"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "assets",
  "db",
  "editor",
@@ -11350,6 +11351,7 @@ dependencies = [
  "menu",
  "multi_buffer",
  "picker",
+ "project",
  "quire_core",
  "quire_store",
  "release_channel",
