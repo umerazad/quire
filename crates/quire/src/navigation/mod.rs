@@ -1,9 +1,12 @@
 //! Notebook navigation: the find palette, page creation, workspace persistence, and the keys
 //! that drive tabs, history, favorites, and the browsers.
 
+pub mod live;
 pub mod palette;
+pub mod tag_page;
+pub mod tags;
 
-use gpui::{App, KeyBinding};
+use gpui::{App, Context, InteractiveElement, KeyBinding, Window};
 use quire_core::{markdown::safe_page_path, workspace::Workspace};
 use quire_store::{
     index::IndexClient, notebook::Edit, sync::format::page_id_for_path, worker::StorageClient,
@@ -33,10 +36,41 @@ gpui::actions!(
         PreviousTab,
         ShowPages,
         ShowDaily,
+        /// Lists every tag with its block count.
+        ShowTags,
         /// Moves focus to the Files tree.
         FocusFiles,
+        /// Adds the highlighted tag to the selection for bulk rename or delete, or takes it out.
+        ToggleTagSelected,
     ]
 );
+
+/// Arrow, Home, End, Enter, and Shift-Enter for a virtualized list view: `step` moves the
+/// highlight and `confirm` opens the highlighted row, beside the page when `true`.
+pub fn list_keys<V: 'static, E: InteractiveElement>(
+    element: E,
+    cx: &mut Context<V>,
+    step: fn(&mut V, isize, &mut Context<V>),
+    confirm: fn(&mut V, bool, &mut Window, &mut Context<V>),
+) -> E {
+    element
+        .on_action(cx.listener(move |this, _: &menu::SelectNext, _, cx| step(this, 1, cx)))
+        .on_action(cx.listener(move |this, _: &menu::SelectPrevious, _, cx| step(this, -1, cx)))
+        .on_action(
+            cx.listener(move |this, _: &menu::SelectFirst, _, cx| step(this, isize::MIN, cx)),
+        )
+        .on_action(cx.listener(move |this, _: &menu::SelectLast, _, cx| step(this, isize::MAX, cx)))
+        .on_action(
+            cx.listener(move |this, _: &menu::Confirm, window, cx| {
+                confirm(this, false, window, cx)
+            }),
+        )
+        .on_action(
+            cx.listener(move |this, _: &menu::SecondaryConfirm, window, cx| {
+                confirm(this, true, window, cx)
+            }),
+        )
+}
 
 pub const NAVIGATION_CONTEXT: &str = "QuireNotebook";
 pub const NEW_PAGE_TEXT: &str = "- ";
@@ -93,6 +127,12 @@ pub fn bind_keys(cx: &mut App) {
             "shift-enter",
             menu::SecondaryConfirm,
             Some("QuireList > Editor"),
+        ),
+        KeyBinding::new(primary!("enter"), ToggleTagSelected, Some("QuireTags")),
+        KeyBinding::new(
+            primary!("enter"),
+            ToggleTagSelected,
+            Some("QuireTags > Editor"),
         ),
     ];
     if cfg!(target_os = "macos") {

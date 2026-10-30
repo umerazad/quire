@@ -84,6 +84,10 @@ fn restores_saved_state_and_survives_invalid_preferences() {
         ..Default::default()
     };
     work.side = Some("p2".into());
+    work.set_oldest_first("p1", true);
+    work.tabs.push(Destination::Browser {
+        view: BrowserView::Tags,
+    });
     assert_eq!(Workspace::load(&work.save()), work);
     assert_eq!(Workspace::load("{"), Workspace::default());
     assert_eq!(Workspace::load("{\"favorites\":[]}"), Workspace::default());
@@ -91,7 +95,11 @@ fn restores_saved_state_and_survives_invalid_preferences() {
         r##"{"tabs":[{"kind":"page","page":"a"},{"kind":"tag","tag":"#x"},{"kind":"browser","view":"help"},4],
             "recent":[{"kind":"page"}],"expanded":["A",3],"active":{"kind":"browser","view":"daily"}}"##,
     );
-    assert_eq!(mixed.tabs, [page("a")]);
+    assert_eq!(
+        mixed.tabs,
+        [page("a"), Destination::Tag { tag: "#x".into() }],
+        "tag pages are destinations; unknown browsers drop"
+    );
     assert!(mixed.recent.is_empty());
     assert_eq!(mixed.expanded, ["A"]);
     assert_eq!(
@@ -154,8 +162,14 @@ fn favorites_toggle_in_insertion_order_and_missing_pages_drop() {
     assert_eq!(workspace.favorites, [page("b"), page("c")]);
     workspace.visit(page("c"));
     workspace.side = Some("c".into());
+    workspace.set_oldest_first("c", true);
+    workspace.set_oldest_first("b", true);
+    workspace.set_oldest_first("b", false);
+    workspace.set_oldest_first("a", true);
+    assert!(workspace.is_oldest_first("c") && !workspace.is_oldest_first("b"));
     workspace.retain_pages(|id| id != "c");
     assert_eq!(workspace.favorites, [page("b")]);
+    assert_eq!(workspace.oldest_first, ["a"]);
     assert!(workspace.tabs.is_empty() && workspace.recent.is_empty());
     assert_eq!((workspace.active, workspace.side), (None, None));
 }

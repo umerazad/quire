@@ -22,10 +22,17 @@ const DEBOUNCE: Duration = Duration::from_millis(150);
 pub struct IndexSync {
     client: IndexClient,
     remaining: usize,
+    generation: u64,
     error: Option<SharedString>,
     tracked: HashMap<EntityId, Tracked>,
     _task: Task<()>,
 }
+
+/// The index answers queries differently than before: saved pages were analyzed or removed, or
+/// an open page's unsaved text changed. Views showing query results re-run them.
+pub struct IndexChanged;
+
+impl gpui::EventEmitter<IndexChanged> for IndexSync {}
 
 /// An open page feeding its live analysis to the index.
 struct Tracked {
@@ -84,18 +91,22 @@ impl IndexSync {
                     return;
                 }
                 loop {
-                    let (pause, remaining, error) = match Self::step(&client, cx).await {
-                        Ok(0) => (Some(IDLE), Some(0), None),
-                        Ok(remaining) => (None, Some(remaining), None),
+                    let (pause, progress, error) = match Self::step(&client, cx).await {
+                        Ok((0, generation)) => (Some(IDLE), Some((0, generation)), None),
+                        Ok(progress) => (None, Some(progress), None),
                         Err(error) => (Some(RETRY), None, Some(error)),
                     };
                     let updated = this.update(cx, |this, cx| {
                         this.set_error(error, cx);
-                        if let Some(remaining) = remaining
-                            && this.remaining != remaining
-                        {
-                            this.remaining = remaining;
-                            cx.notify();
+                        if let Some((remaining, generation)) = progress {
+                            if this.remaining != remaining {
+                                this.remaining = remaining;
+                                cx.notify();
+                            }
+                            if this.generation != generation {
+                                this.generation = generation;
+                                cx.emit(IndexChanged);
+                            }
                         }
                     });
                     if updated.is_err() {
@@ -109,6 +120,7 @@ impl IndexSync {
             Self {
                 client: worker.client.clone(),
                 remaining: 0,
+                generation: 0,
                 error: None,
                 tracked: HashMap::new(),
                 _task: task,
@@ -116,8 +128,9 @@ impl IndexSync {
         }))
     }
 
-    /// Analyzes one batch and returns how many pages still need analysis.
-    async fn step(client: &IndexClient, cx: &mut gpui::AsyncApp) -> Result<usize, String> {
+    /// Analyzes one batch and returns how many pages still need analysis, with the index
+    /// generation after it.
+    async fn step(client: &IndexClient, cx: &mut gpui::AsyncApp) -> Result<(usize, u64), String> {
         let pending = ask(client.pending(BATCH)).await?;
         for page in pending {
             let work = cx.update(|cx| analyze(editor_text(&page.text), cx));
@@ -126,7 +139,9 @@ impl IndexSync {
             };
             ask(client.put(page.revision, analysis)).await?;
         }
-        ask(client.unanalyzed()).await
+        let (generation, remaining) =
+            ask(client.with_generation(|index| index.unanalyzed())).await?;
+        Ok((remaining, generation))
     }
 
     fn set_error(&mut self, error: Option<String>, cx: &mut Context<Self>) {
@@ -157,8 +172,12 @@ impl IndexSync {
             cx.observe_release(&page, move |this, page, cx| {
                 this.tracked.remove(&id);
                 let release = this.client.release_overlay(JsString::from(page.id()));
-                cx.background_spawn(async move { ask(release).await.ok() })
-                    .detach();
+                cx.spawn(async move |this, cx| {
+                    if ask(release).await.is_ok() {
+                        this.update(cx, |_, cx| cx.emit(IndexChanged)).ok();
+                    }
+                })
+                .detach();
             }),
         ];
         self.tracked.insert(
@@ -230,8 +249,13 @@ impl IndexSync {
                 ask(client
                     .set_overlay(JsString::from(key.as_str()), Overlay { path, title, index }))
                 .await;
-            this.update(cx, |this, cx| this.set_error(result.err(), cx))
-                .ok();
+            this.update(cx, |this, cx| {
+                if result.is_ok() {
+                    cx.emit(IndexChanged);
+                }
+                this.set_error(result.err(), cx)
+            })
+            .ok();
         }));
     }
 

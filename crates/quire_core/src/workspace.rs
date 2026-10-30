@@ -16,12 +16,14 @@ pub const MAX_TABS: usize = 30;
 pub enum BrowserView {
     Pages,
     Daily,
+    Tags,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Destination {
     Page { page: String },
+    Tag { tag: String },
     Browser { view: BrowserView },
 }
 
@@ -33,7 +35,7 @@ impl Destination {
     pub fn page_id(&self) -> Option<&str> {
         match self {
             Self::Page { page } => Some(page),
-            Self::Browser { .. } => None,
+            Self::Tag { .. } | Self::Browser { .. } => None,
         }
     }
 }
@@ -52,6 +54,9 @@ pub struct Workspace {
     pub active: Option<Destination>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub side: Option<String>,
+    /// Pages whose linked references list the oldest daily pages first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub oldest_first: Vec<String>,
 }
 
 fn destinations(value: Option<&Value>) -> Vec<Destination> {
@@ -97,6 +102,16 @@ impl Workspace {
                 .get("active")
                 .and_then(|active| serde_json::from_value(active.clone()).ok()),
             side: value.get("side").and_then(Value::as_str).map(str::to_owned),
+            oldest_first: value
+                .get("oldest_first")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 
@@ -173,6 +188,19 @@ impl Workspace {
         }
         if self.side.as_deref().is_some_and(|side| !exists(side)) {
             self.side = None;
+        }
+        self.oldest_first.retain(|page| exists(page));
+    }
+
+    pub fn is_oldest_first(&self, page: &str) -> bool {
+        self.oldest_first.iter().any(|item| item == page)
+    }
+
+    /// Chooses whether a page's linked references list the oldest daily pages first.
+    pub fn set_oldest_first(&mut self, page: &str, oldest: bool) {
+        self.oldest_first.retain(|item| item != page);
+        if oldest {
+            self.oldest_first.push(page.to_owned());
         }
     }
 
