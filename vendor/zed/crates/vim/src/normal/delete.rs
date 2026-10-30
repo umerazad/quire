@@ -11,9 +11,36 @@ use editor::{
 };
 use gpui::{Context, Window};
 use language::{Point, Selection};
-use multi_buffer::MultiBufferRow;
+use multi_buffer::{MultiBufferOffset, MultiBufferRow, ViewEditIntent};
+use std::ops::Range;
 
 impl Vim {
+    pub(crate) fn source_linewise_selection(
+        map: &DisplaySnapshot,
+        selection: &Selection<DisplayPoint>,
+        start_row: u32,
+        end_row: u32,
+    ) -> (Selection<MultiBufferOffset>, Range<Point>) {
+        let buffer = map.buffer_snapshot();
+        let copy_range =
+            Point::new(start_row, 0)..Point::new(end_row, buffer.line_len(MultiBufferRow(end_row)));
+        let mut delete_range = copy_range.clone();
+        if end_row < buffer.max_point().row {
+            delete_range.end = Point::new(end_row + 1, 0);
+        } else if start_row > 0 {
+            delete_range.start = Point::new(
+                start_row - 1,
+                buffer.line_len(MultiBufferRow(start_row - 1)),
+            );
+        }
+        let mut selection = selection
+            .clone()
+            .map(|point| point.to_offset(map, Bias::Left));
+        selection.start = buffer.point_to_offset(delete_range.start);
+        selection.end = buffer.point_to_offset(delete_range.end);
+        (selection, copy_range)
+    }
+
     pub fn delete_motion(
         &mut self,
         motion: Motion,
@@ -30,6 +57,8 @@ impl Vim {
                 let mut original_columns: HashMap<_, _> = Default::default();
                 let mut motion_kind = None;
                 let mut ranges_to_copy = Vec::new();
+                let source_lines = editor.buffer().read(cx).has_edit_filter();
+                let mut source_selections = Vec::new();
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(&mut |map, selection| {
                         let original_head = selection.head();
@@ -41,8 +70,26 @@ impl Vim {
                             &text_layout_details,
                             forced_motion,
                         );
-                        ranges_to_copy
-                            .push(selection.start.to_point(map)..selection.end.to_point(map));
+                        if source_lines && kind == Some(MotionKind::Linewise) {
+                            let (source, copy_range) = Self::source_linewise_selection(
+                                map,
+                                selection,
+                                selection.start.to_point(map).row,
+                                selection.end.to_point(map).row,
+                            );
+                            source_selections.push(source);
+                            ranges_to_copy.push(copy_range);
+                        } else {
+                            ranges_to_copy
+                                .push(selection.start.to_point(map)..selection.end.to_point(map));
+                            if source_lines {
+                                source_selections.push(
+                                    selection
+                                        .clone()
+                                        .map(|point| point.to_offset(map, Bias::Left)),
+                                );
+                            }
+                        }
 
                         // When deleting line-wise, we always want to delete a newline.
                         // If there is one after the current line, it goes; otherwise we
@@ -68,7 +115,20 @@ impl Vim {
                 });
                 let Some(kind) = motion_kind else { return };
                 vim.copy_ranges(editor, kind, false, ranges_to_copy, window, cx);
-                editor.delete_selections_with_linked_edits(window, cx);
+                if source_lines && kind == MotionKind::Linewise {
+                    editor.change_selections(Default::default(), window, cx, |s| {
+                        s.select(source_selections)
+                    });
+                }
+                {
+                    let _intent = (kind == MotionKind::Linewise).then(|| {
+                        editor
+                            .buffer()
+                            .read(cx)
+                            .scoped_edit_intent(ViewEditIntent::DeleteLines)
+                    });
+                    editor.delete_selections_with_linked_edits(window, cx);
+                }
 
                 // Fixup cursor position after the deletion
                 editor.set_clip_at_line_ends(true, cx);
@@ -116,6 +176,10 @@ impl Vim {
                 // contains whitespace
                 let mut column_before_move: HashMap<_, _> = Default::default();
                 let target_mode = object.target_visual_mode(vim.mode, around);
+                let source_lines =
+                    target_mode == Mode::VisualLine && editor.buffer().read(cx).has_edit_filter();
+                let mut source_selections = Vec::new();
+                let mut ranges_to_copy = Vec::new();
 
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(&mut |map, selection| {
@@ -124,7 +188,30 @@ impl Vim {
                             column_before_move.insert(selection.id, cursor_point.column);
                         }
 
-                        object.expand_selection(map, selection, around, times);
+                        let found = object.expand_selection(map, selection, around, times);
+                        if source_lines {
+                            let start = selection.start.to_point(map);
+                            let end = selection.end.to_point(map);
+                            if found {
+                                let end_row = if end.column == 0 && end.row > start.row {
+                                    end.row - 1
+                                } else {
+                                    end.row
+                                };
+                                let (source, copy_range) = Self::source_linewise_selection(
+                                    map, selection, start.row, end_row,
+                                );
+                                source_selections.push(source);
+                                ranges_to_copy.push(copy_range);
+                            } else {
+                                source_selections.push(
+                                    selection
+                                        .clone()
+                                        .map(|point| point.to_offset(map, Bias::Left)),
+                                );
+                                ranges_to_copy.push(start..end);
+                            }
+                        }
                         let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
                         let mut move_selection_start_to_previous_line =
                             |map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>| {
@@ -174,8 +261,30 @@ impl Vim {
                         }
                     });
                 });
-                vim.copy_selections_content(editor, MotionKind::Exclusive, window, cx);
-                editor.delete_selections_with_linked_edits(window, cx);
+                if source_lines {
+                    vim.copy_ranges(
+                        editor,
+                        MotionKind::Linewise,
+                        false,
+                        ranges_to_copy,
+                        window,
+                        cx,
+                    );
+                    editor.change_selections(Default::default(), window, cx, |s| {
+                        s.select(source_selections)
+                    });
+                } else {
+                    vim.copy_selections_content(editor, MotionKind::Exclusive, window, cx);
+                }
+                {
+                    let _intent = source_lines.then(|| {
+                        editor
+                            .buffer()
+                            .read(cx)
+                            .scoped_edit_intent(ViewEditIntent::DeleteLines)
+                    });
+                    editor.delete_selections_with_linked_edits(window, cx);
+                }
 
                 // Fixup cursor position after the deletion
                 editor.set_clip_at_line_ends(true, cx);

@@ -70,7 +70,46 @@ pub fn excerpt_context_lines(cx: &App) -> u32 {
 
 pub type ViewEdit = (Range<MultiBufferOffset>, Arc<str>);
 /// Rewrites a view's edits before source mapping. Preserve their order and UTF-8 boundaries.
-pub type EditFilter = Arc<dyn Fn(&mut [ViewEdit], &MultiBufferSnapshot) + Send + Sync>;
+pub type EditFilter =
+    Arc<dyn Fn(&mut [ViewEdit], &MultiBufferSnapshot, ViewEditIntent) + Send + Sync>;
+
+#[derive(Clone, Copy, Default, Debug, Eq, PartialEq)]
+pub enum ViewEditIntent {
+    #[default]
+    Default,
+    /// Replaces editable text while retaining a structured block's prefix and identity.
+    Change,
+    /// The caller supplies complete source-line selections, including hidden syntax.
+    DeleteLines,
+}
+
+struct ViewEditFilter {
+    filter: EditFilter,
+    intent: Rc<Cell<ViewEditIntent>>,
+}
+
+impl Clone for ViewEditFilter {
+    fn clone(&self) -> Self {
+        Self {
+            filter: self.filter.clone(),
+            intent: Default::default(),
+        }
+    }
+}
+
+#[must_use = "Keep the guard alive until the synchronous edit finishes"]
+pub struct EditIntentGuard {
+    intent: Option<Rc<Cell<ViewEditIntent>>>,
+    previous: ViewEditIntent,
+}
+
+impl Drop for EditIntentGuard {
+    fn drop(&mut self) {
+        if let Some(intent) = &self.intent {
+            intent.set(self.previous);
+        }
+    }
+}
 
 /// One or more [`Buffers`](Buffer) being edited in a single view.
 ///
@@ -90,7 +129,7 @@ pub struct MultiBuffer {
     history: History,
     /// A single-page excerpt delegates history to its source buffer.
     shared_history_buffer: Option<Entity<Buffer>>,
-    edit_filter: Option<EditFilter>,
+    edit_filter: Option<ViewEditFilter>,
     /// The explicit title of the multi-buffer.
     /// If `None`, it will be derived from the underlying path or content.
     title: Option<String>,
@@ -1355,7 +1394,35 @@ impl MultiBuffer {
     }
 
     pub fn set_edit_filter(&mut self, filter: Option<EditFilter>) {
-        self.edit_filter = filter;
+        self.edit_filter = filter.map(|filter| ViewEditFilter {
+            filter,
+            intent: Default::default(),
+        });
+    }
+
+    pub fn has_edit_filter(&self) -> bool {
+        self.edit_filter.is_some()
+    }
+
+    pub fn edit_intent(&self) -> ViewEditIntent {
+        self.edit_filter
+            .as_ref()
+            .map_or(ViewEditIntent::Default, |filter| filter.intent.get())
+    }
+
+    /// Applies metadata to an opt-in view filter while the returned guard lives.
+    /// Drop it before yielding to the event loop so unrelated edits retain their own intent.
+    pub fn scoped_edit_intent(&self, intent: ViewEditIntent) -> EditIntentGuard {
+        match &self.edit_filter {
+            Some(filter) => EditIntentGuard {
+                intent: Some(filter.intent.clone()),
+                previous: filter.intent.replace(intent),
+            },
+            None => EditIntentGuard {
+                intent: None,
+                previous: ViewEditIntent::Default,
+            },
+        }
     }
 
     pub fn set_group_interval(&mut self, group_interval: Duration, cx: &mut Context<Self>) {
@@ -1545,7 +1612,7 @@ impl MultiBuffer {
             };
 
             if let Some(filter) = &this.edit_filter {
-                filter(&mut edits, this.snapshot.get_mut());
+                (filter.filter)(&mut edits, this.snapshot.get_mut(), filter.intent.get());
             }
             let buffer_edits = MultiBuffer::convert_edits_to_buffer_edits(
                 edits,

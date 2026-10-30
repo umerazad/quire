@@ -1731,5 +1731,242 @@
         ]
       }
     ]
+  },
+  {
+    "name": "empty-item-eof",
+    "source": "- ",
+    "text": "- ",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 2,
+        "contentFrom": 2,
+        "contentTo": 2,
+        "subtreeTo": 2,
+        "depth": 0,
+        "kind": "list",
+        "text": ""
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          2
+        ],
+        "id": null
+      }
+    ]
+  },
+  {
+    "name": "empty-task-eof",
+    "source": "- [ ] ",
+    "text": "- [ ] ",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 5,
+        "contentFrom": 2,
+        "contentTo": 5,
+        "subtreeTo": 6,
+        "depth": 0,
+        "kind": "list",
+        "text": "[ ]"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          2
+        ],
+        "id": null
+      }
+    ]
+  },
+  {
+    "name": "nested-empty-eof",
+    "source": "- مرحبا🙂 ^p\n  - ",
+    "text": "- مرحبا🙂 ^p\n  - ",
+    "blocks": [
+      {
+        "key": "p",
+        "id": "p",
+        "from": 0,
+        "to": 12,
+        "contentFrom": 2,
+        "contentTo": 12,
+        "subtreeTo": 17,
+        "depth": 0,
+        "kind": "list",
+        "text": "مرحبا🙂"
+      },
+      {
+        "key": "at-15",
+        "from": 15,
+        "to": 17,
+        "contentFrom": 17,
+        "contentTo": 17,
+        "subtreeTo": 17,
+        "depth": 1,
+        "kind": "list",
+        "text": "",
+        "parent": "p"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          2
+        ],
+        "id": [
+          9,
+          12
+        ]
+      },
+      {
+        "marker": [
+          15,
+          17
+        ],
+        "id": null
+      }
+    ]
+  },
+  {
+    "name": "ordered-empty-eof",
+    "source": "12. ",
+    "text": "12. ",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 4,
+        "contentFrom": 4,
+        "contentTo": 4,
+        "subtreeTo": 4,
+        "depth": 0,
+        "kind": "list",
+        "text": ""
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          4
+        ],
+        "id": null
+      }
+    ]
+  },
+  {
+    "name": "empty-marker-after-paragraph-eof",
+    "source": "text\n- ",
+    "text": "text\n- ",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 7,
+        "contentFrom": 0,
+        "contentTo": 7,
+        "subtreeTo": 7,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "text\n-"
+      }
+    ],
+    "spans": []
+  },
+  {
+    "name": "empty-marker-code-eof",
+    "source": "    - ",
+    "text": "    - ",
+    "blocks": [
+      {
+        "key": "at-4",
+        "from": 4,
+        "to": 6,
+        "contentFrom": 4,
+        "contentTo": 6,
+        "subtreeTo": 6,
+        "depth": 0,
+        "kind": "code",
+        "text": "-"
+      }
+    ],
+    "spans": []
+  },
+  {
+    "name": "empty-marker-fence-eof",
+    "source": "```md\n- ",
+    "text": "```md\n- ",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 8,
+        "contentFrom": 0,
+        "contentTo": 8,
+        "subtreeTo": 8,
+        "depth": 0,
+        "kind": "code",
+        "text": "```md\n-"
+      }
+    ],
+    "spans": []
+  },
+  {
+    "name": "empty-marker-sibling-eof",
+    "source": "- one ^one\n- ",
+    "text": "- one ^one\n- ",
+    "blocks": [
+      {
+        "key": "one",
+        "id": "one",
+        "from": 0,
+        "to": 10,
+        "contentFrom": 2,
+        "contentTo": 10,
+        "subtreeTo": 10,
+        "depth": 0,
+        "kind": "list",
+        "text": "one"
+      },
+      {
+        "key": "at-11",
+        "from": 11,
+        "to": 13,
+        "contentFrom": 13,
+        "contentTo": 13,
+        "subtreeTo": 13,
+        "depth": 0,
+        "kind": "list",
+        "text": ""
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          2
+        ],
+        "id": [
+          5,
+          10
+        ]
+      },
+      {
+        "marker": [
+          11,
+          13
+        ],
+        "id": null
+      }
+    ]
   }
 ]

@@ -1,6 +1,9 @@
 use editor::{Addon, Editor, EditorEvent, FoldPlaceholder, display_map::Crease};
 use gpui::{App, Context, Entity, Focusable, Subscription, WeakEntity, Window, prelude::*};
-use multi_buffer::{Anchor, MultiBufferOffset, MultiBufferSnapshot, ToOffset, ViewEdit};
+use multi_buffer::{
+    Anchor, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot, ToOffset, ViewEdit,
+    ViewEditIntent,
+};
 use std::{
     any::{Any, TypeId},
     ops::Range,
@@ -38,6 +41,29 @@ impl Addon for Projection {
     }
 }
 
+fn text_start(block: &AnchoredBlock, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
+    let start = block.marker.end.to_offset(snapshot);
+    if block.marker.start.to_offset(snapshot) == start
+        || !matches!(snapshot.chars_at(start).next(), Some('[' | '{'))
+    {
+        return start;
+    }
+    let prefix: String = snapshot
+        .chars_at(start)
+        .take(crate::task_marker::PREFIX_CHAR_LIMIT)
+        .take_while(|c| *c != '\n')
+        .collect();
+    let Some(task) = crate::task_marker::read(&prefix) else {
+        return start;
+    };
+    let marker_end = MultiBufferOffset(start.0 + task.source.len());
+    let gap = snapshot
+        .chars_at(marker_end)
+        .take_while(|c| matches!(c, ' ' | '\t'))
+        .count();
+    MultiBufferOffset(marker_end.0 + gap)
+}
+
 fn id_range(
     block: &AnchoredBlock,
     snapshot: &MultiBufferSnapshot,
@@ -60,7 +86,7 @@ fn id_range(
         return None;
     }
     start.0 += caret;
-    let content = block.marker.end.to_offset(snapshot);
+    let content = text_start(block, snapshot);
     let gap = snapshot
         .reversed_chars_at(start)
         .take_while(|c| matches!(c, ' ' | '\t'))
@@ -333,7 +359,7 @@ fn clamp_carets(
             let mut position = selection.start;
             for block in blocks {
                 let start = block.marker.start.to_offset(&snapshot);
-                let content = block.marker.end.to_offset(&snapshot);
+                let content = text_start(block, &snapshot);
                 if position >= start && position < content {
                     position = content;
                 }
@@ -361,13 +387,39 @@ fn filter_edits(
     edits: &mut [ViewEdit],
     protected: &[AnchoredBlock],
     snapshot: &MultiBufferSnapshot,
+    intent: ViewEditIntent,
 ) {
     for (range, inserted) in edits {
+        if intent == ViewEditIntent::DeleteLines && inserted.is_empty() {
+            continue;
+        }
         for block in protected.iter() {
+            let content_start = text_start(block, snapshot);
+            if intent == ViewEditIntent::Change
+                && inserted.is_empty()
+                && range.start <= content_start
+            {
+                let point = snapshot.offset_to_point(content_start);
+                let line_end = snapshot.point_to_offset(language::Point::new(
+                    point.row,
+                    snapshot.line_len(MultiBufferRow(point.row)),
+                ));
+                if snapshot.offset_to_point(range.start).row == point.row && range.end == line_end {
+                    range.start = content_start;
+                    if let Some(id) = id_range(block, snapshot)
+                        && range.end >= id.start
+                    {
+                        let gap = snapshot
+                            .chars_at(id.start)
+                            .take_while(|c| matches!(c, ' ' | '\t'))
+                            .count();
+                        range.end = MultiBufferOffset(id.start.0 + gap);
+                    }
+                }
+            }
             let Some(id) = id_range(block, snapshot) else {
                 continue;
             };
-            let content_start = block.marker.end.to_offset(snapshot);
             let id_start = id.start;
             let id_end = id.end;
             if !inserted.is_empty() && range.start >= id_start && range.end <= id_end {
@@ -431,8 +483,8 @@ fn apply_spans(
         .collect();
     let protected = blocks.clone();
     buffer.update(cx, |buffer, _| {
-        buffer.set_edit_filter(Some(Arc::new(move |edits, snapshot| {
-            filter_edits(edits, &protected, snapshot)
+        buffer.set_edit_filter(Some(Arc::new(move |edits, snapshot, intent| {
+            filter_edits(edits, &protected, snapshot, intent)
         })))
     });
     refresh(editor, &blocks, window, cx);
@@ -462,10 +514,11 @@ fn rebuild(
     {
         return;
     }
-    let Some(spans) = crate::markdown_blocks::syntax_spans(&snapshot) else {
+    let Some(blocks) = crate::markdown_blocks::blocks(&snapshot) else {
         return;
     };
-    let Some(links) = crate::markdown_links::links(&snapshot) else {
+    let spans = crate::markdown_blocks::syntax_spans(&snapshot, &blocks);
+    let Some(links) = crate::markdown_links::links(&snapshot, &blocks) else {
         return;
     };
     let view = editor.buffer().read(cx).snapshot(cx);

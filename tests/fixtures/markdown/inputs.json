@@ -37,5 +37,13 @@
   {"name":"indented-paragraph","source":"   paragraph ^para\n\n  - item ^item\n"},
   {"name":"frontmatter-eof","source":"---\ntitle: Test\n---"},
   {"name":"js-whitespace","source":"- body\u0085 ^id\n- other\ufeff ^other\n"},
-  {"name":"double-bom","source":"\ufeff\ufeff---\ntitle: Test\n---\n\n- real ^real\n"}
+  {"name":"double-bom","source":"\ufeff\ufeff---\ntitle: Test\n---\n\n- real ^real\n"},
+  {"name":"empty-item-eof","source":"- "},
+  {"name":"empty-task-eof","source":"- [ ] "},
+  {"name":"nested-empty-eof","source":"- مرحبا🙂 ^p\n  - "},
+  {"name":"ordered-empty-eof","source":"12. "},
+  {"name":"empty-marker-after-paragraph-eof","source":"text\n- "},
+  {"name":"empty-marker-code-eof","source":"    - "},
+  {"name":"empty-marker-fence-eof","source":"```md\n- "},
+  {"name":"empty-marker-sibling-eof","source":"- one ^one\n- "}
 ]

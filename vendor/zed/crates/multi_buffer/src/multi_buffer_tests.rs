@@ -34,6 +34,48 @@ fn test_empty_singleton(cx: &mut App) {
 }
 
 #[gpui::test]
+fn view_edit_intent_is_scoped_and_clones_start_with_default_intent(cx: &mut App) {
+    let source = cx.new(|cx| Buffer::local("text", cx));
+    let view = cx.new(|cx| MultiBuffer::singleton(source, cx));
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    view.update(cx, |view, _| {
+        let seen = seen.clone();
+        view.set_edit_filter(Some(Arc::new(move |_, _, intent| {
+            seen.lock().unwrap().push(intent)
+        })));
+    });
+    let edit = |view: &Entity<MultiBuffer>, cx: &mut App| {
+        view.update(cx, |view, cx| {
+            view.edit([(MultiBufferOffset(0)..MultiBufferOffset(0), "")], None, cx)
+        })
+    };
+    let outer = view
+        .read(cx)
+        .scoped_edit_intent(ViewEditIntent::DeleteLines);
+    edit(&view, cx);
+    {
+        let _inner = view.read(cx).scoped_edit_intent(ViewEditIntent::Default);
+        edit(&view, cx);
+    }
+    edit(&view, cx);
+    let clone = view.update(cx, |view, cx| cx.new(|cx| view.clone(cx)));
+    edit(&clone, cx);
+    drop(outer);
+    edit(&view, cx);
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [
+            ViewEditIntent::DeleteLines,
+            ViewEditIntent::Default,
+            ViewEditIntent::DeleteLines,
+            ViewEditIntent::Default,
+            ViewEditIntent::Default
+        ]
+    );
+    assert_eq!(view.read(cx).snapshot(cx).text(), "text");
+}
+
+#[gpui::test]
 fn test_singleton(cx: &mut App) {
     let buffer = cx.new(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));

@@ -7,6 +7,7 @@ use crate::{
 use editor::{Editor, SelectionEffects, movement};
 use gpui::{Context, Window, actions};
 use language::Point;
+use multi_buffer::ViewEditIntent;
 
 actions!(
     vim,
@@ -101,7 +102,13 @@ impl Vim {
                     .all::<Point>(&editor.display_snapshot(cx))
                     .into_iter();
                 let edits = selections.map(|selection| (selection.start..selection.end, ""));
-                editor.edit(edits, cx);
+                {
+                    let _intent = editor
+                        .buffer()
+                        .read(cx)
+                        .scoped_edit_intent(ViewEditIntent::Change);
+                    editor.edit(edits, cx);
+                }
                 linked_edits.apply(cx);
             });
         });

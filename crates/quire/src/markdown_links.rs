@@ -8,8 +8,10 @@ pub struct Link {
     pub source: String,
 }
 
-pub fn links(snapshot: &BufferSnapshot) -> Option<Vec<Link>> {
-    let blocks = crate::markdown_blocks::blocks(snapshot)?;
+pub fn links(
+    snapshot: &BufferSnapshot,
+    blocks: &[crate::markdown_blocks::Block],
+) -> Option<Vec<Link>> {
     let primary = snapshot
         .syntax_layers()
         .find(|layer| layer.language.name().as_ref() == "Markdown")?;
@@ -107,7 +109,11 @@ mod tests {
         let buffer = cx.update(|cx| crate::markdown::buffer(text, cx));
         cx.executor().run_until_parked();
         let snapshot = cx.update(|cx| buffer.read(cx).snapshot());
-        let links = super::links(&snapshot).unwrap();
+        let links = super::links(
+            &snapshot,
+            &crate::markdown_blocks::blocks(&snapshot).unwrap(),
+        )
+        .unwrap();
         let actual: Vec<_> = links
             .iter()
             .map(|link| (link.label.as_str(), link.url.as_str()))
@@ -128,6 +134,14 @@ mod tests {
         let buffer = cx.update(|cx| crate::markdown::buffer(&text, cx));
         cx.executor().run_until_parked();
         let snapshot = cx.update(|cx| buffer.read(cx).snapshot());
-        assert_eq!(super::links(&snapshot).unwrap()[0].label, label);
+        assert_eq!(
+            super::links(
+                &snapshot,
+                &crate::markdown_blocks::blocks(&snapshot).unwrap()
+            )
+            .unwrap()[0]
+                .label,
+            label
+        );
     }
 }

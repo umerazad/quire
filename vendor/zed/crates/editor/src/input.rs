@@ -1998,7 +1998,14 @@ impl Editor {
 
         let text: Arc<str> = text.into();
         self.transact(window, cx, |this, window, cx| {
-            let old_selections = this.selections.all_adjusted(&this.display_snapshot(cx));
+            let snapshot = this.display_snapshot(cx);
+            let old_selections = if this.buffer.read(cx).edit_intent()
+                == multi_buffer::ViewEditIntent::DeleteLines
+            {
+                this.selections.all_unexpanded(&snapshot)
+            } else {
+                this.selections.all_adjusted(&snapshot)
+            };
             let linked_edits = if apply_linked_edits {
                 this.linked_edits_for_selections(text.clone(), cx)
             } else {

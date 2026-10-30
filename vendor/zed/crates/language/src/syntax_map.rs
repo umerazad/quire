@@ -1965,6 +1965,11 @@ fn insert_newlines_between_ranges(
 }
 
 impl OwnedSyntaxLayer {
+    /// Returns the owned tree in layer-relative coordinates; source mapping uses `offset`.
+    pub fn into_tree(self) -> tree_sitter::Tree {
+        self.tree
+    }
+
     /// Returns the root syntax node for this layer.
     pub fn node(&self) -> Node<'_> {
         self.tree

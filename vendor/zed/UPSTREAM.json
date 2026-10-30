@@ -228,7 +228,7 @@
     },
     {
       "path": "crates/multi_buffer/src/multi_buffer.rs",
-      "change": "Add an exact-range single-page excerpt constructor sharing its source history while retaining non-singleton display mapping. Preserve this association on clone/grouping. Add an optional per-view edit rewrite hook before source mapping; mutable slices retain edit counts for autoindent metadata. Default constructors retain their original behavior."
+      "change": "Add an exact-range single-page excerpt constructor sharing its source history while retaining non-singleton display mapping. Preserve this association on clone/grouping. Add an optional per-view edit rewrite hook before source mapping; mutable slices retain edit counts for autoindent metadata. Default constructors retain their original behavior. Add scoped opt-in view edit intent with restoration on drop and independent default intent on clone."
     },
     {
       "path": "crates/multi_buffer/src/transaction.rs",
@@ -245,6 +245,34 @@
     {
       "path": "crates/editor/src/test/editor_lsp_test_context.rs",
       "change": "Remove two stale wrong_self_convention lint expectations that fail the all-targets editor Clippy gate on the pinned Rust toolchain. Test helper behavior and lint enforcement are unchanged."
+    },
+    {
+      "path": "crates/editor/src/input.rs",
+      "change": "Use unexpanded source selections only for opted-in DeleteLines intent, retaining canonical source boundaries across hidden syntax and the existing linked edit/history pipeline."
+    },
+    {
+      "path": "crates/vim/src/normal/delete.rs",
+      "change": "For views with an edit filter, derive linewise deletion and register ranges from complete source lines, including hidden syntax, and scope DeleteLines intent around the normal deletion pipeline. Ordinary views retain their original behavior."
+    },
+    {
+      "path": "crates/vim/src/visual.rs",
+      "change": "Use complete source line selections and scoped DeleteLines intent for filtered visual-line deletion; preserve ordinary and visual-block behavior."
+    },
+    {
+      "path": "crates/vim/src/normal/change.rs",
+      "change": "Scope Change intent around motion/object deletion so filtered hosts can preserve hidden block prefixes and identities. Views without a filter are unchanged."
+    },
+    {
+      "path": "crates/vim/src/normal/substitute.rs",
+      "change": "Scope Change intent around substitute edits so filtered hosts can preserve hidden block prefixes and identities."
+    },
+    {
+      "path": "crates/multi_buffer/src/multi_buffer_tests.rs",
+      "change": "Verify nested edit-intent restoration and independent default intent on clone through real filtered edits."
+    },
+    {
+      "path": "crates/language/src/syntax_map.rs",
+      "change": "Expose the owned syntax tree in layer-relative coordinates for independent derived analysis without mutating the shared syntax snapshot."
     }
   ]
 }

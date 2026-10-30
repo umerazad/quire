@@ -8,7 +8,7 @@ use editor::{
 };
 use gpui::{Context, Window, actions};
 use language::{Point, Selection, SelectionGoal};
-use multi_buffer::MultiBufferRow;
+use multi_buffer::{MultiBufferRow, ViewEditIntent};
 use search::BufferSearchBar;
 use text::TransactionId;
 use util::ResultExt;
@@ -628,6 +628,11 @@ impl Vim {
             let mut original_columns: HashMap<_, _> = Default::default();
             let line_mode = line_mode || editor.selections.line_mode();
             editor.selections.set_line_mode(false);
+            let source_lines = line_mode
+                && vim.mode != Mode::VisualBlock
+                && editor.buffer().read(cx).has_edit_filter();
+            let mut source_selections = Vec::new();
+            let mut ranges_to_copy = Vec::new();
 
             editor.transact(window, cx, |editor, window, cx| {
                 editor.change_selections(Default::default(), window, cx, |s| {
@@ -664,13 +669,22 @@ impl Vim {
                 } else {
                     MotionKind::Exclusive
                 };
-                vim.copy_selections_content(editor, kind, window, cx);
+                if !source_lines {
+                    vim.copy_selections_content(editor, kind, window, cx);
+                }
 
                 if line_mode && vim.mode != Mode::VisualBlock {
                     editor.change_selections(Default::default(), window, cx, |s| {
                         s.move_with(&mut |map, selection| {
                             let end = selection.end.to_point(map);
                             let start = selection.start.to_point(map);
+                            if source_lines {
+                                let (source, copy_range) = Self::source_linewise_selection(
+                                    map, selection, start.row, end.row,
+                                );
+                                source_selections.push(source);
+                                ranges_to_copy.push(copy_range);
+                            }
                             if end.row < map.buffer_snapshot().max_point().row {
                                 selection.end = Point::new(end.row + 1, 0).to_display_point(map)
                             } else if start.row > 0 {
@@ -684,7 +698,21 @@ impl Vim {
                         });
                     });
                 }
-                editor.delete_selections_with_linked_edits(window, cx);
+                if source_lines {
+                    vim.copy_ranges(editor, kind, false, ranges_to_copy, window, cx);
+                    editor.change_selections(Default::default(), window, cx, |s| {
+                        s.select(source_selections)
+                    });
+                }
+                {
+                    let _intent = source_lines.then(|| {
+                        editor
+                            .buffer()
+                            .read(cx)
+                            .scoped_edit_intent(ViewEditIntent::DeleteLines)
+                    });
+                    editor.delete_selections_with_linked_edits(window, cx);
+                }
 
                 // Fixup cursor position after the deletion. Helix keeps the
                 // cursor on the trailing newline, so only clip in Vim modes.

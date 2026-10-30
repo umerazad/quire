@@ -11,6 +11,7 @@ use editor::{
 };
 use gpui::{Context, Window};
 use language::Selection;
+use multi_buffer::ViewEditIntent;
 
 impl Vim {
     pub fn change_motion(
@@ -89,7 +90,13 @@ impl Vim {
                 });
                 if let Some(kind) = motion_kind {
                     vim.copy_selections_content(editor, kind, window, cx);
-                    editor.delete_selections_with_linked_edits(window, cx);
+                    {
+                        let _intent = editor
+                            .buffer()
+                            .read(cx)
+                            .scoped_edit_intent(ViewEditIntent::Change);
+                        editor.delete_selections_with_linked_edits(window, cx);
+                    }
                     editor.refresh_edit_prediction(
                         true,
                         false,
@@ -132,7 +139,13 @@ impl Vim {
                         _ => MotionKind::Exclusive,
                     };
                     vim.copy_selections_content(editor, kind, window, cx);
-                    editor.delete_selections_with_linked_edits(window, cx);
+                    {
+                        let _intent = editor
+                            .buffer()
+                            .read(cx)
+                            .scoped_edit_intent(ViewEditIntent::Change);
+                        editor.delete_selections_with_linked_edits(window, cx);
+                    }
                     editor.refresh_edit_prediction(
                         true,
                         false,

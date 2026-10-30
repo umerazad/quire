@@ -622,3 +622,7 @@ mod excerpt_tests;
 #[cfg(test)]
 #[path = "editor_projection_tests.rs"]
 mod projection_tests;
+
+#[cfg(test)]
+#[path = "editor_projection_vim_tests.rs"]
+mod projection_vim_tests;
