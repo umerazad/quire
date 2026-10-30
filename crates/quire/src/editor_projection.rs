@@ -1,5 +1,5 @@
 use editor::{Addon, Editor, EditorEvent, FoldPlaceholder, display_map::Crease};
-use gpui::{App, Context, Entity, Subscription, Window};
+use gpui::{App, Context, Entity, Focusable, Subscription, WeakEntity, Window, prelude::*};
 use multi_buffer::{Anchor, MultiBufferOffset, MultiBufferSnapshot, ToOffset, ViewEdit};
 use std::{
     any::{Any, TypeId},
@@ -70,9 +70,22 @@ fn refresh(
 ) {
     let snapshot = editor.buffer().read(cx).snapshot(cx);
     let mut hidden = Vec::new();
+    let mut tasks = Vec::new();
     for block in blocks {
         let marker = block.marker.start.to_offset(&snapshot)..block.marker.end.to_offset(&snapshot);
         if !marker.is_empty() {
+            let content: String = snapshot
+                .chars_at(marker.end)
+                .take_while(|c| *c != '\n')
+                .take(crate::task_marker::PREFIX_CHAR_LIMIT)
+                .collect();
+            if let Some(task) = crate::task_marker::read(&content) {
+                let range = marker.end..MultiBufferOffset(marker.end.0 + task.source.len());
+                tasks.push(Crease::simple(
+                    range,
+                    checkbox_placeholder(cx.entity().downgrade(), task.source.into(), task.checked),
+                ));
+            }
             hidden.push(marker);
         }
         if let Some(id) = id_range(block, &snapshot) {
@@ -96,11 +109,117 @@ fn refresh(
         hidden
             .into_iter()
             .map(|range| Crease::simple(range, placeholder.clone()))
+            .chain(tasks)
             .collect(),
         false,
         window,
         cx,
     );
+}
+
+fn toggle_task_marker(
+    editor: &mut Editor,
+    range: Range<Anchor>,
+    expected: &str,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    let Some(projection) = editor.addon::<Projection>() else {
+        return;
+    };
+    let Some(source) = editor.buffer().read(cx).all_buffers_iter().next() else {
+        return;
+    };
+    let source = source.read(cx);
+    let source_snapshot = source.snapshot();
+    let fresh = *source.parse_status().borrow() == language::ParseStatus::Idle
+        && projection.parsed.as_ref().is_some_and(|(text, count)| {
+            text.version() == source_snapshot.version()
+                && *count == source_snapshot.syntax_update_count()
+        });
+    if !fresh {
+        return;
+    }
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let start = range.start.to_offset(&snapshot);
+    let is_list = projection.blocks.iter().any(|block| {
+        block.marker.start.to_offset(&snapshot) < start
+            && block.marker.end.to_offset(&snapshot) == start
+    });
+    if !is_list {
+        return;
+    }
+    let current: String = snapshot.text_for_range(range.clone()).collect();
+    if current != expected {
+        return;
+    }
+    let Some(task) = crate::task_marker::read(&current) else {
+        return;
+    };
+    editor.transact(window, cx, |editor, _, cx| {
+        editor.edit([(range, task.toggled())], cx)
+    });
+    window.focus(&editor.focus_handle(cx), cx);
+}
+
+fn checkbox_placeholder(
+    editor: WeakEntity<Editor>,
+    source: String,
+    checked: bool,
+) -> FoldPlaceholder {
+    FoldPlaceholder {
+        collapsed_text: Some(if checked { "☑" } else { "☐" }.into()),
+        constrain_width: false,
+        merge_adjacent: false,
+        type_tag: Some(TypeId::of::<Projection>()),
+        render: Arc::new(move |id, range, _| {
+            let editor = editor.clone();
+            let key_editor = editor.clone();
+            let source = source.clone();
+            gpui::div()
+                .id(id)
+                .key_context("QuireControl")
+                .debug_selector(|| "quire-task-checkbox".into())
+                .role(gpui::Role::CheckBox)
+                .aria_label(if checked {
+                    "Mark task incomplete"
+                } else {
+                    "Complete task"
+                })
+                .aria_toggled(if checked {
+                    gpui::Toggled::True
+                } else {
+                    gpui::Toggled::False
+                })
+                .tab_index(0_isize)
+                .tab_stop(true)
+                .child(ui::Checkbox::new("task-marker", checked.into()).visualization_only(true))
+                .on_key_down(move |event, window, cx| {
+                    if event.keystroke.key == "escape" {
+                        key_editor
+                            .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx), cx))
+                            .ok();
+                    }
+                    if !matches!(event.keystroke.key.as_str(), "enter" | "space" | "tab") {
+                        window.prevent_default();
+                        cx.stop_propagation();
+                    }
+                })
+                .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                })
+                .on_click(move |_, window, cx| {
+                    cx.stop_propagation();
+                    editor
+                        .update(cx, |editor, cx| {
+                            toggle_task_marker(editor, range.clone(), &source, window, cx)
+                        })
+                        .ok();
+                })
+                .into_any_element()
+        }),
+    }
 }
 
 fn clamp_carets(
@@ -344,4 +463,99 @@ pub fn unbind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
             .update(cx, |buffer, _| buffer.set_edit_filter(None));
         refresh(editor, &[], window, cx);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn old_checkbox_cannot_toggle_a_task_moved_into_code(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let note = "- [ ] task ^id\n";
+        let code = format!("```md\n{note}```\n");
+        let source = cx.update(|cx| crate::markdown::buffer(note, cx));
+        let window =
+            cx.add_window(|window, cx| Editor::for_buffer(source.clone(), None, window, cx));
+        let editor = window.update(cx, |_, _, cx| cx.entity()).unwrap();
+        cx.update_window(window.into(), |_, window, cx| {
+            bind(&editor, window, cx).unwrap()
+        })
+        .unwrap();
+        cx.executor().run_until_parked();
+        let range = window
+            .update(cx, |editor, _, cx| {
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                snapshot.anchor_before(MultiBufferOffset(2))
+                    ..snapshot.anchor_before(MultiBufferOffset(5))
+            })
+            .unwrap();
+        source.update(cx, |source, cx| {
+            source.set_sync_parse_timeout(None);
+            source.edit(
+                [(0..0, "```md\n"), (note.len()..note.len(), "```\n")],
+                None,
+                cx,
+            );
+        });
+        window
+            .update(cx, |editor, window, cx| {
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                assert_eq!(
+                    snapshot.text_for_range(range.clone()).collect::<String>(),
+                    "[ ]"
+                );
+                toggle_task_marker(editor, range.clone(), "[ ]", window, cx);
+                assert_eq!(editor.text(cx), code);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        window
+            .update(cx, |editor, window, cx| {
+                toggle_task_marker(editor, range.clone(), "[ ]", window, cx);
+                assert_eq!(editor.text(cx), code);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn obsolete_task_callbacks_do_not_edit_source_or_changed_markers(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let source = cx.update(|cx| crate::markdown::buffer("- [ ] task ^id\n", cx));
+        let window =
+            cx.add_window(|window, cx| Editor::for_buffer(source.clone(), None, window, cx));
+        let editor = window.update(cx, |_, _, cx| cx.entity()).unwrap();
+        cx.update_window(window.into(), |_, window, cx| {
+            bind(&editor, window, cx).unwrap()
+        })
+        .unwrap();
+        cx.executor().run_until_parked();
+        let range = window
+            .update(cx, |editor, _, cx| {
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                snapshot.anchor_before(MultiBufferOffset(2))
+                    ..snapshot.anchor_before(MultiBufferOffset(5))
+            })
+            .unwrap();
+        cx.update_window(window.into(), |_, window, cx| unbind(&editor, window, cx))
+            .unwrap();
+        window
+            .update(cx, |editor, window, cx| {
+                toggle_task_marker(editor, range.clone(), "[ ]", window, cx);
+                assert_eq!(editor.text(cx), "- [ ] task ^id\n");
+            })
+            .unwrap();
+        cx.update_window(window.into(), |_, window, cx| {
+            bind(&editor, window, cx).unwrap()
+        })
+        .unwrap();
+        source.update(cx, |source, cx| source.edit([(2..5, "[x]")], None, cx));
+        window
+            .update(cx, |editor, window, cx| {
+                toggle_task_marker(editor, range.clone(), "[ ]", window, cx);
+                assert_eq!(editor.text(cx), "- [x] task ^id\n");
+            })
+            .unwrap();
+    }
 }

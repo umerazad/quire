@@ -236,8 +236,16 @@ impl Render for CommandPrompt {
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new(":", OpenCommand, Some("vim_mode == normal")),
-        KeyBinding::new(":", OpenCommand, Some("vim_mode == visual")),
+        KeyBinding::new(
+            ":",
+            OpenCommand,
+            Some("vim_mode == normal && !QuireControl"),
+        ),
+        KeyBinding::new(
+            ":",
+            OpenCommand,
+            Some("vim_mode == visual && !QuireControl"),
+        ),
         KeyBinding::new("enter", SubmitCommand, Some("QuireEx > Editor")),
         KeyBinding::new("escape", DismissCommand, Some("QuireEx > Editor")),
         KeyBinding::new("ctrl-c", DismissCommand, Some("QuireEx > Editor")),

@@ -196,7 +196,7 @@
     },
     {
       "path": "crates/settings/src/keymap_file.rs",
-      "change": "Expose retain_sections so embedded hosts can load editor/Vim contexts without unrelated Zed product contexts; selected bindings still load strictly."
+      "change": "Expose retain_sections and constrain_contexts so embedded hosts can select editor/Vim contexts and exclude nested native controls without changing binding order or key equivalents; selected bindings still load strictly."
     },
     {
       "path": "crates/sqlez/src/connection.rs",

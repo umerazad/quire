@@ -23,6 +23,9 @@ mod markdown;
 #[cfg(feature = "full-editor")]
 mod markdown_blocks;
 
+#[cfg(feature = "full-editor")]
+mod task_marker;
+
 #[path = "example_support/fonts.rs"]
 mod example_support;
 

@@ -20,10 +20,26 @@ pub fn bind_keys(cx: &mut App) {
         ("ctrl-f", "ctrl-h", "f3", "shift-f3")
     };
     cx.bind_keys([
-        KeyBinding::new(find, buffer_search::Deploy::find(), Some("Editor")),
-        KeyBinding::new(replace, buffer_search::Deploy::replace(), Some("Editor")),
-        KeyBinding::new(next, search::SelectNextMatch, Some("Editor")),
-        KeyBinding::new(previous, search::SelectPreviousMatch, Some("Editor")),
+        KeyBinding::new(
+            find,
+            buffer_search::Deploy::find(),
+            Some(super::editor_host::EDITOR_CONTEXT),
+        ),
+        KeyBinding::new(
+            replace,
+            buffer_search::Deploy::replace(),
+            Some(super::editor_host::EDITOR_CONTEXT),
+        ),
+        KeyBinding::new(
+            next,
+            search::SelectNextMatch,
+            Some(super::editor_host::EDITOR_CONTEXT),
+        ),
+        KeyBinding::new(
+            previous,
+            search::SelectPreviousMatch,
+            Some(super::editor_host::EDITOR_CONTEXT),
+        ),
         KeyBinding::new("escape", buffer_search::Dismiss, Some("BufferSearchBar")),
         KeyBinding::new(
             "enter",

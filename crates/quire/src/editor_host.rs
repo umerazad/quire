@@ -5,6 +5,8 @@ use ui::{Button, ButtonCommon, Clickable, Tooltip};
 
 gpui::actions!(quire, [TogglePresentation]);
 
+pub(super) const EDITOR_CONTEXT: &str = "Editor && !QuireControl";
+
 pub(super) fn init(cx: &mut App) -> Result<(), String> {
     settings::init(cx);
     let result = settings::SettingsStore::update_global(cx, |store, cx| {
@@ -34,15 +36,19 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
         None,
     )]);
     cx.bind_keys([
-        KeyBinding::new("enter", editor::actions::Newline, Some("Editor")),
-        KeyBinding::new("backspace", editor::actions::Backspace, Some("Editor")),
-        KeyBinding::new("delete", editor::actions::Delete, Some("Editor")),
-        KeyBinding::new("left", editor::actions::MoveLeft, Some("Editor")),
-        KeyBinding::new("right", editor::actions::MoveRight, Some("Editor")),
-        KeyBinding::new("up", zed_actions::editor::MoveUp, Some("Editor")),
-        KeyBinding::new("down", zed_actions::editor::MoveDown, Some("Editor")),
-        KeyBinding::new("tab", editor::actions::Tab, Some("Editor")),
-        KeyBinding::new("shift-tab", editor::actions::Outdent, Some("Editor")),
+        KeyBinding::new("enter", editor::actions::Newline, Some(EDITOR_CONTEXT)),
+        KeyBinding::new(
+            "backspace",
+            editor::actions::Backspace,
+            Some(EDITOR_CONTEXT),
+        ),
+        KeyBinding::new("delete", editor::actions::Delete, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("left", editor::actions::MoveLeft, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("right", editor::actions::MoveRight, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("up", zed_actions::editor::MoveUp, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("down", zed_actions::editor::MoveDown, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("tab", editor::actions::Tab, Some(EDITOR_CONTEXT)),
+        KeyBinding::new("shift-tab", editor::actions::Outdent, Some(EDITOR_CONTEXT)),
     ]);
     let shortcuts = if cfg!(target_os = "macos") {
         ["cmd-z", "cmd-shift-z", "cmd-a", "cmd-c", "cmd-x", "cmd-v"]
@@ -57,18 +63,23 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
         ]
     };
     cx.bind_keys([
-        KeyBinding::new(shortcuts[0], editor::actions::Undo, Some("Editor")),
-        KeyBinding::new(shortcuts[1], editor::actions::Redo, Some("Editor")),
-        KeyBinding::new(shortcuts[2], editor::actions::SelectAll, Some("Editor")),
-        KeyBinding::new(shortcuts[3], editor::actions::Copy, Some("Editor")),
-        KeyBinding::new(shortcuts[4], editor::actions::Cut, Some("Editor")),
-        KeyBinding::new(shortcuts[5], editor::actions::Paste, Some("Editor")),
+        KeyBinding::new(shortcuts[0], editor::actions::Undo, Some(EDITOR_CONTEXT)),
+        KeyBinding::new(shortcuts[1], editor::actions::Redo, Some(EDITOR_CONTEXT)),
+        KeyBinding::new(
+            shortcuts[2],
+            editor::actions::SelectAll,
+            Some(EDITOR_CONTEXT),
+        ),
+        KeyBinding::new(shortcuts[3], editor::actions::Copy, Some(EDITOR_CONTEXT)),
+        KeyBinding::new(shortcuts[4], editor::actions::Cut, Some(EDITOR_CONTEXT)),
+        KeyBinding::new(shortcuts[5], editor::actions::Paste, Some(EDITOR_CONTEXT)),
     ]);
     let mut keymap =
         settings::KeymapFile::parse(settings::vim_keymap().as_ref()).map_err(|error| {
             format!("Cannot read the bundled Vim bindings: {error}. Rebuild or reinstall Quire.")
         })?;
     keymap.retain_sections(|section| editor_vim_context(&section.context));
+    keymap.constrain_contexts("!QuireControl");
     match keymap.load_keymap(cx) {
         settings::KeymapFileLoadResult::Success { key_bindings } => cx.bind_keys(key_bindings),
         settings::KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => {
@@ -91,7 +102,7 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
             "ctrl-shift-m"
         },
         TogglePresentation,
-        Some("Editor"),
+        Some(EDITOR_CONTEXT),
     )]);
     Ok(())
 }

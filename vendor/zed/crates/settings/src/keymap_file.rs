@@ -175,6 +175,17 @@ impl KeymapFile {
         self.0.retain(predicate);
     }
 
+    /// Adds a host constraint without changing binding order, actions, or key equivalents.
+    pub fn constrain_contexts(&mut self, constraint: &str) {
+        for section in &mut self.0 {
+            section.context = if section.context.is_empty() {
+                constraint.to_owned()
+            } else {
+                format!("({}) && ({constraint})", section.context)
+            };
+        }
+    }
+
     pub fn parse(content: &str) -> anyhow::Result<Self> {
         if content.trim().is_empty() {
             return Ok(Self(Vec::new()));

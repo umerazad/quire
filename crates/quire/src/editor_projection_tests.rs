@@ -13,6 +13,147 @@ fn projected_window(cx: &mut TestAppContext) -> gpui::WindowHandle<NotebookWindo
     window
 }
 
+fn activate_focused_control(
+    window: gpui::WindowHandle<NotebookWindow>,
+    key: &str,
+    cx: &mut TestAppContext,
+) {
+    cx.executor().run_until_parked();
+    cx.update_window(window.into(), |_, window, cx| {
+        window.draw(cx).clear(cx);
+        let keystroke = gpui::Keystroke::parse_with_os(key, cx.platform_info().os).unwrap();
+        window.dispatch_event(
+            gpui::PlatformInput::KeyDown(gpui::KeyDownEvent {
+                keystroke: keystroke.clone(),
+                is_held: false,
+                prefer_character_input: false,
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            gpui::PlatformInput::KeyUp(gpui::KeyUpEvent { keystroke }),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.executor().run_until_parked();
+}
+
+#[gpui::test]
+fn task_checkbox_edits_the_shared_marker_and_undoes_from_source(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let window = cx.add_window(|window, cx| {
+        let view = NotebookWindow::new("- [ ] مرحبا🙂 ^task\n", window, cx);
+        crate::editor_projection::bind(&view.second, window, cx).unwrap();
+        view
+    });
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                "☐ مرحبا🙂\n"
+            );
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    let bounds = visual
+        .debug_bounds("quire-task-checkbox")
+        .expect("rendered task checkbox");
+    visual.simulate_click(bounds.center(), Default::default());
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "- [x] مرحبا🙂 ^task\n");
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                "☑ مرحبا🙂\n"
+            );
+            window.focus(&view.source.focus_handle(cx), cx);
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "u");
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "- [ ] مرحبا🙂 ^task\n")
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn roam_checkbox_supports_keyboard_activation(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let window = cx.add_window(|window, cx| {
+        let view = NotebookWindow::new("- {{[[TODO]]}} task ^id\n", window, cx);
+        crate::editor_projection::bind(&view.second, window, cx).unwrap();
+        view
+    });
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, window, cx| {
+            window.blur(cx);
+            for _ in 0..3 {
+                window.focus_next(cx);
+            }
+            assert!(!view.source.focus_handle(cx).is_focused(window));
+            assert!(!view.second.focus_handle(cx).is_focused(window));
+            assert!(view.second.focus_handle(cx).contains_focused(window, cx));
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "d d i x");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "- {{[[TODO]]}} task ^id\n")
+        })
+        .unwrap();
+    activate_focused_control(window, "enter", cx);
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "- {{[[DONE]]}} task ^id\n");
+            assert!(view.second.focus_handle(cx).contains_focused(window, cx));
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                "☑ task\n"
+            );
+        })
+        .unwrap();
+    window
+        .update(cx, |_, window, cx| {
+            window.blur(cx);
+            for _ in 0..3 {
+                window.focus_next(cx);
+            }
+        })
+        .unwrap();
+    activate_focused_control(window, "space", cx);
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "- {{[[TODO]]}} task ^id\n");
+            window.blur(cx);
+            for _ in 0..3 {
+                window.focus_next(cx);
+            }
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "escape");
+    window
+        .update(cx, |view, window, cx| {
+            assert!(view.second.focus_handle(cx).is_focused(window));
+            assert_eq!(view.source.read(cx).text(cx), "- {{[[TODO]]}} task ^id\n");
+        })
+        .unwrap();
+}
+
 #[gpui::test]
 fn switching_to_source_releases_id_guards_and_keeps_shared_undo(cx: &mut TestAppContext) {
     cx.update(|cx| init(cx).expect("editor initialization"));
@@ -72,6 +213,39 @@ fn switching_to_source_releases_id_guards_and_keeps_shared_undo(cx: &mut TestApp
 }
 
 #[gpui::test]
+fn checkbox_projection_respects_code_marker_boundaries_and_source_mode(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let text = "```md\n- [x] fake ^literal\n```\n\n- {{[[TODO]]}} Task ^id\n- [x]body ^b\n";
+    let window = cx.add_window(|window, cx| {
+        let view = NotebookWindow::new(text, window, cx);
+        crate::editor_projection::bind(&view.second, window, cx).unwrap();
+        view
+    });
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                "```md\n- [x] fake ^literal\n```\n\n☐ Task\n[x]body\n"
+            );
+            let editor = view.second.clone();
+            view.change_presentation(&editor, window, cx);
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                text
+            );
+            assert_eq!(view.source.read(cx).text(cx), text);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn hidden_syntax_uses_the_shared_source_without_display_ellipsis(cx: &mut TestAppContext) {
     cx.update(|cx| init(cx).expect("editor initialization"));
     let window = projected_window(cx);
@@ -103,25 +277,7 @@ fn presentation_button_supports_keyboard_activation_and_returns_editor_focus(
             assert!(!view.source.focus_handle(cx).contains_focused(window, cx));
         })
         .unwrap();
-    cx.executor().run_until_parked();
-    cx.update_window(window.into(), |_, window, cx| {
-        window.draw(cx).clear(cx);
-        let keystroke = gpui::Keystroke::parse_with_os("enter", cx.platform_info().os).unwrap();
-        window.dispatch_event(
-            gpui::PlatformInput::KeyDown(gpui::KeyDownEvent {
-                keystroke: keystroke.clone(),
-                is_held: false,
-                prefer_character_input: false,
-            }),
-            cx,
-        );
-        window.dispatch_event(
-            gpui::PlatformInput::KeyUp(gpui::KeyUpEvent { keystroke }),
-            cx,
-        );
-    })
-    .unwrap();
-    cx.executor().run_until_parked();
+    activate_focused_control(window, "enter", cx);
     window
         .update(cx, |view, window, cx| {
             assert!(crate::editor_projection::enabled(view.source.read(cx)));
