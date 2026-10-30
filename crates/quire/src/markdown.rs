@@ -1,4 +1,4 @@
-use gpui::{App, AppContext, Entity, Global};
+use gpui::{App, AppContext, Context, Entity, Global};
 use language::{Buffer, Language, LanguageRegistry};
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -34,11 +34,23 @@ pub fn init(cx: &mut App) -> Result<(), String> {
 }
 
 pub fn buffer(text: impl Into<String>, cx: &mut App) -> Entity<Buffer> {
+    new_buffer(|cx| Buffer::local(text, cx), cx)
+}
+
+pub fn prepared_buffer(
+    text: rope::Rope,
+    line_ending: text::LineEnding,
+    cx: &mut App,
+) -> Entity<Buffer> {
+    new_buffer(|cx| Buffer::local_normalized(text, line_ending, cx), cx)
+}
+
+fn new_buffer(create: impl FnOnce(&mut Context<Buffer>) -> Buffer, cx: &mut App) -> Entity<Buffer> {
     let languages = cx.global::<MarkdownLanguages>();
     let registry = languages.registry.clone();
     let markdown = languages.markdown.clone();
     cx.new(|cx| {
-        let mut buffer = Buffer::local(text, cx);
+        let mut buffer = create(cx);
         buffer.set_language_registry(registry);
         buffer.set_language(Some(markdown), cx);
         buffer

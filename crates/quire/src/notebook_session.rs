@@ -1,4 +1,7 @@
-use crate::page_analysis::PageAnalysis;
+use crate::{
+    page_analysis::PageAnalysis,
+    stored_source::{PreparedSource, StoredSource},
+};
 use futures::{
     FutureExt,
     future::{BoxFuture, Shared},
@@ -67,6 +70,7 @@ impl NotebookSession {
 
 pub struct LoadedPage {
     pub analysis: Entity<PageAnalysis>,
+    pub source: Arc<StoredSource>,
     pub heads: Vec<String>,
     pub path: Option<String>,
     pub recovered: bool,
@@ -139,7 +143,7 @@ impl OpenPage {
             this.update(cx, |this, cx| {
                 match result {
                     Ok(page) => {
-                        let source = crate::markdown::buffer(page.text, cx);
+                        let (source, stored_source) = page.text.install(cx);
                         // Persistent editing is enabled only after recovery/save/close guards exist.
                         source.update(cx, |source, cx| {
                             source.set_capability(language::Capability::ReadOnly, cx)
@@ -148,6 +152,7 @@ impl OpenPage {
                         this.status = page.status.into();
                         this.state = LoadState::Ready(LoadedPage {
                             analysis,
+                            source: Arc::new(stored_source),
                             heads: page.heads,
                             path: page.path,
                             recovered: page.recovered,
@@ -171,7 +176,7 @@ impl OpenPage {
 }
 
 struct PreparedPage {
-    text: String,
+    text: PreparedSource,
     path: Option<String>,
     heads: Vec<String>,
     recovered: bool,
@@ -219,7 +224,7 @@ impl PreparedPage {
             status.push_str(" · recovered unsaved changes");
         }
         Ok(Self {
-            text,
+            text: PreparedSource::new(text),
             path,
             heads: checkout.heads,
             recovered,

@@ -74,6 +74,8 @@ struct StoredWindow {
     _session: NotebookSession,
     page: Entity<OpenPage>,
     editor: Option<Entity<NotebookWindow>>,
+    copy_task: Option<gpui::Task<()>>,
+    copy_error: Option<gpui::SharedString>,
 }
 
 impl StoredWindow {
@@ -92,6 +94,8 @@ impl StoredWindow {
             _session: session,
             page,
             editor: None,
+            copy_task: None,
+            copy_error: None,
         };
         this.attach_editor(window, cx);
         this
@@ -108,14 +112,39 @@ impl StoredWindow {
         let title = page.path.as_deref().unwrap_or("Unsaved page");
         window.set_window_title(&format!("{title} · Quire Native"));
         eprintln!(
-            "Quire page preview ready: {} revision bodies, {} heads, recovery={}, deleted={}, {:.1} ms to buffer ready.",
+            "Quire page preview ready: {} revision bodies, {} source bytes, {} heads, recovery={}, deleted={}, {:.1} ms to buffer ready.",
             page.loaded_revision_bodies,
+            page.source.original_len(),
             page.heads.len(),
             page.recovered,
             page.deleted,
             page.load_time.as_secs_f64() * 1000.
         );
         self.editor = Some(cx.new(|cx| NotebookWindow::for_page(analysis, None, window, cx)));
+    }
+
+    fn copy_markdown(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(page) = self.page.read(cx).loaded() else {
+            return;
+        };
+        let source = page.source.clone();
+        let snapshot = page.analysis.read(cx).source.read(cx).snapshot();
+        let work = cx
+            .background_spawn(async move { source.render(&snapshot).map(|text| text.to_string()) });
+        self.copy_error = None;
+        self.copy_task = Some(cx.spawn(async move |this, cx| {
+            let result = work.await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(text) => cx.write_to_clipboard(gpui::ClipboardItem::new_string(text)),
+                    Err(error) => this.copy_error = Some(error.into()),
+                }
+                this.copy_task = None;
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
     }
 }
 
@@ -128,6 +157,19 @@ impl Render for StoredWindow {
             .items_center()
             .gap_2()
             .child(Label::new(page.status()))
+            .when(page.loaded().is_some(), |div| {
+                div.child(
+                    Button::new(
+                        "copy-markdown",
+                        if self.copy_task.is_some() {
+                            "Copying Markdown…"
+                        } else {
+                            "Copy Markdown"
+                        },
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.copy_markdown(cx))),
+                )
+            })
             .when(page.can_retry(), |div| {
                 div.child(
                     Button::new("retry-page", "Retry page").on_click(cx.listener(
@@ -143,6 +185,9 @@ impl Render for StoredWindow {
             .flex_col()
             .bg(cx.theme().colors().editor_background)
             .child(header)
+            .when_some(self.copy_error.clone(), |div, error| {
+                div.child(gpui::div().p_2().child(error))
+            })
             .when(page.is_loading(), |div| {
                 div.child(gpui::div().p_2().child("Opening notebook storage…"))
             })
@@ -231,7 +276,8 @@ mod tests {
         edit.deleted = false;
         edit.text = "other branch".into();
         store.save(&edit).unwrap();
-        let text = "- [ ] recovered اردو #work ^b-one\n";
+        let text = "- [ ] recovered اردو #work ^b-one\r\n- end\r";
+        let normalized = "- [ ] recovered اردو #work ^b-one\n- end\n";
         let draft = Draft {
             page: "p".into(),
             path: "Recovered.md".into(),
@@ -270,8 +316,8 @@ mod tests {
                 };
                 assert!(source.read(cx).read_only(cx));
                 assert!(second.read(cx).read_only(cx));
-                assert_eq!(source.read(cx).text(cx), text);
-                assert_eq!(second.read(cx).text(cx), text);
+                assert_eq!(source.read(cx).text(cx), normalized);
+                assert_eq!(second.read(cx).text(cx), normalized);
                 crate::editor_projection::bind(&second, window, cx).unwrap();
             })
             .unwrap();
@@ -282,10 +328,15 @@ mod tests {
         window
             .update(cx, |view, _, cx| {
                 let editor = view.editor.as_ref().unwrap().read(cx);
-                assert_eq!(editor.source.read(cx).text(cx), text);
-                assert_eq!(editor.second.read(cx).text(cx), text);
+                assert_eq!(editor.source.read(cx).text(cx), normalized);
+                assert_eq!(editor.second.read(cx).text(cx), normalized);
             })
             .unwrap();
+        window
+            .update(cx, |view, _, cx| view.copy_markdown(cx))
+            .unwrap();
+        cx.executor().run_until_parked();
+        cx.update(|cx| assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), text));
         let store = NotebookStore::open(&path, "nb", "local").unwrap();
         assert_eq!(store.heads("p").unwrap(), heads);
         assert_eq!(store.outbox().unwrap(), outbox);

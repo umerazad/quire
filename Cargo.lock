@@ -11350,6 +11350,7 @@ dependencies = [
  "quire_core",
  "quire_store",
  "release_channel",
+ "rope",
  "search",
  "semver",
  "serde_json",

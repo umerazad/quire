@@ -755,6 +755,27 @@ The upstream audit verifies 3,008 unchanged files and 28 documented fork modific
 This provides the pre-termination boundary only. Notebook recovery/save coordination and the per-window close guard are still required before persistent editing can be enabled. Actual macOS desktop termination and native Windows/Linux event acceptance remain NR33/NR35 gates; the test callback simulation is not OS-level evidence.
 Status: done
 
+##### NR11.3.2: Preserve stored source through native line-ending normalization
+
+What to do: Prepare normalized editor text and its rope on a background worker, retaining original wire text and a byte-offset map. Apply native snapshot edit ranges back to that original source so untouched LF, CRLF, and bare-CR endings survive; preserve no-op replacements and undo exactly. Retain the original source with the loaded page for persistence. Add Copy Markdown as the first snapshot consumer of that exact-source path, capturing the clicked version and preparing clipboard text off the foreground.
+Constraints: No foreground source copy/normalization or extra parser. Use the copied local_normalized constructor and snapshot edit iterator. Keep the core mapping independent of GPUI and reject invalid, overlapping, or unnormalized edits before returning any rewritten source. Preserve the existing immutable original on errors.
+Write set: pure core source-text mapping and tests, Markdown prepared-buffer constructor, native checkout preparation and snapshot integration tests.
+Verify: LF/CRLF/CR/mixed endings, Unicode and empty/terminal lines, insert/delete/replace around newline boundaries, unchanged/semantic no-op source identity, whole-page undo/redo, stale/different-buffer integration boundaries, and stored-recovery round trips. Run core/app/storage tests, Clippy, build, formatting, and prose lint. Keep full persistence and close coordination pending.
+Proof notes: `quire_core::source_text` retains immutable original text plus normalized-byte offsets for CRLF boundaries. Its ordered SourceEdit iterator replaces only the requested source ranges, preserving untouched bytes and semantically unchanged replacements. No effective edit returns the original Arc. Replacement newlines use the first opened LF/CRLF/CR style, with LF for a page without line breaks. Invalid UTF-8 boundaries, out-of-range/reversed/overlapping edits, and carriage returns in normalized replacements fail without returning a partial rewrite. The module uses only std and remains independent of GPUI.
+
+`stored_source.rs` prepares normalized text and the copied rope on the background checkout path. The foreground moves that rope into Buffer::local_normalized through the shared Markdown setup and retains its opening snapshot with the original source. Rendering a captured snapshot uses the copied edits_since iterator and rejects another buffer or a snapshot predating its baseline. The opening baseline remains fixed so full undo can recover original mixed endings after intermediate checkpoints. Explicit native line-ending metadata changes use a separate uniform conversion path; ordinary text edits preserve untouched original endings. Loaded pages share this immutable adapter through an Arc, keeping page state and background requests small without copying its opening snapshot for each request.
+
+Stored-page previews now expose Copy Markdown. It captures the clicked snapshot, prepares source text off the foreground, and writes the prepared string through the copied clipboard API. Pending copies show Copying Markdown; replacing/dropping the owned task prevents an older completion from overwriting a newer request. Source byte counts join the existing loaded-body/readiness metrics. This copies full Markdown source, including recovery text and hidden source syntax, rather than a flattened standalone export.
+
+Five core tests cover normalization, byte translation, mixed styles, boundary inserts/deletes, exact no-op Arc identity, and unchanged originals on invalid edits. Five native tests cover actual snapshot edit ranges, all 27 combinations of three line-break styles, Unicode replacements, captured versions while later typing continues, foreign/predating rejection, explicit line-ending conversion, and 120 deterministic edits followed by full undo/redo. The existing drawn stored-recovery test now uses mixed CRLF/CR content, checks normalized read-only views, copies exact original recovery text through the headless clipboard, and verifies unchanged stored heads, outbox, and recovery.
+
+`CARGO_HOME=/private/tmp/quire-cargo cargo test -p quire -p quire_core -p quire_store --locked --features quire/test-support` passes 259 tests (128 app, 20 core, 111 storage; `/private/tmp/quire-source-roundtrip-all-tests.log`). After sharing the adapter and adding copy feedback, all 128 app tests pass again (`/private/tmp/quire-source-roundtrip-final-app-tests.log`). All-target core/store/app Clippy with -D warnings passes (`/private/tmp/quire-source-roundtrip-final-clippy.log`), and final app Clippy passes after the UI feedback change (`/private/tmp/quire-source-roundtrip-final-ui-clippy.log`). The locked native build passes with existing dependency artifacts (`/private/tmp/quire-source-roundtrip-final-build.log`), retaining its existing linker warning. Formatting, prose lint, and staged whitespace pass. Cargo.lock gains only the direct application edge to the already copied rope crate; no dependency versions or vendored sources change.
+
+An additional plain --no-default-features check fails when an uncached gpui_apple variant attempts shader compilation: the selected Xcode installation lacks the Metal toolchain (`/private/tmp/quire-source-roundtrip-input-check.log`). The compiler invocation independently reports that missing component. The input-only Rust configuration checks with the existing gpui_platform/runtime_shaders feature (`/private/tmp/quire-source-roundtrip-input-runtime-check.log`); this diagnostic does not satisfy the precompiled-shader or clean-build gate. No source feature/default, build requirement, or verification assertion was changed to hide the failure. NR35 records the clean-build limitation.
+
+Sequential review checked byte/Unicode boundaries, complete CRLF mapping, ordered sparse edits, semantic no-ops, immutable errors, snapshot identity/ancestry, fixed-baseline undo, explicit metadata changes, source ownership, foreground/background call sites, copy task lifetime, and preserved read-only/storage behavior. The simplification pass reuses the native snapshot iterator, rope constructor, Markdown initialization, and clipboard API rather than introducing a diff engine or parser. This completes source preparation and its copy consumer. The recovery/save coordinator must still retain selected/draft ancestry and stamps, track acknowledgments against captured text and line-ending state, and secure all dirty pages through close/quit guards before enabling persistent edits. Source copying is not a save acknowledgment or release timing proof.
+Status: done
+
 ### NR12: Serve indexed queries with a live overlay
 
 What to do: Add incremental derived tables and bounded search/page/backlink/tag/task/template/daily queries. Merge unsaved analysis without counting old and new versions twice; expose generation-aware paging.
@@ -878,7 +899,7 @@ Constraints: Preserve paths, titles, IDs and attachment resolution; no silent ov
 Write set: import/export modules, progress/cancel UI, round-trip fixtures.
 Dependencies: NR13, NR15, NR21.
 Verify: Round-trip both backends; interrupt and resume staged import; compare page/attachment counts and hashes; flattened embeds/citations match current behavior; unknown formats fail safely.
-Proof notes: pending; whole-notebook export was a source-plan gap.
+Proof notes: pending; whole-notebook export was a source-plan gap. NR11.3.2 adds exact-source Copy Markdown for a stored-page preview, including recovery text and original line endings. It does not implement filesystem import/export, flattened embeds, or whole-notebook exchange.
 Status: pending
 
 ### NR24: Implement Roam JSON/EDN exchange
@@ -1002,7 +1023,7 @@ Constraints: No Zed/rt checkout or developer runtime at build/run acceptance. Ke
 Write set: packaging/CI configuration, manifests/notices, native acceptance harness.
 Dependencies: NR05, NR06, NR31, NR33, NR34.
 Verify: Clean isolated builds and install/open/update smoke checks; native input/IME/clipboard/accessibility, dialogs, scale factors, close saves, media, formatters, and terminal tools on each OS. Report unsigned/notarization status accurately.
-Proof notes: pending.
+Proof notes: pending. During NR11.3.2, an uncached input-only build variant failed because Xcode's Metal toolchain is missing. Cached native app builds pass, and the optional runtime_shaders diagnostic configuration checks, but neither proves a fresh precompiled-shader build. Install the required toolchain before claiming clean isolated macOS acceptance. Native desktop services also remain unavailable in the Codex sandbox.
 Status: pending
 
 ### NR36: Demonstrate full-state migration and rollback
