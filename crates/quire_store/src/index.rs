@@ -4,6 +4,7 @@
 //! cache: deleting it loses nothing, and any version, identity, or corruption mismatch rebuilds it.
 //! Rows are keyed by immutable revision IDs, so a row is either complete or absent, never stale.
 
+mod blocks;
 mod catalog;
 mod overlay;
 mod query;
@@ -11,6 +12,7 @@ mod references;
 mod schema;
 mod tasks;
 
+pub use blocks::{BlockChoice, BlockPreview};
 pub use catalog::{ListedPage, SETTINGS_PAGE};
 pub use overlay::Overlay;
 pub use query::{Backlink, PageRef, SearchHit, TagCount, TaggedBlock};
@@ -486,6 +488,11 @@ impl Client<QueryIndex> {
     pub fn find_page(&self, target: String) -> Answer<Option<PageRef>> {
         self.request(128 + target.len(), move |index| index.find_page(&target))
     }
+    pub fn resolve_block(&self, target: String) -> Answer<Option<PageRef>> {
+        self.request(128 + target.len(), move |index| {
+            index.resolve_block(&target)
+        })
+    }
     pub fn backlinks(&self, page: JsString) -> Answer<Vec<Backlink>> {
         self.request(128 + page.as_bytes().len(), move |index| {
             index.backlinks(&page)
@@ -505,6 +512,16 @@ impl Client<QueryIndex> {
     }
     pub fn search(&self, query: String) -> Answer<Vec<SearchHit>> {
         self.request(128 + query.len(), move |index| index.search(&query))
+    }
+    pub fn block_choices(&self, query: String, limit: usize) -> Answer<Vec<BlockChoice>> {
+        self.request(128 + query.len(), move |index| {
+            index.block_choices(&query, limit)
+        })
+    }
+    pub fn block_preview(&self, target: String) -> Answer<Option<BlockPreview>> {
+        self.request(128 + target.len(), move |index| {
+            index.block_preview(&target)
+        })
     }
     pub fn linked_references(
         &self,

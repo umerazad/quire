@@ -489,3 +489,92 @@ fn task_rows_keep_date_sources_through_layout_changes_and_overlays() -> Result<(
     );
     Ok(())
 }
+
+#[test]
+fn block_choices_and_previews_read_live_blocks_and_refuse_ambiguous_ids() -> Result<()> {
+    use quire_store::index::Overlay;
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "a", "Alpha.md", "a")?;
+    save(&store, "b", "Beta.md", "b")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    let text =
+        |id: Option<&str>, from: u32, text: &str, kind: &str, parent: Option<&str>| IndexedBlock {
+            text: text.into(),
+            kind: kind.into(),
+            parent: parent.map(str::to_owned),
+            ..block(id, from)
+        };
+    let alpha = PageIndex {
+        blocks: vec![
+            text(Some("zebra"), 0, "Zebras graze at dawn", "list", None),
+            text(None, 10, "zebra child", "list", Some("zebra")),
+            text(None, 20, "zebra code", "code", None),
+        ],
+        ..Default::default()
+    };
+    let beta = PageIndex {
+        blocks: vec![text(Some("dup"), 0, "Dawn chorus", "paragraph", None)],
+        ..Default::default()
+    };
+    analyze_all(&index, &[("Alpha.md", alpha), ("Beta.md", beta)])?;
+    let choices = |query: &str, limit: usize| -> Result<Vec<(String, String)>> {
+        Ok(index
+            .block_choices(query, limit)?
+            .into_iter()
+            .map(|choice| (choice.source.path, choice.key))
+            .collect())
+    };
+    let pair = |path: &str, key: &str| (path.to_owned(), key.to_owned());
+    assert_eq!(
+        choices("ZEBRA", 10)?,
+        [pair("Alpha.md", "zebra"), pair("Alpha.md", "at-10")],
+        "code blocks are left out"
+    );
+    assert_eq!(
+        choices("dawn", 10)?,
+        [pair("Alpha.md", "zebra"), pair("Beta.md", "dup")]
+    );
+    assert_eq!(choices("dawn graze", 10)?, [pair("Alpha.md", "zebra")]);
+    assert_eq!(
+        choices("", 1)?.len(),
+        1,
+        "an empty query lists blocks up to the limit"
+    );
+
+    let preview = index.block_preview("zebra")?.unwrap();
+    assert_eq!(
+        (
+            preview.source.path.as_str(),
+            preview.text.as_str(),
+            preview.children
+        ),
+        ("Alpha.md", "Zebras graze at dawn", true)
+    );
+    assert_eq!(index.block_preview("Alpha#^zebra")?.unwrap().id, "zebra");
+    assert!(index.block_preview("Beta#^zebra")?.is_none());
+    assert!(index.block_preview("missing")?.is_none());
+
+    index.set_overlay(
+        &JsString::from("a"),
+        &Overlay {
+            path: "Alpha.md".into(),
+            title: "Alpha".into(),
+            index: PageIndex {
+                blocks: vec![text(Some("dup"), 0, "Unsaved dawn", "list", None)],
+                ..Default::default()
+            },
+        },
+    )?;
+    assert!(
+        index.block_preview("dup")?.is_none(),
+        "an ID on two pages resolves to nothing"
+    );
+    assert!(index.block_preview("zebra")?.is_none());
+    assert_eq!(
+        choices("unsaved", 10)?,
+        [pair("Alpha.md", "dup")],
+        "unsaved text is offered"
+    );
+    Ok(())
+}

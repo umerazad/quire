@@ -589,6 +589,7 @@ impl StoredWindow {
             }
             editor
         });
+        self.link_editors(&editor, window, cx);
         match (focus, previous) {
             (true, _) => window.focus(&editor.read(cx).source.focus_handle(cx), cx),
             (false, Some(previous)) => window.focus(&previous, cx),
@@ -695,3 +696,19 @@ mod references_tests;
 #[cfg(test)]
 #[path = "tasks_tests.rs"]
 mod tasks_tests;
+
+#[cfg(test)]
+#[path = "links_tests.rs"]
+mod links_tests;
+
+#[cfg(test)]
+#[path = "completion_tests.rs"]
+mod completion_tests;
+
+#[cfg(test)]
+#[path = "rendered_links_tests.rs"]
+mod rendered_links_tests;
+
+#[cfg(test)]
+#[path = "embeds_tests.rs"]
+mod embeds_tests;

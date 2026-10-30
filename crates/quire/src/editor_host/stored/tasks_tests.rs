@@ -248,10 +248,11 @@ fn selected_tasks_move_together_and_stale_selections_are_refused(cx: &mut TestAp
         "- [ ] One #next\n- [ ] Two #next\n- [ ] Three #pending\n\ntyped\n",
         "the open page keeps its unsaved typing"
     );
-    assert_eq!(
-        cx.read(|cx| buffer.read(cx).text()),
-        "- [ ] One #next\n- [ ] Two #next\n- [ ] Three #pending\n\ntyped\n"
-    );
+    // The open page takes in the written version after a background diff.
+    let merged = "- [ ] One #next\n- [ ] Two #next\n- [ ] Three #pending\n\ntyped\n";
+    wait_until(cx, "the open page to take in the move", |cx| {
+        cx.read(|cx| buffer.read(cx).text()) == merged
+    });
     assert_eq!(
         message(&notebook, cx).0.as_deref(),
         Some("Moved 3 tasks to Next.")

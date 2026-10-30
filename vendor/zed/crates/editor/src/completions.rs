@@ -9,6 +9,10 @@ impl Editor {
         self.show_completions_on_input_override = show_completions_on_input;
     }
 
+    pub fn disable_word_completions(&mut self) {
+        self.word_completions_enabled = false;
+    }
+
     pub fn text_layout_details(&self, window: &mut Window, cx: &mut App) -> TextLayoutDetails {
         TextLayoutDetails {
             text_system: window.text_system().clone(),
@@ -1143,11 +1147,6 @@ impl Editor {
         } else {
             None
         }
-    }
-
-    #[cfg(test)]
-    pub(super) fn disable_word_completions(&mut self) {
-        self.word_completions_enabled = false;
     }
 }
 

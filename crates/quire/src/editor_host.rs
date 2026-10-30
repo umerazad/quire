@@ -114,6 +114,7 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     crate::editor_command::bind_keys(cx);
     crate::outline::init(cx);
     crate::tasks::init(cx);
+    crate::references::init(cx);
     stored::bind_keys(cx);
     crate::navigation::bind_keys(cx);
     if !cx.has_global::<db::AppDatabase>() {

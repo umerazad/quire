@@ -155,7 +155,7 @@ impl QueryIndex {
         self.resolve_block_page(target)
     }
 
-    fn resolve_block_page(&self, target: &str) -> Result<Option<PageRef>> {
+    pub(super) fn resolve_block_page(&self, target: &str) -> Result<Option<PageRef>> {
         let scope = match target.find("#^") {
             Some(index) => Some(self.resolve_page(&target[..index])?),
             None => None,

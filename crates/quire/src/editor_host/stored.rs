@@ -11,6 +11,7 @@ use std::{
 };
 use theme::ActiveTheme;
 
+mod links;
 mod navigation;
 
 pub(super) fn bind_keys(cx: &mut App) {
@@ -129,6 +130,7 @@ struct StoredWindow {
     copy_error: Option<gpui::SharedString>,
     index: Result<Entity<IndexSync>, gpui::SharedString>,
     nav: navigation::Navigation,
+    links: links::Links,
 }
 
 impl StoredWindow {
@@ -172,6 +174,7 @@ impl StoredWindow {
             copy_error: None,
             index,
             nav,
+            links: links::Links::new(cx.weak_entity(), cx),
         };
         let pages = this.session.borrow().open_pages();
         for observed in pages {
@@ -227,6 +230,7 @@ impl StoredWindow {
             }
             editor
         });
+        self.link_editors(&editor, window, cx);
         if let Some(previous) = previous {
             window.focus(&previous, cx);
         }

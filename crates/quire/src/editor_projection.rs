@@ -6,6 +6,7 @@ use multi_buffer::{
 };
 use std::{
     any::{Any, TypeId},
+    collections::HashMap,
     ops::Range,
     sync::Arc,
 };
@@ -23,9 +24,23 @@ struct AnchoredBlock {
 struct Projection {
     blocks: Arc<[AnchoredBlock]>,
     links: Vec<AnchoredLink>,
+    previews: Vec<AnchoredPreview>,
+    /// Each previewed block's text by reference target; `None` when the target is unresolved.
+    preview_text: HashMap<String, Option<String>>,
+    /// The latest request for each target, so an older answer never replaces a newer one.
+    requests: HashMap<String, u64>,
+    sequence: u64,
     parsed: Option<(text::BufferSnapshot, usize)>,
     heads: Vec<Anchor>,
     _subscriptions: Vec<Subscription>,
+}
+
+#[derive(Clone)]
+struct AnchoredPreview {
+    range: Range<Anchor>,
+    block: Range<Anchor>,
+    target: String,
+    source: String,
 }
 
 #[derive(Clone)]
@@ -83,6 +98,28 @@ fn rendered_link(
     window: &Window,
     cx: &App,
 ) -> bool {
+    shown(
+        editor,
+        &link.range,
+        &link.block,
+        &link.data.source,
+        snapshot,
+        window,
+        cx,
+    )
+}
+
+/// Whether rendered syntax replaces `source` at `range`: the text is unchanged and the caret of
+/// a focused editor is outside its block, where the source shows for editing.
+fn shown(
+    editor: &Editor,
+    range: &Range<Anchor>,
+    block: &Range<Anchor>,
+    source: &str,
+    snapshot: &MultiBufferSnapshot,
+    window: &Window,
+    cx: &App,
+) -> bool {
     if editor.focus_handle(cx).is_focused(window) {
         let head = editor
             .selections
@@ -90,16 +127,14 @@ fn rendered_link(
             .last()
             .map(|selection| selection.head().to_offset(snapshot));
         if head.is_some_and(|head| {
-            link.block.start.to_offset(snapshot) <= head
-                && head <= link.block.end.to_offset(snapshot)
+            block.start.to_offset(snapshot) <= head && head <= block.end.to_offset(snapshot)
         }) {
             return false;
         }
     }
-    let start = link.range.start.to_offset(snapshot);
-    let end = link.range.end.to_offset(snapshot);
-    end.0.saturating_sub(start.0) == link.data.source.len()
-        && snapshot.contains_str_at(start, &link.data.source)
+    let start = range.start.to_offset(snapshot);
+    let end = range.end.to_offset(snapshot);
+    end.0.saturating_sub(start.0) == source.len() && snapshot.contains_str_at(start, source)
 }
 
 fn text_start(block: &AnchoredBlock, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
@@ -199,10 +234,53 @@ fn refresh(
         type_tag: Some(TypeId::of::<Projection>()),
         ..Default::default()
     };
-    let links = editor
+    let (links, previews) = editor
         .addon::<Projection>()
-        .map(|projection| projection.links.clone())
+        .map(|projection| {
+            let previews: Vec<_> = projection
+                .previews
+                .iter()
+                .filter_map(|preview| {
+                    let text = projection.preview_text.get(&preview.target)?;
+                    Some((preview.clone(), text.clone()))
+                })
+                .collect();
+            (projection.links.clone(), previews)
+        })
         .unwrap_or_default();
+    for (preview, text) in previews {
+        if shown(
+            editor,
+            &preview.range,
+            &preview.block,
+            &preview.source,
+            &snapshot,
+            window,
+            cx,
+        ) {
+            let range =
+                preview.range.start.to_offset(&snapshot)..preview.range.end.to_offset(&snapshot);
+            tasks.push(Crease::simple(
+                range,
+                preview_placeholder(cx.entity().downgrade(), preview, text),
+            ));
+        }
+    }
+    let type_tag = TypeId::of::<Projection>();
+    for (spot, placeholder) in crate::embeds::headers(editor, cx.entity().downgrade(), type_tag) {
+        if shown(
+            editor,
+            &spot.range,
+            &spot.block,
+            &spot.source,
+            &snapshot,
+            window,
+            cx,
+        ) {
+            let range = spot.range.start.to_offset(&snapshot)..spot.range.end.to_offset(&snapshot);
+            tasks.push(Crease::simple(range, placeholder));
+        }
+    }
     let mut labels = Vec::new();
     for link in links.iter() {
         labels.push(link.label.clone());
@@ -259,7 +337,16 @@ fn projection_is_current(editor: &Editor, cx: &App) -> bool {
     })
 }
 
-fn open_web_link(editor: &Editor, range: Range<Anchor>, expected: &str, cx: &mut App) {
+/// Opens a rendered link if the page still reads as when it was drawn: a web link in the browser,
+/// a reference through the notebook (beside the page with Shift).
+fn open_link(
+    editor: &Editor,
+    range: Range<Anchor>,
+    expected: &str,
+    beside: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
     if !projection_is_current(editor, cx) {
         return;
     }
@@ -279,8 +366,14 @@ fn open_web_link(editor: &Editor, range: Range<Anchor>, expected: &str, cx: &mut
         return;
     };
     let current: String = snapshot.text_for_range(offsets).collect();
-    if current == expected {
-        cx.open_url(&link.data.url);
+    if current != expected {
+        return;
+    }
+    match &link.data.destination {
+        crate::markdown_links::Destination::Web(url) => cx.open_url(url),
+        crate::markdown_links::Destination::Reference(target) => {
+            follow(editor, target.clone(), beside, window, cx)
+        }
     }
 }
 
@@ -306,7 +399,7 @@ fn focusable_control(
         })
 }
 
-fn inline_control(
+pub(crate) fn inline_control(
     id: impl Into<gpui::ElementId>,
     editor: WeakEntity<Editor>,
 ) -> gpui::Stateful<gpui::Div> {
@@ -354,11 +447,19 @@ fn link_region(
                     window.prevent_default();
                     cx.stop_propagation();
                 })
-                .on_click(move |_, _, cx| {
+                .on_click(move |event, window, cx| {
                     cx.stop_propagation();
+                    let beside = event.modifiers().shift;
                     editor
                         .update(cx, |editor, cx| {
-                            open_web_link(editor, source_range.clone(), &data.source, cx)
+                            open_link(
+                                editor,
+                                source_range.clone(),
+                                &data.source,
+                                beside,
+                                window,
+                                cx,
+                            )
                         })
                         .ok();
                 })
@@ -397,6 +498,184 @@ fn toggle_task_marker(
     }
     crate::tasks::toggle_at(editor, start.0, window, cx);
     window.focus(&editor.focus_handle(cx), cx);
+}
+
+fn follow(
+    editor: &Editor,
+    target: crate::references::Target,
+    beside: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(host) = crate::references::host(editor) else {
+        return;
+    };
+    let notebook = host.read(cx).notebook().clone();
+    notebook.follow(
+        crate::references::Follow {
+            target,
+            beside,
+            backlinks: false,
+        },
+        window,
+        cx,
+    );
+}
+
+const PREVIEW_CHARS: usize = 80;
+
+/// What an unlabeled block reference shows: the block's text, or that it does not resolve.
+fn preview_label(preview: &AnchoredPreview, text: Option<&str>) -> String {
+    match text {
+        Some(text) => {
+            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            match text.char_indices().nth(PREVIEW_CHARS) {
+                Some((end, _)) => format!("↗ {}…", &text[..end]),
+                None => format!("↗ {text}"),
+            }
+        }
+        None => format!("{} · unresolved", preview.target),
+    }
+}
+
+fn preview_placeholder(
+    editor: WeakEntity<Editor>,
+    preview: AnchoredPreview,
+    text: Option<String>,
+) -> FoldPlaceholder {
+    let label: gpui::SharedString = preview_label(&preview, text.as_deref()).into();
+    let resolved = text.is_some();
+    // Zed's wrap and tab maps assume a placeholder's text cannot split, so it stays one character
+    // and the rendered element carries the label.
+    FoldPlaceholder {
+        collapsed_text: Some(if resolved { "↗" } else { "?" }.into()),
+        constrain_width: false,
+        merge_adjacent: false,
+        type_tag: Some(TypeId::of::<Projection>()),
+        render: Arc::new(move |id, _, cx| {
+            use theme::ActiveTheme;
+            let editor = editor.clone();
+            let preview = preview.clone();
+            let colors = cx.theme().colors();
+            inline_control(id, editor.clone())
+                .debug_selector(|| "quire-block-preview".into())
+                .role(gpui::Role::Link)
+                .aria_label(label.clone())
+                .cursor_pointer()
+                .text_color(if resolved {
+                    colors.link_text_hover
+                } else {
+                    colors.text_muted
+                })
+                .child(label.clone())
+                .on_click(move |event, window, cx| {
+                    cx.stop_propagation();
+                    let beside = event.modifiers().shift;
+                    editor
+                        .update(cx, |editor, cx| {
+                            let snapshot = editor.buffer().read(cx).snapshot(cx);
+                            let start = preview.range.start.to_offset(&snapshot);
+                            if projection_is_current(editor, cx)
+                                && snapshot.contains_str_at(start, &preview.source)
+                            {
+                                let target =
+                                    crate::references::Target::Block(preview.target.clone());
+                                follow(editor, target, beside, window, cx);
+                            }
+                        })
+                        .ok();
+                })
+                .into_any_element()
+        }),
+    }
+}
+
+/// Asks the notebook for the text of each previewed block not asked for yet, or of all of them
+/// when `again`, because the index changed.
+fn request_previews(
+    editor: &mut Editor,
+    again: bool,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    let Some(index) =
+        crate::references::host(editor).and_then(|host| host.read(cx).index().cloned())
+    else {
+        return;
+    };
+    let Some(projection) = editor.addon_mut::<Projection>() else {
+        return;
+    };
+    let mut targets: Vec<String> = projection
+        .previews
+        .iter()
+        .map(|preview| preview.target.clone())
+        .filter(|target| again || !projection.requests.contains_key(target))
+        .collect();
+    targets.sort();
+    targets.dedup();
+    for target in targets {
+        projection.sequence += 1;
+        let sequence = projection.sequence;
+        projection.requests.insert(target.clone(), sequence);
+        let reply = index.block_preview(target.clone());
+        cx.spawn_in(window, async move |editor, cx| {
+            let found = crate::query_index::ask(reply).await;
+            editor
+                .update_in(cx, |editor, window, cx| {
+                    let Some(projection) = editor.addon_mut::<Projection>() else {
+                        return;
+                    };
+                    if projection.requests.get(&target) != Some(&sequence) {
+                        return;
+                    }
+                    match found {
+                        Ok(found) => {
+                            projection
+                                .preview_text
+                                .insert(target, found.map(|preview| preview.text));
+                        }
+                        Err(_) => {
+                            projection.requests.remove(&target);
+                        }
+                    }
+                    let blocks = projection.blocks.clone();
+                    refresh(editor, &blocks, window, cx);
+                })
+                .ok();
+        })
+        .detach();
+    }
+}
+
+/// The labels of block previews whose target has been looked up, in page order.
+#[cfg(test)]
+pub fn preview_labels(editor: &Editor) -> Vec<String> {
+    let Some(projection) = editor.addon::<Projection>() else {
+        return Vec::new();
+    };
+    projection
+        .previews
+        .iter()
+        .filter_map(|preview| {
+            let text = projection.preview_text.get(&preview.target)?;
+            Some(preview_label(preview, text.as_deref()))
+        })
+        .collect()
+}
+
+/// Folds the view again, for decorations whose state changed outside a parse.
+pub(crate) fn refold(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
+    if let Some(projection) = editor.addon::<Projection>() {
+        let blocks = projection.blocks.clone();
+        refresh(editor, &blocks, window, cx);
+    }
+}
+
+/// The notebook's index answers differently: ask again for every preview.
+pub fn references_changed(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
+    request_previews(editor, true, window, cx);
+    crate::embeds::requery(editor, window, cx);
 }
 
 fn checkbox_placeholder(
@@ -654,19 +933,67 @@ fn rebuild(
     let Some(links) = crate::markdown_links::links(&snapshot, &blocks) else {
         return;
     };
-    apply_blocks(editor, &snapshot, &blocks, links, window, cx);
+    let Some(references) = crate::page_analysis::references(&snapshot) else {
+        return;
+    };
+    apply_blocks(editor, &snapshot, &blocks, links, &references, window, cx);
 }
 
 fn apply_blocks(
     editor: &mut Editor,
     snapshot: &language::BufferSnapshot,
     blocks: &[crate::markdown_blocks::Block],
-    links: Vec<crate::markdown_links::Link>,
+    mut links: Vec<crate::markdown_links::Link>,
+    references: &[quire_core::markdown::Reference],
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
     let spans = crate::markdown_blocks::syntax_spans(snapshot, blocks);
     let view = editor.buffer().read(cx).snapshot(cx);
+    let (reference_links, previews) =
+        crate::markdown_links::reference_links(snapshot, blocks, references);
+    links.extend(reference_links);
+    links.sort_by_key(|link| link.range.start);
+    let shown = |range: &Range<usize>| {
+        view.excerpts().any(|excerpt| {
+            excerpt.context.start.buffer_id == snapshot.remote_id()
+                && text::ToOffset::to_offset(&excerpt.context.start, &snapshot.text) <= range.start
+                && range.end <= text::ToOffset::to_offset(&excerpt.context.end, &snapshot.text)
+        })
+    };
+    let anchor = |byte: usize| view.anchor_in_buffer(snapshot.anchor_before(byte));
+    let previews: Vec<_> = previews
+        .into_iter()
+        .filter(|preview| shown(&preview.range))
+        .filter_map(|preview| {
+            Some(AnchoredPreview {
+                range: anchor(preview.range.start)?..anchor(preview.range.end)?,
+                block: anchor(preview.block_range.start)?..anchor(preview.block_range.end)?,
+                target: preview.target,
+                source: preview.source,
+            })
+        })
+        .collect();
+    editor.addon_mut::<Projection>().unwrap().previews = previews;
+    let page_text = snapshot.text();
+    let spots: Vec<_> = references
+        .iter()
+        .filter(|reference| crate::markdown_links::is_full_embed(&page_text, reference))
+        .filter(|reference| shown(&reference.range))
+        .filter_map(|reference| {
+            let target = crate::references::Target::of(reference)?;
+            let block = blocks
+                .get(blocks.partition_point(|block| block.content_to <= reference.range.start))
+                .filter(|block| block.content_from <= reference.range.start)?;
+            Some(crate::embeds::Spot {
+                range: anchor(reference.range.start)?..anchor(reference.range.end)?,
+                block: anchor(block.from)?..anchor(block.content_to)?,
+                source: page_text[reference.range.clone()].to_owned(),
+                target,
+            })
+        })
+        .collect();
+    crate::embeds::sync(editor, spots, window, cx);
     let links = links
         .into_iter()
         .filter_map(|link| {
@@ -733,6 +1060,7 @@ fn apply_blocks(
         .addon_mut::<Projection>()
         .expect("installed projection")
         .parsed = Some((snapshot.text.clone(), snapshot.syntax_update_count()));
+    request_previews(editor, false, window, cx);
 }
 
 pub fn bind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Result<(), String> {
@@ -771,7 +1099,8 @@ pub fn bind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Resul
             }
         });
         editor.register_addon(Projection {
-            blocks: Arc::default(), links: Vec::new(), parsed: None, heads: Vec::new(),
+            blocks: Arc::default(), links: Vec::new(), previews: Vec::new(), preview_text: HashMap::new(),
+            requests: HashMap::new(), sequence: 0, parsed: None, heads: Vec::new(),
             _subscriptions: vec![editor_subscription, source_subscription, theme_subscription],
         });
         apply_spans(editor, &[], window, cx);
@@ -797,11 +1126,13 @@ pub fn view_range_changed(
     };
     projection.parsed = None;
     projection.links.clear();
+    projection.previews.clear();
     apply_spans(editor, &[], window, cx);
     if let Some(blocks) = blocks {
         let snapshot = source.read(cx).snapshot();
         let links = crate::markdown_links::links(&snapshot, blocks).unwrap_or_default();
-        apply_blocks(editor, &snapshot, blocks, links, window, cx);
+        let references = crate::page_analysis::references(&snapshot).unwrap_or_default();
+        apply_blocks(editor, &snapshot, blocks, links, &references, window, cx);
     }
 }
 
@@ -811,6 +1142,7 @@ pub fn unbind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
             return;
         }
         editor.unregister_addon::<Projection>();
+        crate::embeds::clear(editor, cx);
         editor
             .buffer()
             .update(cx, |buffer, _| buffer.set_edit_filter(None));
@@ -850,7 +1182,7 @@ mod tests {
             );
         });
         window
-            .update(cx, |editor, _, cx| {
+            .update(cx, |editor, view_window, cx| {
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                 assert_eq!(
                     snapshot
@@ -858,14 +1190,28 @@ mod tests {
                         .collect::<String>(),
                     link.data.source
                 );
-                open_web_link(editor, link.range.clone(), &link.data.source, cx);
+                open_link(
+                    editor,
+                    link.range.clone(),
+                    &link.data.source,
+                    false,
+                    view_window,
+                    cx,
+                );
             })
             .unwrap();
         assert!(cx.opened_url().is_none());
         cx.executor().run_until_parked();
         window
-            .update(cx, |editor, _, cx| {
-                open_web_link(editor, link.range.clone(), &link.data.source, cx)
+            .update(cx, |editor, view_window, cx| {
+                open_link(
+                    editor,
+                    link.range.clone(),
+                    &link.data.source,
+                    false,
+                    view_window,
+                    cx,
+                )
             })
             .unwrap();
         assert!(cx.opened_url().is_none());

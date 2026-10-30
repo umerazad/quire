@@ -335,10 +335,10 @@ fn renaming_selected_tags_previews_every_change_then_rewrites_open_and_closed_pa
         assert!(edits.preview.is_none() && edits.name.read(cx).text(cx).is_empty());
     });
     assert_eq!(stored(&notebook, "b"), "- third #job\n- #job note\n");
-    assert_eq!(
-        cx.read(|cx| buffer.read(cx).text()),
-        "- first #job\n  - nested #job/sub\n- typed #job\n"
-    );
+    // The open page takes in the written version after a background diff.
+    wait_until(cx, "the open page to take in the rename", |cx| {
+        cx.read(|cx| buffer.read(cx).text()) == "- first #job\n  - nested #job/sub\n- typed #job\n"
+    });
     assert_eq!(stored(&notebook, "c"), "- `#plan` in code\n");
     assert!(cx.read(|cx| list.read(cx).selected().is_empty()));
     wait_until(cx, "the renamed tags in the list", |cx| {
