@@ -28,7 +28,7 @@ pub use publication::PendingPublication;
 pub use publisher::PublicationAck;
 pub use recovery::{Draft, DraftStamp};
 pub(crate) use revision::read_revision;
-pub use revision::{CheckedSave, Cursor, Edit, SaveAck};
+pub use revision::{CheckedSave, CheckedSaves, Cursor, Edit, SaveAck};
 
 pub use crate::schema::{APPLICATION_ID, SCHEMA_VERSION};
 

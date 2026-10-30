@@ -51,6 +51,16 @@ pub enum CheckedSave {
     Saved(SaveAck),
     HeadsChanged { heads: Vec<String> },
 }
+
+#[derive(Debug)]
+pub enum CheckedSaves {
+    Saved(Vec<SaveAck>),
+    /// Nothing was written: this page's heads no longer equal its edit's base.
+    HeadsChanged {
+        page: String,
+        heads: Vec<String>,
+    },
+}
 impl SaveAck {
     pub fn revision_id(&self) -> &str {
         self.revision
@@ -170,12 +180,30 @@ impl NotebookStore {
         Ok(self.save_many(std::slice::from_ref(edit))?.remove(0))
     }
     pub fn save_many(&self, edits: &[Edit]) -> Result<Vec<SaveAck>> {
-        let mut pages = HashSet::new();
-        ensure!(
-            edits.iter().all(|edit| pages.insert(&edit.page)),
-            "A save contains several edits for one page. Combine them before saving."
-        );
+        distinct_pages(edits)?;
         self.transaction(|| edits.iter().map(|edit| self.save_one(edit)).collect())
+    }
+
+    /// Saves every edit or none: each page's heads must still equal its edit's base, checked in
+    /// the same write transaction as the saves.
+    pub fn save_many_if_heads(&self, edits: &[Edit]) -> Result<CheckedSaves> {
+        distinct_pages(edits)?;
+        self.transaction(|| {
+            for edit in edits {
+                let heads = self.heads(&edit.page)?;
+                if heads != edit.base {
+                    return Ok(CheckedSaves::HeadsChanged {
+                        page: edit.page.clone(),
+                        heads,
+                    });
+                }
+            }
+            edits
+                .iter()
+                .map(|edit| self.save_one(edit))
+                .collect::<Result<_>>()
+                .map(CheckedSaves::Saved)
+        })
     }
 
     /// Native editor save; resolving conflicts requires a separate explicit command.
@@ -450,4 +478,13 @@ impl NotebookStore {
         }
         Ok(())
     }
+}
+
+fn distinct_pages(edits: &[Edit]) -> Result<()> {
+    let mut pages = HashSet::new();
+    ensure!(
+        edits.iter().all(|edit| pages.insert(&edit.page)),
+        "A save contains several edits for one page. Combine them before saving."
+    );
+    Ok(())
 }

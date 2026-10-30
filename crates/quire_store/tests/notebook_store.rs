@@ -272,6 +272,48 @@ fn multi_page_save_rolls_back_every_page_when_one_parent_is_missing() {
     assert!(store.outbox().unwrap().is_empty());
 }
 
+#[test]
+fn checked_multi_page_saves_write_nothing_when_any_page_moved() {
+    use quire_store::notebook::CheckedSaves;
+    let root = tempfile::tempdir().unwrap();
+    let store = NotebookStore::open(&root.path().join("local.sqlite"), "nb", "office").unwrap();
+    let one = store
+        .save(&edit(vec![], "one"))
+        .unwrap()
+        .revision_id()
+        .to_owned();
+    let mut other = edit(vec![], "two");
+    other.page = "p-two".into();
+    other.path = "B.md".into();
+    let two = store.save(&other).unwrap().revision_id().to_owned();
+    let moved = store
+        .save(&edit(vec![one.clone()], "one, moved"))
+        .unwrap()
+        .revision_id()
+        .to_owned();
+    let outbox = store.outbox().unwrap().len();
+
+    let mut second = edit(vec![two.clone()], "two, retagged");
+    second.page = "p-two".into();
+    second.path = "B.md".into();
+    let stale = [second.clone(), edit(vec![one], "one, retagged")];
+    match store.save_many_if_heads(&stale).unwrap() {
+        CheckedSaves::HeadsChanged { page, heads } => {
+            assert_eq!((page.as_str(), heads), ("p-one", vec![moved.clone()]));
+        }
+        CheckedSaves::Saved(_) => panic!("a moved page must refuse the whole save"),
+    }
+    assert_eq!(store.heads("p-two").unwrap(), [two]);
+    assert_eq!(store.outbox().unwrap().len(), outbox);
+
+    let current = [second, edit(vec![moved], "one, retagged")];
+    let CheckedSaves::Saved(acks) = store.save_many_if_heads(&current).unwrap() else {
+        panic!("current heads must save");
+    };
+    assert_eq!(acks.len(), 2);
+    assert!(acks.iter().all(|ack| ack.changed && !ack.conflict));
+}
+
 fn draft(version: u64, base: Vec<String>, text: &str) -> quire_store::notebook::Draft {
     quire_store::notebook::Draft {
         page: "p-one".into(),

@@ -1,7 +1,7 @@
 use crate::notebook::{
-    BatchImport, CheckedSave, Cursor, Draft, DraftStamp, Edit, MetadataLimits, NotebookStore,
-    PageCheckout, PageMetadata, PendingPublication, PublicationAck, RescanCursor, RescanLimits,
-    RescanReport, SaveAck,
+    BatchImport, CheckedSave, CheckedSaves, Cursor, Draft, DraftStamp, Edit, MetadataLimits,
+    NotebookStore, PageCheckout, PageMetadata, PendingPublication, PublicationAck, RescanCursor,
+    RescanLimits, RescanReport, SaveAck,
 };
 use crate::sync::json::{JsString, Json};
 use anyhow::{Context as _, Result, anyhow, ensure};
@@ -213,6 +213,12 @@ fn strings_size(values: &[String]) -> usize {
         |size, value| size.saturating_add(value.capacity()),
     )
 }
+fn edits_size(edits: &[Edit]) -> usize {
+    edits
+        .iter()
+        .fold(0usize, |size, edit| size.saturating_add(edit_size(edit)))
+}
+
 fn edit_size(edit: &Edit) -> usize {
     256usize
         .saturating_add(edit.page.capacity())
@@ -312,12 +318,15 @@ impl Client<NotebookStore> {
         &self,
         edits: Vec<Edit>,
     ) -> std::result::Result<Reply<Vec<SaveAck>>, QueueError> {
-        self.request(
-            edits
-                .iter()
-                .fold(0usize, |size, edit| size.saturating_add(edit_size(edit))),
-            move |store| store.save_many(&edits),
-        )
+        self.request(edits_size(&edits), move |store| store.save_many(&edits))
+    }
+    pub fn save_many_if_heads(
+        &self,
+        edits: Vec<Edit>,
+    ) -> std::result::Result<Reply<CheckedSaves>, QueueError> {
+        self.request(edits_size(&edits), move |store| {
+            store.save_many_if_heads(&edits)
+        })
     }
     pub fn put_draft(
         &self,
