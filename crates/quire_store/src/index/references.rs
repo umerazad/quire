@@ -24,7 +24,14 @@ pub struct ReferenceBlock {
     pub block_id: Option<String>,
     pub snippet: String,
     pub context: ReferenceContext,
-    /// The block's parents, outermost first, at most four, as the reference shows them.
+    pub outline: Outline,
+}
+
+/// Where a block sits, for showing it with its surroundings as the reference tag and
+/// reference results do.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Outline {
+    /// The block's parents, outermost first, at most four.
     pub ancestors: Vec<String>,
     /// The first blocks nested under it, with their depth below it (1 for a direct child).
     pub children: Vec<(u32, String)>,
@@ -32,7 +39,7 @@ pub struct ReferenceBlock {
     pub more_children: usize,
 }
 
-/// Nested blocks listed under a reference before the rest are counted instead.
+/// Nested blocks listed under a block before the rest are counted instead.
 pub const SHOWN_CHILDREN: usize = 8;
 const SHOWN_ANCESTORS: usize = 4;
 
@@ -89,7 +96,7 @@ fn page_names(page: &PageRef) -> [String; 2] {
 
 /// A block's parents (nearest four, outermost first) and its first nested blocks with their
 /// depth below it, plus how many nested blocks are left out.
-fn outline(page: &Page, block: &Block) -> (Vec<String>, Vec<(u32, String)>, usize) {
+fn outline(page: &Page, block: &Block) -> Outline {
     let parent = |item: &Block| Some(&page.blocks[*page.by_key.get(item.parent.as_deref()?)?]);
     let mut ancestors = Vec::new();
     let mut up = parent(block);
@@ -116,11 +123,11 @@ fn outline(page: &Page, block: &Block) -> (Vec<String>, Vec<(u32, String)>, usiz
         .take(SHOWN_CHILDREN)
         .map(|item| (depth(item), item.content.clone()))
         .collect();
-    (
+    Outline {
         ancestors,
         children,
-        nested.len().saturating_sub(SHOWN_CHILDREN),
-    )
+        more_children: nested.len().saturating_sub(SHOWN_CHILDREN),
+    }
 }
 
 impl QueryIndex {
@@ -225,6 +232,22 @@ impl QueryIndex {
         ReferenceContext { tags, links, text }
     }
 
+    /// The outline of the block holding each `(revision, position)`, empty where no block does.
+    pub fn outlines(&self, at: &[(String, u32)]) -> Result<Vec<Outline>> {
+        let mut pages: HashMap<String, Page> = HashMap::new();
+        at.iter()
+            .map(|(revision, position)| {
+                if !pages.contains_key(revision) {
+                    pages.insert(revision.clone(), self.page_rows(revision)?);
+                }
+                let rows = &pages[revision];
+                Ok(block_at(&rows.blocks, *position)
+                    .map(|block| outline(rows, block))
+                    .unwrap_or_default())
+            })
+            .collect()
+    }
+
     /// The page's referring blocks, each once: daily pages newest first (or oldest first), then
     /// other pages by path, keeping block order within a page.
     pub fn linked_references(
@@ -247,13 +270,9 @@ impl QueryIndex {
             if !seen.insert((revision, from)) {
                 continue;
             }
-            let (ancestors, children, more_children) =
-                block.map(|block| outline(rows, block)).unwrap_or_default();
             blocks.push(ReferenceBlock {
                 context: Self::context(&link.source, rows, from),
-                ancestors,
-                children,
-                more_children,
+                outline: block.map(|block| outline(rows, block)).unwrap_or_default(),
                 block_id: block.and_then(|block| block.id.clone()),
                 snippet: link.link.text,
                 source: link.source,

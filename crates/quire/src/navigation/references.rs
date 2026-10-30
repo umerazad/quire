@@ -2,7 +2,11 @@
 //! blocks, grouped by page, ordered newest or oldest daily page first, and narrowed by a
 //! filter line with one-click suggestion chips.
 
-use super::{list_keys, live::Live};
+use super::{
+    context_rows::{ContextItem, ContextRow, context_rows},
+    list_keys,
+    live::Live,
+};
 use editor::{Editor, EditorEvent};
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy,
@@ -15,7 +19,7 @@ use quire_store::{
 };
 use ui::{
     Button, ButtonStyle, Color, Icon, IconButton, IconName, Label, LabelCommon, LabelSize,
-    ListItem, ListItemSpacing, Toggleable, prelude::*, v_flex,
+    Toggleable, prelude::*, v_flex,
 };
 
 /// References whose contexts suggest chips, as the reference's first page of 40.
@@ -35,93 +39,6 @@ pub struct ReferenceResults {
     pub facets: Vec<Facet>,
     /// Some reference comes from a daily page, so the order toggle applies.
     pub dated: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ReferenceRow {
-    Page {
-        page: String,
-        title: String,
-        matches: usize,
-    },
-    Parents {
-        page: String,
-        text: String,
-    },
-    Block {
-        page: String,
-        text: String,
-    },
-    Child {
-        page: String,
-        depth: u32,
-        text: String,
-    },
-    More {
-        page: String,
-        count: usize,
-    },
-}
-
-impl ReferenceRow {
-    pub fn page(&self) -> &str {
-        match self {
-            Self::Page { page, .. }
-            | Self::Parents { page, .. }
-            | Self::Block { page, .. }
-            | Self::Child { page, .. }
-            | Self::More { page, .. } => page,
-        }
-    }
-}
-
-/// Lays references out grouped by page, each with its parents above and nested blocks below.
-pub fn rows(references: &[ReferenceBlock]) -> Vec<ReferenceRow> {
-    let mut rows = Vec::new();
-    let mut heading: Option<(usize, String)> = None;
-    for reference in references {
-        let page = reference.source.page.to_lossy_string();
-        if heading.as_ref().is_none_or(|(_, id)| id != &page) {
-            rows.push(ReferenceRow::Page {
-                page: page.clone(),
-                title: reference.source.title.clone(),
-                matches: 0,
-            });
-            heading = Some((rows.len() - 1, page.clone()));
-        }
-        if let Some((index, _)) = &heading
-            && let ReferenceRow::Page { matches, .. } = &mut rows[*index]
-        {
-            *matches += 1;
-        }
-        if !reference.ancestors.is_empty() {
-            rows.push(ReferenceRow::Parents {
-                page: page.clone(),
-                text: reference.ancestors.join(" › "),
-            });
-        }
-        rows.push(ReferenceRow::Block {
-            page: page.clone(),
-            text: reference.snippet.clone(),
-        });
-        rows.extend(
-            reference
-                .children
-                .iter()
-                .map(|(depth, text)| ReferenceRow::Child {
-                    page: page.clone(),
-                    depth: *depth,
-                    text: text.clone(),
-                }),
-        );
-        if reference.more_children > 0 {
-            rows.push(ReferenceRow::More {
-                page,
-                count: reference.more_children,
-            });
-        }
-    }
-    rows
 }
 
 pub struct ReferencesView {
@@ -260,8 +177,19 @@ impl ReferencesView {
         cx.notify();
     }
 
-    pub fn rows(&self) -> Vec<ReferenceRow> {
-        rows(&self.results.value.shown)
+    pub fn rows(&self) -> Vec<ContextRow> {
+        context_rows(
+            self.results
+                .value
+                .shown
+                .iter()
+                .map(|reference| ContextItem {
+                    page: reference.source.page.to_lossy_string(),
+                    title: &reference.source.title,
+                    text: &reference.snippet,
+                    outline: &reference.outline,
+                }),
+        )
     }
 
     /// Adds a chip's term to the filter, or `-term` with `exclude`, or takes it out.
@@ -341,61 +269,18 @@ impl ReferencesView {
             }))
     }
 
-    fn render_rows(&self, rows: Vec<ReferenceRow>, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_rows(&self, rows: Vec<ContextRow>, cx: &mut Context<Self>) -> impl IntoElement {
         uniform_list(
             "reference-rows",
             rows.len(),
             cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
                 range
                     .filter_map(|index| {
-                        let base = ListItem::new(("reference-row", index))
-                            .spacing(ListItemSpacing::Dense)
-                            .toggle_state(index == this.highlighted);
-                        let item = match rows.get(index)? {
-                            ReferenceRow::Page { title, matches, .. } => base
-                                .start_slot(Icon::new(IconName::File).color(Color::Muted))
-                                .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(Label::new(title.clone()).truncate())
-                                        .child(
-                                            Label::new(match matches {
-                                                1 => "1 reference".to_owned(),
-                                                count => format!("{count} references"),
-                                            })
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                        ),
-                                ),
-                            ReferenceRow::Parents { text, .. } => base.indent_level(1).child(
-                                Label::new(format!("{text} ›"))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
-                                    .truncate(),
-                            ),
-                            ReferenceRow::Block { text, .. } => base
-                                .indent_level(1)
-                                .child(Label::new(format!("• {text}")).truncate()),
-                            ReferenceRow::Child { depth, text, .. } => {
-                                base.indent_level(1 + (*depth as usize).min(5)).child(
-                                    Label::new(format!("• {text}"))
-                                        .color(Color::Muted)
-                                        .truncate(),
-                                )
-                            }
-                            ReferenceRow::More { count, .. } => base.indent_level(2).child(
-                                Label::new(match count {
-                                    1 => {
-                                        "1 more nested block · open the page to read it".to_owned()
-                                    }
-                                    count => format!(
-                                        "{count} more nested blocks · open the page to read them"
-                                    ),
-                                })
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                            ),
-                        };
+                        let item = rows.get(index)?.item(
+                            index,
+                            index == this.highlighted,
+                            ("reference", "references"),
+                        );
                         Some(
                             item.on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
                                 this.open(index, event.modifiers().shift, cx)
@@ -557,63 +442,5 @@ impl Render for ReferencesView {
             })
             .when(shown > 0, |root| root.child(self.render_rows(rows, cx)))
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use quire_core::reference_filter::ReferenceContext;
-    use quire_store::index::PageRef;
-
-    fn reference(page: &str, snippet: &str) -> ReferenceBlock {
-        ReferenceBlock {
-            source: PageRef {
-                page: JsString::from(page),
-                revision: format!("r-{page}"),
-                path: format!("{page}.md"),
-                title: page.to_uppercase(),
-            },
-            from: 0,
-            block_id: None,
-            snippet: snippet.into(),
-            context: ReferenceContext::default(),
-            ancestors: Vec::new(),
-            children: Vec::new(),
-            more_children: 0,
-        }
-    }
-
-    #[test]
-    fn rows_group_references_with_parents_children_and_the_rest_counted() {
-        let mut nested = reference("a", "Met [[Ana]]");
-        nested.ancestors = vec!["Week".into(), "Monday".into()];
-        nested.children = vec![(1, "asked".into()), (2, "about pricing".into())];
-        nested.more_children = 3;
-        let rows = rows(&[nested, reference("a", "again"), reference("b", "elsewhere")]);
-        let text: Vec<String> = rows
-            .iter()
-            .map(|row| match row {
-                ReferenceRow::Page { title, matches, .. } => format!("{title} {matches}"),
-                ReferenceRow::Parents { text, .. } => format!("^ {text}"),
-                ReferenceRow::Block { text, .. } => format!("- {text}"),
-                ReferenceRow::Child { depth, text, .. } => format!("{depth} {text}"),
-                ReferenceRow::More { count, .. } => format!("+{count}"),
-            })
-            .collect();
-        assert_eq!(
-            text,
-            [
-                "A 2",
-                "^ Week › Monday",
-                "- Met [[Ana]]",
-                "1 asked",
-                "2 about pricing",
-                "+3",
-                "- again",
-                "B 1",
-                "- elsewhere"
-            ]
-        );
     }
 }

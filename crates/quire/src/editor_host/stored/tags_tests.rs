@@ -2,7 +2,7 @@ use super::super::*;
 use super::tests::{Notebook, active, open_notebook, read, save, wait_until};
 use crate::navigation::{
     ShowTags,
-    tag_page::TagRow,
+    context_rows::ContextRow,
     tags::{TagSort, visible},
 };
 use gpui::TestAppContext;
@@ -10,7 +10,7 @@ use quire_core::workspace::{BrowserView, Destination};
 use quire_store::{index::TagCount, notebook::NotebookStore};
 
 pub(super) const TAGGED: [(&str, &str, &str); 3] = [
-    ("a", "Alpha.md", "- first #Plan\n- nested #plan/sub\n"),
+    ("a", "Alpha.md", "- first #Plan\n  - nested #plan/sub\n"),
     ("b", "Beta.md", "- third #plan\n- #other note\n"),
     ("c", "Code.md", "- `#plan` in code\n"),
 ];
@@ -45,7 +45,7 @@ pub(super) fn show_tags(notebook: &Notebook, cx: &mut TestAppContext) {
     });
 }
 
-pub(super) fn page_rows(notebook: &Notebook, cx: &mut TestAppContext) -> Vec<TagRow> {
+pub(super) fn page_rows(notebook: &Notebook, cx: &mut TestAppContext) -> Vec<ContextRow> {
     read(notebook, cx, |view, cx| {
         view.shown_tag_page()
             .map(|page| page.read(cx).rows(cx))
@@ -53,11 +53,14 @@ pub(super) fn page_rows(notebook: &Notebook, cx: &mut TestAppContext) -> Vec<Tag
     })
 }
 
-fn texts(rows: &[TagRow]) -> Vec<String> {
+fn texts(rows: &[ContextRow]) -> Vec<String> {
     rows.iter()
         .map(|row| match row {
-            TagRow::Page { title, matches, .. } => format!("{title} ({matches})"),
-            TagRow::Block { text, .. } => format!("  {text}"),
+            ContextRow::Page { title, matches, .. } => format!("{title} ({matches})"),
+            ContextRow::Block { text, .. } => format!("  {text}"),
+            ContextRow::Parents { text, .. } => format!("  ^ {text}"),
+            ContextRow::Child { text, .. } => format!("    {text}"),
+            ContextRow::More { count, .. } => format!("    +{count}"),
         })
         .collect()
 }
@@ -96,7 +99,7 @@ fn tags_list_counts_blocks_filters_and_opens_a_tag_page(cx: &mut TestAppContext)
     );
     assert_eq!(
         texts(&page_rows(&notebook, cx)),
-        ["Alpha (1)", "  nested #plan/sub"]
+        ["Alpha (1)", "  ^ first #Plan", "  nested #plan/sub"]
     );
     read(&notebook, cx, |view, cx| {
         assert_eq!(
@@ -126,8 +129,14 @@ fn tag_pages_group_by_page_follow_saves_and_open_sources(cx: &mut TestAppContext
     });
     assert_eq!(
         texts(&page_rows(&notebook, cx)),
-        ["Alpha (1)", "  first #Plan", "Beta (1)", "  third #plan"],
-        "a tag page matches its tag in any case, and not the tags nested under it"
+        [
+            "Alpha (1)",
+            "  first #Plan",
+            "    nested #plan/sub",
+            "Beta (1)",
+            "  third #plan"
+        ],
+        "a tag page matches its tag in any case, not the tags nested under it, and shows nested blocks"
     );
     let store = NotebookStore::open(&notebook.path, "nb", "local").unwrap();
     save(
@@ -137,13 +146,14 @@ fn tag_pages_group_by_page_follow_saves_and_open_sources(cx: &mut TestAppContext
         "- third #plan\n- fourth #Plan too\n",
     );
     wait_until(cx, "the saved page to reach the tag page", |cx| {
-        page_rows(&notebook, cx).len() == 5
+        page_rows(&notebook, cx).len() == 6
     });
     assert_eq!(
         texts(&page_rows(&notebook, cx)),
         [
             "Alpha (1)",
             "  first #Plan",
+            "    nested #plan/sub",
             "Beta (2)",
             "  third #plan",
             "  fourth #Plan too"
@@ -327,7 +337,7 @@ fn renaming_selected_tags_previews_every_change_then_rewrites_open_and_closed_pa
     assert_eq!(stored(&notebook, "b"), "- third #job\n- #job note\n");
     assert_eq!(
         cx.read(|cx| buffer.read(cx).text()),
-        "- first #job\n- nested #job/sub\n- typed #job\n"
+        "- first #job\n  - nested #job/sub\n- typed #job\n"
     );
     assert_eq!(stored(&notebook, "c"), "- `#plan` in code\n");
     assert!(cx.read(|cx| list.read(cx).selected().is_empty()));
@@ -385,7 +395,7 @@ fn invalid_names_empty_selections_and_stale_previews_show_inline_errors(cx: &mut
     assert_eq!(stored(&notebook, "b"), "- third #plan\n- #other note\n");
     assert_eq!(
         cx.read(|cx| buffer.read(cx).text()),
-        "x- first #Plan\n- nested #plan/sub\n"
+        "x- first #Plan\n  - nested #plan/sub\n"
     );
 
     list.update(cx, |list, cx| list.toggle("#Plan", cx));

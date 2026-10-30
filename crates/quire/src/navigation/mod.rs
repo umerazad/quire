@@ -1,6 +1,7 @@
 //! Notebook navigation: the find palette, page creation, workspace persistence, and the keys
 //! that drive tabs, history, favorites, and the browsers.
 
+pub mod context_rows;
 pub mod live;
 pub mod palette;
 pub mod references;

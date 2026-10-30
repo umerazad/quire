@@ -1,80 +1,50 @@
-//! A tag's page: every block using the tag, grouped by page and
-//! kept current as pages change.
+//! A tag's page: every block using the tag, with its parents and nested blocks, grouped by
+//! page and kept current as pages change.
 
-use super::{list_keys, live::Live, tags::blocks};
+use super::{
+    context_rows::{ContextItem, ContextRow, context_rows},
+    list_keys,
+    live::Live,
+    tags::blocks,
+};
 use editor::{Editor, EditorEvent};
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy,
     Subscription, UniformListScrollHandle, Window, uniform_list,
 };
-use quire_store::index::{IndexClient, TaggedBlock};
-use ui::{
-    Color, Icon, IconName, Label, LabelCommon, LabelSize, ListItem, ListItemSpacing, Toggleable,
-    prelude::*, v_flex,
-};
+use quire_store::index::{IndexClient, Outline, TaggedBlock};
+use ui::{Color, Icon, IconName, Label, LabelCommon, LabelSize, prelude::*, v_flex};
 
 pub enum TagPageEvent {
     Open { page: String, beside: bool },
 }
 
-/// One line of the grouped results: a page heading or a block under it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TagRow {
-    Page {
-        page: String,
-        title: String,
-        matches: usize,
-    },
-    Block {
-        page: String,
-        text: String,
-    },
-}
+pub type Tagged = Vec<(TaggedBlock, Outline)>;
 
-impl TagRow {
-    pub fn page(&self) -> &str {
-        match self {
-            Self::Page { page, .. } | Self::Block { page, .. } => page,
-        }
-    }
-}
-
-/// Groups blocks by page in result order, keeping blocks whose page title or text contains
-/// the filter.
-pub fn grouped(blocks: &[TaggedBlock], filter: &str) -> Vec<TagRow> {
+/// The reference tag page filter: blocks whose page title or text contains the filter, laid
+/// out by page.
+pub fn tagged_rows(blocks: &[(TaggedBlock, Outline)], filter: &str) -> Vec<ContextRow> {
     let needle = filter.trim().to_lowercase();
-    let mut rows: Vec<TagRow> = Vec::new();
-    let mut heading = None;
-    for block in blocks.iter().filter(|block| {
-        format!("{}\n{}", block.source.title, block.tag.snippet)
-            .to_lowercase()
-            .contains(&needle)
-    }) {
-        let page = block.source.page.to_lossy_string();
-        if heading.as_ref().is_none_or(|(_, id)| id != &page) {
-            rows.push(TagRow::Page {
-                page: page.clone(),
-                title: block.source.title.clone(),
-                matches: 0,
-            });
-            heading = Some((rows.len() - 1, page.clone()));
-        }
-        if let Some((index, _)) = &heading
-            && let TagRow::Page { matches, .. } = &mut rows[*index]
-        {
-            *matches += 1;
-        }
-        rows.push(TagRow::Block {
-            page,
-            text: block.tag.snippet.clone(),
-        });
-    }
-    rows
+    context_rows(
+        blocks
+            .iter()
+            .filter(|(block, _)| {
+                format!("{}\n{}", block.source.title, block.tag.snippet)
+                    .to_lowercase()
+                    .contains(&needle)
+            })
+            .map(|(block, outline)| ContextItem {
+                page: block.source.page.to_lossy_string(),
+                title: &block.source.title,
+                text: &block.tag.snippet,
+                outline,
+            }),
+    )
 }
 
 pub struct TagPageView {
     tag: String,
-    pub(crate) blocks: Live<Vec<TaggedBlock>>,
+    pub(crate) blocks: Live<Tagged>,
     filter: Entity<Editor>,
     highlighted: usize,
     focus: FocusHandle,
@@ -114,9 +84,18 @@ impl TagPageView {
         }
     }
 
+    /// Asks for the tagged blocks and their outlines in one index step.
     pub fn refresh(&mut self, client: &IndexClient, cx: &mut Context<Self>) {
         let tag = self.tag.clone();
-        let answer = client.with_generation(move |index| index.tagged_blocks(&tag));
+        let answer = client.with_generation(move |index| {
+            let blocks = index.tagged_blocks(&tag)?;
+            let at: Vec<_> = blocks
+                .iter()
+                .map(|block| (block.source.revision.clone(), block.tag.from))
+                .collect();
+            let outlines = index.outlines(&at)?;
+            Ok(blocks.into_iter().zip(outlines).collect())
+        });
         self.blocks.request(
             answer,
             cx,
@@ -129,8 +108,8 @@ impl TagPageView {
         );
     }
 
-    pub fn rows(&self, cx: &App) -> Vec<TagRow> {
-        grouped(&self.blocks.value, &self.filter.read(cx).text(cx))
+    pub fn rows(&self, cx: &App) -> Vec<ContextRow> {
+        tagged_rows(&self.blocks.value, &self.filter.read(cx).text(cx))
     }
 
     fn move_highlight(&mut self, delta: isize, cx: &mut Context<Self>) {
@@ -166,7 +145,7 @@ impl Render for TagPageView {
             .blocks
             .value
             .iter()
-            .map(|block| &block.source.revision)
+            .map(|(block, _)| &block.source.revision)
             .collect::<std::collections::HashSet<_>>()
             .len();
         let empty = rows.is_empty().then_some(if total == 0 {
@@ -180,35 +159,15 @@ impl Render for TagPageView {
             cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
                 range
                     .filter_map(|index| {
-                        let item = match rows.get(index)? {
-                            TagRow::Page { title, matches, .. } => {
-                                ListItem::new(("tag-row", index))
-                                    .spacing(ListItemSpacing::Dense)
-                                    .start_slot(Icon::new(IconName::File).color(Color::Muted))
-                                    .child(
-                                        h_flex()
-                                            .gap_2()
-                                            .child(Label::new(title.clone()).truncate())
-                                            .child(
-                                                Label::new(match matches {
-                                                    1 => "1 match".to_owned(),
-                                                    count => format!("{count} matches"),
-                                                })
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                            ),
-                                    )
-                            }
-                            TagRow::Block { text, .. } => ListItem::new(("tag-row", index))
-                                .spacing(ListItemSpacing::Dense)
-                                .indent_level(1)
-                                .child(Label::new(text.clone()).truncate()),
-                        };
+                        let item = rows.get(index)?.item(
+                            index,
+                            index == this.highlighted,
+                            ("match", "matches"),
+                        );
                         Some(
-                            item.toggle_state(index == this.highlighted)
-                                .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
-                                    this.open(index, event.modifiers().shift, cx)
-                                })),
+                            item.on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                                this.open(index, event.modifiers().shift, cx)
+                            })),
                         )
                     })
                     .collect()
@@ -281,8 +240,8 @@ mod tests {
         sync::json::JsString,
     };
 
-    fn block(page: &str, title: &str, snippet: &str) -> TaggedBlock {
-        TaggedBlock {
+    fn block(page: &str, title: &str, snippet: &str) -> (TaggedBlock, Outline) {
+        let block = TaggedBlock {
             source: PageRef {
                 page: JsString::from(page),
                 revision: format!("r-{page}"),
@@ -295,49 +254,34 @@ mod tests {
                 block_id: None,
                 snippet: snippet.into(),
             },
-        }
+        };
+        (block, Outline::default())
     }
 
     #[test]
-    fn groups_blocks_under_their_page_and_filters_by_text_or_title() {
+    fn tag_rows_filter_by_block_text_or_page_title() {
         let blocks = [
             block("a", "Alpha", "first #plan"),
             block("a", "Alpha", "second #plan"),
             block("b", "Beta", "third #plan"),
         ];
+        assert_eq!(tagged_rows(&blocks, "").len(), 5);
         assert_eq!(
-            grouped(&blocks, ""),
+            tagged_rows(&blocks, " BETA "),
             [
-                TagRow::Page {
-                    page: "a".into(),
-                    title: "Alpha".into(),
-                    matches: 2
-                },
-                TagRow::Block {
-                    page: "a".into(),
-                    text: "first #plan".into()
-                },
-                TagRow::Block {
-                    page: "a".into(),
-                    text: "second #plan".into()
-                },
-                TagRow::Page {
+                ContextRow::Page {
                     page: "b".into(),
                     title: "Beta".into(),
                     matches: 1
                 },
-                TagRow::Block {
+                ContextRow::Block {
                     page: "b".into(),
                     text: "third #plan".into()
                 },
-            ]
-        );
-        assert_eq!(
-            grouped(&blocks, " BETA ").len(),
-            2,
+            ],
             "the page title matches"
         );
-        assert_eq!(grouped(&blocks, "second").len(), 2);
-        assert!(grouped(&blocks, "missing").is_empty());
+        assert_eq!(tagged_rows(&blocks, "second").len(), 2);
+        assert!(tagged_rows(&blocks, "missing").is_empty());
     }
 }

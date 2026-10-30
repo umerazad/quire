@@ -1,6 +1,6 @@
 use super::super::*;
 use super::tests::{Notebook, active, key, open_notebook, read, save, wait_until};
-use crate::navigation::references::{ReferenceRow, ReferencesView};
+use crate::navigation::{context_rows::ContextRow, references::ReferencesView};
 use gpui::TestAppContext;
 use quire_core::reference_filter::UNCLOSED_QUOTE;
 use quire_store::notebook::NotebookStore;
@@ -39,7 +39,7 @@ fn blocks(notebook: &Notebook, cx: &mut TestAppContext) -> (Vec<String>, usize) 
             .rows()
             .into_iter()
             .filter_map(|row| match row {
-                ReferenceRow::Block { text, .. } => Some(text),
+                ContextRow::Block { text, .. } => Some(text),
                 _ => None,
             })
             .collect();
@@ -63,7 +63,7 @@ fn linked_references_filter_by_typed_terms_and_chips(cx: &mut TestAppContext) {
     let panel = panel(&notebook, cx);
     let rows = cx.read(|cx| panel.read(cx).rows());
     assert!(
-        rows.contains(&ReferenceRow::Child {
+        rows.contains(&ContextRow::Child {
             page: "notes".into(),
             depth: 1,
             text: "she asked about pricing #question".into()

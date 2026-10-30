@@ -13,7 +13,7 @@ mod schema;
 pub use catalog::{ListedPage, SETTINGS_PAGE};
 pub use overlay::Overlay;
 pub use query::{Backlink, PageRef, SearchHit, TagCount, TaggedBlock};
-pub use references::{Facet, FacetKind, ReferenceBlock, SHOWN_CHILDREN};
+pub use references::{Facet, FacetKind, Outline, ReferenceBlock, SHOWN_CHILDREN};
 
 use crate::notebook::{PageMetadata, read_revision, revision_metadata};
 use crate::sync::json::JsString;
