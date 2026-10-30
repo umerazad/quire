@@ -102,6 +102,7 @@ pub struct PagePersistence {
     queued_save: Option<BufferSnapshot>,
     recover_requested: bool,
     stale: bool,
+    held: bool,
     hint: Option<(String, Arc<str>)>,
     save_by: Option<Instant>,
     task: Option<Task<()>>,
@@ -152,6 +153,7 @@ impl PagePersistence {
             queued_save: None,
             recover_requested: false,
             stale: false,
+            held: false,
             hint: None,
             save_by: None,
             task: None,
@@ -336,7 +338,7 @@ impl PagePersistence {
             return;
         }
         let snapshot = self.buffer.read(cx).snapshot();
-        if save && self.merge.is_some() {
+        if save && (self.merge.is_some() || self.held) {
             self.queued_save = Some(snapshot);
             return;
         }
@@ -432,7 +434,7 @@ impl PagePersistence {
         }
         cx.notify();
         if succeeded {
-            if self.queued_save.is_some() && self.merge.is_none() {
+            if self.queued_save.is_some() && self.merge.is_none() && !self.held {
                 let snapshot = self.queued_save.take().expect("queued save");
                 self.start(snapshot, true, cx);
             } else if self.recover_requested {
@@ -568,6 +570,42 @@ impl PagePersistence {
                 self.schedule_recovery(cx);
                 self.schedule_autosave(cx);
             }
+        }
+    }
+}
+
+/// Coordination with other writers of an open page, used by bulk tag edits. The Tags view
+/// (NR17) brings the first production caller; until then only tests call these.
+#[cfg(test)]
+impl PagePersistence {
+    pub fn buffer(&self) -> &Entity<Buffer> {
+        &self.buffer
+    }
+
+    /// The revisions the next save replaces.
+    pub fn base(&self) -> &[String] {
+        &self.opened.base
+    }
+
+    pub fn path(&self) -> &str {
+        &self.opened.path
+    }
+
+    /// Defers this page's saves while another writer saves it.
+    pub fn hold(&mut self) {
+        self.held = true;
+        self.autosave = None;
+    }
+
+    /// No save or merge is in flight.
+    pub fn is_idle(&self) -> bool {
+        self.task.is_none() && self.merge.is_none()
+    }
+
+    pub fn release(&mut self, cx: &mut Context<Self>) {
+        self.held = false;
+        if self.queued_save.take().is_some() {
+            self.save(cx);
         }
     }
 }

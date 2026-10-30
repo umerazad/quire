@@ -53,6 +53,11 @@ impl NotebookSession {
         }
     }
 
+    #[cfg(test)]
+    pub fn client(&self) -> &StorageClient {
+        &self.client
+    }
+
     pub fn open_page(&mut self, page: String, cx: &mut App) -> Entity<OpenPage> {
         self.pages
             .entry(page.clone())

@@ -49,7 +49,7 @@ fn describe(error: impl std::fmt::Display) -> String {
 }
 
 /// Sends a request to the index worker and waits for its reply, as one error message.
-async fn ask<T>(
+pub(crate) async fn ask<T>(
     request: Result<quire_store::worker::Reply<T>, quire_store::worker::QueueError>,
 ) -> Result<T, String> {
     request
@@ -240,7 +240,7 @@ impl IndexSync {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use gpui::TestAppContext;
     use quire_store::{
@@ -248,7 +248,7 @@ mod tests {
         sync::json::JsString,
     };
 
-    pub(super) async fn settle(client: &IndexClient, cx: &mut TestAppContext) {
+    pub(crate) async fn settle(client: &IndexClient, cx: &mut TestAppContext) {
         for _ in 0..100 {
             cx.executor().advance_clock(IDLE);
             cx.run_until_parked();
