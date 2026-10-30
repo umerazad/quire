@@ -9,6 +9,7 @@ license = "GPL-3.0-or-later"
 path = "src/quire_core.rs"
 
 [dependencies]
+chrono.workspace = true
 unicode-normalization = "=0.1.25"
 serde.workspace = true
 serde_json.workspace = true

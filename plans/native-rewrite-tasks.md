@@ -859,8 +859,25 @@ Constraints: Namespace navigation does not reorganize files. Workspace state is 
 Write set: workspace/navigation views, daily/layout core, preference persistence.
 Dependencies: NR12, NR15.
 Verify: Native keyboard/mouse/tab/history tests plus daily-layout fixtures, duplicate dates, profile switches, restored reading position, and empty folders. Lists remain virtualized.
-Proof notes: pending.
-Status: pending
+Proof notes: Shared daily rules have started under NR16.1. Indexed title lookup, page creation, navigation, and complete parent acceptance remain open.
+Status: in_progress
+
+#### NR16.1: Port daily date and layout rules for indexed opening
+
+What to do: Port daily formatting, configured-title parsing, ISO/weekday/Roam date recognition, layout validation/detection, and notebook settings into the shared core. Freeze the original daily/workspace helpers and compare native results with generated cases before wiring indexed page selection.
+Constraints: Keep layout state notebook-scoped. Preserve invalid settings and unknown versions without overwriting them. Validate native formatting dates explicitly. Keep source text and paths unchanged. Do not replace title-based daily selection with a path-only lookup, or load every page body during opening.
+Write set: core daily helpers/tests, frozen oracle provenance, deterministic fixture generator, task proof and README.
+Verify: Differential valid dates, leap/month/year boundaries, incorrect weekdays, configured patterns, duplicate tokens, Unicode literals, layout detection and ties, ISO/Roam recognition, malformed/unknown settings, and unchanged original source hashes. Test injected local-calendar normalization, including skipped days, before declaring date parity. Indexed storage selection and native navigation remain NR12/NR16 requirements.
+Proof notes: Added the civil/UTC foundation in `quire_core::daily`: formatting, configured pattern parsing, ISO/weekday/Roam recognition, layout validation/detection, and settings serialization/validation. `DailyParser` retains its compiled configuration per notebook instead of using the source's process-global active layout. Recognition retains the source's early four-digit-year check. The parser handles JavaScript's numeric-constructor years 0..99, Roam month prefixes/year interpretation and day overflow, greedy duplicate tokens, literal escaping, and non-Unicode regex case canonicalization. Layout detection preserves first-seen ties and single boundary-delimited month replacement.
+
+Native formatting requires a valid four-digit civil ISO date and returns an actionable error for invalid dates rather than producing a path. Settings parse through the shared lossless JSON implementation. Malformed/unknown-version settings remain read-only. Unpaired-surrogate layout strings produce an explicit read-only native representation error, retaining the original caller-owned source; this remains the existing native display limitation, not complete UTF-16 layout parity. No settings file or notebook is written by these helpers.
+
+Copied unchanged daily-layout/workspace modules from the frozen e91f3e23603c76a1b1d824ec3dd64c60096e5d01 source and recorded/verified their hashes. `TZ=UTC bun tools/daily-vectors.ts` generates 4,831 cases. A Node-target bundle executed by Node emits identical fixture bytes. Four native tests compare that corpus, isolate two notebook parsers, reject invalid dates as paths, preserve unrepresentable settings, and exercise short Unicode filenames. The Unicode regression first reproduced a byte-boundary panic (`/private/tmp/quire-daily-unicode-red.log`); detection now reuses the canonical page-name helper instead of slicing filenames itself.
+
+`cargo test -p quire -p quire_core -p quire_store --locked --features quire/test-support` passes 280 tests (145 app, 24 core, 111 storage; `/private/tmp/quire-daily-all-tests.log`). Core all-target Clippy with warnings denied passes (`/private/tmp/quire-daily-clippy.log`). The locked normal native build passes with existing dependency artifacts (`/private/tmp/quire-daily-build.log`), retaining its existing linker warning and previously recorded clean Metal-build limitation. Formatting, prose lint, and scoped whitespace checks pass. The lockfile adds only a core edge to the existing chrono version; no package version, schema, vendor source, or app workflow changes.
+
+Sequential review checked source provenance, parser scoping and compilation reuse, JavaScript date/year quirks, regex literal/case boundaries, Unicode filenames, stable detection ties, settings truthiness/version/error handling, original-source preservation, and explicit formatting preconditions. One source difference is now verified: formatting 2011-12-30 with a weekday yields Friday in UTC and Saturday in Pacific/Apia, whose calendar skipped that day. The current civil kernel has no injected timezone and is not yet complete local-date parity. Next, add deterministic timezone/clock coverage and the necessary adapter, using an existing dependency if suitable; then connect indexed title selection and guarded page creation. Keep this task and NR16 open.
+Status: in_progress
 
 ### NR17: Port tag pages and linked references
 
