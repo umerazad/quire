@@ -78,7 +78,8 @@ impl Editor {
 
         self.unfold_buffers_with_selections(cx);
 
-        let selections = self.selections.all_adjusted(&self.display_snapshot(cx));
+        let snapshot = self.display_snapshot(cx);
+        let selections = self.replacement_selections(&snapshot, cx);
         let has_multiple_selections = selections.len() > 1;
         let mut bracket_inserted = false;
         let mut edits = Vec::new();
@@ -1979,6 +1980,40 @@ impl Editor {
         )
     }
 
+    /// Retains a filtered view's complete source selection before display clipping.
+    pub(crate) fn full_view_selection(
+        &self,
+        snapshot: &DisplaySnapshot,
+        cx: &App,
+    ) -> Option<Selection<MultiBufferOffset>> {
+        if !self.buffer.read(cx).has_edit_filter() {
+            return None;
+        }
+        let selections = self
+            .selections
+            .all_unexpanded::<MultiBufferOffset>(snapshot);
+        let [selection] = selections.as_slice() else {
+            return None;
+        };
+        (selection.start == MultiBufferOffset(0)
+            && selection.end == snapshot.buffer_snapshot().len())
+        .then_some(*selection)
+    }
+
+    fn replacement_selections(
+        &self,
+        snapshot: &DisplaySnapshot,
+        cx: &App,
+    ) -> Vec<Selection<Point>> {
+        if self.buffer.read(cx).edit_intent() == multi_buffer::ViewEditIntent::DeleteLines
+            || self.full_view_selection(snapshot, cx).is_some()
+        {
+            self.selections.all_unexpanded(snapshot)
+        } else {
+            self.selections.all_adjusted(snapshot)
+        }
+    }
+
     /// Replaces the editor's selections with the provided `text`, applying the
     /// given `autoindent_mode` (`None` will skip autoindentation).
     ///
@@ -1999,13 +2034,7 @@ impl Editor {
         let text: Arc<str> = text.into();
         self.transact(window, cx, |this, window, cx| {
             let snapshot = this.display_snapshot(cx);
-            let old_selections = if this.buffer.read(cx).edit_intent()
-                == multi_buffer::ViewEditIntent::DeleteLines
-            {
-                this.selections.all_unexpanded(&snapshot)
-            } else {
-                this.selections.all_adjusted(&snapshot)
-            };
+            let old_selections = this.replacement_selections(&snapshot, cx);
             let linked_edits = if apply_linked_edits {
                 this.linked_edits_for_selections(text.clone(), cx)
             } else {

@@ -390,6 +390,12 @@ fn filter_edits(
     intent: ViewEditIntent,
 ) {
     for (range, inserted) in edits {
+        if !inserted.is_empty()
+            && range.start == MultiBufferOffset(0)
+            && range.end == snapshot.len()
+        {
+            continue;
+        }
         if intent == ViewEditIntent::DeleteLines && inserted.is_empty() {
             continue;
         }

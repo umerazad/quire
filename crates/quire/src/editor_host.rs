@@ -626,3 +626,7 @@ mod projection_tests;
 #[cfg(test)]
 #[path = "editor_projection_vim_tests.rs"]
 mod projection_vim_tests;
+
+#[cfg(test)]
+#[path = "editor_projection_mapping_tests.rs"]
+mod projection_mapping_tests;

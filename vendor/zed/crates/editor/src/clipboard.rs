@@ -76,7 +76,10 @@ impl Editor {
         self.transact(window, cx, |this, window, cx| {
             let had_active_edit_prediction = this.has_active_edit_prediction();
             let display_map = this.display_snapshot(cx);
-            let old_selections = this.selections.all::<MultiBufferOffset>(&display_map);
+            let old_selections = this.full_view_selection(&display_map, cx).map_or_else(
+                || this.selections.all::<MultiBufferOffset>(&display_map),
+                |selection| vec![selection],
+            );
             let cursor_offset = this
                 .selections
                 .last::<MultiBufferOffset>(&display_map)

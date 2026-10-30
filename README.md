@@ -36,6 +36,8 @@ Write renders square task markers and Roam TODO/DONE markers as native checkboxe
 
 Plain-label inline HTTP/HTTPS links render as underlined native controls. Pointer or keyboard activation requests the URL without editing the note; Source exposes the complete syntax. Rich labels, images, reference links, and other destinations currently retain their source presentation. Internal notebook navigation and complete wrapping/selection behavior remain unfinished. Headless tests intercept URL requests; native browser and accessibility acceptance remain open.
 
+Narrow-wrap tests cover visible Unicode positions, hidden marker/ID boundaries, and typing before a hidden ID. Select All followed by paste or typing replaces the complete view, including its hidden syntax. Bounded excerpt replacements preserve surrounding source and share page undo. Native pointer selection and wrapping of custom link controls still need acceptance checks.
+
 Reference protocol tests deliberately run through Node/Vitest. Bun's zstd decoder reports a truncated frame differently, so running those tests with `bun test` would change the compatibility oracle.
 
 The development oracle also compares native block boundaries and hidden spans with 47 synthetic vectors from Quire's copied legacy Markdown parser. Regenerate them with `bun tools/markdown-vectors.ts`. The pinned Lezer packages are development dependencies; the native app uses the copied Markdown grammar and requires no JavaScript parser at runtime. These fixtures cover specific cases rather than establishing complete Markdown or Write parity.

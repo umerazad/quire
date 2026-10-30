@@ -248,7 +248,7 @@
     },
     {
       "path": "crates/editor/src/input.rs",
-      "change": "Use unexpanded source selections only for opted-in DeleteLines intent, retaining canonical source boundaries across hidden syntax and the existing linked edit/history pipeline."
+      "change": "Use unexpanded source selections for opted-in DeleteLines intent and complete selections of filtered views. Share complete-selection detection with clipboard paste and typed/replacement input, retaining canonical boundaries across hidden syntax and the existing linked edit/history pipeline. Ordinary views retain their original selection resolution."
     },
     {
       "path": "crates/vim/src/normal/delete.rs",
@@ -273,6 +273,10 @@
     {
       "path": "crates/language/src/syntax_map.rs",
       "change": "Expose the owned syntax tree in layer-relative coordinates for independent derived analysis without mutating the shared syntax snapshot."
+    },
+    {
+      "path": "crates/editor/src/clipboard.rs",
+      "change": "Retain a filtered view's complete source selection during clipboard paste rather than clipping its hidden prefix through a display round trip. Reuse the input helper and original paste/autoindent/history paths; partial selections and ordinary views retain their existing resolution."
     }
   ]
 }
