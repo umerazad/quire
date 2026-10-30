@@ -36,6 +36,12 @@ mod stored_source;
 mod tag_edit;
 
 #[cfg(feature = "full-editor")]
+mod page_writes;
+
+#[cfg(feature = "full-editor")]
+mod task_edit;
+
+#[cfg(feature = "full-editor")]
 mod page_persistence;
 
 #[cfg(all(test, feature = "full-editor"))]

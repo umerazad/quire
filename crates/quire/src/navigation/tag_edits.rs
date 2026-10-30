@@ -51,7 +51,7 @@ impl Preview {
             .pages
             .iter()
             .flat_map(|page| {
-                let name = page_name(&page.path).to_owned();
+                let name = page_name(page.path()).to_owned();
                 page.changes.iter().map(move |change| ChangeRow {
                     page: name.clone(),
                     before: change.before.clone(),

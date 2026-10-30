@@ -89,6 +89,7 @@ impl StoredWindow {
         let Some(calendar) = self.nav.daily.calendar.clone() else {
             return;
         };
+        self.install_task_context(cx);
         let config = crate::query_index::config(self.nav.daily.layout.clone(), calendar);
         self.index =
             IndexSync::spawn(self.nav.database.clone(), config, cx).map_err(SharedString::from);
@@ -115,7 +116,7 @@ impl StoredWindow {
         cx.notify();
     }
 
-    fn today(&self) -> Result<String, String> {
+    pub(in crate::editor_host::stored) fn today(&self) -> Result<String, String> {
         let calendar = self.nav.daily.calendar.as_ref().ok_or_else(|| {
             "Daily notes need the system time zone. Set a valid time zone and reopen the notebook."
                 .to_owned()

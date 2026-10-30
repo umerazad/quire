@@ -3,9 +3,9 @@
 
 use super::*;
 use crate::navigation::{
-    CloseTab, FindPage, FocusFiles, FocusReferences, GoBack, GoForward, NewPage, NextTab,
-    OpenToday, PreviousTab, ShowDaily, ShowPages, ShowTags, ToggleFavorite, ToggleSidePane,
-    WorkspaceFile, create_page,
+    CaptureTask, CloseTab, FindPage, FocusFiles, FocusReferences, GoBack, GoForward, NewPage,
+    NextTab, OpenToday, PreviousTab, ShowDaily, ShowPages, ShowTags, ShowTasks, ToggleFavorite,
+    ToggleSidePane, WorkspaceFile, create_page,
     palette::{PagePalette, PaletteChoice, PaletteMode},
 };
 use gpui::{DismissEvent, EntityId, SharedString, Task};
@@ -22,6 +22,8 @@ mod daily;
 mod reference_views;
 #[path = "tag_views.rs"]
 mod tag_views;
+#[path = "task_views.rs"]
+mod task_views;
 
 pub(super) struct Navigation {
     file: WorkspaceFile,
@@ -42,6 +44,7 @@ pub(super) struct Navigation {
     pub(super) daily: daily::DailyState,
     pub(super) database: std::path::PathBuf,
     pub(super) tags: tag_views::TagViews,
+    pub(super) tasks: task_views::TaskViews,
     /// Linked reference panels by page, kept for the session so each keeps its filter.
     pub(super) references: HashMap<String, Entity<crate::navigation::references::ReferencesView>>,
 }
@@ -72,6 +75,7 @@ impl Navigation {
             daily: daily::DailyState::new(calendar),
             database: database.to_owned(),
             tags: tag_views::TagViews::default(),
+            tasks: task_views::TaskViews::default(),
             references: HashMap::new(),
         }
     }
@@ -236,6 +240,7 @@ impl StoredWindow {
         };
         match (self.nav.view, self.nav.tags.shown.clone()) {
             (Some(BrowserView::Tags), _) => self.show_tags(window, cx),
+            (Some(BrowserView::Tasks), _) => self.show_tasks(window, cx),
             (Some(view), _) => self.open_browser(view, window, cx),
             (None, Some(tag)) => self.show_tag(tag, window, cx),
             (None, None) => {}
@@ -427,6 +432,18 @@ impl StoredWindow {
                     cx,
                 )
             }))
+            .on_action(cx.listener(|this, _: &ShowTasks, window, cx| {
+                this.visit(
+                    Destination::Browser {
+                        view: BrowserView::Tasks,
+                    },
+                    window,
+                    cx,
+                )
+            }))
+            .on_action(
+                cx.listener(|this, _: &CaptureTask, window, cx| this.capture_task(window, cx)),
+            )
             .on_action(cx.listener(|this, _: &FocusReferences, window, cx| {
                 this.focus_references(window, cx)
             }))
@@ -611,8 +628,8 @@ impl StoredWindow {
         _window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> gpui::Div {
-        let content = match (self.nav.view, self.tag_content()) {
-            (Some(BrowserView::Tags), Some(tags)) | (None, Some(tags)) => tags,
+        let content = match (self.nav.view, self.tag_content().or(self.task_content())) {
+            (Some(BrowserView::Tags | BrowserView::Tasks), Some(view)) | (None, Some(view)) => view,
             (Some(view), _) => self.render_browser(view, cx).into_any_element(),
             (None, None) => match self.editor.clone() {
                 Some(editor) => gpui::div()
@@ -674,3 +691,7 @@ mod tags_tests;
 #[cfg(test)]
 #[path = "references_tests.rs"]
 mod references_tests;
+
+#[cfg(test)]
+#[path = "tasks_tests.rs"]
+mod tasks_tests;

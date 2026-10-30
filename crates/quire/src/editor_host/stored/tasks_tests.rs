@@ -1,0 +1,576 @@
+//! The Tasks browser in the stored window, driven by keys: lists and counts, ticking and state
+//! changes in place, bulk moves with stale refusal, date controls, capture, Projects, and the
+//! notebook clock and layout reaching task commands. Ported from rt `tests/tasks-page.test.tsx`.
+
+use super::super::*;
+use super::tags_tests::stored;
+use super::tests::{Notebook, key, open_notebook, read, wait_until};
+use super::workspace_tests::{reopen, saved};
+use crate::navigation::tasks::{TasksView, next_action};
+use gpui::TestAppContext;
+use quire_core::{
+    daily::{DailyLayout, write_settings},
+    workspace::{BrowserView, ProjectStatus, TaskView},
+};
+use quire_store::{index::SETTINGS_PAGE, notebook::NotebookStore};
+
+/// 2026-10-30T12:00:00Z, a date every inhabited time zone shares at that instant.
+const NOW: i64 = 1_793_361_600_000;
+const STAMP: &str = " ➕ [[2026-10-30]]";
+
+fn set_clock(notebook: &Notebook, cx: &mut TestAppContext) {
+    notebook
+        .window
+        .update(cx, |view, _, cx| {
+            view.nav.daily.now = Rc::new(|| NOW);
+            view.install_task_context(cx);
+            view.refresh_tasks(cx);
+        })
+        .unwrap();
+}
+
+fn list(notebook: &Notebook, cx: &mut TestAppContext) -> Entity<TasksView> {
+    read(notebook, cx, |view, _| view.nav.tasks.list.clone().unwrap())
+}
+
+fn settle_tasks(notebook: &Notebook, cx: &mut TestAppContext) {
+    wait_until(cx, "the task list", |cx| {
+        read(notebook, cx, |view, cx| {
+            view.nav
+                .tasks
+                .list
+                .as_ref()
+                .is_some_and(|list| list.read(cx).idle())
+        })
+    });
+}
+
+fn show_tasks(notebook: &Notebook, cx: &mut TestAppContext) {
+    set_clock(notebook, cx);
+    cx.dispatch_action(notebook.window.into(), crate::navigation::ShowTasks);
+    set_clock(notebook, cx);
+    settle_tasks(notebook, cx);
+}
+
+fn texts(notebook: &Notebook, cx: &mut TestAppContext) -> Vec<String> {
+    let list = list(notebook, cx);
+    cx.read(|cx| {
+        list.read(cx)
+            .rows()
+            .iter()
+            .map(|task| task.text.clone())
+            .collect()
+    })
+}
+
+fn selected(notebook: &Notebook, cx: &mut TestAppContext) -> usize {
+    let list = list(notebook, cx);
+    cx.read(|cx| list.read(cx).selected_count())
+}
+
+fn count(notebook: &Notebook, view: TaskView, cx: &mut TestAppContext) -> usize {
+    let list = list(notebook, cx);
+    cx.read(|cx| list.read(cx).board.value.counts.of(view))
+}
+
+fn keys(notebook: &Notebook, keys: &str, cx: &mut TestAppContext) {
+    cx.simulate_keystrokes(notebook.window.into(), keys);
+    settle_tasks(notebook, cx);
+}
+
+/// Waits until the stored page reads `expected`, for changes the index has yet to see.
+fn wait_stored(notebook: &Notebook, page: &str, expected: &str, cx: &mut TestAppContext) {
+    wait_until(cx, "the stored page", |_| {
+        stored(notebook, page) == expected
+    });
+}
+
+fn wait_rows(notebook: &Notebook, expected: &[&str], cx: &mut TestAppContext) {
+    let mut shown = Vec::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while shown != expected {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "listed {shown:?}, expected {expected:?}; {:?}",
+            message(notebook, cx)
+        );
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(200));
+        settle_tasks(notebook, cx);
+        shown = texts(notebook, cx);
+    }
+}
+
+fn message(notebook: &Notebook, cx: &mut TestAppContext) -> (Option<String>, Option<String>) {
+    let list = list(notebook, cx);
+    cx.read(|cx| {
+        let list = list.read(cx);
+        (
+            list.notice.as_ref().map(ToString::to_string),
+            list.error.as_ref().map(ToString::to_string),
+        )
+    })
+}
+
+const WORK: &str = "- [ ] Later [[2026-11-02]] #next\n- [ ] Overdue [[2026-10-20]] #next\n- [ ] Today [[2026-10-30]]\n- [ ] Undated #next\n- [x] Fresh win ✅ 2026-10-27\n";
+
+#[gpui::test]
+fn task_lists_count_order_and_change_tasks_in_place(cx: &mut TestAppContext) {
+    let notebook = open_notebook(
+        &[
+            ("a", "Alpha.md", "- start\n"),
+            ("w", "Work.md", WORK),
+            ("d", "2026-10-25.md", "- [ ] From a daily page\n"),
+        ],
+        "a",
+        cx,
+    );
+    show_tasks(&notebook, cx);
+    assert_eq!(
+        read(&notebook, cx, |view, _| view.nav.view),
+        Some(BrowserView::Tasks)
+    );
+    assert_eq!(
+        texts(&notebook, cx),
+        ["From a daily page", "Today [[2026-10-30]]"],
+    );
+    assert_eq!(
+        [
+            TaskView::Due,
+            TaskView::Inbox,
+            TaskView::Next,
+            TaskView::Done
+        ]
+        .map(|view| count(&notebook, view, cx)),
+        [3, 2, 3, 1]
+    );
+    keys(&notebook, "[ [", cx);
+    assert_eq!(
+        texts(&notebook, cx),
+        [
+            "Overdue [[2026-10-20]]",
+            "From a daily page",
+            "Today [[2026-10-30]]"
+        ],
+        "Due lists overdue tasks first; a daily page dates its tasks"
+    );
+    keys(&notebook, &key("enter"), cx);
+    wait_stored(
+        &notebook,
+        "w",
+        &WORK.replace(
+            "- [ ] Overdue [[2026-10-20]] #next\n",
+            "- [x] Overdue [[2026-10-20]] #next ✅ 2026-10-30\n",
+        ),
+        cx,
+    );
+    assert_eq!(message(&notebook, cx).0.as_deref(), Some("Completed task."));
+    wait_rows(
+        &notebook,
+        &["From a daily page", "Today [[2026-10-30]]"],
+        cx,
+    );
+    keys(&notebook, "down 2", cx);
+    wait_stored(
+        &notebook,
+        "w",
+        &WORK
+            .replace(
+                "- [ ] Overdue [[2026-10-20]] #next\n",
+                "- [x] Overdue [[2026-10-20]] #next ✅ 2026-10-30\n",
+            )
+            .replace(
+                "- [ ] Today [[2026-10-30]]\n",
+                "- [ ] Today [[2026-10-30]] #next\n",
+            ),
+        cx,
+    );
+    assert_eq!(
+        message(&notebook, cx).0.as_deref(),
+        Some("Moved 1 task to Next.")
+    );
+    keys(&notebook, "[", cx);
+    assert_eq!(
+        read(&notebook, cx, |view, _| view.nav.workspace.tasks.view),
+        TaskView::Done,
+        "the list wraps around and is remembered"
+    );
+    wait_rows(&notebook, &["Overdue [[2026-10-20]]", "Fresh win"], cx);
+    keys(&notebook, &key("enter"), cx);
+    wait_stored(
+        &notebook,
+        "w",
+        &WORK.replace(
+            "- [ ] Today [[2026-10-30]]\n",
+            "- [ ] Today [[2026-10-30]] #next\n",
+        ),
+        cx,
+    );
+    assert_eq!(message(&notebook, cx).0.as_deref(), Some("Reopened task."));
+}
+
+#[gpui::test]
+fn selected_tasks_move_together_and_stale_selections_are_refused(cx: &mut TestAppContext) {
+    let notebook = open_notebook(
+        &[
+            (
+                "a",
+                "A.md",
+                "- [ ] One #inbox\n- [ ] Two #inbox\n- [ ] Three #pending\n",
+            ),
+            ("b", "B.md", "- [ ] Four #inbox\n"),
+        ],
+        "a",
+        cx,
+    );
+    let buffer = read(&notebook, cx, |view, cx| {
+        view.page
+            .read(cx)
+            .persistence()
+            .unwrap()
+            .read(cx)
+            .buffer()
+            .clone()
+    });
+    buffer.update(cx, |buffer, cx| {
+        let end = buffer.len();
+        buffer.edit([(end..end, "\ntyped\n")], None, cx)
+    });
+    show_tasks(&notebook, cx);
+    wait_rows(&notebook, &["One", "Two", "Four"], cx);
+    keys(&notebook, "space down down shift-space", cx);
+    assert_eq!(selected(&notebook, cx), 3);
+    keys(&notebook, "down", cx);
+    keys(&notebook, "2", cx);
+    wait_stored(&notebook, "b", "- [ ] Four #next\n", cx);
+    assert_eq!(
+        stored(&notebook, "a"),
+        "- [ ] One #next\n- [ ] Two #next\n- [ ] Three #pending\n\ntyped\n",
+        "the open page keeps its unsaved typing"
+    );
+    assert_eq!(
+        cx.read(|cx| buffer.read(cx).text()),
+        "- [ ] One #next\n- [ ] Two #next\n- [ ] Three #pending\n\ntyped\n"
+    );
+    assert_eq!(
+        message(&notebook, cx).0.as_deref(),
+        Some("Moved 3 tasks to Next.")
+    );
+    assert_eq!(selected(&notebook, cx), 0);
+
+    keys(&notebook, "] ]", cx);
+    wait_rows(&notebook, &["Three"], cx);
+    keys(&notebook, "space escape", cx);
+    assert_eq!(selected(&notebook, cx), 0);
+    keys(&notebook, "[", cx);
+    wait_rows(&notebook, &["One", "Two", "Four"], cx);
+    keys(&notebook, "space down down space", cx);
+    let store = NotebookStore::open(&notebook.path, "nb", "local").unwrap();
+    super::tests::save(&store, "b", "B.md", "- [ ] Four, rewritten #next\n");
+    keys(&notebook, "3", cx);
+    let (_, error) = message(&notebook, cx);
+    assert_eq!(
+        error.as_deref(),
+        Some("A task on B changed since it was listed. Review the list and try again.")
+    );
+    assert_eq!(
+        stored(&notebook, "a"),
+        "- [ ] One #next\n- [ ] Two #next\n- [ ] Three #pending\n\ntyped\n",
+        "a refused move writes no page"
+    );
+}
+
+#[gpui::test]
+fn date_controls_set_change_and_clear_task_dates(cx: &mut TestAppContext) {
+    let notebook = open_notebook(
+        &[
+            ("a", "Alpha.md", "- start\n"),
+            ("w", "Work.md", "- [ ] Plan #next\n"),
+        ],
+        "a",
+        cx,
+    );
+    show_tasks(&notebook, cx);
+    keys(&notebook, "]", cx);
+    wait_rows(&notebook, &["Plan"], cx);
+    keys(&notebook, "d", cx);
+    cx.simulate_input(notebook.window.into(), "tomorrow");
+    keys(&notebook, "enter", cx);
+    wait_stored(&notebook, "w", "- [ ] Plan #next 📅 [[2026-10-31]]\n", cx);
+    assert_eq!(
+        message(&notebook, cx).0.as_deref(),
+        Some("Set the due date.")
+    );
+    wait_until(cx, "the due date", |cx| {
+        settle_tasks(&notebook, cx);
+        let list = list(&notebook, cx);
+        cx.read(|cx| {
+            list.read(cx)
+                .rows()
+                .first()
+                .is_some_and(|task| task.due.as_deref() == Some("2026-10-31"))
+        })
+    });
+    keys(&notebook, "d", cx);
+    cx.simulate_input(notebook.window.into(), "soon");
+    keys(&notebook, "enter", cx);
+    assert!(
+        message(&notebook, cx)
+            .1
+            .is_some_and(|error| error.contains("\"soon\" is not a date")),
+        "an unreadable date is refused in place"
+    );
+    keys(&notebook, "escape", cx);
+    keys(&notebook, "shift-d", cx);
+    cx.simulate_input(notebook.window.into(), "today");
+    keys(&notebook, "enter", cx);
+    assert_eq!(
+        message(&notebook, cx).1.as_deref(),
+        Some(quire_core::tasks::OPEN_COMPLETION)
+    );
+    keys(&notebook, "d backspace enter", cx);
+    wait_stored(&notebook, "w", "- [ ] Plan #next\n", cx);
+    assert_eq!(
+        message(&notebook, cx).0.as_deref(),
+        Some("Cleared the due date.")
+    );
+}
+
+#[gpui::test]
+fn capture_creates_the_inbox_page_then_appends_and_links_projects(cx: &mut TestAppContext) {
+    let notebook = open_notebook(
+        &[
+            ("a", "Alpha.md", "- start\n"),
+            ("p", "Launch.md", "- #project\n"),
+        ],
+        "a",
+        cx,
+    );
+    set_clock(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), &key("shift-t"));
+    set_clock(&notebook, cx);
+    settle_tasks(&notebook, cx);
+    let focused = read(&notebook, cx, |view, _| view.nav.view);
+    assert_eq!(focused, Some(BrowserView::Tasks));
+    cx.simulate_input(notebook.window.into(), "Call Jane #meeting");
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    let inbox = wait_for_page(&notebook, "Inbox", cx);
+    wait_stored(
+        &notebook,
+        &inbox,
+        &format!("- [ ] Call Jane #meeting #inbox{STAMP}\n"),
+        cx,
+    );
+    wait_rows(&notebook, &["Call Jane #meeting"], cx);
+    assert_eq!(message(&notebook, cx).0.as_deref(), Some("Task captured."));
+
+    let launch = read(&notebook, cx, |_, _| "p".to_owned());
+    list(&notebook, cx).update(cx, |list, cx| list.set_capture_project(Some(launch), cx));
+    cx.simulate_keystrokes(notebook.window.into(), &key("shift-t"));
+    cx.simulate_input(notebook.window.into(), "Draft brief #next");
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_stored(
+        &notebook,
+        &inbox,
+        &format!(
+            "- [ ] Call Jane #meeting #inbox{STAMP}\n- [ ] Draft brief #next [[Launch]]{STAMP}\n"
+        ),
+        cx,
+    );
+    wait_rows(&notebook, &["Draft brief  [[Launch]]"], cx);
+    assert_eq!(
+        read(&notebook, cx, |view, _| view.nav.workspace.tasks.view),
+        TaskView::Next,
+        "capture shows the list the task went to"
+    );
+    cx.simulate_keystrokes(notebook.window.into(), &key("shift-t"));
+    keys(&notebook, "enter", cx);
+    assert_eq!(
+        message(&notebook, cx).1.as_deref(),
+        Some(quire_core::tasks::CAPTURE_ONE),
+        "an empty capture is refused"
+    );
+}
+
+fn wait_for_page(notebook: &Notebook, title: &str, cx: &mut TestAppContext) -> String {
+    let mut found = None;
+    wait_until(cx, "the created page", |cx| {
+        notebook
+            .window
+            .update(cx, |view, _, cx| view.refresh_catalogue(cx))
+            .unwrap();
+        cx.run_until_parked();
+        found = read(notebook, cx, |view, _| {
+            view.nav
+                .pages
+                .iter()
+                .find(|listed| listed.page.title == title)
+                .map(|listed| listed.page.page.to_lossy_string())
+        });
+        found.is_some()
+    });
+    found.unwrap()
+}
+
+#[gpui::test]
+fn projects_filter_by_status_flag_missing_next_actions_and_remember_the_choice(
+    cx: &mut TestAppContext,
+) {
+    let notebook = open_notebook(
+        &[
+            ("a", "Alpha.md", "- start\n"),
+            (
+                "o",
+                "Open.md",
+                "---\ntags: [project]\n---\n- [ ] Write the brief\n",
+            ),
+            (
+                "f",
+                "Finished.md",
+                "---\ntags: [project]\n---\n- [x] Ship it ✅ 2026-10-20\n",
+            ),
+            ("e", "Empty.md", "---\ntags: [project]\n---\n- Just notes\n"),
+            ("d", "Daily.md", "- [ ] Send brief [[Open]] #next\n"),
+        ],
+        "a",
+        cx,
+    );
+    show_tasks(&notebook, cx);
+    list(&notebook, cx).update(cx, |list, cx| list.choose(TaskView::Projects, cx));
+    settle_tasks(&notebook, cx);
+    let shown = |cx: &mut TestAppContext| -> Vec<(String, String)> {
+        let list = list(&notebook, cx);
+        cx.read(|cx| {
+            list.read(cx)
+                .shown_projects(cx)
+                .iter()
+                .map(|project| (project.page.title.clone(), next_action(project).0))
+                .collect()
+        })
+    };
+    let statuses = |cx: &mut TestAppContext| {
+        let list = list(&notebook, cx);
+        cx.read(|cx| ProjectStatus::ALL.map(|status| list.read(cx).status_count(status)))
+    };
+    assert_eq!(statuses(cx), [1, 2, 3]);
+    assert_eq!(shown(cx), [("Open".into(), "1 next action".into())]);
+    list(&notebook, cx).update(cx, |list, cx| list.set_status(ProjectStatus::Inactive, cx));
+    assert_eq!(
+        shown(cx),
+        [
+            ("Empty".into(), "No next action".into()),
+            ("Finished".into(), "All actions complete".into()),
+        ]
+    );
+    saved(&notebook, cx);
+    let notebook = reopen(notebook, "a", cx);
+    let remembered = read(&notebook, cx, |view, _| view.nav.workspace.tasks.clone());
+    assert_eq!(
+        (remembered.view, remembered.project_status),
+        (TaskView::Projects, ProjectStatus::Inactive)
+    );
+    show_tasks(&notebook, cx);
+    list(&notebook, cx).update(cx, |list, cx| list.set_status(ProjectStatus::All, cx));
+    keys(&notebook, "down down r", cx);
+    wait_rows(&notebook, &["Send brief [[Open]]"], cx);
+    let chosen = read(&notebook, cx, |view, _| view.nav.workspace.tasks.clone());
+    assert_eq!(
+        (chosen.view, chosen.project.as_deref()),
+        (TaskView::Next, Some("o")),
+        "Review lists a project's next actions, including tasks that link it"
+    );
+    wait_until(cx, "the project's open count", |cx| {
+        let list = list(&notebook, cx);
+        cx.read(|cx| {
+            list.read(cx)
+                .board
+                .value
+                .projects
+                .iter()
+                .any(|project| project.page.title == "Open" && project.open == 2)
+        })
+    });
+}
+
+#[gpui::test]
+fn new_projects_start_with_a_next_action_and_open(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&[("a", "Alpha.md", "- start\n")], "a", cx);
+    show_tasks(&notebook, cx);
+    list(&notebook, cx).update(cx, |list, cx| list.choose(TaskView::Projects, cx));
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            let list = view.nav.tasks.list.clone().unwrap();
+            list.update(cx, |list, cx| list.start_new_project(window, cx))
+        })
+        .unwrap();
+    cx.simulate_input(notebook.window.into(), "Atlas");
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the new project page", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.page
+                .read(cx)
+                .loaded()
+                .is_some_and(|page| page.path.as_deref() == Some("Projects/Atlas.md"))
+        })
+    });
+    let page = read(&notebook, cx, |view, cx| view.page.read(cx).id().to_owned());
+    assert_eq!(
+        stored(&notebook, &page),
+        crate::navigation::tasks::NEW_PROJECT_TEXT
+    );
+}
+
+#[gpui::test]
+fn task_commands_use_the_notebook_daily_layout_and_page_titles(cx: &mut TestAppContext) {
+    let layout = DailyLayout {
+        folder: "Journal".into(),
+        title: "{DD}.{MM}.{YYYY}".into(),
+    };
+    let notebook = open_notebook(
+        &[
+            ("j", "Journal/30.10.2026.md", "- call\n"),
+            ("a", "Alpha.md", "- start\n"),
+            (SETTINGS_PAGE, "notebook-settings", &write_settings(&layout)),
+        ],
+        "j",
+        cx,
+    );
+    set_clock(&notebook, cx);
+    let editor_key = key("enter");
+    cx.simulate_keystrokes(notebook.window.into(), &editor_key);
+    let text = |cx: &mut TestAppContext| {
+        read(&notebook, cx, |view, cx| {
+            view.page
+                .read(cx)
+                .persistence()
+                .unwrap()
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .text()
+        })
+    };
+    assert_eq!(
+        text(cx),
+        "- [ ] call\n",
+        "a task made on today's daily page needs no created stamp"
+    );
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.visit(quire_core::workspace::Destination::page("a"), window, cx)
+        })
+        .unwrap();
+    wait_until(cx, "the second page", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.page.read(cx).id() == "a" && view.editor.is_some()
+        })
+    });
+    cx.simulate_keystrokes(notebook.window.into(), &editor_key);
+    assert_eq!(
+        text(cx),
+        "- [ ] start ➕ [[30.10.2026]]\n",
+        "created stamps link the daily page by the configured title"
+    );
+}

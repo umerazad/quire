@@ -255,7 +255,7 @@ fn open_buffer(notebook: &Notebook, cx: &mut TestAppContext) -> Entity<language:
     })
 }
 
-fn stored(notebook: &Notebook, page: &str) -> String {
+pub(super) fn stored(notebook: &Notebook, page: &str) -> String {
     NotebookStore::open(&notebook.path, "nb", "local")
         .unwrap()
         .checkout(page, None)

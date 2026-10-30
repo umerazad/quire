@@ -518,6 +518,17 @@ impl StoredWindow {
                                 cx,
                             )
                         },
+                    )))
+                    .child(Button::new("tasks", "Tasks").on_click(cx.listener(
+                        |this, _, window, cx| {
+                            this.visit(
+                                Destination::Browser {
+                                    view: BrowserView::Tasks,
+                                },
+                                window,
+                                cx,
+                            )
+                        },
                     ))),
             )
             .when(!favorites.is_empty(), |div| {

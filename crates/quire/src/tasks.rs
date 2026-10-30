@@ -41,15 +41,15 @@ pub struct TaskContext {
 }
 impl Global for TaskContext {}
 
-const NO_TIME_ZONE: &str =
+pub(crate) const NO_TIME_ZONE: &str =
     "Tasks need the system time zone to date them. Set a valid time zone and reopen the notebook.";
 
 impl TaskContext {
-    fn today(&self) -> Option<String> {
+    pub(crate) fn today(&self) -> Option<String> {
         self.calendar.as_ref()?.date_at((self.now)()).ok()
     }
 
-    fn days(&self) -> Option<DailyNames> {
+    pub(crate) fn days(&self) -> Option<DailyNames> {
         Some(DailyNames::new(self.layout.clone(), self.calendar.clone()?))
     }
 }
@@ -112,12 +112,22 @@ pub(crate) struct Analysis {
     text: String,
     blocks: Vec<Block>,
     references: Vec<quire_core::markdown::Reference>,
-    tags: Vec<quire_core::markdown::TagToken>,
+    pub(crate) tags: Vec<quire_core::markdown::TagToken>,
     syntax: Vec<Range<usize>>,
     code: Vec<Range<usize>>,
 }
 
 impl Analysis {
+    /// Analyzes text outside any buffer. Parsing happens in the returned future, which belongs
+    /// on the background executor.
+    pub(crate) fn detached(
+        text: &str,
+        cx: &mut App,
+    ) -> impl std::future::Future<Output = Option<Self>> + Send + use<> {
+        let snapshot = crate::markdown::detached_snapshot(text, cx);
+        async move { Self::read(&snapshot.await) }
+    }
+
     pub(crate) fn read(snapshot: &BufferSnapshot) -> Option<Self> {
         let text = snapshot.text();
         let blocks = crate::markdown_blocks::current_blocks(snapshot)?;
