@@ -1,5 +1,6 @@
 use crate::{
     page_analysis::PageAnalysis,
+    page_persistence::{OpenedPage, PagePersistence},
     stored_source::{PreparedSource, StoredSource},
 };
 use futures::{
@@ -12,8 +13,10 @@ use quire_store::{
     worker::{QueueError, QueueLimits, StorageClient, StorageWorker},
 };
 use std::{
+    cell::Cell,
     collections::HashMap,
     path::PathBuf,
+    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -25,6 +28,7 @@ pub struct NotebookSession {
     client: StorageClient,
     ready: Ready,
     pages: HashMap<String, Entity<OpenPage>>,
+    editing: Rc<Cell<bool>>,
 }
 
 impl NotebookSession {
@@ -44,6 +48,7 @@ impl NotebookSession {
             client,
             ready,
             pages: HashMap::new(),
+            editing: Rc::new(Cell::new(false)),
         }
     }
 
@@ -56,6 +61,7 @@ impl NotebookSession {
                         id: page,
                         client: self.client.clone(),
                         ready: self.ready.clone(),
+                        editing: self.editing.clone(),
                         state: LoadState::Loading,
                         status: "Loading page…".into(),
                         task: None,
@@ -66,11 +72,43 @@ impl NotebookSession {
             })
             .clone()
     }
+
+    pub fn open_pages(&self) -> Vec<Entity<OpenPage>> {
+        self.pages.values().cloned().collect()
+    }
+    fn controllers(&self, cx: &App) -> Vec<Entity<PagePersistence>> {
+        self.pages
+            .values()
+            .filter_map(|page| page.read(cx).persistence().cloned())
+            .collect()
+    }
+    pub fn enable_editing(&self, cx: &mut App) {
+        self.editing.set(true);
+        for page in self.controllers(cx) {
+            page.update(cx, |page, cx| page.enable(cx));
+        }
+    }
+    pub fn is_secured(&self, cx: &App) -> bool {
+        self.controllers(cx)
+            .iter()
+            .all(|page| page.read(cx).is_secured(cx))
+    }
+    pub fn has_error(&self, cx: &App) -> bool {
+        self.controllers(cx)
+            .iter()
+            .any(|page| page.read(cx).has_error() && !page.read(cx).is_secured(cx))
+    }
+    pub fn recover(&self, cx: &mut App) {
+        for page in self.controllers(cx) {
+            page.update(cx, |page, cx| page.recover(cx));
+        }
+    }
 }
 
 pub struct LoadedPage {
     pub analysis: Entity<PageAnalysis>,
     pub source: Arc<StoredSource>,
+    pub persistence: Option<Entity<PagePersistence>>,
     pub heads: Vec<String>,
     pub path: Option<String>,
     pub recovered: bool,
@@ -89,6 +127,7 @@ pub struct OpenPage {
     id: String,
     client: StorageClient,
     ready: Ready,
+    editing: Rc<Cell<bool>>,
     state: LoadState,
     status: SharedString,
     task: Option<Task<()>>,
@@ -101,8 +140,16 @@ impl OpenPage {
     pub fn can_retry(&self) -> bool {
         matches!(self.state, LoadState::Failed { retryable: true })
     }
-    pub fn status(&self) -> SharedString {
+    pub fn status(&self, cx: &App) -> SharedString {
+        if let Some(page) = self.persistence()
+            && page.read(cx).enabled()
+        {
+            return page.read(cx).status(cx);
+        }
         self.status.clone()
+    }
+    pub fn persistence(&self) -> Option<&Entity<PagePersistence>> {
+        self.loaded().and_then(|page| page.persistence.as_ref())
     }
     pub fn loaded(&self) -> Option<&LoadedPage> {
         match &self.state {
@@ -131,12 +178,12 @@ impl OpenPage {
                     false,
                 ));
             }
-            let reply = client.checkout(id, None).map_err(|error| {
+            let reply = client.checkout(id.clone(), None).map_err(|error| {
                 let retryable = error == QueueError::Busy;
                 (error.to_string(), retryable)
             })?;
             let checkout = reply.await.map_err(|error| (format!("{error:#}"), true))?;
-            PreparedPage::new(checkout).map_err(|error| (error, true))
+            PreparedPage::new(id, checkout).map_err(|error| (error, true))
         });
         self.task = Some(cx.spawn(async move |this, cx| {
             let result = work.await;
@@ -144,15 +191,32 @@ impl OpenPage {
                 match result {
                     Ok(page) => {
                         let (source, stored_source) = page.text.install(cx);
-                        // Persistent editing is enabled only after recovery/save/close guards exist.
                         source.update(cx, |source, cx| {
                             source.set_capability(language::Capability::ReadOnly, cx)
+                        });
+                        let stored_source = Arc::new(stored_source);
+                        let persistence = page.opened.map(|opened| {
+                            let persistence = cx.new(|cx| {
+                                PagePersistence::new(
+                                    source.clone(),
+                                    stored_source.clone(),
+                                    this.client.clone(),
+                                    opened,
+                                    cx,
+                                )
+                            });
+                            cx.observe(&persistence, |_, _, cx| cx.notify()).detach();
+                            if this.editing.get() {
+                                persistence.update(cx, |page, cx| page.enable(cx));
+                            }
+                            persistence
                         });
                         let analysis = cx.new(|cx| PageAnalysis::new(source, cx));
                         this.status = page.status.into();
                         this.state = LoadState::Ready(LoadedPage {
                             analysis,
-                            source: Arc::new(stored_source),
+                            source: stored_source,
+                            persistence,
                             heads: page.heads,
                             path: page.path,
                             recovered: page.recovered,
@@ -183,16 +247,24 @@ struct PreparedPage {
     deleted: bool,
     loaded_revision_bodies: usize,
     status: String,
+    opened: Option<OpenedPage>,
 }
 
 impl PreparedPage {
-    fn new(checkout: PageCheckout) -> Result<Self, String> {
+    fn new(id: String, checkout: PageCheckout) -> Result<Self, String> {
         let loaded_revision_bodies = usize::from(checkout.selected.is_some());
         let deleted = checkout
             .selected
             .as_ref()
             .is_some_and(|record| record.root().field("deleted").as_bool() == Some(true));
         let recovered = checkout.draft.is_some();
+        let base = checkout
+            .draft
+            .as_ref()
+            .map(|draft| draft.base.clone())
+            .unwrap_or_else(|| checkout.heads.clone());
+        let stamp = checkout.draft.as_ref().map(|draft| draft.stamp.clone());
+        let eligible = !deleted && checkout.heads.len() == 1 && base == checkout.heads;
         let (text, path) = if let Some(draft) = checkout.draft {
             (draft.text, Some(draft.path))
         } else if let Some(record) = checkout.selected {
@@ -223,6 +295,16 @@ impl PreparedPage {
         if recovered {
             status.push_str(" · recovered unsaved changes");
         }
+        let opened = eligible
+            .then(|| {
+                path.clone().map(|path| OpenedPage {
+                    page: id,
+                    path,
+                    base,
+                    draft: stamp,
+                })
+            })
+            .flatten();
         Ok(Self {
             text: PreparedSource::new(text),
             path,
@@ -231,6 +313,7 @@ impl PreparedPage {
             deleted,
             loaded_revision_bodies,
             status,
+            opened,
         })
     }
 }

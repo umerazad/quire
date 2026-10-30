@@ -23,6 +23,9 @@ mod notebook_session;
 #[cfg(feature = "full-editor")]
 mod stored_source;
 
+#[cfg(feature = "full-editor")]
+mod page_persistence;
+
 #[cfg(all(test, feature = "full-editor"))]
 mod quit_guard_tests;
 

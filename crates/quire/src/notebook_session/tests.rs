@@ -169,7 +169,7 @@ fn startup_failures_are_visible_and_retry_preserves_the_page_identity(cx: &mut T
     wait(&page, cx);
     cx.update(|cx| {
         assert!(page.read(cx).loaded().is_none());
-        assert!(page.read(cx).status().contains("Cannot open"));
+        assert!(page.read(cx).status(cx).contains("Cannot open"));
     });
     page.update(cx, |page, cx| page.retry(cx));
     wait(&page, cx);
@@ -198,7 +198,7 @@ fn retry_after_closed_storage_never_manufactures_an_editable_empty_page(cx: &mut
     );
     let page = cx.update(|cx| session.open_page("p".into(), cx));
     wait(&page, cx);
-    cx.update(|cx| assert!(page.read(cx).status().contains("stopped")));
+    cx.update(|cx| assert!(page.read(cx).status(cx).contains("stopped")));
     page.update(cx, |page, cx| page.retry(cx));
     wait(&page, cx);
     cx.update(|cx| assert!(page.read(cx).loaded().is_none()));
@@ -232,7 +232,7 @@ fn a_failed_page_read_can_retry_after_repair_without_replacing_its_registry_iden
     cx.update(|cx| {
         assert!(page.read(cx).loaded().is_none());
         assert!(page.read(cx).can_retry());
-        assert!(page.read(cx).status().contains("damaged"));
+        assert!(page.read(cx).status(cx).contains("damaged"));
     });
     connection
         .exec_bound("UPDATE revisions SET body=? WHERE id=?")
@@ -273,7 +273,7 @@ fn missing_pages_load_no_revision_body_and_remain_unsaved(cx: &mut TestAppContex
         assert!(loaded.heads.is_empty());
         assert_eq!(loaded.loaded_revision_bodies, 0);
         assert!(loaded.analysis.read(cx).source.read(cx).read_only());
-        assert!(page.read(cx).status().contains("page not saved"));
+        assert!(page.read(cx).status(cx).contains("page not saved"));
     });
     assert!(
         NotebookStore::open(&path, "nb", "local")
@@ -323,7 +323,7 @@ fn unrepresentable_page_strings_fail_without_a_lossy_buffer_or_storage_changes(
         wait(&page, cx);
         cx.update(|cx| {
             assert!(page.read(cx).loaded().is_none());
-            assert!(page.read(cx).status().contains("UTF-16"));
+            assert!(page.read(cx).status(cx).contains("UTF-16"));
         });
         let store = NotebookStore::open(&database, "nb", "local").unwrap();
         assert_eq!(

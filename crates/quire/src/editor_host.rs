@@ -97,6 +97,7 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     }
     crate::editor_search::bind_keys(cx);
     crate::editor_command::bind_keys(cx);
+    stored::bind_keys(cx);
     cx.bind_keys([KeyBinding::new(
         if cfg!(target_os = "macos") {
             "cmd-shift-m"

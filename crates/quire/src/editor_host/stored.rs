@@ -1,7 +1,49 @@
 use super::*;
 use crate::notebook_session::{NotebookSession, OpenPage};
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    path::PathBuf,
+    rc::Rc,
+};
 use theme::ActiveTheme;
+
+gpui::actions!(quire, [SavePage]);
+
+pub(super) fn bind_keys(cx: &mut App) {
+    cx.bind_keys([KeyBinding::new(
+        if cfg!(target_os = "macos") {
+            "cmd-s"
+        } else {
+            "ctrl-s"
+        },
+        SavePage,
+        Some(EDITOR_CONTEXT),
+    )]);
+}
+
+#[derive(Clone, Copy)]
+enum CloseIntent {
+    Window,
+    Quit,
+}
+
+fn allow_close(
+    session: Rc<RefCell<NotebookSession>>,
+    closing: Rc<Cell<Option<CloseIntent>>>,
+    intent: CloseIntent,
+    cx: &App,
+) -> bool {
+    if session.borrow().is_secured(cx) {
+        return true;
+    }
+    closing.set(Some(intent));
+    cx.spawn(async move |cx| {
+        cx.update(|cx| session.borrow().recover(cx));
+    })
+    .detach();
+    false
+}
 
 pub(super) struct OpenOptions {
     database: PathBuf,
@@ -71,7 +113,10 @@ impl OpenOptions {
 }
 
 struct StoredWindow {
-    _session: NotebookSession,
+    session: Rc<RefCell<NotebookSession>>,
+    closing: Rc<Cell<Option<CloseIntent>>>,
+    close_error: Option<gpui::SharedString>,
+    _quit_guard: gpui::Subscription,
     page: Entity<OpenPage>,
     editor: Option<Entity<NotebookWindow>>,
     copy_task: Option<gpui::Task<()>>,
@@ -85,13 +130,32 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> Self {
-        cx.observe_in(&page, window, |this, _, window, cx| {
-            this.attach_editor(window, cx);
-            cx.notify();
-        })
-        .detach();
+        let session = Rc::new(RefCell::new(session));
+        let closing = Rc::new(Cell::new(None));
+        let quit_guard = cx.on_request_quit({
+            let session = session.clone();
+            let closing = closing.clone();
+            move |cx| allow_close(session.clone(), closing.clone(), CloseIntent::Quit, cx)
+        });
+        window.on_window_should_close(cx, {
+            let session = session.clone();
+            let closing = closing.clone();
+            move |_, cx| allow_close(session.clone(), closing.clone(), CloseIntent::Window, cx)
+        });
+        for observed in session.borrow().open_pages() {
+            cx.observe_in(&observed, window, |this, _, window, cx| {
+                this.attach_editor(window, cx);
+                this.finish_close(window, cx);
+                cx.notify();
+            })
+            .detach();
+        }
+        session.borrow().enable_editing(cx);
         let mut this = Self {
-            _session: session,
+            session,
+            closing,
+            close_error: None,
+            _quit_guard: quit_guard,
             page,
             editor: None,
             copy_task: None,
@@ -112,7 +176,7 @@ impl StoredWindow {
         let title = page.path.as_deref().unwrap_or("Unsaved page");
         window.set_window_title(&format!("{title} · Quire Native"));
         eprintln!(
-            "Quire page preview ready: {} revision bodies, {} source bytes, {} heads, recovery={}, deleted={}, {:.1} ms to buffer ready.",
+            "Quire page buffer ready: {} revision bodies, {} source bytes, {} heads, recovery={}, deleted={}, {:.1} ms to buffer ready.",
             page.loaded_revision_bodies,
             page.source.original_len(),
             page.heads.len(),
@@ -121,6 +185,36 @@ impl StoredWindow {
             page.load_time.as_secs_f64() * 1000.
         );
         self.editor = Some(cx.new(|cx| NotebookWindow::for_page(analysis, None, window, cx)));
+    }
+
+    fn save_page(&mut self, cx: &mut gpui::Context<Self>) {
+        let persistence = self.page.read(cx).persistence().cloned();
+        if let Some(page) = persistence {
+            page.update(cx, |page, cx| page.save(cx));
+        }
+        self.close_error = None;
+    }
+
+    fn finish_close(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        if self.session.borrow().is_secured(cx) {
+            self.close_error = None;
+            if self.closing.get().is_some() {
+                cx.defer_in(window, |this, window, cx| {
+                    if this.session.borrow().is_secured(cx) {
+                        match this.closing.take() {
+                            Some(CloseIntent::Quit) => cx.quit(),
+                            Some(CloseIntent::Window) => window.remove_window(),
+                            None => {}
+                        }
+                    } else {
+                        this.session.borrow().recover(cx);
+                    }
+                });
+            }
+        } else if self.closing.get().is_some() && self.session.borrow().has_error(cx) {
+            self.closing.set(None);
+            self.close_error = Some("Some pages could not be recorded for recovery. Keep this window open, check the storage error, and retry closing after it is corrected. Copy Markdown remains available.".into());
+        }
     }
 
     fn copy_markdown(&mut self, cx: &mut gpui::Context<Self>) {
@@ -156,7 +250,13 @@ impl Render for StoredWindow {
             .flex()
             .items_center()
             .gap_2()
-            .child(Label::new(page.status()))
+            .child(Label::new(page.status(cx)))
+            .when(page.persistence().is_some(), |div| {
+                div.child(
+                    Button::new("save-page", "Save locally")
+                        .on_click(cx.listener(|this, _, _, cx| this.save_page(cx))),
+                )
+            })
             .when(page.loaded().is_some(), |div| {
                 div.child(
                     Button::new(
@@ -181,10 +281,14 @@ impl Render for StoredWindow {
             });
         gpui::div()
             .size_full()
+            .on_action(cx.listener(|this, _: &SavePage, _, cx| this.save_page(cx)))
             .flex()
             .flex_col()
             .bg(cx.theme().colors().editor_background)
             .child(header)
+            .when_some(self.close_error.clone(), |div, error| {
+                div.child(gpui::div().p_2().child(error))
+            })
             .when_some(self.copy_error.clone(), |div, error| {
                 div.child(gpui::div().p_2().child(error))
             })
@@ -200,6 +304,245 @@ impl Render for StoredWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct StoredFixture {
+        _root: tempfile::TempDir,
+        path: PathBuf,
+        window: gpui::WindowHandle<StoredWindow>,
+        page: Entity<OpenPage>,
+    }
+
+    fn open_stored(text: &str, cx: &mut gpui::TestAppContext) -> StoredFixture {
+        use quire_store::notebook::{Edit, NotebookStore};
+        cx.update(|cx| init(cx).unwrap());
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("local.sqlite");
+        let store = NotebookStore::open(&path, "nb", "local").unwrap();
+        store
+            .save(&Edit {
+                page: "p".into(),
+                base: vec![],
+                path: "Note.md".into(),
+                text: text.into(),
+                deleted: false,
+                created: 1,
+                recovery: None,
+            })
+            .unwrap();
+        drop(store);
+        let mut session = NotebookSession::open(path.clone(), "nb".into(), "local".into()).unwrap();
+        let page = cx.update(|cx| session.open_page("p".into(), cx));
+        let window =
+            cx.add_window(|window, cx| StoredWindow::new(session, page.clone(), window, cx));
+        crate::notebook_session::tests::wait(&page, cx);
+        cx.executor().run_until_parked();
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        StoredFixture {
+            _root: root,
+            path,
+            window,
+            page,
+        }
+    }
+
+    fn persistence(
+        fixture: &StoredFixture,
+        cx: &mut gpui::TestAppContext,
+    ) -> Entity<crate::page_persistence::PagePersistence> {
+        cx.update(|cx| fixture.page.read(cx).persistence().unwrap().clone())
+    }
+
+    #[gpui::test]
+    fn stored_editor_keyboard_save_commits_the_shared_source(cx: &mut gpui::TestAppContext) {
+        let fixture = open_stored("hello\r\n", cx);
+        let model = persistence(&fixture, cx);
+        fixture
+            .window
+            .update(cx, |view, _, cx| {
+                assert!(
+                    !view
+                        .editor
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .source
+                        .read(cx)
+                        .read_only(cx)
+                )
+            })
+            .unwrap();
+        cx.simulate_keystrokes(fixture.window.into(), "i x escape");
+        cx.simulate_keystrokes(
+            fixture.window.into(),
+            if cfg!(target_os = "macos") {
+                "cmd-s"
+            } else {
+                "ctrl-s"
+            },
+        );
+        crate::page_persistence::tests::wait(&model, cx);
+        cx.update(|cx| assert_eq!(model.read(cx).status(cx), "Saved locally"));
+        let store =
+            quire_store::notebook::NotebookStore::open(&fixture.path, "nb", "local").unwrap();
+        assert_eq!(
+            store
+                .checkout("p", None)
+                .unwrap()
+                .selected
+                .unwrap()
+                .root()
+                .field("text")
+                .as_str(),
+            Some("xhello\r\n")
+        );
+        assert!(store.draft("p").unwrap().is_none());
+    }
+
+    #[gpui::test]
+    fn close_records_current_recovery_before_removing_the_window(cx: &mut gpui::TestAppContext) {
+        let fixture = open_stored("hello\r\n", cx);
+        let model = persistence(&fixture, cx);
+        cx.simulate_keystrokes(fixture.window.into(), "i x escape");
+        fixture
+            .window
+            .update(cx, |view, _, cx| {
+                assert!(!allow_close(
+                    view.session.clone(),
+                    view.closing.clone(),
+                    CloseIntent::Window,
+                    cx
+                ));
+            })
+            .unwrap();
+        crate::page_persistence::tests::wait(&model, cx);
+        while cx.executor().tick() {}
+        assert!(fixture.window.update(cx, |_, _, _| {}).is_err());
+        let store =
+            quire_store::notebook::NotebookStore::open(&fixture.path, "nb", "local").unwrap();
+        assert_eq!(store.draft("p").unwrap().unwrap().text, "xhello\r\n");
+        assert_eq!(
+            store
+                .checkout("p", None)
+                .unwrap()
+                .selected
+                .unwrap()
+                .root()
+                .field("text")
+                .as_str(),
+            Some("hello\r\n")
+        );
+    }
+
+    #[gpui::test]
+    fn native_quit_resumes_after_recording_the_current_recovery(cx: &mut gpui::TestAppContext) {
+        let fixture = open_stored("hello\r\n", cx);
+        let model = persistence(&fixture, cx);
+        cx.simulate_keystrokes(fixture.window.into(), "i x escape");
+        assert!(!cx.simulate_native_quit_request());
+        assert_eq!(cx.platform_quit_count(), 0);
+        crate::page_persistence::tests::wait(&model, cx);
+        while cx.executor().tick() {}
+        assert_eq!(cx.platform_quit_count(), 1);
+        assert!(cx.simulate_native_quit_request());
+        let store =
+            quire_store::notebook::NotebookStore::open(&fixture.path, "nb", "local").unwrap();
+        assert_eq!(store.draft("p").unwrap().unwrap().text, "xhello\r\n");
+    }
+
+    #[gpui::test]
+    fn quit_failure_keeps_the_window_and_current_text_accessible(cx: &mut gpui::TestAppContext) {
+        let fixture = open_stored("hello", cx);
+        let model = persistence(&fixture, cx);
+        crate::page_persistence::tests::stop_storage(&model, cx);
+        cx.simulate_keystrokes(fixture.window.into(), "i x escape");
+        assert!(!cx.simulate_native_quit_request());
+        crate::page_persistence::tests::wait(&model, cx);
+        cx.executor().run_until_parked();
+        assert_eq!(cx.platform_quit_count(), 0);
+        fixture
+            .window
+            .update(cx, |view, _, cx| {
+                assert!(view.close_error.is_some());
+                assert!(view.closing.get().is_none());
+                assert_eq!(
+                    view.editor
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .source
+                        .read(cx)
+                        .text(cx),
+                    "xhello"
+                );
+                view.copy_markdown(cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        cx.update(|cx| assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), "xhello"));
+    }
+
+    #[gpui::test]
+    fn semantic_excerpt_edits_and_source_undo_use_the_same_persistence_stream(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use multi_buffer::MultiBufferOffset;
+        let raw = "- hello ^b-one\r\n  - child\r\n- outside\r";
+        let fixture = open_stored(raw, cx);
+        let model = persistence(&fixture, cx);
+        let analysis = cx.update(|cx| fixture.page.read(cx).loaded().unwrap().analysis.clone());
+        let excerpt = cx
+            .new(|cx| crate::semantic_excerpt::SemanticExcerpt::new(analysis, "b-one".into(), cx));
+        cx.executor().run_until_parked();
+        let buffer = cx.update(|cx| excerpt.read(cx).buffer.clone());
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(MultiBufferOffset(2)..MultiBufferOffset(2), "x")],
+                None,
+                cx,
+            );
+        });
+        cx.update(|cx| assert!(model.read(cx).is_dirty(cx)));
+        cx.simulate_keystrokes(fixture.window.into(), "u");
+        fixture
+            .window
+            .update(cx, |view, _, cx| {
+                assert_eq!(
+                    view.editor
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .source
+                        .read(cx)
+                        .text(cx),
+                    "- hello ^b-one\n  - child\n- outside\n"
+                )
+            })
+            .unwrap();
+        cx.simulate_keystrokes(
+            fixture.window.into(),
+            if cfg!(target_os = "macos") {
+                "cmd-s"
+            } else {
+                "ctrl-s"
+            },
+        );
+        crate::page_persistence::tests::wait(&model, cx);
+        let store =
+            quire_store::notebook::NotebookStore::open(&fixture.path, "nb", "local").unwrap();
+        assert_eq!(
+            store
+                .checkout("p", None)
+                .unwrap()
+                .selected
+                .unwrap()
+                .root()
+                .field("text")
+                .as_str(),
+            Some(raw)
+        );
+        cx.update(|cx| assert!(!model.read(cx).is_dirty(cx)));
+    }
 
     fn arguments() -> Vec<String> {
         [
@@ -306,9 +649,9 @@ mod tests {
                 assert!(loaded.deleted);
                 assert!(loaded.recovered);
                 assert_eq!(loaded.heads.len(), 2);
-                assert!(page.status().contains("2 conflicting versions"));
-                assert!(page.status().contains("selected version is deleted"));
-                assert!(page.status().contains("recovered unsaved changes"));
+                assert!(page.status(cx).contains("2 conflicting versions"));
+                assert!(page.status(cx).contains("selected version is deleted"));
+                assert!(page.status(cx).contains("recovered unsaved changes"));
                 let editor = view.editor.as_ref().unwrap();
                 let (source, second) = {
                     let editor = editor.read(cx);

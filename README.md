@@ -1,8 +1,8 @@
 # Quire native
 
-The Rust/GPUI rewrite is underway. The default executable hosts Zed's editor and Vim in two panes sharing an in-memory example note. Each pane can switch between Source and Write presentation using the copied Markdown and inline grammars. Editing, search, shared undo, projections, and semantic excerpts have headless tests. Persistent editing, daily-page navigation, and the remaining application workflows are still in [the task queue](plans/native-rewrite-tasks.md).
+The Rust/GPUI rewrite is underway. The default executable hosts Zed's editor and Vim in two panes sharing an in-memory example note. Each pane can switch between Source and Write presentation using the copied Markdown and inline grammars. Existing stored pages support editing, recovery, and local saves. Daily-page navigation and the remaining application workflows are still in [the task queue](plans/native-rewrite-tasks.md).
 
-Open a stored page preview with its native database and original identities:
+Open a stored page with its native database and original identities:
 
 ```sh
 cargo run -p quire --locked -- \
@@ -10,11 +10,13 @@ cargo run -p quire --locked -- \
   --notebook-id notebook-id --writer-id writer-id --page-id page-id
 ```
 
-The preview loads one selected revision and optional recovery through the storage worker. Concurrent opens within a notebook session share one buffer and analysis model. Recovery takes precedence in the preview, while the saved revision and recovery record remain in storage. Conflicts and deleted versions appear in its status. Unrepresentable UTF-16 strings produce an actionable error without creating a lossy buffer. A failed page read can be retried after its cause is corrected; startup failures require reopening the notebook.
+The window loads one selected revision and optional recovery through the storage worker. Concurrent opens within a notebook session share one buffer and analysis model. Recovery takes precedence when opening a page. Conflicts, deleted versions, missing pages, and recovery based on older heads remain read-only until their resolution or creation workflow is available. Unrepresentable UTF-16 strings produce an actionable error without creating a lossy buffer. A failed page read can be retried after its cause is corrected; startup failures require reopening the notebook.
 
 Copy Markdown copies the whole page, including recovered text, with its original line endings. It captures the page when clicked and prepares the clipboard contents in the background. The shared source mapping preserves untouched LF, CRLF, and bare-CR endings through native edits and undo; new line breaks use the first opened line-break style, or LF for a page without line breaks.
 
-Stored-page previews are read-only until recovery, save, and close protection are connected. Opening a database still performs the normal native schema validation and upgrades. This path does not open or convert a legacy Markdown folder. It reports loaded revision-body counts and time to buffer readiness; those figures do not establish first-editable or release performance acceptance.
+Typing records recovery after 100 ms of inactivity and saves locally after 450 ms. Save locally, Cmd-S on macOS, or Ctrl-S elsewhere saves immediately. Status distinguishes recovery from a committed local save; folder publication remains separate. A save acknowledges its captured version, so later typing stays dirty. If the stored heads changed elsewhere, saving stops and preserves the buffer for recovery and review. Closing or quitting waits for current recovery; a storage failure keeps the window and Copy Markdown accessible.
+
+Opening a database performs native schema validation and upgrades. This path does not open or convert a legacy Markdown folder. It reports loaded revision-body counts and time to buffer readiness; those figures do not establish first-editable or release performance acceptance. Native desktop close/quit acceptance remains open; the guards have headless GPUI coverage.
 
 Each pane has local Find and Replace. Use Cmd-F / Cmd-Option-F on macOS, or Ctrl-F / Ctrl-H elsewhere. Enter and Shift-Enter navigate matches; Escape returns to the editor. In the replacement field, Enter replaces one match and Cmd-Enter / Ctrl-Enter replaces all. Replacements share the document's undo history. Vim supports `/`, `?`, `n`/`N`, word-under-cursor search, counts, cancellation, and search motions with operators.
 

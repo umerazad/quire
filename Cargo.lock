@@ -11366,6 +11366,7 @@ dependencies = [
  "ui",
  "unicode-segmentation",
  "util",
+ "uuid",
  "vim",
  "workspace",
  "zed_actions",
