@@ -3,7 +3,7 @@ import { resolve, join, relative } from "node:path";
 import { execFileSync } from "node:child_process";
 
 const source = resolve(process.argv[2] ?? "../zed");
-const vendor = resolve("vendor/zed");
+const vendor = resolve(process.argv[3] ?? "vendor/zed");
 const manifest = JSON.parse(readFileSync(join(vendor, "UPSTREAM.json"), "utf8"));
 const revision = execFileSync("git", ["-C", source, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 if (revision !== manifest.revision) throw new Error("The upstream checkout is at a different revision. Use the pinned snapshot before comparing vendored files.");

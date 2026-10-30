@@ -11357,6 +11357,7 @@ dependencies = [
  "theme_settings",
  "tree-sitter",
  "tree-sitter-md",
+ "tree-sitter-quire-markdown",
  "ui",
  "unicode-segmentation",
  "util",
@@ -14614,6 +14615,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6bf85fd39652e740bf60f46f4cda9492c3a9ad75880575bf14960f775cb74a1c"
 dependencies = [
  "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-quire-markdown"
+version = "0.3.2"
+dependencies = [
+ "cc",
+ "tree-sitter",
  "tree-sitter-language",
 ]
 

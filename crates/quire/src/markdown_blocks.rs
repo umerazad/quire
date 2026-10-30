@@ -134,7 +134,9 @@ fn parse_tree(
         });
     }
     let mut parser = language::Parser::new();
-    parser.set_language(&tree_sitter_md::LANGUAGE.into()).ok()?;
+    parser
+        .set_language(&tree_sitter_quire_markdown::LANGUAGE.into())
+        .ok()?;
     let mut chunks = snapshot.text.as_rope().chunks_in_range(0..len);
     parser.parse_with_options(
         &mut |offset, _| {

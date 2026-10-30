@@ -1,0 +1,45 @@
+{
+  "repository": "https://github.com/tree-sitter-grammars/tree-sitter-markdown",
+  "revision": "b596e737286780d7bfa9fcddceaeeb754574b352",
+  "build_inputs": [
+    "bindings/rust",
+    "tree-sitter-markdown/src",
+    "tree-sitter-markdown/queries",
+    "tree-sitter-markdown-inline/src",
+    "tree-sitter-markdown-inline/queries"
+  ],
+  "modifications": [
+    {
+      "path": "Cargo.toml",
+      "reason": "Standalone namespaced grammar bindings; use the workspace runtime for tests and omit the unused optional convenience parser."
+    },
+    {
+      "path": "tree-sitter-markdown/src/parser.c",
+      "reason": "Namespace exported C symbols so the original Zed grammar can coexist."
+    },
+    {
+      "path": "tree-sitter-markdown/src/scanner.c",
+      "reason": "Namespace exported C symbols so the original Zed grammar can coexist. Match the frozen Quire dialect: no setext headings and tables cannot interrupt paragraphs."
+    },
+    {
+      "path": "tree-sitter-markdown-inline/src/parser.c",
+      "reason": "Namespace exported C symbols so the original Zed grammar can coexist."
+    },
+    {
+      "path": "tree-sitter-markdown-inline/src/scanner.c",
+      "reason": "Namespace exported C symbols so the original Zed grammar can coexist."
+    },
+    {
+      "path": "bindings/rust/lib.rs",
+      "reason": "Namespace exported C symbols so the original Zed grammar can coexist. Expose only grammar bindings; Quire uses the Zed language layer rather than the optional upstream convenience parser."
+    },
+    {
+      "path": "bindings/rust/build.rs",
+      "reason": "Use a distinct static archive name."
+    },
+    {
+      "path": "README.md",
+      "reason": "Document the standalone Quire dialect, namespacing, omitted convenience wrapper, and verification commands; retain upstream README below."
+    }
+  ]
+}

@@ -19,7 +19,7 @@ workspace = { workspace = true, optional = true }
 language = { workspace = true, optional = true }
 multi_buffer = { workspace = true, optional = true }
 grammars = { workspace = true, optional = true }
-tree-sitter-md = { workspace = true, optional = true }
+tree-sitter-quire-markdown = { workspace = true, optional = true }
 tree-sitter = { workspace = true, optional = true }
 settings = { workspace = true, optional = true }
 theme = { workspace = true, optional = true }
@@ -33,8 +33,9 @@ zed_actions = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true
+tree-sitter-md.workspace = true
 
 [features]
 default = ["full-editor"]
 test-support = ["gpui/test-support", "gpui_platform/test-support"]
-full-editor = ["dep:quire_core", "dep:editor", "dep:ui", "dep:http_client", "dep:search", "dep:workspace", "dep:language", "dep:multi_buffer", "dep:grammars", "dep:tree-sitter-md", "dep:tree-sitter", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:assets", "dep:util", "dep:zed_actions"]
+full-editor = ["dep:quire_core", "dep:editor", "dep:ui", "dep:http_client", "dep:search", "dep:workspace", "dep:language", "dep:multi_buffer", "dep:grammars", "dep:tree-sitter-quire-markdown", "dep:tree-sitter", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:assets", "dep:util", "dep:zed_actions"]
