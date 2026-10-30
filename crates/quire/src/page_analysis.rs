@@ -182,6 +182,13 @@ pub(crate) fn task_syntax(snapshot: &BufferSnapshot, text: &str) -> Option<TaskS
     })
 }
 
+/// The page's wiki and Roam references outside code, without tag analysis.
+pub(crate) fn references(snapshot: &BufferSnapshot) -> Option<Vec<Reference>> {
+    let text = snapshot.text();
+    let excluded = syntax::exclusions(snapshot, &text)?;
+    Some(quire_core::markdown::references(&text, &excluded.code))
+}
+
 pub(crate) fn analyze_inline(snapshot: &BufferSnapshot) -> Option<InlineAnalysis> {
     let text = snapshot.text();
     let excluded = syntax::exclusions(snapshot, &text)?;

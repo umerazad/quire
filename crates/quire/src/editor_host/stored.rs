@@ -230,7 +230,7 @@ impl StoredWindow {
             }
             editor
         });
-        self.link_editors(&editor, cx);
+        self.link_editors(&editor, window, cx);
         if let Some(previous) = previous {
             window.focus(&previous, cx);
         }

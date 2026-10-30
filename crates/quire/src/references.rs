@@ -54,8 +54,6 @@ pub struct Follow {
 
 /// The notebook a page editor's references resolve in.
 pub trait Notebook {
-    /// The query index, once it runs.
-    fn index(&self, cx: &App) -> Option<IndexClient>;
     /// Opens what a reference names.
     fn follow(&self, follow: Follow, window: &mut Window, cx: &mut App);
     /// The open page with this ID, loading it if needed, so every view of a page shares one
@@ -69,19 +67,29 @@ pub trait Notebook {
 /// have changed.
 pub struct ReferenceHost {
     notebook: Rc<dyn Notebook>,
+    index: Option<IndexClient>,
 }
 
 impl ReferenceHost {
     pub fn new(notebook: Rc<dyn Notebook>) -> Self {
-        Self { notebook }
+        Self {
+            notebook,
+            index: None,
+        }
     }
 
     pub fn notebook(&self) -> &Rc<dyn Notebook> {
         &self.notebook
     }
 
-    /// The index answers differently than before.
-    pub fn changed(&mut self, cx: &mut Context<Self>) {
+    /// The query index, once it runs.
+    pub fn index(&self) -> Option<&IndexClient> {
+        self.index.as_ref()
+    }
+
+    /// The index started, restarted, or answers differently than before.
+    pub fn changed(&mut self, index: Option<IndexClient>, cx: &mut Context<Self>) {
+        self.index = index;
         cx.notify();
     }
 }
@@ -107,12 +115,20 @@ pub(crate) fn host(editor: &Editor) -> Option<Entity<ReferenceHost>> {
 }
 
 /// Lets an editor follow and complete references in the host's notebook.
-pub fn install(editor: &Entity<Editor>, host: &Entity<ReferenceHost>, cx: &mut App) {
+pub fn install(
+    editor: &Entity<Editor>,
+    host: &Entity<ReferenceHost>,
+    window: &mut Window,
+    cx: &mut App,
+) {
     editor.update(cx, |editor, cx| {
         if editor.addon::<Linked>().is_some() {
             return;
         }
-        let subscription = cx.observe(host, |_, _, cx| cx.notify());
+        let subscription = cx.observe_in(host, window, |editor, _, window, cx| {
+            crate::editor_projection::references_changed(editor, window, cx);
+            cx.notify();
+        });
         editor.register_addon(Linked {
             host: host.clone(),
             _subscription: subscription,
@@ -205,11 +221,11 @@ fn follow_at_caret(
     {
         return false;
     }
-    let Some(inline) = crate::page_analysis::analyze_inline(&snapshot) else {
+    let Some(references) = crate::page_analysis::references(&snapshot) else {
         crate::outline::set_notice(Some(NOT_READY), cx);
         return true;
     };
-    let Some(target) = reference_at(&inline.references, offset.0).and_then(Target::of) else {
+    let Some(target) = reference_at(&references, offset.0).and_then(Target::of) else {
         return false;
     };
     let notebook = host.read(cx).notebook().clone();

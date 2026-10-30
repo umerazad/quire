@@ -80,7 +80,10 @@ impl StoredWindow {
 
     /// Re-runs every query shown on screen, after the index changed or restarted.
     pub(in crate::editor_host::stored) fn refresh_queries(&mut self, cx: &mut gpui::Context<Self>) {
-        self.links.host.update(cx, |host, cx| host.changed(cx));
+        let index = self.index_client(cx);
+        self.links
+            .host
+            .update(cx, |host, cx| host.changed(index, cx));
         self.refresh_tags(cx);
         self.refresh_references(cx);
     }

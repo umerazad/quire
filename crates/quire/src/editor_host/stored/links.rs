@@ -5,7 +5,7 @@ use super::*;
 use crate::query_index::ask;
 use crate::references::{Follow, Notebook, ReferenceHost, Target};
 use quire_core::workspace::Destination;
-use quire_store::index::{IndexClient, PageRef};
+use quire_store::index::PageRef;
 
 pub(super) struct Links {
     pub(super) host: Entity<ReferenceHost>,
@@ -29,10 +29,6 @@ impl Links {
 struct WindowNotebook(gpui::WeakEntity<StoredWindow>);
 
 impl Notebook for WindowNotebook {
-    fn index(&self, cx: &App) -> Option<IndexClient> {
-        self.0.upgrade()?.read(cx).index_client(cx)
-    }
-
     fn follow(&self, follow: Follow, window: &mut Window, cx: &mut App) {
         self.0
             .update(cx, |this, cx| this.follow(follow, window, cx))
@@ -62,13 +58,18 @@ impl Notebook for WindowNotebook {
 
 impl StoredWindow {
     /// Lets both editors of a page view follow and complete references in this notebook.
-    pub(super) fn link_editors(&self, view: &Entity<NotebookWindow>, cx: &mut App) {
+    pub(super) fn link_editors(
+        &self,
+        view: &Entity<NotebookWindow>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         let (source, second) = {
             let view = view.read(cx);
             (view.source.clone(), view.second.clone())
         };
         for editor in [source, second] {
-            crate::references::install(&editor, &self.links.host, cx);
+            crate::references::install(&editor, &self.links.host, window, cx);
         }
     }
 

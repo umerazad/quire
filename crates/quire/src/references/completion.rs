@@ -173,7 +173,7 @@ impl CompletionProvider for References {
             return Task::ready(Ok(Vec::new()));
         };
         let notebook = self.host.read(cx).notebook().clone();
-        let Some(index) = notebook.index(cx) else {
+        let Some(index) = self.host.read(cx).index().cloned() else {
             crate::outline::set_notice(Some(NO_INDEX), cx);
             return Task::ready(Ok(Vec::new()));
         };
