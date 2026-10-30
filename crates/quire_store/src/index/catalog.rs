@@ -4,7 +4,9 @@
 use super::query::{PAGE_COLUMNS, PageRow, page_ref};
 use super::{QueryIndex, strip_markdown};
 use crate::index::PageRef;
+use crate::sync::json::JsString;
 use anyhow::Result;
+use std::collections::HashSet;
 
 /// The replicated page that carries notebook settings; navigation never lists it.
 pub const SETTINGS_PAGE: &str = "s-notebook";
@@ -46,6 +48,50 @@ impl QueryIndex {
         let name = strip_markdown(path).to_lowercase();
         Ok(!self.pages_where("p.name_key=?", &name)?.is_empty())
     }
+
+    /// What deleting a page or a folder takes: the pages that go, ordered by path, and how many
+    /// links from the pages that stay will stop resolving.
+    pub fn deletion(&self, target: &DeletionTarget) -> Result<Deletion> {
+        let mut pages: Vec<PageRef> = match target {
+            DeletionTarget::Page(page) => self.pages_where("p.page=?", &page.to_json())?,
+            DeletionTarget::Folder(folder) => self
+                .pages()?
+                .into_iter()
+                .map(|listed| listed.page)
+                .filter(|page| {
+                    page.path
+                        .strip_prefix(folder.as_str())
+                        .is_some_and(|rest| rest.starts_with('/'))
+                })
+                .collect(),
+        };
+        pages.sort_by(|a, b| self.collator.compare(&a.path, &b.path));
+        let gone: HashSet<&[u8]> = pages.iter().map(|page| page.page.as_bytes()).collect();
+        let mut broken_links = 0;
+        for page in &pages {
+            broken_links += self
+                .backlinks(&page.page)?
+                .iter()
+                .filter(|link| !gone.contains(link.source.page.as_bytes()))
+                .count();
+        }
+        Ok(Deletion {
+            pages,
+            broken_links,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DeletionTarget {
+    Page(JsString),
+    Folder(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Deletion {
+    pub pages: Vec<PageRef>,
+    pub broken_links: usize,
 }
 
 impl super::IndexClient {
@@ -54,5 +100,8 @@ impl super::IndexClient {
     }
     pub fn path_taken(&self, path: String) -> super::Answer<bool> {
         self.request(128 + path.len(), move |index| index.path_taken(&path))
+    }
+    pub fn deletion(&self, target: DeletionTarget) -> super::Answer<Deletion> {
+        self.request(256, move |index| index.deletion(&target))
     }
 }

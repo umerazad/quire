@@ -1,4 +1,5 @@
-//! All-or-nothing writes to several pages, open or closed: bulk tag edits and task updates. Each
+//! All-or-nothing writes to several pages, open or closed: bulk tag edits, task updates, renames,
+//! and deletions. Each
 //! page's text is read from its live buffer when open, unsaved typing included, or from its
 //! stored head. Applying refuses when any open page changed after it was read; otherwise open
 //! pages save first and hold further saves, every page is written in one checked save, and open
@@ -35,9 +36,15 @@ pub struct PageSource {
 impl PageSource {
     /// The write that replaces this page's text with `text`.
     pub fn write(self, text: Arc<str>) -> PageWrite {
+        let path = self.path.clone();
+        self.write_at(path, text)
+    }
+
+    /// The write that moves this page to `path` with `text`, keeping its identity and history.
+    pub fn write_at(self, path: String, text: Arc<str>) -> PageWrite {
         PageWrite {
             page: self.page,
-            path: self.path,
+            path,
             base: self.base,
             text,
             open: self.open,
@@ -158,9 +165,33 @@ async fn idle(open: &[Entity<PagePersistence>], cx: &mut AsyncApp) {
 }
 
 /// Writes every page or none, refusing with `stale` when an open page changed after it was read
-/// or another writer saved a page meanwhile. Returns how many pages were written.
+/// or another writer saved a page meanwhile. Open pages take in their new text and path. Returns
+/// how many pages were written.
 pub fn apply(
     writes: Vec<PageWrite>,
+    storage: StorageClient,
+    stale: &'static str,
+    cx: &mut App,
+) -> Task<Result<usize, String>> {
+    write(writes, None, storage, stale, cx)
+}
+
+/// Deletes every page or none, as `apply` writes them. With `folder`, also refuses when a page
+/// appeared inside it after the pages were chosen. Open pages stop saving, so nothing typed later
+/// can revive them; their text stays in the buffer.
+pub fn delete(
+    writes: Vec<PageWrite>,
+    folder: Option<String>,
+    storage: StorageClient,
+    stale: &'static str,
+    cx: &mut App,
+) -> Task<Result<usize, String>> {
+    write(writes, Some(folder), storage, stale, cx)
+}
+
+fn write(
+    writes: Vec<PageWrite>,
+    deletion: Option<Option<String>>,
     storage: StorageClient,
     stale: &'static str,
     cx: &mut App,
@@ -182,41 +213,64 @@ pub fn apply(
     }
     cx.spawn(async move |cx| {
         idle(&open, cx).await;
-        let saved = match cx.update(|cx| edits(&writes, cx)) {
-            Some(edits) => match ask(storage.save_many_if_heads(edits)).await {
-                Ok(CheckedSaves::Saved(acks)) => Ok(acks),
-                Ok(CheckedSaves::HeadsChanged { .. } | CheckedSaves::Appeared { .. }) => {
-                    Err(stale.to_owned())
+        let saved = match cx.update(|cx| edits(&writes, deletion.is_some(), cx)) {
+            Some(edits) => {
+                let request = match &deletion {
+                    None => storage.save_many_if_heads(edits),
+                    Some(folder) => storage.delete_if_heads(edits, folder.clone()),
+                };
+                match ask(request).await {
+                    Ok(CheckedSaves::Saved(acks)) => Ok(acks),
+                    Ok(CheckedSaves::HeadsChanged { .. }) => Err(stale.to_owned()),
+                    Ok(CheckedSaves::Appeared { path }) => Err(appeared(&path, &deletion)),
+                    Err(error) => Err(error),
                 }
-                Err(error) => Err(error),
-            },
+            }
             None => Err(stale.to_owned()),
         };
         cx.update(|cx| {
-            if let Ok(acks) = &saved {
-                for (write, ack) in writes.iter().zip(acks) {
-                    if let Some(persistence) = write
-                        .open
-                        .as_ref()
-                        .and_then(|open| open.persistence.upgrade())
-                    {
-                        persistence.update(cx, |persistence, cx| {
-                            persistence.absorb(ack.revision_id().to_owned(), write.text.clone(), cx)
-                        });
+            let written = saved.is_ok();
+            for (write, ack) in writes.iter().zip(saved.iter().flatten()) {
+                let Some(persistence) = write
+                    .open
+                    .as_ref()
+                    .and_then(|open| open.persistence.upgrade())
+                else {
+                    continue;
+                };
+                persistence.update(cx, |persistence, cx| {
+                    if deletion.is_some() {
+                        persistence.retire(cx);
+                    } else {
+                        persistence.relocate(write.path.clone(), cx);
+                        persistence.absorb(ack.revision_id().to_owned(), write.text.clone(), cx)
                     }
-                }
+                });
             }
-            for persistence in &open {
-                persistence.update(cx, |persistence, cx| persistence.release(cx));
+            if !(written && deletion.is_some()) {
+                for persistence in &open {
+                    persistence.update(cx, |persistence, cx| persistence.release(cx));
+                }
             }
         });
         saved.map(|acks| acks.len())
     })
 }
 
+fn appeared(path: &str, deletion: &Option<Option<String>>) -> String {
+    match deletion {
+        Some(Some(folder)) => format!(
+            "{path} appeared in {folder} after you chose to delete it. Nothing was deleted; try again."
+        ),
+        _ => format!(
+            "{path} changed before the change could be applied. Nothing was changed; review the page and try again."
+        ),
+    }
+}
+
 /// The saves to make, with each open page's current base: its own save may have landed since
 /// it was read without changing its text.
-fn edits(writes: &[PageWrite], cx: &App) -> Option<Vec<Edit>> {
+fn edits(writes: &[PageWrite], deleted: bool, cx: &App) -> Option<Vec<Edit>> {
     if !unchanged(writes, cx) {
         return None;
     }
@@ -237,7 +291,7 @@ fn edits(writes: &[PageWrite], cx: &App) -> Option<Vec<Edit>> {
                 base,
                 path: write.path.clone(),
                 text: write.text.to_string(),
-                deleted: false,
+                deleted,
                 created,
                 recovery: None,
             })

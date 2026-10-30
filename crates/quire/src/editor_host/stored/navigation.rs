@@ -3,9 +3,9 @@
 
 use super::*;
 use crate::navigation::{
-    CaptureTask, CloseTab, FindPage, FocusFiles, FocusReferences, GoBack, GoForward, NewPage,
-    NextTab, OpenToday, PreviousTab, ShowDaily, ShowPages, ShowTags, ShowTasks, ToggleFavorite,
-    ToggleSidePane, WorkspaceFile, create_page,
+    CaptureTask, CloseTab, DeleteFile, DeletePage, FindPage, FocusFiles, FocusReferences, GoBack,
+    GoForward, NewPage, NextTab, OpenToday, PreviousTab, ShowDaily, ShowPages, ShowTags, ShowTasks,
+    ToggleFavorite, ToggleSidePane, WorkspaceFile, create_page,
     palette::{PagePalette, PaletteChoice, PaletteMode},
 };
 use gpui::{DismissEvent, EntityId, SharedString, Task};
@@ -18,6 +18,8 @@ use std::collections::HashSet;
 mod chrome;
 #[path = "daily.rs"]
 mod daily;
+#[path = "file_views.rs"]
+mod file_views;
 #[path = "reference_views.rs"]
 mod reference_views;
 #[path = "tag_views.rs"]
@@ -32,6 +34,7 @@ pub(super) struct Navigation {
     editors: HashMap<EntityId, Entity<NotebookWindow>>,
     watched: HashSet<EntityId>,
     pub(super) palette: Option<Entity<Picker<PagePalette>>>,
+    pub(super) dialog: Option<Entity<crate::navigation::file_dialog::FileDialog>>,
     pub(super) pages: Vec<ListedPage>,
     catalogue: Option<Task<()>>,
     saving: Option<Task<()>>,
@@ -63,6 +66,7 @@ impl Navigation {
             editors: HashMap::new(),
             watched: HashSet::new(),
             palette: None,
+            dialog: None,
             pages: Vec::new(),
             catalogue: None,
             saving: None,
@@ -449,6 +453,14 @@ impl StoredWindow {
             }))
             .on_action(cx.listener(|this, _: &FocusFiles, window, cx| this.focus_files(window, cx)))
             .on_action(cx.listener(|this, _: &OpenToday, window, cx| this.open_today(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &DeletePage, window, cx| this.delete_shown_page(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &DeleteFile, window, cx| {
+                    this.delete_selected_file(window, cx)
+                }),
+            )
     }
 
     /// Moves through history without recording recents, restoring a closed tab if needed.
@@ -695,3 +707,7 @@ mod references_tests;
 #[cfg(test)]
 #[path = "tasks_tests.rs"]
 mod tasks_tests;
+
+#[cfg(test)]
+#[path = "file_tests.rs"]
+mod file_tests;
