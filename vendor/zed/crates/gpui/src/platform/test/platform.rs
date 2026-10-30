@@ -30,6 +30,8 @@ use std::{
 /// TestPlatform implements the Platform trait for use in tests.
 pub(crate) struct TestPlatform {
     pub(crate) platform_info: Cell<crate::PlatformInfo>,
+    pub(crate) quit_count: Cell<usize>,
+    pub(crate) quit_request_callback: RefCell<Option<Box<dyn FnMut() -> bool>>>,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
 
@@ -238,6 +240,8 @@ impl TestPlatform {
                 },
             }),
             background_executor: executor,
+            quit_count: Cell::new(0),
+            quit_request_callback: RefCell::new(None),
             foreground_executor,
             #[cfg(any(test, feature = "test-support"))]
             prompts: Default::default(),
@@ -528,7 +532,9 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn quit(&self) {}
+    fn quit(&self) {
+        self.quit_count.set(self.quit_count.get() + 1);
+    }
 
     fn restart(&self, path: Option<PathBuf>, arguments: Vec<std::ffi::OsString>) {
         if let Some(tx) = self.expect_restart.take() {
@@ -690,6 +696,9 @@ impl Platform for TestPlatform {
     }
 
     fn on_quit(&self, _callback: Box<dyn FnMut() -> bool>) {}
+    fn on_request_quit(&self, callback: Box<dyn FnMut() -> bool>) {
+        *self.quit_request_callback.borrow_mut() = Some(callback);
+    }
 
     fn on_reopen(&self, _callback: Box<dyn FnMut()>) {
         unimplemented!()

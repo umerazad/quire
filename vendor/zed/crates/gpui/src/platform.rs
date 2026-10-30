@@ -461,6 +461,10 @@ pub trait Platform: 'static {
     fn open_with_system(&self, path: &Path);
 
     fn on_quit(&self, callback: Box<dyn FnMut() -> bool>);
+    /// Registers a check before native termination, where the platform supports vetoing it.
+    /// This is separate from the final on_quit notification. App::quit also runs checks before
+    /// asking any platform to quit, including platforms without a native request callback.
+    fn on_request_quit(&self, _callback: Box<dyn FnMut() -> bool>) {}
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
     /// Registers the callback invoked when the system is about to sleep.
     fn on_system_sleep(&self, callback: Box<dyn FnMut()>);

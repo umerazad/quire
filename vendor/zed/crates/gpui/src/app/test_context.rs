@@ -250,6 +250,20 @@ impl TestAppContext {
         self.on_quit.borrow_mut().push(Box::new(f));
     }
 
+    /// Runs the native pre-termination check without shutting down the test application.
+    pub fn simulate_native_quit_request(&self) -> bool {
+        self.test_platform
+            .quit_request_callback
+            .borrow_mut()
+            .as_mut()
+            .is_none_or(|callback| callback())
+    }
+
+    /// Counts allowed programmatic platform-quit requests without ending the test runner.
+    pub fn platform_quit_count(&self) -> usize {
+        self.test_platform.quit_count.get()
+    }
+
     /// Schedules all windows to be redrawn on the next effect cycle.
     pub fn refresh(&mut self) -> Result<()> {
         let mut app = self.app.borrow_mut();

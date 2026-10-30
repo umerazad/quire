@@ -20,6 +20,9 @@ mod page_analysis;
 #[cfg(feature = "full-editor")]
 mod notebook_session;
 
+#[cfg(all(test, feature = "full-editor"))]
+mod quit_guard_tests;
+
 #[cfg(feature = "full-editor")]
 mod semantic_excerpt;
 

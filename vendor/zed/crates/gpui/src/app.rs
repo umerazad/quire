@@ -427,6 +427,7 @@ type MissingGlyphCallback = Box<dyn FnMut(&[MissingGlyph], &mut App) + 'static>;
 pub(crate) type KeystrokeObserver =
     Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut App) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut App) -> LocalBoxFuture<'static, ()> + 'static>;
+type QuitRequestHandler = Box<dyn FnMut(&App) -> bool + 'static>;
 type WindowClosedHandler = Box<dyn FnMut(&mut App, WindowId)>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
@@ -892,6 +893,8 @@ pub struct App {
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SingleSubscriberSet<QuitHandler>,
+    quit_request_observers: SingleSubscriberSet<QuitRequestHandler>,
+    checking_quit_request: Cell<bool>,
     pub(crate) restart_observers: SingleSubscriberSet<Handler>,
     pub(crate) window_closed_observers: SingleSubscriberSet<WindowClosedHandler>,
 
@@ -1039,6 +1042,8 @@ impl App {
                 memory_warning_observers: SingleSubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SingleSubscriberSet::new(),
+                quit_request_observers: SingleSubscriberSet::new(),
+                checking_quit_request: Cell::new(false),
                 restart_observers: SingleSubscriberSet::new(),
                 restart_path: None,
                 restart_arguments: Vec::new(),
@@ -1164,6 +1169,19 @@ impl App {
                 if let Some(app) = app.upgrade() {
                     let power_mode = app.borrow().platform.power_mode();
                     app.borrow_mut().power_mode = power_mode;
+                }
+            }
+        }));
+
+        platform.on_request_quit(Box::new({
+            let cx = Rc::downgrade(&app);
+            move || {
+                let Some(cx) = cx.upgrade() else {
+                    return true;
+                };
+                match cx.try_borrow_mut() {
+                    Ok(cx) => cx.can_quit(),
+                    Err(_) => false,
                 }
             }
         }));
@@ -1307,8 +1325,24 @@ impl App {
     }
 
     /// Gracefully quit the application via the platform's standard routine.
+    /// Quit-request subscribers may defer the request before shutdown begins.
     pub fn quit(&self) {
-        self.platform.quit();
+        if self.can_quit() {
+            self.platform.quit();
+        }
+    }
+
+    fn can_quit(&self) -> bool {
+        if self.quitting || self.checking_quit_request.replace(true) {
+            return false;
+        }
+        let _reset = gpui_util::defer(|| self.checking_quit_request.set(false));
+        let mut allowed = true;
+        self.quit_request_observers.retain(|guard| {
+            allowed &= guard(self);
+            true
+        });
+        allowed
     }
 
     /// Switches the platform between headless and windowed modes.
@@ -2809,6 +2843,16 @@ impl App {
     /// Get a map from an action name to the documentation.
     pub fn action_documentation(&self) -> &HashMap<&'static str, &'static str> {
         self.actions.documentation()
+    }
+
+    /// Register a synchronous check before a quit request can start shutdown.
+    /// All checks run; any false result keeps the app open without consuming shutdown handlers.
+    /// To perform asynchronous preparation, return false, spawn the work, then request quit again
+    /// when it succeeds. Keep the subscription alive until that final request is allowed.
+    /// Checks may run more than once, including at native termination on supporting platforms.
+    /// Programmatic quits are guarded on every platform; forced shutdown is not cancellable.
+    pub fn on_request_quit(&self, guard: impl FnMut(&App) -> bool + 'static) -> Subscription {
+        self.quit_request_observers.insert(Box::new(guard))
     }
 
     /// Register a callback to be invoked when the application is about to quit.

@@ -285,6 +285,26 @@
     {
       "path": "crates/editor/src/element.rs",
       "change": "Lay out addon text regions over native shaped and wrapped source fragments, excluding folded text and clipping to the viewport. Reuse the navigation overlay lifecycle and element namespace; test resize, clipping, stateful elements, removal, and unchanged source text."
+    },
+    {
+      "path": "crates/gpui/src/app.rs",
+      "change": "Add opt-in cancellable quit-request subscriptions before programmatic/native termination, with all-guard evaluation and reentrancy protection; preserve the final shutdown handler lifecycle."
+    },
+    {
+      "path": "crates/gpui/src/platform.rs",
+      "change": "Expose an optional native pre-termination callback, separate from final on_quit, without requiring changes to platforms that only support guarded programmatic quits."
+    },
+    {
+      "path": "crates/gpui/src/platform/test/platform.rs",
+      "change": "Retain the native quit-request callback and count accepted programmatic platform quits without terminating the headless test runner."
+    },
+    {
+      "path": "crates/gpui/src/app/test_context.rs",
+      "change": "Expose native pre-termination simulation and accepted platform-quit counts for host-level durability/close tests. Test teardown still forces shutdown to release resources."
+    },
+    {
+      "path": "crates/gpui_macos/src/platform.rs",
+      "change": "Route applicationShouldTerminate through the optional cancellable request callback before applicationWillTerminate. Preserve the original final shutdown callback and default immediate termination."
     }
   ]
 }
