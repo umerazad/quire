@@ -313,6 +313,20 @@ mod tag_edit_tests {
     }
 
     #[gpui::test]
+    async fn written_edits_keep_each_line_break_the_page_had(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let stored = "---\r\ntags:\r\n  - project\r\n---\r\n- #project here\n- tail\r\n";
+        let (source, normalized) = quire_core::source_text::SourceText::prepare(stored.into());
+        let retag = Retag::new(&["#project"], Some("work")).unwrap();
+        let work = cx.update(|cx| edit_tags(normalized, retag, cx));
+        let edit = cx.background_executor.spawn(work).await.unwrap();
+        assert_eq!(
+            &*source.apply(edit.edits).unwrap(),
+            "---\r\ntags:\r\n  - work\r\n---\r\n- #work here\n- tail\r\n"
+        );
+    }
+
+    #[gpui::test]
     async fn refuses_invalid_names_and_reports_each_change(cx: &mut TestAppContext) {
         cx.update(|cx| crate::editor_host::init(cx).unwrap());
         assert_eq!(

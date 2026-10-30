@@ -8,6 +8,7 @@ pub struct SourceText {
     preferred_newline: &'static str,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceEdit<S> {
     /// Byte offsets in the original LF-normalized representation.
     pub range: Range<usize>,

@@ -1,8 +1,11 @@
 //! Bulk tag rename and delete, per page. Ported from rt `957da33d4766` `src/core/tag-edits.ts`.
 //! Callers supply the page's tag tokens from native Markdown analysis, so tags inside code and
-//! links are already excluded. Text is the editor's line-break-normalized text.
+//! links are already excluded. Text is the editor's line-break-normalized text; callers write the
+//! returned edits through `SourceText::apply`, which keeps each page's own line breaks. That
+//! differs from the reference, which rewrites every line break of a CRLF page as CRLF.
 
 use crate::markdown::{TagToken, frontmatter_length, js_space};
+use crate::source_text::SourceEdit;
 use regex::Regex;
 use std::sync::LazyLock;
 use unicode_normalization::UnicodeNormalization;
@@ -124,14 +127,14 @@ pub struct TagChange {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PageTagEdit {
+    /// The rewritten normalized text, for previews and checks.
     pub text: String,
     pub changes: Vec<TagChange>,
+    /// Ordered, non-overlapping edits on the normalized text.
+    pub edits: Vec<SourceEdit<String>>,
 }
 
-struct Edit {
-    range: std::ops::Range<usize>,
-    insert: String,
-}
+type Edit = SourceEdit<String>;
 
 /// Rewrites one page, or returns None when nothing changes.
 pub fn edit_page(text: &str, tags: &[TagToken], retag: &Retag) -> Option<PageTagEdit> {
@@ -143,7 +146,7 @@ pub fn edit_page(text: &str, tags: &[TagToken], retag: &Retag) -> Option<PageTag
         if let Some(renamed) = renamed {
             edits.push(Edit {
                 range: token.range.clone(),
-                insert: format!("#{renamed}"),
+                replacement: format!("#{renamed}"),
             });
             continue;
         }
@@ -157,7 +160,7 @@ pub fn edit_page(text: &str, tags: &[TagToken], retag: &Retag) -> Option<PageTag
         let before = !after && prefix.ends_with([' ', '\t']) && !MARKER_PREFIX.is_match(prefix);
         edits.push(Edit {
             range: token.range.start - usize::from(before)..token.range.end + usize::from(after),
-            insert: String::new(),
+            replacement: String::new(),
         });
     }
     edits.extend(frontmatter_change(text, retag));
@@ -169,16 +172,17 @@ pub fn edit_page(text: &str, tags: &[TagToken], retag: &Retag) -> Option<PageTag
         .iter()
         .map(|edit| TagChange {
             before: text[edit.range.clone()].trim_matches(js_space).to_owned(),
-            after: edit.insert.trim_matches(js_space).to_owned(),
+            after: edit.replacement.trim_matches(js_space).to_owned(),
         })
         .collect();
     let mut next = text.to_owned();
     for edit in edits.iter().rev() {
-        next.replace_range(edit.range.clone(), &edit.insert);
+        next.replace_range(edit.range.clone(), &edit.replacement);
     }
     Some(PageTagEdit {
         text: next,
         changes,
+        edits,
     })
 }
 
@@ -231,7 +235,6 @@ fn frontmatter_change(text: &str, retag: &Retag) -> Option<Edit> {
             unique.push(value);
         }
     }
-    let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
     let key = &field[1];
     let written = if unique.is_empty() {
         format!("{key}: []")
@@ -246,14 +249,14 @@ fn frontmatter_change(text: &str, retag: &Retag) -> Option<Edit> {
             "{key}:{}",
             unique
                 .iter()
-                .map(|value| format!("{newline}  - {value}"))
+                .map(|value| format!("\n  - {value}"))
                 .collect::<String>()
         )
     };
     let whole = field.get(0)?;
     Some(Edit {
         range: whole.range(),
-        insert: written,
+        replacement: written,
     })
 }
 
