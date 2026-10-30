@@ -7,7 +7,7 @@
 mod query;
 mod schema;
 
-pub use query::{Backlink, PageRef, TagCount, TaggedBlock};
+pub use query::{Backlink, PageRef, SearchHit, TagCount, TaggedBlock};
 
 use crate::notebook::{PageMetadata, read_revision, revision_metadata};
 use crate::sync::json::JsString;
@@ -303,13 +303,20 @@ impl QueryIndex {
     /// head, so the caller can drop the work.
     pub fn put(&self, revision: &str, analysis: &PageIndex) -> Result<bool> {
         self.transaction(|| {
-            let analyzed: Option<bool> = self
+            let row: Option<(bool, String)> = self
                 .connection
-                .select_row_bound("SELECT analyzed FROM pages WHERE revision=?")?(revision)?;
-            match analyzed {
+                .select_row_bound("SELECT analyzed,title FROM pages WHERE revision=?")?(revision)?;
+            let title = match row {
                 None => return Ok(false),
-                Some(true) => return Ok(true),
-                Some(false) => {}
+                Some((true, _)) => return Ok(true),
+                Some((false, title)) => title,
+            };
+            let mut search = self.connection.exec_bound(
+                "INSERT INTO search_rows(revision,title,text,block_id) VALUES (?,?,?,?)",
+            )?;
+            search((revision, title.as_str(), "", None::<&str>))?;
+            for block in &analysis.blocks {
+                search((revision, title.as_str(), block.text.as_str(), block.id.as_deref()))?;
             }
             for (ordinal, block) in analysis.blocks.iter().enumerate() {
                 self.connection.exec_bound(
@@ -406,11 +413,77 @@ impl Client<QueryIndex> {
     pub fn tag_names(&self) -> Answer<Vec<TagCount>> {
         self.request(64, QueryIndex::tag_names)
     }
+    pub fn search(&self, query: String) -> Answer<Vec<SearchHit>> {
+        self.request(128 + query.len(), move |index| index.search(&query))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn superseded_revisions_leave_search_through_the_cascade() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let database = root.path().join("local.sqlite");
+        let store = crate::notebook::NotebookStore::open(&database, "nb", "local")?;
+        let save = |text: &str| -> Result<()> {
+            store.save(&crate::notebook::Edit {
+                page: "p".into(),
+                path: "P.md".into(),
+                text: text.into(),
+                base: store.heads("p")?,
+                deleted: false,
+                created: 1,
+                recovery: None,
+            })?;
+            Ok(())
+        };
+        let analyze = |index: &QueryIndex, word: &str| -> Result<()> {
+            for page in index.pending(8)? {
+                let block = IndexedBlock {
+                    text: word.into(),
+                    ..Default::default()
+                };
+                index.put(
+                    &page.revision,
+                    &PageIndex {
+                        blocks: vec![block],
+                        ..Default::default()
+                    },
+                )?;
+            }
+            Ok(())
+        };
+        save("old")?;
+        let index = QueryIndex::open(
+            &database,
+            IndexConfig {
+                analyzer: 1,
+                layout: DailyLayout::default(),
+                calendar: DailyCalendar::utc(),
+            },
+        )?;
+        analyze(&index, "obsoleteword")?;
+        assert_eq!(index.search("obsoleteword")?.len(), 1);
+        save("new")?;
+        analyze(&index, "freshword")?;
+        assert!(index.search("obsoleteword")?.is_empty());
+        assert_eq!(index.search("fresh")?[0].snippet, "freshword");
+        assert_eq!(
+            index.search("P")?.len(),
+            2,
+            "one title row and one block row"
+        );
+        index
+            .connection
+            .exec("INSERT INTO search(search) VALUES ('integrity-check')")?()?;
+        let rows: Option<i64> = index
+            .connection
+            .select_row("SELECT count(*) FROM search_rows")?()?;
+        assert_eq!(rows, Some(2));
+        Ok(())
+    }
 
     #[test]
     fn key_lookups_use_indexes_instead_of_scanning() -> Result<()> {

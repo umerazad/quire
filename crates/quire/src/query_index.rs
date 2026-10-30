@@ -142,6 +142,17 @@ mod tests {
         sync::json::JsString,
     };
 
+    pub(super) async fn settle(client: &IndexClient, cx: &mut TestAppContext) {
+        for _ in 0..100 {
+            cx.executor().advance_clock(IDLE);
+            cx.run_until_parked();
+            if client.unanalyzed().unwrap().await.unwrap() == 0 {
+                return;
+            }
+        }
+        panic!("indexing did not finish");
+    }
+
     fn save(store: &NotebookStore, page: &str, text: &str) {
         let base = store.heads(page).unwrap();
         store
@@ -172,17 +183,7 @@ mod tests {
             })
             .unwrap();
         let client = cx.read(|cx| sync.read(cx).client().clone());
-        let settle = async |cx: &mut TestAppContext| {
-            for _ in 0..50 {
-                cx.executor().advance_clock(IDLE);
-                cx.run_until_parked();
-                if client.unanalyzed().unwrap().await.unwrap() == 0 {
-                    return;
-                }
-            }
-            panic!("indexing did not finish");
-        };
-        settle(cx).await;
+        settle(&client, cx).await;
         let links = client
             .backlinks(JsString::from("Target"))
             .unwrap()
@@ -199,7 +200,7 @@ mod tests {
             ]
         );
         save(&store, "Source", "- nothing here\n");
-        settle(cx).await;
+        settle(&client, cx).await;
         assert!(
             client
                 .backlinks(JsString::from("Target"))
@@ -210,5 +211,115 @@ mod tests {
         );
         assert!(client.tag_names().unwrap().await.unwrap().is_empty());
         assert!(cx.read(|cx| sync.read(cx).error().is_none()));
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use quire_store::notebook::{Edit, NotebookStore};
+    use serde_json::Value;
+    use std::collections::BTreeMap;
+
+    #[gpui::test]
+    async fn search_matches_the_frozen_reference_index(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let fixture: Value =
+            serde_json::from_str(include_str!("../../../tests/fixtures/search-vectors.json"))
+                .unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("local.sqlite");
+        let store = NotebookStore::open(&database, "nb", "local").unwrap();
+        for page in fixture["pages"].as_array().unwrap() {
+            let path = page["path"].as_str().unwrap();
+            store
+                .save(&Edit {
+                    page: path.into(),
+                    path: path.into(),
+                    text: page["text"].as_str().unwrap().into(),
+                    base: vec![],
+                    deleted: false,
+                    created: 1,
+                    recovery: None,
+                })
+                .unwrap();
+        }
+        let sync = cx
+            .update(|cx| IndexSync::spawn(database, default_config(DailyCalendar::utc()), cx))
+            .unwrap();
+        let client = cx.read(|cx| sync.read(cx).client().clone());
+        super::tests::settle(&client, cx).await;
+        let mut failures = Vec::new();
+        for vector in fixture["queries"].as_array().unwrap() {
+            let query = vector["query"].as_str().unwrap();
+            let expected = vector["hits"].as_array().unwrap();
+            let actual = client.search(query.into()).unwrap().await.unwrap();
+            let key = |path: &str, title: &str, snippet: &str, block: Option<&str>| {
+                format!(
+                    "{path}\u{1}{title}\u{1}{snippet}\u{1}{}",
+                    block.unwrap_or("-")
+                )
+            };
+            if actual.len() != expected.len() {
+                failures.push(format!(
+                    "{query:?}: {} hits, expected {}",
+                    actual.len(),
+                    expected.len()
+                ));
+                continue;
+            }
+            // Equal bm25 scores have no defined order; compare each tie run as a multiset. A run cut
+            // by the 40-hit limit can hold different members of the tie, so only its size counts.
+            let mut start = 0;
+            while start < expected.len() {
+                let score = expected[start]["score"].as_f64().unwrap();
+                let end = (start..expected.len())
+                    .find(|&i| (expected[i]["score"].as_f64().unwrap() - score).abs() > 1e-9)
+                    .unwrap_or(expected.len());
+                if !(end == 40 && start > 0) {
+                    let count = |keys: Vec<String>| {
+                        keys.into_iter().fold(BTreeMap::new(), |mut map, key| {
+                            *map.entry(key).or_insert(0) += 1;
+                            map
+                        })
+                    };
+                    let want = count(
+                        expected[start..end]
+                            .iter()
+                            .map(|hit| {
+                                key(
+                                    hit["path"].as_str().unwrap(),
+                                    hit["title"].as_str().unwrap(),
+                                    hit["snippet"].as_str().unwrap(),
+                                    hit["blockId"].as_str(),
+                                )
+                            })
+                            .collect(),
+                    );
+                    let got = count(
+                        actual[start..end]
+                            .iter()
+                            .map(|hit| {
+                                key(
+                                    &hit.source.path,
+                                    &hit.source.title,
+                                    &hit.snippet,
+                                    hit.block_id.as_deref(),
+                                )
+                            })
+                            .collect(),
+                    );
+                    if want != got {
+                        failures.push(format!(
+                            "{query:?} hits {start}..{end}:\nexpected {want:?}\nactual   {got:?}"
+                        ));
+                    }
+                }
+                start = end;
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n\n"));
     }
 }

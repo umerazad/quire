@@ -13,7 +13,8 @@
     "daily/daily-layout.ts": "32a3eccd9eea5de811a321f74d930788453ceb4f3d309421acd4bc7ca1bb4e24",
     "daily/workspace.ts": "b9c05efe0846973676ce8e666f87657e091a69f732741ad933148c4110bd000e",
     "daily/local-date.ts": "0786f47b120ae1a8759ea1cbdc840fecc82f24ab3aecb183f77d8f5e681806f6",
-    "index/page-analysis.ts": "b93c2341736ba3fadeb6d65eb73c8e270127277eef04290f993b78efff08711e"
+    "index/page-analysis.ts": "b93c2341736ba3fadeb6d65eb73c8e270127277eef04290f993b78efff08711e",
+    "index/search-index.ts": "896af48e70a467b0e432c8045771679e802b3751c107d29428309e41c11c570b"
   },
   "daily_extractions": [
     {
@@ -58,6 +59,13 @@
       "source_sha256": "f639198dd689540eb71dcd35b3d773b7c90362368fd6cd60e91b31c88b96d690",
       "destination": "index/page-analysis.ts",
       "change": "Keep tagKey, blockAt, and the link and tagged-block composition of analyzePage; drop task and template analysis (ported separately) and the Backlink/TaggedBlock type imports."
+    },
+    {
+      "source": "src/desktop/search-index.ts",
+      "source_revision": "5ea5c22310ff",
+      "source_sha256": "3cbc4f27504253f3f6041e379f9a2fa2fa723412c5e0c6098b8b21dd6c3b40ee",
+      "destination": "index/search-index.ts",
+      "change": "Unchanged SearchIndex class; import paths adjusted and SearchHit inlined from src/core/types.ts."
     }
   ]
 }

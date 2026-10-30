@@ -311,3 +311,48 @@ impl QueryIndex {
         Ok(names)
     }
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchHit {
+    pub source: PageRef,
+    pub snippet: String,
+    pub block_id: Option<String>,
+}
+
+static TERM: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"[\p{L}\p{N}_-]+").expect("the search term pattern is valid")
+});
+
+/// The reference search expression: every term as a quoted prefix, all required.
+fn search_expression(query: &str) -> Option<String> {
+    let terms: Vec<_> = TERM
+        .find_iter(query)
+        .map(|term| format!("\"{}\"*", term.as_str()))
+        .collect();
+    (!terms.is_empty()).then(|| terms.join(" AND "))
+}
+
+impl QueryIndex {
+    /// The reference `search`: up to 40 block and title hits by bm25 rank, with 24-token snippets.
+    pub fn search(&self, query: &str) -> Result<Vec<SearchHit>> {
+        self.refresh()?;
+        let Some(expression) = search_expression(query) else {
+            return Ok(Vec::new());
+        };
+        let rows: Vec<(PageRow, (String, Option<String>))> =
+            self.connection.select_bound(&format!(
+                "SELECT {PAGE_COLUMNS},snippet(search,2,'','',' … ',24),search.block_id FROM search
+             JOIN pages p ON p.revision=search.revision
+             WHERE search MATCH ? AND p.deleted=0 ORDER BY bm25(search) LIMIT 40"
+            ))?(expression)?;
+        rows.into_iter()
+            .map(|(page, (snippet, block_id))| {
+                Ok(SearchHit {
+                    source: page_ref(page)?,
+                    snippet,
+                    block_id,
+                })
+            })
+            .collect()
+    }
+}

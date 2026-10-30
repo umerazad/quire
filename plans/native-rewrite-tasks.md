@@ -896,8 +896,8 @@ What to do: Add an FTS5 index over analyzed blocks and page titles matching the 
 Constraints: Maintain the FTS table in the same index transaction as its block rows. Short and Unicode queries must behave as in the reference; add trigram support only if it preserves those results.
 Write set: `crates/quire_store/src/index*`, worker API, frozen search fixtures, tests.
 Verify: Differential hits, order, and snippets against the reference `SearchIndex` over the fixture notebook; Unicode, single-character, hyphenated, and empty queries; query-plan and work-count checks at 1x and 5x notebook size.
-Proof notes: pending.
-Status: pending
+Proof notes: `QueryIndex::search` and `IndexClient::search` use an FTS5 external-content table over `search_rows` (index format 2), filled in the same transaction as the block rows and removed through the page cascade and a delete trigger. `tests/reference/index/search-index.ts` freezes the unchanged reference class from rt 5ea5c22310ff, and `tools/search-vectors.ts` runs it under Bun's `node:sqlite` (SQLite 3.54.0) over 60 seeded pages with Arabic, Urdu, CJK, emoji, diacritics, hyphens, underscores, digits, frontmatter titles, and block IDs, recording hits and bm25 scores for 33 queries (678 hits, several at the 40-hit limit). `query_index::search_tests` indexes the same pages through the production analyzer and compares every query, treating equal-score runs as multisets and checking only the size of a tie run cut by the limit. `index::tests::superseded_revisions_leave_search_through_the_cascade` re-saves a page, confirms old text is unsearchable, and runs the FTS5 integrity check. The raw-text CRLF snippet difference is deliberate and documented in README. Gates as for NR12.2 pass. Trigram search was not added: prefix-AND over `unicode61` already reproduces the reference, including single-character and two-letter prefixes. Remaining for the parent: 1x and 5x work-count checks.
+Status: done
 
 #### NR12.4: Overlay unsaved buffers on indexed queries
 
