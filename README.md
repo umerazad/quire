@@ -20,7 +20,9 @@ Opening a database performs native schema validation and upgrades. This path doe
 
 Each pane has local Find and Replace. Use Cmd-F / Cmd-Option-F on macOS, or Ctrl-F / Ctrl-H elsewhere. Enter and Shift-Enter navigate matches; Escape returns to the editor. In the replacement field, Enter replaces one match and Cmd-Enter / Ctrl-Enter replaces all. Replacements share the document's undo history. Vim supports `/`, `?`, `n`/`N`, word-under-cursor search, counts, cancellation, and search motions with operators.
 
-Use `:` for editor-local commands, including line jumps, visual/count ranges, substitution, settings, delete, and sort. For example, `:%s/old/new/g` replaces throughout the note. Errors stay in the prompt for correction; Escape cancels. Up/Down recall command history by prefix and restore unfinished input. History stays in memory for the application session. Named registers work across panes and survive toggling Vim. Save and AI commands still need their notebook-service integrations.
+Use `:` for editor-local commands, including line jumps, visual/count ranges, substitution, settings, delete, and sort. For example, `:%s/old/new/g` replaces throughout the note. Errors stay in the prompt for correction; Escape cancels. Up/Down recall command history by prefix and restore unfinished input. History stays in memory for the application session. Named registers work across panes and survive toggling Vim.
+
+Editable stored pages support `:w`, `:write`, and `:wq`. Write-quit closes the window only after the latest text is saved locally and retained pages are secured. Save errors appear in the page status and keep the window accessible. Force forms still check stored heads. Filename and range writes remain unavailable; use Copy Markdown for the complete source. In-memory examples and read-only pages reject writes. AI commands still need their notebook-service integration.
 
 Use Rust 1.98.1, Bun, and Node 26 for development. macOS builds require Xcode with the Metal tools. GPUI and its platform/support crates are copied under `vendor/zed`; building does not require either sibling checkout.
 

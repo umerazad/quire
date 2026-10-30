@@ -241,7 +241,7 @@ fn unavailable_workspace_commands_do_not_dispatch_from_the_prompt(cx: &mut TestA
     cx.update(|cx| init(cx).expect("editor initialization"));
     let text = "unsaved example\n";
     let window = cx.add_window(|window, cx| NotebookWindow::new(text, window, cx));
-    for keys in [": w enter", ": ! p w d enter"] {
+    for keys in [": w enter", ": w q enter", ": ! p w d enter"] {
         cx.simulate_keystrokes(window.into(), keys);
         cx.executor().run_until_parked();
         window

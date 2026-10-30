@@ -13,7 +13,9 @@ actions!(
         SubmitCommand,
         DismissCommand,
         PreviousCommand,
-        NextCommand
+        NextCommand,
+        SavePage,
+        SaveAndClosePage
     ]
 );
 
@@ -72,6 +74,7 @@ pub struct CommandPrompt {
     target: Option<WeakEntity<Editor>>,
     epoch: u64,
     history_cursor: HistoryCursor,
+    writes_enabled: bool,
 }
 
 impl CommandPrompt {
@@ -95,11 +98,16 @@ impl CommandPrompt {
             target: None,
             epoch: 0,
             history_cursor: HistoryCursor::default(),
+            writes_enabled: false,
         }
     }
 
     pub fn is_open(&self) -> bool {
         self.target.is_some()
+    }
+
+    pub fn enable_writes(&mut self) {
+        self.writes_enabled = true;
     }
 
     pub fn open(&mut self, editor: &Entity<Editor>, window: &mut Window, cx: &mut Context<Self>) {
@@ -133,7 +141,7 @@ impl CommandPrompt {
         let query = self.input.read(cx).text(cx);
         self.remember(cx);
         let epoch = self.epoch;
-        let parsed = vim::editor_command(&query, cx);
+        let parsed = vim::page_command(&query, cx);
         cx.spawn_in(window, async move |this, cx| {
             let result = parsed.await;
             this.update_in(cx, |this, window, cx| {
@@ -142,7 +150,7 @@ impl CommandPrompt {
                 }
                 match result {
                     Err(error) => this.error = Some(error),
-                    Ok(action) => {
+                    Ok(command) => {
                         let Some(editor) = this.target.as_ref().and_then(|target| target.upgrade())
                         else {
                             this.error = Some(
@@ -151,13 +159,23 @@ impl CommandPrompt {
                             cx.notify();
                             return;
                         };
-                        if let Err(error) =
-                            vim::validate_editor_command(action.as_ref(), &editor, window, cx)
-                        {
-                            this.error = Some(error);
-                            cx.notify();
-                            return;
-                        }
+                        let action: Box<dyn gpui::Action> = match command {
+                            vim::PageCommand::Editor(action) => {
+                                if let Err(error) = vim::validate_editor_command(action.as_ref(), &editor, window, cx) {
+                                    this.error = Some(error);
+                                    cx.notify();
+                                    return;
+                                }
+                                action
+                            }
+                            vim::PageCommand::Write { .. } if !this.writes_enabled => {
+                                this.error = Some("Saving is unavailable for this page. Open an editable stored page or copy its Markdown.".into());
+                                cx.notify();
+                                return;
+                            }
+                            vim::PageCommand::Write { close: false } => Box::new(SavePage),
+                            vim::PageCommand::Write { close: true } => Box::new(SaveAndClosePage),
+                        };
                         this.target = None;
                         this.error = None;
                         this.epoch = this.epoch.wrapping_add(1);

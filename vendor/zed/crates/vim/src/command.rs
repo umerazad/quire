@@ -1845,6 +1845,22 @@ pub fn editor_command(
     input: &str,
     cx: &mut App,
 ) -> Task<std::result::Result<Box<dyn Action>, String>> {
+    let parsed = page_command(input, cx);
+    cx.spawn(async move |_| match parsed.await? {
+        PageCommand::Editor(action) => Ok(action),
+        PageCommand::Write { .. } => Err("This command is unavailable in this editor. Edit the command or press Escape to cancel.".into()),
+    })
+}
+
+/// Embedded hosts handle whole-page persistence without constructing a workspace.
+pub enum PageCommand {
+    Editor(Box<dyn Action>),
+    Write { close: bool },
+}
+
+/// Parses editor commands and whole-page writes without filename completion.
+/// Hosts must reject writes when their current page has no persistence service.
+pub fn page_command(input: &str, cx: &mut App) -> Task<std::result::Result<PageCommand, String>> {
     let parsed = command_interceptor_inner(input, None, cx);
     cx.spawn(async move |_| {
         let mut parsed = parsed.await;
@@ -1855,10 +1871,22 @@ pub fn editor_command(
             return Err("Ambiguous Vim command. Type the full command or press Escape to cancel.".into());
         }
         let action = parsed.results.remove(0).action;
+        if let Some(write) = action.as_any().downcast_ref::<VimSave>()
+            && write.range.is_none()
+            && write.filename.is_empty()
+            && matches!(write.save_intent, Some(SaveIntent::Save | SaveIntent::Overwrite))
+        {
+            return Ok(PageCommand::Write { close: false });
+        }
+        if let Some(close) = action.as_any().downcast_ref::<workspace::CloseActiveItem>()
+            && matches!(close.save_intent, Some(SaveIntent::Save | SaveIntent::Overwrite))
+        {
+            return Ok(PageCommand::Write { close: true });
+        }
         if !is_editor_command(action.as_ref()) {
             return Err("This command is unavailable in this editor. Edit the command or press Escape to cancel.".into());
         }
-        Ok(action)
+        Ok(PageCommand::Editor(action))
     })
 }
 
@@ -2794,6 +2822,59 @@ mod test {
     use settings::Settings;
     use util::path;
     use workspace::{OpenOptions, Workspace};
+
+    #[gpui::test]
+    async fn test_embedded_page_write_commands(cx: &mut TestAppContext) {
+        for (query, expected_close) in [
+            ("w", false),
+            ("wr", false),
+            ("write", false),
+            (":write!", false),
+            ("w!", false),
+            ("wq", true),
+            ("wq!", true),
+        ] {
+            let result = cx
+                .update(|cx| super::page_command(query, cx))
+                .await
+                .unwrap();
+            assert!(
+                matches!(result, super::PageCommand::Write { close } if close == expected_close),
+                "{query}"
+            );
+            assert!(
+                cx.update(|cx| super::editor_command(query, cx))
+                    .await
+                    .is_err(),
+                "{query}"
+            );
+        }
+        for query in [
+            "%w",
+            "1,2write",
+            "w other.md",
+            "q",
+            "q!",
+            "wall",
+            "wqa",
+            "g/./w",
+            "writefile",
+            "!pwd",
+        ] {
+            assert!(
+                cx.update(|cx| super::page_command(query, cx))
+                    .await
+                    .is_err(),
+                "{query}"
+            );
+        }
+        assert!(matches!(
+            cx.update(|cx| super::page_command("sort", cx))
+                .await
+                .unwrap(),
+            super::PageCommand::Editor(_)
+        ));
+    }
 
     #[gpui::test]
     async fn test_command_basics(cx: &mut TestAppContext) {

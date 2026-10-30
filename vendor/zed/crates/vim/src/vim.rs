@@ -5,7 +5,7 @@ mod test;
 
 mod change_list;
 mod command;
-pub use command::{editor_command, validate_editor_command};
+pub use command::{PageCommand, editor_command, page_command, validate_editor_command};
 mod digraph;
 mod helix;
 mod indent;

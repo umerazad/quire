@@ -1,4 +1,5 @@
 use super::*;
+use crate::editor_command::{SaveAndClosePage, SavePage};
 use crate::notebook_session::{NotebookSession, OpenPage};
 use std::{
     cell::{Cell, RefCell},
@@ -7,8 +8,6 @@ use std::{
     rc::Rc,
 };
 use theme::ActiveTheme;
-
-gpui::actions!(quire, [SavePage]);
 
 pub(super) fn bind_keys(cx: &mut App) {
     cx.bind_keys([KeyBinding::new(
@@ -25,6 +24,7 @@ pub(super) fn bind_keys(cx: &mut App) {
 #[derive(Clone, Copy)]
 enum CloseIntent {
     Window,
+    SaveWindow,
     Quit,
 }
 
@@ -184,7 +184,16 @@ impl StoredWindow {
             page.deleted,
             page.load_time.as_secs_f64() * 1000.
         );
-        self.editor = Some(cx.new(|cx| NotebookWindow::for_page(analysis, None, window, cx)));
+        let writes_enabled = page.persistence.is_some();
+        self.editor = Some(cx.new(|cx| {
+            let editor = NotebookWindow::for_page(analysis, None, window, cx);
+            if writes_enabled {
+                editor
+                    .commands
+                    .update(cx, |commands, _| commands.enable_writes());
+            }
+            editor
+        }));
     }
 
     fn save_page(&mut self, cx: &mut gpui::Context<Self>) {
@@ -195,15 +204,43 @@ impl StoredWindow {
         self.close_error = None;
     }
 
+    fn save_and_close(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        if self.page.read(cx).persistence().is_none() {
+            return;
+        }
+        self.closing.set(Some(CloseIntent::SaveWindow));
+        self.save_page(cx);
+        self.session.borrow().recover(cx);
+        self.finish_close(window, cx);
+    }
+
+    fn can_finish_close(&self, cx: &App) -> bool {
+        self.session.borrow().is_secured(cx)
+            && (!matches!(self.closing.get(), Some(CloseIntent::SaveWindow))
+                || self
+                    .page
+                    .read(cx)
+                    .persistence()
+                    .is_some_and(|page| !page.read(cx).is_dirty(cx)))
+    }
+
     fn finish_close(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
-        if self.session.borrow().is_secured(cx) {
+        let write_failed = matches!(self.closing.get(), Some(CloseIntent::SaveWindow))
+            && self
+                .page
+                .read(cx)
+                .persistence()
+                .is_some_and(|page| page.read(cx).has_error());
+        if self.can_finish_close(cx) {
             self.close_error = None;
             if self.closing.get().is_some() {
                 cx.defer_in(window, |this, window, cx| {
-                    if this.session.borrow().is_secured(cx) {
+                    if this.can_finish_close(cx) {
                         match this.closing.take() {
                             Some(CloseIntent::Quit) => cx.quit(),
-                            Some(CloseIntent::Window) => window.remove_window(),
+                            Some(CloseIntent::Window | CloseIntent::SaveWindow) => {
+                                window.remove_window()
+                            }
                             None => {}
                         }
                     } else {
@@ -211,9 +248,15 @@ impl StoredWindow {
                     }
                 });
             }
-        } else if self.closing.get().is_some() && self.session.borrow().has_error(cx) {
+        } else if self.closing.get().is_some()
+            && (write_failed || self.session.borrow().has_error(cx))
+        {
             self.closing.set(None);
-            self.close_error = Some("Some pages could not be recorded for recovery. Keep this window open, check the storage error, and retry closing after it is corrected. Copy Markdown remains available.".into());
+            self.close_error = Some(if write_failed {
+                "The page could not be saved locally. Keep this window open, resolve the save error, and retry :wq. Copy Markdown remains available."
+            } else {
+                "Some pages could not be recorded for recovery. Keep this window open, check the storage error, and retry closing after it is corrected. Copy Markdown remains available."
+            }.into());
         }
     }
 
@@ -282,6 +325,11 @@ impl Render for StoredWindow {
         gpui::div()
             .size_full()
             .on_action(cx.listener(|this, _: &SavePage, _, cx| this.save_page(cx)))
+            .on_action(
+                cx.listener(|this, _: &SaveAndClosePage, window, cx| {
+                    this.save_and_close(window, cx)
+                }),
+            )
             .flex()
             .flex_col()
             .bg(cx.theme().colors().editor_background)
@@ -351,6 +399,170 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) -> Entity<crate::page_persistence::PagePersistence> {
         cx.update(|cx| fixture.page.read(cx).persistence().unwrap().clone())
+    }
+
+    #[gpui::test]
+    fn vim_write_saves_the_shared_page_and_write_quit_waits_for_a_local_commit(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fixture = open_stored("hello\r\n", cx);
+        let model = persistence(&fixture, cx);
+        cx.simulate_keystrokes(fixture.window.into(), "i x escape : w r i t e enter");
+        crate::page_persistence::tests::wait(&model, cx);
+        fixture
+            .window
+            .update(cx, |view, window, cx| {
+                assert!(
+                    !view
+                        .editor
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .commands
+                        .read(cx)
+                        .is_open()
+                );
+                assert!(!model.read(cx).is_dirty(cx));
+                window.focus(
+                    &view
+                        .editor
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .second
+                        .focus_handle(cx),
+                    cx,
+                );
+            })
+            .unwrap();
+        cx.simulate_keystrokes(fixture.window.into(), "0 i y escape : w q enter");
+        crate::page_persistence::tests::wait(&model, cx);
+        while cx.executor().tick() {}
+        assert!(fixture.window.update(cx, |_, _, _| {}).is_err());
+        let store =
+            quire_store::notebook::NotebookStore::open(&fixture.path, "nb", "local").unwrap();
+        assert!(store.draft("p").unwrap().is_none());
+        assert_eq!(
+            store
+                .checkout("p", None)
+                .unwrap()
+                .selected
+                .unwrap()
+                .root()
+                .field("text")
+                .as_str(),
+            Some("yxhello\r\n")
+        );
+    }
+
+    #[gpui::test]
+    fn vim_write_quit_keeps_later_typing_open_until_it_is_saved(cx: &mut gpui::TestAppContext) {
+        let fixture = open_stored("hello\r\n", cx);
+        let model = persistence(&fixture, cx);
+        let lock =
+            sqlez::connection::Connection::try_open_file(fixture.path.to_str().unwrap()).unwrap();
+        lock.exec("BEGIN IMMEDIATE").unwrap()().unwrap();
+        cx.simulate_keystrokes(fixture.window.into(), "i x escape : w q enter");
+        while cx.executor().tick() {}
+        fixture
+            .window
+            .update(cx, |view, _, _| {
+                assert!(matches!(view.closing.get(), Some(CloseIntent::SaveWindow)));
+            })
+            .unwrap();
+        cx.simulate_keystrokes(fixture.window.into(), "i y escape");
+        lock.exec("ROLLBACK").unwrap()().unwrap();
+        crate::page_persistence::tests::wait(&model, cx);
+        fixture
+            .window
+            .update(cx, |_, _, cx| {
+                assert!(model.read(cx).is_dirty(cx));
+                assert!(model.read(cx).is_secured(cx));
+            })
+            .unwrap();
+        let store =
+            quire_store::notebook::NotebookStore::open(&fixture.path, "nb", "local").unwrap();
+        assert_eq!(store.draft("p").unwrap().unwrap().text, "yxhello\r\n");
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(450));
+        crate::page_persistence::tests::wait(&model, cx);
+        while cx.executor().tick() {}
+        assert!(fixture.window.update(cx, |_, _, _| {}).is_err());
+        assert!(store.draft("p").unwrap().is_none());
+        assert_eq!(
+            store
+                .checkout("p", None)
+                .unwrap()
+                .selected
+                .unwrap()
+                .root()
+                .field("text")
+                .as_str(),
+            Some("yxhello\r\n")
+        );
+    }
+
+    #[gpui::test]
+    fn vim_force_write_quit_cannot_overwrite_changed_heads_or_close_on_recovery(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fixture = open_stored("hello", cx);
+        let model = persistence(&fixture, cx);
+        let store =
+            quire_store::notebook::NotebookStore::open(&fixture.path, "nb", "local").unwrap();
+        let peer = store
+            .save(&quire_store::notebook::Edit {
+                page: "p".into(),
+                path: "Note.md".into(),
+                text: "peer".into(),
+                base: store.heads("p").unwrap(),
+                deleted: false,
+                created: 2,
+                recovery: None,
+            })
+            .unwrap();
+        cx.simulate_keystrokes(fixture.window.into(), "i x escape : w q ! enter");
+        crate::page_persistence::tests::wait(&model, cx);
+        fixture
+            .window
+            .update(cx, |view, _, cx| {
+                assert!(view.closing.get().is_none());
+                assert!(
+                    view.close_error
+                        .as_ref()
+                        .unwrap()
+                        .contains("could not be saved")
+                );
+                assert!(model.read(cx).has_error());
+                assert!(model.read(cx).is_dirty(cx));
+                assert!(model.read(cx).is_secured(cx));
+            })
+            .unwrap();
+        assert_eq!(store.heads("p").unwrap(), [peer.revision_id()]);
+        assert_eq!(store.draft("p").unwrap().unwrap().text, "xhello");
+    }
+
+    #[gpui::test]
+    fn vim_filename_and_range_writes_remain_errors_without_saving(cx: &mut gpui::TestAppContext) {
+        let fixture = open_stored("hello", cx);
+        let store =
+            quire_store::notebook::NotebookStore::open(&fixture.path, "nb", "local").unwrap();
+        let heads = store.heads("p").unwrap();
+        for keys in [": % w enter", ": w space o t h e r enter"] {
+            cx.simulate_keystrokes(fixture.window.into(), keys);
+            cx.executor().run_until_parked();
+            fixture
+                .window
+                .update(cx, |view, _, cx| {
+                    let prompt = view.editor.as_ref().unwrap().read(cx).commands.read(cx);
+                    assert!(prompt.is_open());
+                    assert!(prompt.error.as_ref().unwrap().contains("unavailable"));
+                })
+                .unwrap();
+            assert_eq!(store.heads("p").unwrap(), heads);
+            assert!(store.draft("p").unwrap().is_none());
+            cx.simulate_keystrokes(fixture.window.into(), "escape");
+        }
     }
 
     #[gpui::test]
@@ -668,9 +880,21 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
             .unwrap();
         cx.simulate_keystrokes(window.into(), "i x escape d d");
+        cx.simulate_keystrokes(window.into(), ": w q enter");
+        cx.executor().run_until_parked();
         window
             .update(cx, |view, _, cx| {
                 let editor = view.editor.as_ref().unwrap().read(cx);
+                assert!(editor.commands.read(cx).is_open());
+                assert!(
+                    editor
+                        .commands
+                        .read(cx)
+                        .error
+                        .as_ref()
+                        .unwrap()
+                        .contains("unavailable")
+                );
                 assert_eq!(editor.source.read(cx).text(cx), normalized);
                 assert_eq!(editor.second.read(cx).text(cx), normalized);
             })

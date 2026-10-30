@@ -204,7 +204,7 @@
     },
     {
       "path": "crates/vim/src/vim.rs",
-      "change": "Add editor-local weak search-bar association, targeted submission and command-prefix hooks for embedded hosts; retain workspace lookup and preserve the bar association across Vim toggles. Keep embedded visual/local marks in the Vim session when no workspace exists. Expose initialization with session register retention while leaving default initialization unchanged."
+      "change": "Add editor-local weak search-bar association, targeted submission and command-prefix hooks for embedded hosts; retain workspace lookup and preserve the bar association across Vim toggles. Keep embedded visual/local marks in the Vim session when no workspace exists. Expose initialization with session register retention while leaving default initialization unchanged. Export typed page-command parsing for persistence-aware hosts."
     },
     {
       "path": "crates/vim/src/normal/search.rs",
@@ -212,7 +212,7 @@
     },
     {
       "path": "crates/vim/src/command.rs",
-      "change": "Expose editor-local parsing and range/pattern validation without filename completion or unrelated IDE actions. Preserve the original workspace command-interceptor entry point and parser."
+      "change": "Expose editor-local parsing and range/pattern validation without filename completion or unrelated IDE actions. Add typed whole-page write/write-close parsing for persistence-aware hosts, retaining the editor-only rejection API and rejecting filename/range writes. Preserve the original workspace command-interceptor entry point and parser."
     },
     {
       "path": "crates/vim/src/normal/mark.rs",
