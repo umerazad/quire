@@ -1,7 +1,7 @@
 use language::{BufferSnapshot, ToTreeSitterPoint};
 use std::ops::Range;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Block {
     pub key: String,
     pub id: Option<String>,
@@ -102,36 +102,54 @@ fn eof_tree(
     snapshot: &BufferSnapshot,
     layer: &language::SyntaxLayer<'_>,
 ) -> Option<language::Tree> {
-    let owned = layer.to_owned();
-    if owned.offset.0 != 0 {
-        return None;
-    }
-    let mut tree = owned.into_tree();
+    parse_tree(snapshot, Some(layer), true)
+}
+
+fn parse_tree(
+    snapshot: &BufferSnapshot,
+    layer: Option<&language::SyntaxLayer<'_>>,
+    normalize_eof: bool,
+) -> Option<language::Tree> {
+    let mut tree = if let Some(layer) = layer {
+        let owned = layer.to_owned();
+        if owned.offset.0 != 0 {
+            return None;
+        }
+        Some(owned.into_tree())
+    } else {
+        None
+    };
     let len = snapshot.text.len();
     let point = snapshot.text.max_point().to_ts_point();
     // A newline alone can turn a nested empty bullet into a setext underline.
     // The virtual body forces list syntax; all returned ranges stay in real source.
-    tree.edit(&tree_sitter::InputEdit {
-        start_byte: len,
-        old_end_byte: len,
-        new_end_byte: len + 2,
-        start_position: point,
-        old_end_position: point,
-        new_end_position: tree_sitter::Point::new(point.row + 1, 0),
-    });
+    if normalize_eof && let Some(tree) = &mut tree {
+        tree.edit(&tree_sitter::InputEdit {
+            start_byte: len,
+            old_end_byte: len,
+            new_end_byte: len + 2,
+            start_position: point,
+            old_end_position: point,
+            new_end_position: tree_sitter::Point::new(point.row + 1, 0),
+        });
+    }
     let mut parser = language::Parser::new();
     parser.set_language(&tree_sitter_md::LANGUAGE.into()).ok()?;
     let mut chunks = snapshot.text.as_rope().chunks_in_range(0..len);
     parser.parse_with_options(
         &mut |offset, _| {
             if offset >= len {
-                b"x\n".get(offset - len..).unwrap_or_default()
+                if normalize_eof {
+                    b"x\n".get(offset - len..).unwrap_or_default()
+                } else {
+                    &[]
+                }
             } else {
                 chunks.seek(offset);
                 chunks.peek_bytes().unwrap_or_default()
             }
         },
-        Some(&tree),
+        tree.as_ref(),
         None,
     )
 }
@@ -214,6 +232,32 @@ pub fn blocks(snapshot: &BufferSnapshot) -> Option<Vec<Block>> {
     let root = normalized
         .as_ref()
         .map_or_else(|| layer.node(), language::Tree::root_node);
+    Some(collect_blocks(snapshot, root, normalized.is_some()))
+}
+
+pub fn current_blocks(snapshot: &BufferSnapshot) -> Option<Vec<Block>> {
+    if snapshot
+        .language()
+        .is_none_or(|language| language.name().as_ref() != "Markdown")
+    {
+        return None;
+    }
+    if let Some(blocks) = blocks(snapshot) {
+        return Some(blocks);
+    }
+    let layer = snapshot
+        .syntax_layers()
+        .find(|layer| layer.language.name().as_ref() == "Markdown");
+    let normalized = needs_eof_terminator(snapshot);
+    let tree = parse_tree(snapshot, layer.as_ref(), normalized)?;
+    Some(collect_blocks(snapshot, tree.root_node(), normalized))
+}
+
+fn collect_blocks(
+    snapshot: &BufferSnapshot,
+    root: language::Node<'_>,
+    normalized: bool,
+) -> Vec<Block> {
     let source_len = snapshot.text.len();
     let mut stack = vec![(root, 0, None::<String>)];
     let frontmatter = frontmatter_end(snapshot);
@@ -333,7 +377,7 @@ pub fn blocks(snapshot: &BufferSnapshot) -> Option<Vec<Block>> {
             .clone()
             .unwrap_or_else(|| format!("at-{}", snapshot.text.offset_to_offset_utf16(from).0));
         // An empty item cannot interrupt a paragraph, even though the virtual body can.
-        if normalized.is_some()
+        if normalized
             && kind == "list"
             && content_from == source_len
             && let Some(previous) = result.last_mut()
@@ -403,7 +447,7 @@ pub fn blocks(snapshot: &BufferSnapshot) -> Option<Vec<Block>> {
             });
         }
     }
-    Some(result)
+    result
 }
 
 #[cfg(test)]
@@ -411,6 +455,52 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use serde_json::{Value, json};
+
+    #[gpui::test]
+    fn current_block_analysis_matches_clean_parser_without_mutating_syntax(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let vectors: Vec<Value> = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/markdown/vectors.json"
+        ))
+        .unwrap();
+        for vector in vectors {
+            let buffer = cx.update(|cx| crate::markdown::buffer("", cx));
+            cx.executor().run_until_parked();
+            let text = vector["text"].as_str().unwrap();
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_sync_parse_timeout(None);
+                buffer.edit([(0..0, text)], None, cx);
+            });
+            let snapshot = cx.update(|cx| buffer.read(cx).snapshot());
+            let syntax = || {
+                snapshot
+                    .syntax_layers()
+                    .map(|layer| {
+                        let node = layer.node();
+                        (
+                            node.to_sexp(),
+                            node.start_byte(),
+                            node.end_byte(),
+                            node.has_changes(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let before = syntax();
+            let current = current_blocks(&snapshot).unwrap();
+            assert_eq!(
+                syntax(),
+                before,
+                "derived analysis must leave shared syntax unchanged"
+            );
+            assert_eq!(snapshot.text(), text);
+            cx.executor().run_until_parked();
+            let clean = cx.update(|cx| buffer.read(cx).snapshot());
+            assert_eq!(current, blocks(&clean).unwrap(), "{}", vector["name"]);
+        }
+    }
 
     #[gpui::test]
     fn native_blocks_match_frozen_markdown_vectors(cx: &mut TestAppContext) {

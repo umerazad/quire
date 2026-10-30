@@ -523,10 +523,21 @@ fn rebuild(
     let Some(blocks) = crate::markdown_blocks::blocks(&snapshot) else {
         return;
     };
-    let spans = crate::markdown_blocks::syntax_spans(&snapshot, &blocks);
     let Some(links) = crate::markdown_links::links(&snapshot, &blocks) else {
         return;
     };
+    apply_blocks(editor, &snapshot, &blocks, links, window, cx);
+}
+
+fn apply_blocks(
+    editor: &mut Editor,
+    snapshot: &language::BufferSnapshot,
+    blocks: &[crate::markdown_blocks::Block],
+    links: Vec<crate::markdown_links::Link>,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    let spans = crate::markdown_blocks::syntax_spans(snapshot, blocks);
     let view = editor.buffer().read(cx).snapshot(cx);
     let links = links
         .into_iter()
@@ -624,6 +635,27 @@ pub fn bind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Resul
 
 pub fn enabled(editor: &Editor) -> bool {
     editor.addon::<Projection>().is_some()
+}
+
+/// Rebuilds excerpt folds from the host's analysis of the current source version.
+pub fn view_range_changed(
+    editor: &mut Editor,
+    source: &Entity<language::Buffer>,
+    blocks: Option<&[crate::markdown_blocks::Block]>,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    let Some(projection) = editor.addon_mut::<Projection>() else {
+        return;
+    };
+    projection.parsed = None;
+    projection.links.clear();
+    apply_spans(editor, &[], window, cx);
+    if let Some(blocks) = blocks {
+        let snapshot = source.read(cx).snapshot();
+        let links = crate::markdown_links::links(&snapshot, blocks).unwrap_or_default();
+        apply_blocks(editor, &snapshot, blocks, links, window, cx);
+    }
 }
 
 pub fn unbind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {

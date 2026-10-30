@@ -15,6 +15,12 @@ mod editor_command;
 mod editor_excerpt;
 
 #[cfg(feature = "full-editor")]
+mod page_analysis;
+
+#[cfg(feature = "full-editor")]
+mod semantic_excerpt;
+
+#[cfg(feature = "full-editor")]
 mod editor_projection;
 
 #[cfg(feature = "full-editor")]

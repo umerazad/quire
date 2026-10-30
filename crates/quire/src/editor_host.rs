@@ -147,6 +147,7 @@ struct NotebookWindow {
     mode: Entity<vim::ModeIndicator>,
     commands: Entity<crate::editor_command::CommandPrompt>,
     presentation_error: Option<String>,
+    semantic_excerpt: Option<Entity<crate::semantic_excerpt::SemanticExcerpt>>,
 }
 
 impl NotebookWindow {
@@ -162,6 +163,15 @@ impl NotebookWindow {
         } else {
             crate::editor_projection::bind(editor, window, cx).err()
         };
+        if editor == &self.second
+            && let Some(model) = &self.semantic_excerpt
+        {
+            crate::semantic_excerpt::refresh_view(editor, model, window, cx);
+            if self.presentation_error.is_some() {
+                self.presentation_error =
+                    model.read(cx).message().or(self.presentation_error.take());
+            }
+        }
         window.focus(&editor.focus_handle(cx), cx);
         cx.notify();
     }
@@ -276,7 +286,24 @@ impl NotebookWindow {
             commands,
             mode,
             presentation_error: None,
+            semantic_excerpt: None,
         }
+    }
+
+    fn for_block(
+        page: Entity<crate::page_analysis::PageAnalysis>,
+        id: &str,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> Self {
+        let source = page.read(cx).source.clone();
+        let model = cx.new(|cx| crate::semantic_excerpt::SemanticExcerpt::new(page, id.into(), cx));
+        let excerpt = model.read(cx).buffer.clone();
+        let mut view = Self::for_buffer(source, Some(excerpt), window, cx);
+        crate::semantic_excerpt::attach(&view.second, &model, window, cx);
+        cx.observe(&model, |_, _, cx| cx.notify()).detach();
+        view.semantic_excerpt = Some(model);
+        view
     }
 }
 
@@ -296,6 +323,10 @@ impl Render for NotebookWindow {
                 div.child(self.source_search.clone())
             })
             .child(gpui::div().flex_1().min_h_0().child(self.source.clone()));
+        let message = self
+            .semantic_excerpt
+            .as_ref()
+            .and_then(|model| model.read(cx).message());
         let mut second =
             DivRegistrar::new(|this: &Self, _, _| Some(this.second_search.clone()), cx);
         BufferSearchBar::register(&mut second);
@@ -306,6 +337,9 @@ impl Render for NotebookWindow {
             .flex_1()
             .min_w_0()
             .child(self.presentation_button("second-presentation", &self.second, cx))
+            .when_some(message, |div, message| {
+                div.child(gpui::div().p_2().child(message))
+            })
             .when(!self.second_search.read(cx).is_dismissed(), |div| {
                 div.child(self.second_search.clone())
             })
@@ -358,12 +392,7 @@ pub fn run() {
         let block = "- Edit this note in either pane. ^b-welcome\n  - Both panes share the same document.";
         let text = format!("{prefix}{block}\n- [ ] Try Vim, undo, and redo.\n");
         let buffer = crate::markdown::buffer(&text, cx);
-        let excerpt = if excerpt_demo {
-            match crate::editor_excerpt::buffer(buffer.clone(), prefix.len()..prefix.len() + block.len(), cx) {
-                Ok(excerpt) => Some(excerpt),
-                Err(error) => { eprintln!("{error}"); cx.quit(); return; }
-            }
-        } else { None };
+        let page = excerpt_demo.then(|| cx.new(|cx| crate::page_analysis::PageAnalysis::new(buffer.clone(), cx)));
         let options = gpui::WindowOptions {
             window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(gpui::px(1100.), gpui::px(760.)), cx))),
             ..Default::default()
@@ -371,7 +400,10 @@ pub fn run() {
         match cx.open_window(options, move |window, cx| {
             window.set_window_title("Quire Native");
             cx.new(|cx| {
-                let view = NotebookWindow::for_buffer(buffer, excerpt, window, cx);
+                let view = match page {
+                    Some(page) => NotebookWindow::for_block(page, "b-welcome", window, cx),
+                    None => NotebookWindow::for_buffer(buffer, None, window, cx),
+                };
                 if write_demo
                     && let Err(error) = crate::editor_projection::bind(&view.second, window, cx) {
                         eprintln!("{error}");
@@ -630,3 +662,7 @@ mod projection_vim_tests;
 #[cfg(test)]
 #[path = "editor_projection_mapping_tests.rs"]
 mod projection_mapping_tests;
+
+#[cfg(test)]
+#[path = "semantic_excerpt_tests.rs"]
+mod semantic_excerpt_tests;
