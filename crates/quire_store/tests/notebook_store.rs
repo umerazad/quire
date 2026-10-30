@@ -196,6 +196,56 @@ fn only_certain_unpublished_current_heads_are_coalesced() {
 }
 
 #[test]
+fn first_versions_and_merges_are_never_coalesced() {
+    let root = tempfile::tempdir().unwrap();
+    let store = NotebookStore::open(&root.path().join("local.sqlite"), "nb", "office").unwrap();
+    store.mark_reconciled(None).unwrap();
+    let first = store.save(&edit(vec![], "one")).unwrap();
+    let second = store
+        .save(&edit(vec![first.revision_id().into()], "two"))
+        .unwrap();
+    assert!(second.replaced.is_none(), "a page's first version stays");
+    assert!(store.get(first.revision_id()).unwrap().is_some());
+    let third = store
+        .save(&edit(vec![second.revision_id().into()], "three"))
+        .unwrap();
+    assert_eq!(third.replaced.as_deref(), Some(second.revision_id()));
+
+    let other = store.save(&edit(vec![], "unrelated root")).unwrap();
+    let merge = store
+        .save(&edit(
+            vec![third.revision_id().into(), other.revision_id().into()],
+            "merged",
+        ))
+        .unwrap();
+    assert_eq!(
+        merge
+            .revision
+            .root()
+            .field("parents")
+            .elements()
+            .unwrap()
+            .count(),
+        2
+    );
+    let after = store
+        .save(&edit(vec![merge.revision_id().into()], "after merge"))
+        .unwrap();
+    assert!(after.replaced.is_none(), "a merge revision stays");
+    assert!(store.get(merge.revision_id()).unwrap().is_some());
+    assert_eq!(
+        store.outbox().unwrap(),
+        vec![
+            first.revision_id(),
+            third.revision_id(),
+            other.revision_id(),
+            merge.revision_id(),
+            after.revision_id()
+        ]
+    );
+}
+
+#[test]
 fn multi_page_save_rolls_back_every_page_when_one_parent_is_missing() {
     let root = tempfile::tempdir().unwrap();
     let store = NotebookStore::open(&root.path().join("local.sqlite"), "nb", "office").unwrap();

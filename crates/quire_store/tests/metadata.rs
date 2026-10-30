@@ -103,8 +103,14 @@ fn metadata_tracks_coalescing_conflicts_and_tombstones() -> Result<()> {
     let root = tempfile::tempdir()?;
     let path = root.path().join("local.sqlite");
     let store = NotebookStore::open(&path, "nb", "local")?;
-    let first = store.save(&edit("p", "---\ntitle: first\n---\n", vec![]))?;
     store.mark_reconciled(None)?;
+    let root_version = store.save(&edit("p", "---\ntitle: root\n---\n", vec![]))?;
+    let first = store.save(&edit(
+        "p",
+        "---\ntitle: first\n---\n",
+        vec![root_version.revision_id().into()],
+    ))?;
+    assert!(first.replaced.is_none());
     let second = store.save(&edit(
         "p",
         "---\ntitle: second\n---\n",
@@ -114,7 +120,7 @@ fn metadata_tracks_coalescing_conflicts_and_tombstones() -> Result<()> {
     let connection = Connection::try_open_file(path.to_str().unwrap())?;
     assert_eq!(
         connection.select_row::<i64>("SELECT COUNT(*) FROM revision_metadata")?()?,
-        Some(1)
+        Some(2)
     );
     assert_eq!(
         store.page_metadata(None, MetadataLimits::default())?[0]

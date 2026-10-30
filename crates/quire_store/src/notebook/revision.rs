@@ -271,6 +271,12 @@ impl NotebookStore {
                     && !observed
                     && heads == base
                     && previous.root().field("device").as_str() == Some(self.device.as_str())
+                    && previous
+                        .root()
+                        .field("parents")
+                        .elements()
+                        .map(Iterator::count)
+                        == Some(1)
             });
             let mut parents: Vec<String> = if let Some(previous) = replaces {
                 previous
