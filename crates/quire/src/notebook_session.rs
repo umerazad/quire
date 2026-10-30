@@ -10,6 +10,7 @@ use futures::{
 use gpui::{App, AppContext, Context, Entity, SharedString, Task};
 use quire_store::{
     notebook::PageCheckout,
+    sync::json::Json,
     worker::{QueueError, QueueLimits, StorageClient, StorageWorker},
 };
 use std::{
@@ -117,6 +118,15 @@ pub struct LoadedPage {
     pub load_time: Duration,
 }
 
+impl LoadedPage {
+    /// The stored-source adapter for the buffer's current lineage, following merged versions.
+    pub fn current_source(&self, cx: &App) -> Arc<StoredSource> {
+        self.persistence
+            .as_ref()
+            .map_or_else(|| self.source.clone(), |page| page.read(cx).source())
+    }
+}
+
 enum LoadState {
     Loading,
     Failed { retryable: bool },
@@ -186,7 +196,15 @@ impl OpenPage {
                 (error.to_string(), retryable)
             })?;
             let checkout = reply.await.map_err(|error| (format!("{error:#}"), true))?;
-            PreparedPage::new(id, checkout).map_err(|error| (error, true))
+            let base = match checkout.draft.as_ref().map(|draft| draft.base.as_slice()) {
+                Some([base]) if checkout.heads != [base.as_str()] => client
+                    .get(base.clone())
+                    .map_err(|error| (error.to_string(), error == QueueError::Busy))?
+                    .await
+                    .map_err(|error| (format!("{error:#}"), true))?,
+                _ => None,
+            };
+            PreparedPage::new(id, checkout, base).map_err(|error| (error, true))
         });
         self.task = Some(cx.spawn(async move |this, cx| {
             let result = work.await;
@@ -254,34 +272,59 @@ struct PreparedPage {
 }
 
 impl PreparedPage {
-    fn new(id: String, checkout: PageCheckout) -> Result<Self, String> {
-        let loaded_revision_bodies = usize::from(checkout.selected.is_some());
+    /// `base` is the draft's own base revision when it differs from the page's current head.
+    fn new(id: String, checkout: PageCheckout, base: Option<Json>) -> Result<Self, String> {
+        let field =
+            |record: &Json, name: &str| record.root().field(name).as_str().map(str::to_owned);
+        let loaded_revision_bodies =
+            usize::from(checkout.selected.is_some()) + usize::from(base.is_some());
         let deleted = checkout
             .selected
             .as_ref()
             .is_some_and(|record| record.root().field("deleted").as_bool() == Some(true));
-        let recovered = checkout.draft.is_some();
-        let base = checkout
-            .draft
+        let live = !deleted && checkout.heads.len() == 1;
+        let head_path = checkout
+            .selected
             .as_ref()
-            .map(|draft| draft.base.clone())
-            .unwrap_or_else(|| checkout.heads.clone());
+            .and_then(|record| field(record, "path"));
+        let head_text = checkout
+            .selected
+            .as_ref()
+            .and_then(|record| field(record, "text"));
+        let recovered = checkout.draft.is_some();
         let stamp = checkout.draft.as_ref().map(|draft| draft.stamp.clone());
-        let eligible = !deleted && checkout.heads.len() == 1 && base == checkout.heads;
+        // A draft settles, saving from its own base so the store merges it, only when that base is
+        // known and the page still lives at the draft's path. Every other draft stays for review.
+        let (eligible, settle, base_ids, base_text) = match &checkout.draft {
+            None => (live, false, checkout.heads.clone(), head_text.clone()),
+            Some(draft) if draft.base == checkout.heads => (
+                live,
+                live && head_path.as_deref() == Some(draft.path.as_str()),
+                draft.base.clone(),
+                head_text.clone(),
+            ),
+            Some(draft) => {
+                let known = base.as_ref().filter(|record| {
+                    record.root().field("page").as_str() == Some(id.as_str())
+                        && record.root().field("deleted").as_bool() == Some(false)
+                });
+                let settle =
+                    live && known.is_some() && head_path.as_deref() == Some(draft.path.as_str());
+                (
+                    settle,
+                    settle,
+                    draft.base.clone(),
+                    known.and_then(|record| field(record, "text")),
+                )
+            }
+        };
         let (text, path) = if let Some(draft) = checkout.draft {
             (draft.text, Some(draft.path))
-        } else if let Some(record) = checkout.selected {
-            let text = record
-                .root()
-                .field("text")
-                .as_str()
-                .ok_or_else(unrepresentable)?;
-            let path = record
-                .root()
-                .field("path")
-                .as_str()
-                .ok_or_else(unrepresentable)?;
-            (text.to_owned(), Some(path.to_owned()))
+        } else if checkout.selected.is_some() {
+            (
+                head_text.ok_or_else(unrepresentable)?,
+                Some(head_path.ok_or_else(unrepresentable)?),
+            )
         } else {
             (String::new(), None)
         };
@@ -297,14 +340,19 @@ impl PreparedPage {
         }
         if recovered {
             status.push_str(" · recovered unsaved changes");
+            if !eligible {
+                status.push_str(" kept for review");
+            }
         }
         let opened = eligible
             .then(|| {
                 path.clone().map(|path| OpenedPage {
                     page: id,
                     path,
-                    base,
+                    base: base_ids,
                     draft: stamp,
+                    base_text: base_text.map(Arc::from),
+                    settle,
                 })
             })
             .flatten();

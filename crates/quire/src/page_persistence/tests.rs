@@ -6,6 +6,7 @@ use quire_store::{
     worker::{QueueLimits, StorageWorker},
 };
 use std::time::{Duration, Instant};
+use text::ToOffset as _;
 
 fn initial(text: &str) -> Edit {
     Edit {
@@ -25,7 +26,7 @@ pub(crate) fn wait(model: &Entity<PagePersistence>, cx: &mut TestAppContext) {
     loop {
         while cx.executor().tick() {}
         if model.read_with(cx, |model, _| {
-            model.task.is_none() && model.debounce.is_none()
+            model.task.is_none() && model.merge.is_none() && model.debounce.is_none()
         }) {
             return;
         }
@@ -36,6 +37,22 @@ pub(crate) fn wait(model: &Entity<PagePersistence>, cx: &mut TestAppContext) {
         if model.read_with(cx, |model, _| model.debounce.is_some()) {
             cx.executor().advance_clock(Duration::from_millis(100));
         }
+        std::thread::yield_now();
+    }
+}
+
+/// Waits for storage work in flight without moving simulated time, so no new timer fires.
+fn settle(model: &Entity<PagePersistence>, cx: &mut TestAppContext) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        while cx.executor().tick() {}
+        if model.read_with(cx, |model, _| model.task.is_none() && model.merge.is_none()) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "native persistence did not finish"
+        );
         std::thread::yield_now();
     }
 }
@@ -67,6 +84,8 @@ fn typing_records_recovery_at_100_ms_and_autosaves_at_450_ms(cx: &mut TestAppCon
             path: "Note.md".into(),
             base: base.clone(),
             draft: None,
+            base_text: None,
+            settle: false,
         },
         worker.client.clone(),
         cx,
@@ -107,62 +126,326 @@ fn typing_records_recovery_at_100_ms_and_autosaves_at_450_ms(cx: &mut TestAppCon
     block_on(worker.stopped).unwrap();
 }
 
+struct Fixture {
+    _root: tempfile::TempDir,
+    path: std::path::PathBuf,
+    store: NotebookStore,
+    client: StorageClient,
+    base: String,
+    buffer: Entity<Buffer>,
+    persistence: Entity<PagePersistence>,
+}
+
+impl Fixture {
+    fn new(text: &str, cx: &mut TestAppContext) -> Self {
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("local.sqlite");
+        let store = NotebookStore::open(&path, "nb", "local").unwrap();
+        let base = store.save(&initial(text)).unwrap().revision_id().to_owned();
+        let worker = StorageWorker::spawn(
+            path.clone(),
+            "nb".into(),
+            "local".into(),
+            QueueLimits::default(),
+        )
+        .unwrap();
+        block_on(worker.ready).unwrap();
+        let (buffer, persistence) = model(
+            text,
+            OpenedPage {
+                page: "p".into(),
+                path: "Note.md".into(),
+                base: vec![base.clone()],
+                draft: None,
+                base_text: Some(text.into()),
+                settle: false,
+            },
+            worker.client.clone(),
+            cx,
+        );
+        Self {
+            _root: root,
+            path,
+            store,
+            client: worker.client,
+            base,
+            buffer,
+            persistence,
+        }
+    }
+
+    /// Another writer's version, stored directly as an import or bulk edit would.
+    fn peer(&self, text: &str, deleted: bool) -> String {
+        let mut edit = initial(text);
+        edit.base = vec![self.base.clone()];
+        edit.deleted = deleted;
+        edit.created = 2;
+        self.store.save(&edit).unwrap().revision_id().to_owned()
+    }
+
+    fn head(&self) -> (String, bool) {
+        let heads = self.store.heads("p").unwrap();
+        assert_eq!(heads.len(), 1, "the page keeps one head");
+        let record = self.store.get(&heads[0]).unwrap().unwrap();
+        (
+            record.root().field("text").as_str().unwrap().to_owned(),
+            record.root().field("deleted").as_bool().unwrap(),
+        )
+    }
+
+    fn text(&self, cx: &mut TestAppContext) -> String {
+        self.buffer.read_with(cx, |buffer, _| buffer.text())
+    }
+
+    fn edit(&self, range: std::ops::Range<usize>, text: &str, cx: &mut TestAppContext) {
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.edit([(range, text)], None, cx);
+        });
+    }
+
+    fn autosave(&self, cx: &mut TestAppContext) {
+        wait(&self.persistence, cx);
+        cx.executor().advance_clock(Duration::from_millis(450));
+        wait(&self.persistence, cx);
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        self.client.close().ok();
+    }
+}
+
 #[gpui::test]
-fn stale_heads_preserve_typing_and_ancestry_while_new_recovery_keeps_working(
+fn merges_another_writers_version_into_a_page_being_typed_in(cx: &mut TestAppContext) {
+    let page = Fixture::new("- one\n- two\n", cx);
+    page.edit(5..5, " and a half", cx);
+    let peer = page.peer("- [x] one\n- two\n- three\n", false);
+    page.persistence.update(cx, |model, cx| {
+        model.absorb(peer, "- [x] one\n- two\n- three\n", cx)
+    });
+    wait(&page.persistence, cx);
+    assert_eq!(page.text(cx), "- [x] one and a half\n- two\n- three\n");
+    cx.update(|cx| assert!(page.persistence.read(cx).is_dirty(cx)));
+    page.autosave(cx);
+    cx.update(|cx| assert!(!page.persistence.read(cx).is_dirty(cx)));
+    assert_eq!(
+        page.head(),
+        ("- [x] one and a half\n- two\n- three\n".into(), false)
+    );
+}
+
+#[gpui::test]
+fn absorbing_into_a_dirty_page_keeps_anchors_and_stays_out_of_undo(cx: &mut TestAppContext) {
+    let page = Fixture::new("alpha\nbeta\n", cx);
+    page.edit(10..10, "!", cx);
+    let anchor = page
+        .buffer
+        .read_with(cx, |buffer, _| buffer.anchor_before(6));
+    let peer = page.peer("alpha more\nbeta\n", false);
+    page.persistence.update(cx, |model, cx| {
+        model.absorb(peer.clone(), "alpha more\nbeta\n", cx)
+    });
+    wait(&page.persistence, cx);
+    page.buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "alpha more\nbeta!\n");
+        assert_eq!(anchor.to_offset(&buffer.snapshot()), 11);
+        assert!(buffer.is_dirty());
+    });
+    cx.update(|cx| {
+        let model = page.persistence.read(cx);
+        assert_eq!(model.opened.base, [peer]);
+        assert!(model.is_dirty(cx));
+    });
+    page.buffer.update(cx, |buffer, cx| buffer.undo(cx));
+    assert_eq!(page.text(cx), "alpha more\nbeta\n");
+    page.buffer.update(cx, |buffer, cx| buffer.undo(cx));
+    assert_eq!(page.text(cx), "alpha more\nbeta\n");
+}
+
+#[gpui::test]
+fn absorbing_into_a_clean_page_shows_the_new_version_with_its_line_endings(
     cx: &mut TestAppContext,
 ) {
-    cx.update(|cx| crate::editor_host::init(cx).unwrap());
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("local.sqlite");
-    let store = NotebookStore::open(&path, "nb", "local").unwrap();
-    let saved = store.save(&initial("saved")).unwrap();
-    let base = vec![saved.revision_id().into()];
+    let page = Fixture::new("one\r\n", cx);
+    let peer = page.peer("one\r\ntwo\r\n", false);
+    page.persistence.update(cx, |model, cx| {
+        model.absorb(peer.clone(), "one\r\ntwo\r\n", cx)
+    });
+    wait(&page.persistence, cx);
+    assert_eq!(page.text(cx), "one\ntwo\n");
+    cx.update(|cx| {
+        let model = page.persistence.read(cx);
+        assert!(!model.is_dirty(cx));
+        assert!(!page.buffer.read(cx).is_dirty());
+        assert_eq!(model.opened.base, std::slice::from_ref(&peer));
+        let snapshot = page.buffer.read(cx).snapshot();
+        assert_eq!(
+            &*model.source().render(&snapshot).unwrap(),
+            "one\r\ntwo\r\n"
+        );
+    });
+    assert!(page.store.draft("p").unwrap().is_none());
+    assert_eq!(page.store.heads("p").unwrap(), std::slice::from_ref(&peer));
+    page.persistence
+        .update(cx, |model, cx| model.absorb(peer.clone(), "ignored", cx));
+    wait(&page.persistence, cx);
+    assert_eq!(page.text(cx), "one\ntwo\n");
+    page.edit(8..8, "x", cx);
+    page.persistence.update(cx, |model, cx| model.save(cx));
+    wait(&page.persistence, cx);
+    assert_eq!(page.head(), ("one\r\ntwo\r\nx".into(), false));
+}
+
+#[gpui::test]
+fn shows_the_merge_a_stale_save_returns_while_typing_continues(cx: &mut TestAppContext) {
+    use sqlez::connection::Connection;
+    let page = Fixture::new("- one\n- two\n", cx);
+    page.edit(5..5, "!", cx);
+    let peer = page.peer("- one\n- two\n- from elsewhere\n", false);
+    let lock = Connection::try_open_file(page.path.to_str().unwrap()).unwrap();
+    lock.exec("BEGIN IMMEDIATE").unwrap()().unwrap();
+    page.persistence.update(cx, |model, cx| model.save(cx));
+    cx.executor().allow_parking();
+    cx.executor().run_until_parked();
+    page.persistence.update(cx, |model, cx| {
+        model.absorb(peer, "- one\n- two\n- from elsewhere\n", cx)
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(page.text(cx), "- one!\n- two\n");
+    page.edit(6..6, "?", cx);
+    lock.exec("ROLLBACK").unwrap()().unwrap();
+    wait(&page.persistence, cx);
+    assert_eq!(page.text(cx), "- one!?\n- two\n- from elsewhere\n");
+    assert_eq!(
+        page.head(),
+        ("- one!\n- two\n- from elsewhere\n".into(), false)
+    );
+    page.autosave(cx);
+    assert_eq!(
+        page.head(),
+        ("- one!?\n- two\n- from elsewhere\n".into(), false)
+    );
+    cx.update(|cx| {
+        let model = page.persistence.read(cx);
+        assert!(!model.is_dirty(cx));
+        assert_eq!(model.status(cx), "Saved locally");
+    });
+}
+
+#[gpui::test]
+fn keeps_both_versions_of_a_line_changed_in_both_places_and_warns(cx: &mut TestAppContext) {
+    let page = Fixture::new("- call Sam\n", cx);
+    page.edit(7..10, "Alex", cx);
+    page.peer("- call Robin\n", false);
+    page.persistence.update(cx, |model, cx| model.save(cx));
+    wait(&page.persistence, cx);
+    assert_eq!(page.text(cx), "- call Robin\n- call Alex\n");
+    assert_eq!(page.head(), ("- call Robin\n- call Alex\n".into(), false));
+    cx.update(|cx| {
+        let model = page.persistence.read(cx);
+        assert!(!model.is_dirty(cx));
+        assert!(model.status(cx).contains(
+            "Note.md was edited in two places at once and some of the same lines changed both ways"
+        ));
+    });
+}
+
+#[gpui::test]
+fn saves_while_typing_goes_on_without_a_pause(cx: &mut TestAppContext) {
+    let page = Fixture::new("- one\n- two\n", cx);
+    cx.executor().allow_parking();
+    for _ in 0..12 {
+        page.edit(5..5, "!", cx);
+        while cx.executor().tick() {}
+        cx.executor().advance_clock(Duration::from_millis(200));
+        while cx.executor().tick() {}
+    }
+    settle(&page.persistence, cx);
+    assert_eq!(
+        page.head(),
+        (format!("- one{}\n- two\n", "!".repeat(10)), false)
+    );
+}
+
+#[gpui::test]
+fn two_editors_saving_one_page_at_once_end_with_one_head_and_the_same_text(
+    cx: &mut TestAppContext,
+) {
+    let first = Fixture::new("- one\n- two\n", cx);
     let worker = StorageWorker::spawn(
-        path.clone(),
+        first.path.clone(),
         "nb".into(),
         "local".into(),
         QueueLimits::default(),
     )
     .unwrap();
     block_on(worker.ready).unwrap();
-    let (buffer, persistence) = model(
-        "saved",
+    let (buffer, second) = model(
+        "- one\n- two\n",
         OpenedPage {
             page: "p".into(),
             path: "Note.md".into(),
-            base: base.clone(),
+            base: vec![first.base.clone()],
             draft: None,
+            base_text: Some("- one\n- two\n".into()),
+            settle: false,
         },
         worker.client.clone(),
         cx,
     );
-    let mut peer = initial("other writer");
-    peer.base = base.clone();
-    let remote = store.save(&peer).unwrap();
+    first.edit(5..5, " first", cx);
     buffer.update(cx, |buffer, cx| {
-        buffer.edit([(0..5, "my text")], None, cx);
+        buffer.edit([(11..11, " second")], None, cx);
     });
-    persistence.update(cx, |model, cx| model.save(cx));
-    wait(&persistence, cx);
+    first.persistence.update(cx, |model, cx| model.save(cx));
+    second.update(cx, |model, cx| model.save(cx));
+    wait(&first.persistence, cx);
+    wait(&second, cx);
+    let (text, _) = first.head();
+    assert_eq!(text, "- one first\n- two second\n");
+    let head = first.store.heads("p").unwrap().remove(0);
+    for model in [&first.persistence, &second] {
+        model.update(cx, |model, cx| model.absorb(head.clone(), text.clone(), cx));
+        wait(model, cx);
+    }
+    assert_eq!(first.text(cx), text);
+    assert_eq!(buffer.read_with(cx, |buffer, _| buffer.text()), text);
     cx.update(|cx| {
-        assert!(persistence.read(cx).blocked);
-        assert_eq!(persistence.read(cx).opened.base, base);
-        assert!(persistence.read(cx).is_dirty(cx));
-        assert!(persistence.read(cx).is_secured(cx));
+        assert!(!first.persistence.read(cx).is_dirty(cx));
+        assert!(!second.read(cx).is_dirty(cx));
     });
-    assert_eq!(store.heads("p").unwrap(), [remote.revision_id()]);
-    assert_eq!(store.draft("p").unwrap().unwrap().text, "my text");
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit([(7..7, " and later")], None, cx);
-    });
-    persistence.update(cx, |model, cx| model.recover(cx));
-    wait(&persistence, cx);
-    let draft = store.draft("p").unwrap().unwrap();
-    assert_eq!(draft.text, "my text and later");
-    assert_eq!(draft.base, base);
-    assert_eq!(store.heads("p").unwrap(), [remote.revision_id()]);
+    assert_eq!(first.store.heads("p").unwrap(), [head]);
     worker.client.close().unwrap();
-    block_on(worker.stopped).unwrap();
+}
+
+#[gpui::test]
+fn saving_to_a_page_deleted_elsewhere_revives_it(cx: &mut TestAppContext) {
+    let page = Fixture::new("keep", cx);
+    page.peer("", true);
+    page.edit(4..4, " more", cx);
+    page.persistence.update(cx, |model, cx| model.save(cx));
+    wait(&page.persistence, cx);
+    assert_eq!(page.head(), ("keep more".into(), false));
+    cx.update(|cx| assert!(!page.persistence.read(cx).is_dirty(cx)));
+}
+
+#[gpui::test]
+fn unchanged_text_saved_from_a_deleted_version_stays_deleted(cx: &mut TestAppContext) {
+    let page = Fixture::new("keep", cx);
+    page.peer("", true);
+    page.edit(4..4, "x", cx);
+    page.edit(4..5, "", cx);
+    page.persistence.update(cx, |model, cx| model.save(cx));
+    wait(&page.persistence, cx);
+    assert_eq!(page.head(), ("".into(), true));
+    assert_eq!(page.text(cx), "keep");
+    cx.update(|cx| {
+        assert!(page.persistence.read(cx).status(cx).contains(
+            "deleted elsewhere. Your text stays open here; edit and save it to restore the page"
+        ))
+    });
 }
 
 #[gpui::test]
@@ -193,6 +476,8 @@ fn busy_queue_retries_the_frozen_request_then_records_later_typing(cx: &mut Test
             path: "Note.md".into(),
             base,
             draft: None,
+            base_text: None,
+            settle: false,
         },
         worker.client.clone(),
         cx,
@@ -280,6 +565,8 @@ fn saves_mixed_source_and_restores_recovery_without_marking_it_saved(cx: &mut Te
             path: "Note.md".into(),
             base: base.clone(),
             draft: None,
+            base_text: None,
+            settle: false,
         },
         worker.client.clone(),
         cx,
@@ -346,6 +633,8 @@ fn later_typing_remains_dirty_when_an_older_save_finishes(cx: &mut TestAppContex
             path: "Note.md".into(),
             base,
             draft: None,
+            base_text: None,
+            settle: false,
         },
         worker.client.clone(),
         cx,
@@ -414,6 +703,8 @@ fn adopts_a_prior_session_draft_before_saving(cx: &mut TestAppContext) {
             path: "Note.md".into(),
             base,
             draft: Some(stamp),
+            base_text: None,
+            settle: false,
         },
         worker.client.clone(),
         cx,
@@ -453,6 +744,8 @@ fn stopped_storage_keeps_the_current_buffer_unsecured_and_retryable(cx: &mut Tes
             path: "Note.md".into(),
             base,
             draft: None,
+            base_text: None,
+            settle: false,
         },
         worker.client.clone(),
         cx,
@@ -500,6 +793,8 @@ fn reverting_line_endings_during_a_save_requires_a_new_recovery_ack(cx: &mut Tes
             path: "Note.md".into(),
             base,
             draft: None,
+            base_text: None,
+            settle: false,
         },
         worker.client.clone(),
         cx,

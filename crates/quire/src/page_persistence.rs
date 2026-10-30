@@ -1,25 +1,36 @@
 use crate::stored_source::StoredSource;
 use gpui::{App, AppContext, Context, Entity, SharedString, Subscription, Task};
 use language::{Buffer, BufferEvent, BufferSnapshot};
+use quire_core::{merge::merge_text, source_text::SourceText};
 use quire_store::{
-    notebook::{CheckedSave, Draft, DraftStamp, Edit, SaveAck},
+    notebook::{Draft, DraftStamp, Edit},
+    sync::json::Json,
     worker::StorageClient,
 };
 use std::{
     sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+const RECOVERY_DELAY: Duration = Duration::from_millis(100);
+const SAVE_IDLE: Duration = Duration::from_millis(450);
+const SAVE_LATEST: Duration = Duration::from_secs(2);
 
 pub struct OpenedPage {
     pub page: String,
     pub path: String,
     pub base: Vec<String>,
     pub draft: Option<DraftStamp>,
+    /// Stored text of `base`, when the checkout read it; fetched on demand otherwise.
+    pub base_text: Option<Arc<str>>,
+    /// Save the restored draft as soon as editing is enabled, merging it into newer versions.
+    pub settle: bool,
 }
 
 #[derive(Clone)]
 struct Frozen {
     snapshot: BufferSnapshot,
+    source: Arc<StoredSource>,
     stamp: DraftStamp,
     created: u64,
     base: Vec<String>,
@@ -27,10 +38,50 @@ struct Frozen {
     save: bool,
 }
 
+struct Saved {
+    revision: String,
+    text: Arc<str>,
+    /// The merge revision and its text, when this save left several versions.
+    merged: Option<(String, Arc<str>)>,
+    overlaps: usize,
+    /// The page's only head is this save's result.
+    settled: bool,
+}
+
 struct Completion {
     recovered: bool,
-    heads_changed: bool,
-    result: Result<Option<SaveAck>, String>,
+    result: Result<Option<Saved>, String>,
+}
+
+/// A version to merge into the buffer: the edits made since `base` merge into `text`.
+#[derive(Clone)]
+struct Known {
+    revision: String,
+    base: Arc<str>,
+    text: Arc<str>,
+}
+
+enum Incoming {
+    /// The store moved on; read its current version. A matching hint avoids reading the body.
+    Store {
+        hint: Option<(String, Arc<str>)>,
+    },
+    Known(Known),
+}
+
+struct Plan {
+    known: Known,
+    snapshot: BufferSnapshot,
+    diff: language::Diff,
+    original: SourceText,
+    clean: bool,
+    overlaps: usize,
+}
+
+enum Resolution {
+    Current,
+    Removed,
+    Merge(Box<Plan>),
 }
 
 pub struct PagePersistence {
@@ -44,12 +95,17 @@ pub struct PagePersistence {
     saved: Option<BufferSnapshot>,
     durable: Option<BufferSnapshot>,
     enabled: bool,
-    blocked: bool,
     error: Option<SharedString>,
+    warning: Option<SharedString>,
+    removed: bool,
     pending: Option<Frozen>,
     queued_save: Option<BufferSnapshot>,
     recover_requested: bool,
+    stale: bool,
+    hint: Option<(String, Arc<str>)>,
+    save_by: Option<Instant>,
     task: Option<Task<()>>,
+    merge: Option<Task<()>>,
     debounce: Option<Task<()>>,
     autosave: Option<Task<()>>,
     _subscription: Subscription,
@@ -89,12 +145,17 @@ impl PagePersistence {
             saved,
             durable,
             enabled: false,
-            blocked: false,
             error: None,
+            warning: None,
+            removed: false,
             pending: None,
             queued_save: None,
             recover_requested: false,
+            stale: false,
+            hint: None,
+            save_by: None,
             task: None,
+            merge: None,
             debounce: None,
             autosave: None,
             _subscription: subscription,
@@ -109,6 +170,9 @@ impl PagePersistence {
         if !self.is_secured(cx) {
             self.schedule_recovery(cx);
         }
+        if std::mem::take(&mut self.opened.settle) {
+            self.save(cx);
+        }
         cx.notify();
     }
 
@@ -117,6 +181,10 @@ impl PagePersistence {
     }
     pub fn has_error(&self) -> bool {
         self.error.is_some()
+    }
+    /// The stored-source adapter for the buffer's current lineage; it follows merged versions.
+    pub fn source(&self) -> Arc<StoredSource> {
+        self.source.clone()
     }
     pub fn is_dirty(&self, cx: &App) -> bool {
         let current = self.buffer.read(cx).snapshot();
@@ -149,24 +217,30 @@ impl PagePersistence {
         if let Some(error) = &self.error {
             return error.clone();
         }
-        if self.task.is_some() {
-            return if self.pending.as_ref().is_some_and(|request| request.save) {
+        let state = if self.task.is_some() {
+            if self.pending.as_ref().is_some_and(|request| request.save) {
                 "Saving captured version…"
             } else {
                 "Recording recovery…"
             }
-            .into();
-        }
-        if self.blocked {
-            return "This page changed elsewhere. Your text is kept for recovery; review its versions before saving.".into();
-        }
-        if !self.is_dirty(cx) {
-            "Saved locally".into()
+        } else if self.merge.is_some() {
+            "Merging changes made elsewhere…"
+        } else if !self.is_dirty(cx) {
+            "Saved locally"
         } else if self.is_secured(cx) {
-            "Recorded for recovery · not saved locally".into()
+            "Recorded for recovery · not saved locally"
         } else {
-            "Unsaved changes".into()
-        }
+            "Unsaved changes"
+        };
+        let removed = self.removed.then_some(
+            "This page was deleted elsewhere. Your text stays open here; edit and save it to restore the page.",
+        );
+        [Some(state), removed, self.warning.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ")
+            .into()
     }
 
     pub fn save(&mut self, cx: &mut Context<Self>) {
@@ -174,6 +248,37 @@ impl PagePersistence {
     }
     pub fn recover(&mut self, cx: &mut Context<Self>) {
         self.request(false, cx);
+    }
+
+    /// Another writer stored `text` as `revision` of this page, for example a bulk tag edit or
+    /// an imported change. Edits made here since the last saved text merge into it as one buffer
+    /// edit outside undo history; a page without unsaved changes simply shows the new version.
+    ///
+    /// While a save is on its way the merge waits: that save's acknowledgment can already include
+    /// this version, or this version can already include that save, and only the store knows which.
+    /// Once the save is acknowledged the page merges the store's current version instead of
+    /// `text`. The same reconciliation runs whenever an acknowledgment shows that the page moved
+    /// on, so a late or reordered call never applies a version older than the saved one.
+    pub fn absorb(&mut self, revision: String, text: impl Into<Arc<str>>, cx: &mut Context<Self>) {
+        if self.opened.base == [revision.as_str()] {
+            return;
+        }
+        self.hint = Some((revision, text.into()));
+        self.stale = true;
+        self.reconcile(cx);
+    }
+
+    fn saving(&self) -> bool {
+        self.task.is_some() && self.pending.as_ref().is_some_and(|request| request.save)
+    }
+
+    fn reconcile(&mut self, cx: &mut Context<Self>) {
+        if !self.stale || self.merge.is_some() || self.saving() {
+            return;
+        }
+        self.stale = false;
+        let hint = self.hint.take();
+        self.start_merge(Incoming::Store { hint }, cx);
     }
 
     fn changed(&mut self, cx: &mut Context<Self>) {
@@ -190,7 +295,7 @@ impl PagePersistence {
     }
 
     fn schedule_recovery(&mut self, cx: &mut Context<Self>) {
-        let delay = cx.background_executor().timer(Duration::from_millis(100));
+        let delay = cx.background_executor().timer(RECOVERY_DELAY);
         self.debounce = Some(cx.spawn(async move |this, cx| {
             delay.await;
             this.update(cx, |this, cx| {
@@ -201,8 +306,13 @@ impl PagePersistence {
         }));
     }
 
+    /// Saves after 450 ms without typing, and no later than 2 s after the first unsaved edit.
     fn schedule_autosave(&mut self, cx: &mut Context<Self>) {
-        let delay = cx.background_executor().timer(Duration::from_millis(450));
+        let now = cx.background_executor().now();
+        let save_by = *self.save_by.get_or_insert(now + SAVE_LATEST);
+        let delay = cx
+            .background_executor()
+            .timer(SAVE_IDLE.min(save_by.saturating_duration_since(now)));
         self.autosave = Some(cx.spawn(async move |this, cx| {
             delay.await;
             this.update(cx, |this, cx| {
@@ -220,23 +330,24 @@ impl PagePersistence {
         self.debounce = None;
         if save {
             self.autosave = None;
-        }
-        if save && self.blocked {
-            self.error = Some("This page changed elsewhere. Keep the buffer and review the current versions before saving.".into());
-            cx.notify();
-            return;
+            self.save_by = None;
         }
         if (save && !self.is_dirty(cx)) || (!save && self.is_secured(cx)) {
             return;
         }
         let snapshot = self.buffer.read(cx).snapshot();
-        if self.pending.is_some() {
+        if save && self.merge.is_some() {
+            self.queued_save = Some(snapshot);
+            return;
+        }
+        if let Some(pending) = &self.pending {
+            let blocked = pending.save && self.merge.is_some();
             if save {
                 self.queued_save = Some(snapshot);
             } else {
                 self.recover_requested = true;
             }
-            if self.task.is_none() {
+            if self.task.is_none() && !blocked {
                 self.dispatch(cx);
             }
             return;
@@ -270,6 +381,7 @@ impl PagePersistence {
         self.version = version;
         self.pending = Some(Frozen {
             snapshot,
+            source: self.source.clone(),
             stamp: DraftStamp {
                 session: self.session.clone(),
                 version,
@@ -288,15 +400,13 @@ impl PagePersistence {
             .as_ref()
             .expect("pending persistence request")
             .clone();
-        let source = self.source.clone();
         let client = self.client.clone();
         let page = self.opened.page.clone();
         let path = self.opened.path.clone();
         let recovered = self.opened.draft.as_ref() == Some(&request.stamp);
         self.error = None;
-        let work = cx.background_spawn(async move {
-            persist(client, source, page, path, request, recovered).await
-        });
+        let work = cx
+            .background_spawn(async move { persist(client, page, path, request, recovered).await });
         self.task = Some(cx.spawn(async move |this, cx| {
             let result = work.await;
             this.update(cx, |this, cx| this.finish(result, cx)).ok();
@@ -313,29 +423,17 @@ impl PagePersistence {
         }
         let succeeded = completion.result.is_ok();
         match completion.result {
-            Ok(Some(saved)) => {
-                self.opened.base = vec![saved.revision_id().to_owned()];
-                self.opened.draft = None;
-                self.saved = Some(request.snapshot.clone());
-                self.buffer.update(cx, |buffer, cx| {
-                    buffer.did_save(request.snapshot.version().clone(), None, cx)
-                });
-                self.durable = Some(request.snapshot);
-            }
+            Ok(Some(saved)) => self.saved(request, saved, cx),
             Ok(None) => {}
             Err(error) => {
                 self.error = Some(error.into());
-                if completion.heads_changed {
-                    self.blocked = true;
-                    self.queued_save = None;
-                } else {
-                    self.pending = Some(request);
-                }
+                self.pending = Some(request);
             }
         }
         cx.notify();
         if succeeded {
-            if let Some(snapshot) = self.queued_save.take() {
+            if self.queued_save.is_some() && self.merge.is_none() {
+                let snapshot = self.queued_save.take().expect("queued save");
                 self.start(snapshot, true, cx);
             } else if self.recover_requested {
                 self.recover_requested = false;
@@ -343,10 +441,133 @@ impl PagePersistence {
             } else if !self.is_secured(cx) && self.debounce.is_none() {
                 self.schedule_recovery(cx);
             }
-        } else if completion.heads_changed && !self.is_secured(cx) {
-            // The checked save definitely made no revision; newer typing can still be recovered.
-            self.recover_requested = false;
+        }
+        self.reconcile(cx);
+    }
+
+    fn saved(&mut self, request: Frozen, saved: Saved, cx: &mut Context<Self>) {
+        self.opened.draft = None;
+        self.opened.base = vec![saved.revision];
+        self.opened.base_text = Some(saved.text.clone());
+        self.saved = Some(request.snapshot.clone());
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.did_save(request.snapshot.version().clone(), None, cx)
+        });
+        self.durable = Some(request.snapshot);
+        if saved.overlaps > 0 {
+            self.warning = Some(overlap_warning(&self.opened.path));
+        }
+        if saved.settled {
+            self.removed = false;
+        } else {
+            self.stale = true;
+        }
+        match saved.merged {
+            Some((revision, text)) if text == saved.text => self.opened.base = vec![revision],
+            Some((revision, text)) => self.start_merge(
+                Incoming::Known(Known {
+                    revision,
+                    base: saved.text,
+                    text,
+                }),
+                cx,
+            ),
+            None => {}
+        }
+    }
+
+    fn start_merge(&mut self, incoming: Incoming, cx: &mut Context<Self>) {
+        let snapshot = self.buffer.read(cx).snapshot();
+        let source = self.source.clone();
+        let client = self.client.clone();
+        let page = self.opened.page.clone();
+        let base = self.opened.base.clone();
+        let base_text = self.opened.base_text.clone();
+        let issued = base.clone();
+        let work = cx.background_spawn(async move {
+            let known = match incoming {
+                Incoming::Known(known) => known,
+                Incoming::Store { hint } => {
+                    match current(client, page, base, base_text, hint).await? {
+                        Ok(known) => known,
+                        Err(resolution) => return Ok(resolution),
+                    }
+                }
+            };
+            plan(snapshot, source, known).map(|plan| Resolution::Merge(Box::new(plan)))
+        });
+        self.merge = Some(cx.spawn(async move |this, cx| {
+            let result = work.await;
+            this.update(cx, |this, cx| this.merged(issued, result, cx))
+                .ok();
+        }));
+        cx.notify();
+    }
+
+    fn merged(
+        &mut self,
+        issued: Vec<String>,
+        result: Result<Resolution, String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.merge = None;
+        match result {
+            Err(error) => self.error = Some(error.into()),
+            Ok(Resolution::Current) => {}
+            Ok(Resolution::Removed) => self.removed = true,
+            // A save landed meanwhile: merge the version again against the new base.
+            Ok(Resolution::Merge(plan)) if self.opened.base != issued => {
+                self.absorb(plan.known.revision, plan.known.text, cx)
+            }
+            // Typing landed meanwhile: recompute rather than drop conflicting hunks.
+            Ok(Resolution::Merge(plan))
+                if !same(&plan.snapshot, &self.buffer.read(cx).snapshot()) =>
+            {
+                self.start_merge(Incoming::Known(plan.known), cx)
+            }
+            Ok(Resolution::Merge(plan)) => self.apply(*plan, cx),
+        }
+        if self.queued_save.take().is_some() {
+            self.save(cx);
+        }
+        if std::mem::take(&mut self.recover_requested) {
             self.recover(cx);
+        }
+        self.reconcile(cx);
+        cx.notify();
+    }
+
+    /// Applies a merge computed against the current snapshot as one edit outside undo history.
+    fn apply(&mut self, plan: Plan, cx: &mut Context<Self>) {
+        let snapshot = self.buffer.update(cx, |buffer, cx| {
+            buffer.finalize_last_transaction();
+            if let Some(transaction) = buffer.apply_diff(plan.diff, cx) {
+                buffer.forget_transaction(transaction);
+            }
+            buffer.snapshot()
+        });
+        self.source = Arc::new(StoredSource::rebased(plan.original, snapshot.clone()));
+        self.opened.base = vec![plan.known.revision];
+        self.opened.base_text = Some(plan.known.text);
+        self.seen = snapshot.clone();
+        self.removed = false;
+        if plan.overlaps > 0 {
+            self.warning = Some(overlap_warning(&self.opened.path));
+        }
+        if plan.clean {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.did_save(snapshot.version().clone(), None, cx)
+            });
+            self.saved = Some(snapshot.clone());
+            self.durable = Some(snapshot);
+            self.autosave = None;
+            self.save_by = None;
+        } else {
+            self.saved = None;
+            if self.enabled {
+                self.schedule_recovery(cx);
+                self.schedule_autosave(cx);
+            }
         }
     }
 }
@@ -357,16 +578,116 @@ fn same(left: &BufferSnapshot, right: &BufferSnapshot) -> bool {
         && left.line_ending() == right.line_ending()
 }
 
+fn overlap_warning(path: &str) -> SharedString {
+    format!("{path} was edited in two places at once and some of the same lines changed both ways. Quire kept both versions of those lines next to each other; check the page and remove the one you don't want.").into()
+}
+
+fn revision_text(record: &Json) -> Result<Arc<str>, String> {
+    record
+        .root()
+        .field("text")
+        .as_str()
+        .map(Arc::from)
+        .ok_or_else(|| "A newer version of this page contains UTF-16 code units the native editor cannot represent. Your text is kept here; open the page with a compatible Quire version to combine them.".into())
+}
+
+fn revision_id(record: &Json) -> String {
+    record
+        .root()
+        .field("id")
+        .as_str()
+        .expect("validated revision id")
+        .to_owned()
+}
+
+async fn read(client: &StorageClient, id: String) -> Result<Json, String> {
+    client
+        .get(id)
+        .map_err(|error| error.to_string())?
+        .await
+        .map_err(|error| format!("{error:#}"))?
+        .ok_or_else(|| "A version of this page is missing from storage. Your text is kept here; preserve the database and reopen the notebook.".to_owned())
+}
+
+/// Reads the page's single current version. Every version stored since `base` descends from it,
+/// so the edits made here since `base` merge into it safely.
+async fn current(
+    client: StorageClient,
+    page: String,
+    base: Vec<String>,
+    base_text: Option<Arc<str>>,
+    hint: Option<(String, Arc<str>)>,
+) -> Result<Result<Known, Resolution>, String> {
+    let heads = client
+        .heads(page.clone())
+        .map_err(|error| error.to_string())?
+        .await
+        .map_err(|error| format!("{error:#}"))?;
+    let head = match heads.as_slice() {
+        [] => return Ok(Err(Resolution::Current)),
+        [head] if base == [head.as_str()] => return Ok(Err(Resolution::Current)),
+        [head] => head.clone(),
+        _ => return Err("This page has competing versions that could not be merged. Your text is kept here; reopen the notebook to retry the merge, then save again.".into()),
+    };
+    let text = match hint.filter(|(revision, _)| *revision == head) {
+        Some((_, text)) => text,
+        None => {
+            let record = read(&client, head.clone()).await?;
+            if record.root().field("deleted").as_bool() == Some(true) {
+                return Ok(Err(Resolution::Removed));
+            }
+            revision_text(&record)?
+        }
+    };
+    let base = match (base_text, base.as_slice()) {
+        (Some(text), _) => text,
+        (None, [id]) => revision_text(&read(&client, id.clone()).await?)?,
+        (None, _) => return Err("This page was opened without one saved version to merge from. Your text is kept here; save it, then reopen the page.".into()),
+    };
+    Ok(Ok(Known {
+        revision: head,
+        base,
+        text,
+    }))
+}
+
+/// Merges the edits made in `snapshot` since `known.base` into `known.text`, in stored form so
+/// original line endings survive, and returns the buffer edits that reach the merged text.
+fn plan(snapshot: BufferSnapshot, source: Arc<StoredSource>, known: Known) -> Result<Plan, String> {
+    let local = source.render(&snapshot)?;
+    let units = |text: &str| text.encode_utf16().collect::<Vec<_>>();
+    let merged = merge_text(&units(&known.base), &units(&known.text), &units(&local));
+    let text = String::from_utf16(&merged.text).map_err(|_| {
+        "Merging this page's versions split a Unicode character. Your text is kept here; save it again to retry.".to_owned()
+    })?;
+    let clean = *text == *known.text;
+    let (original, normalized) = SourceText::prepare(text);
+    let diff = language::Diff {
+        base_version: snapshot.version().clone(),
+        line_ending: snapshot.line_ending(),
+        edits: language::text_diff(&snapshot.text(), &normalized),
+    };
+    Ok(Plan {
+        known,
+        snapshot,
+        diff,
+        original,
+        clean,
+        overlaps: merged.overlaps,
+    })
+}
+
+/// Records recovery, then saves from the captured base. A base that is no longer the page's
+/// head is saved anyway: the store merges it with the newer versions in the same transaction.
 async fn persist(
     client: StorageClient,
-    source: Arc<StoredSource>,
     page: String,
     path: String,
     request: Frozen,
     mut recovered: bool,
 ) -> Completion {
     let result = async {
-        let text = source.render(&request.snapshot)?;
+        let text = request.source.render(&request.snapshot)?;
         if !recovered {
             client
                 .put_draft(
@@ -388,31 +709,37 @@ async fn persist(
         if !request.save {
             return Ok(None);
         }
-        let saved = client
-            .save_if_heads(
-                Edit {
-                    page,
-                    path,
-                    text: text.to_string(),
-                    base: request.base.clone(),
-                    deleted: false,
-                    created: request.created,
-                    recovery: Some(request.stamp),
-                },
-                request.base,
-            )
+        let ack = client
+            .save(Edit {
+                page,
+                path,
+                text: text.to_string(),
+                base: request.base,
+                deleted: false,
+                created: request.created,
+                recovery: Some(request.stamp),
+            })
             .map_err(|error| error.to_string())?
             .await
             .map_err(|error| format!("{error:#}"))?;
-        Ok(Some(saved))
+        let merged = ack
+            .merged
+            .as_ref()
+            .map(|record| Ok::<_, String>((revision_id(record), revision_text(record)?)))
+            .transpose()?;
+        let head = merged
+            .as_ref()
+            .map_or(ack.revision_id(), |(id, _)| id.as_str());
+        Ok(Some(Saved {
+            settled: ack.heads == [head],
+            revision: ack.revision_id().to_owned(),
+            text,
+            merged,
+            overlaps: ack.overlaps,
+        }))
     }
     .await;
-    match result {
-        Ok(Some(CheckedSave::HeadsChanged { .. })) => Completion { recovered, heads_changed: true, result: Err("This page changed elsewhere before the save. Your captured text is recorded for recovery; review its versions before saving.".into()) },
-        Ok(Some(CheckedSave::Saved(saved))) => Completion { recovered, heads_changed: false, result: Ok(Some(saved)) },
-        Ok(None) => Completion { recovered, heads_changed: false, result: Ok(None) },
-        Err(error) => Completion { recovered, heads_changed: false, result: Err(error) },
-    }
+    Completion { recovered, result }
 }
 
 #[cfg(test)]

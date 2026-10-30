@@ -293,7 +293,7 @@ impl StoredWindow {
         let Some(page) = self.page.read(cx).loaded() else {
             return;
         };
-        let source = page.source.clone();
+        let source = page.current_source(cx);
         let snapshot = page.analysis.read(cx).source.read(cx).snapshot();
         let work = cx
             .background_spawn(async move { source.render(&snapshot).map(|text| text.to_string()) });
@@ -536,10 +536,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn vim_force_write_quit_cannot_overwrite_changed_heads_or_close_on_recovery(
+    fn vim_force_write_quit_merges_changed_heads_instead_of_overwriting(
         cx: &mut gpui::TestAppContext,
     ) {
-        let fixture = open_stored("hello", cx);
+        let fixture = open_stored("hello\nworld\n", cx);
         let model = persistence(&fixture, cx);
         let store =
             quire_store::notebook::NotebookStore::open(&fixture.path, "nb", "local").unwrap();
@@ -547,7 +547,7 @@ mod tests {
             .save(&quire_store::notebook::Edit {
                 page: "p".into(),
                 path: "Note.md".into(),
-                text: "peer".into(),
+                text: "hello\npeer\n".into(),
                 base: store.heads("p").unwrap(),
                 deleted: false,
                 created: 2,
@@ -556,23 +556,14 @@ mod tests {
             .unwrap();
         cx.simulate_keystrokes(fixture.window.into(), "i x escape : w q ! enter");
         crate::page_persistence::tests::wait(&model, cx);
-        fixture
-            .window
-            .update(cx, |view, _, cx| {
-                assert!(view.closing.get().is_none());
-                assert!(
-                    view.close_error
-                        .as_ref()
-                        .unwrap()
-                        .contains("could not be saved")
-                );
-                assert!(model.read(cx).has_error());
-                assert!(model.read(cx).is_dirty(cx));
-                assert!(model.read(cx).is_secured(cx));
-            })
-            .unwrap();
-        assert_eq!(store.heads("p").unwrap(), [peer.revision_id()]);
-        assert_eq!(store.draft("p").unwrap().unwrap().text, "xhello");
+        while cx.executor().tick() {}
+        assert!(fixture.window.update(cx, |_, _, _| {}).is_err());
+        let heads = store.heads("p").unwrap();
+        assert_eq!(heads.len(), 1);
+        assert_ne!(heads, [peer.revision_id()]);
+        let head = store.get(&heads[0]).unwrap().unwrap();
+        assert_eq!(head.root().field("text").as_str(), Some("xhello\npeer\n"));
+        assert!(store.draft("p").unwrap().is_none());
     }
 
     #[gpui::test]
