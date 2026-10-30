@@ -15,6 +15,9 @@ mod editor_command;
 mod editor_excerpt;
 
 #[cfg(feature = "full-editor")]
+mod editor_projection;
+
+#[cfg(feature = "full-editor")]
 mod markdown;
 
 #[path = "example_support/fonts.rs"]

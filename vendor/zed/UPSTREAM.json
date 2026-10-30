@@ -228,7 +228,7 @@
     },
     {
       "path": "crates/multi_buffer/src/multi_buffer.rs",
-      "change": "Add an exact-range single-page excerpt constructor that delegates transaction history to its source buffer while retaining non-singleton display mapping. Clone and transaction grouping retain this association; default constructors are unchanged."
+      "change": "Add an exact-range single-page excerpt constructor sharing its source history while retaining non-singleton display mapping. Preserve this association on clone/grouping. Add an optional per-view edit rewrite hook before source mapping; mutable slices retain edit counts for autoindent metadata. Default constructors retain their original behavior."
     },
     {
       "path": "crates/multi_buffer/src/transaction.rs",
@@ -237,6 +237,14 @@
     {
       "path": "crates/multi_buffer/src/path_key.rs",
       "change": "Reject insertion of a different source buffer into a single-page shared-history excerpt before changing its excerpt map. Disable generic context expansion for these page embeds; their host owns the semantic range."
+    },
+    {
+      "path": "crates/editor/src/display_map/tab_map.rs",
+      "change": "Skip empty fold chunks when seeking tab stops, avoiding a zero-length subtraction overflow with empty replacement text. Add a focused UTF-8/tab regression with empty fold placeholders."
+    },
+    {
+      "path": "crates/editor/src/test/editor_lsp_test_context.rs",
+      "change": "Remove two stale wrong_self_convention lint expectations that fail the all-targets editor Clippy gate on the pinned Rust toolchain. Test helper behavior and lint enforcement are unchanged."
     }
   ]
 }

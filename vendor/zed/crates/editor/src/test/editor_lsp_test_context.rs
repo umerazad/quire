@@ -451,7 +451,6 @@ impl EditorLspTestContext {
         self.to_lsp_range(MultiBufferOffset(ranges[0].start)..MultiBufferOffset(ranges[0].end))
     }
 
-    #[expect(clippy::wrong_self_convention, reason = "This is test code")]
     pub fn to_lsp_range(&mut self, range: Range<MultiBufferOffset>) -> lsp::Range {
         use language::ToPointUtf16;
         let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
@@ -469,7 +468,6 @@ impl EditorLspTestContext {
         })
     }
 
-    #[expect(clippy::wrong_self_convention, reason = "This is test code")]
     pub fn to_lsp(&mut self, offset: MultiBufferOffset) -> lsp::Position {
         use language::ToPointUtf16;
 

@@ -1,0 +1,244 @@
+use super::*;
+use gpui::TestAppContext;
+use multi_buffer::MultiBufferOffset;
+
+fn projected_window(cx: &mut TestAppContext) -> gpui::WindowHandle<NotebookWindow> {
+    cx.add_window(|window, cx| {
+        let view = NotebookWindow::new("- alpha ^abc\n", window, cx);
+        crate::editor_projection::show(
+            &view.second,
+            &[crate::editor_projection::BlockSyntax {
+                marker: MultiBufferOffset(0)..MultiBufferOffset(2),
+                id: Some(MultiBufferOffset(7)..MultiBufferOffset(12)),
+            }],
+            window,
+            cx,
+        );
+        window.focus(&view.second.focus_handle(cx), cx);
+        view
+    })
+}
+
+#[gpui::test]
+fn hidden_syntax_uses_the_shared_source_without_display_ellipsis(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let window = projected_window(cx);
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "- alpha ^abc\n");
+            assert_eq!(view.second.read(cx).text(cx), "- alpha ^abc\n");
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                "alpha\n"
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn opening_the_projection_places_input_after_its_hidden_marker(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let window = projected_window(cx);
+    cx.simulate_keystrokes(window.into(), "i shift-z escape");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "- Zalpha ^abc\n")
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn deleting_to_visible_line_end_preserves_the_hidden_id(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let window = projected_window(cx);
+    cx.simulate_keystrokes(window.into(), "l l shift-d");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "- al ^abc\n");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn clearing_visible_text_and_typing_again_keeps_the_id_separate(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let window = projected_window(cx);
+    window
+        .update(cx, |view, _, cx| {
+            let source = view
+                .source
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .unwrap();
+            source.update(cx, |source, _| {
+                source.set_group_interval(std::time::Duration::ZERO)
+            });
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "shift-d");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "- ^abc\n")
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "i x y z escape");
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "- xyz ^abc\n");
+            window.focus(&view.source.focus_handle(cx), cx);
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "u");
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "- ^abc\n");
+            window.focus(&view.second.focus_handle(cx), cx);
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "ctrl-r");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "- xyz ^abc\n")
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn whole_block_deletion_and_undo_restore_source_and_display(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let window = projected_window(cx);
+    cx.simulate_keystrokes(window.into(), "d d");
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "");
+            window.focus(&view.source.focus_handle(cx), cx);
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "u");
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "- alpha ^abc\n");
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                "alpha\n"
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn native_id_deletions_match_the_legacy_outline_fixtures(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    for (from, to, expected) in [
+        (4, 12, "- al ^abc\n"),
+        (7, 8, "- alpha ^abc\n"),
+        (2, 12, "- ^abc\n"),
+    ] {
+        let window = projected_window(cx);
+        window
+            .update(cx, |view, window, cx| {
+                view.second.update(cx, |editor, cx| {
+                    editor.transact(window, cx, |editor, _, cx| {
+                        editor.edit([(MultiBufferOffset(from)..MultiBufferOffset(to), "")], cx)
+                    });
+                });
+                assert_eq!(view.source.read(cx).text(cx), expected);
+            })
+            .unwrap();
+    }
+}
+
+#[gpui::test]
+fn replacing_a_partial_selection_keeps_its_hidden_id_and_typing_order(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    super::search_tests::set_vim_mode(cx, false);
+    let window = projected_window(cx);
+    window
+        .update(cx, |view, window, cx| {
+            view.second.update(cx, |editor, cx| {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_ranges([MultiBufferOffset(4)..MultiBufferOffset(12)]);
+                })
+            });
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string("X".into()));
+        })
+        .unwrap();
+    cx.simulate_keystrokes(
+        window.into(),
+        if cfg!(target_os = "macos") {
+            "cmd-v"
+        } else {
+            "ctrl-v"
+        },
+    );
+    cx.simulate_input(window.into(), "Y");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "- alXY ^abc\n")
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn deleting_a_block_and_typing_new_text_does_not_hide_the_new_text(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let window = projected_window(cx);
+    cx.simulate_keystrokes(window.into(), "d d i n e w escape");
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "new");
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                "new"
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn source_edits_refresh_syntax_without_removing_user_folds(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let window = projected_window(cx);
+    window
+        .update(cx, |view, window, cx| {
+            view.second.update(cx, |editor, cx| {
+                editor.fold_ranges(
+                    vec![MultiBufferOffset(3)..MultiBufferOffset(4)],
+                    false,
+                    window,
+                    cx,
+                )
+            });
+            view.source.update(cx, |editor, cx| {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_ranges([MultiBufferOffset(2)..MultiBufferOffset(2)])
+                })
+            });
+            window.focus(&view.source.focus_handle(cx), cx);
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "i shift-z escape");
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "- Zalpha ^abc\n");
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                "Za⋯pha\n"
+            );
+        })
+        .unwrap();
+}

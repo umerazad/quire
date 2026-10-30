@@ -249,6 +249,11 @@ impl Render for NotebookWindow {
 
 pub fn run() {
     let excerpt_demo = std::env::args().any(|argument| argument == "--excerpt-harness");
+    let write_demo = std::env::args().any(|argument| argument == "--write-harness");
+    if excerpt_demo && write_demo {
+        eprintln!("Choose one editor harness: pass --write-harness or --excerpt-harness.");
+        std::process::exit(2);
+    }
     gpui_platform::application().with_assets(assets::Assets).run(move |cx| {
         if let Err(error) = init(cx) {
             eprintln!("{error}");
@@ -262,7 +267,7 @@ pub fn run() {
         }
         let prefix = "# Welcome to Quire\n\n";
         let block = "- Edit this note in either pane. ^b-welcome\n  - Both panes share the same document.";
-        let text = format!("{prefix}{block}\n- [ ] Try Vim, undo, and redo.\n");
+        let text = if write_demo { "- alpha ^abc\n".to_owned() } else { format!("{prefix}{block}\n- [ ] Try Vim, undo, and redo.\n") };
         let buffer = crate::markdown::buffer(&text, cx);
         let excerpt = if excerpt_demo {
             match crate::editor_excerpt::buffer(buffer.clone(), prefix.len()..prefix.len() + block.len(), cx) {
@@ -276,7 +281,17 @@ pub fn run() {
         };
         match cx.open_window(options, move |window, cx| {
             window.set_window_title("Quire Native");
-            cx.new(|cx| NotebookWindow::for_buffer(buffer, excerpt, window, cx))
+            cx.new(|cx| {
+                let view = NotebookWindow::for_buffer(buffer, excerpt, window, cx);
+                if write_demo {
+                    use multi_buffer::MultiBufferOffset;
+                    crate::editor_projection::show(&view.second, &[crate::editor_projection::BlockSyntax {
+                        marker: MultiBufferOffset(0)..MultiBufferOffset(2),
+                        id: Some(MultiBufferOffset(7)..MultiBufferOffset(12)),
+                    }], window, cx);
+                }
+                view
+            })
         }) {
             Ok(_) => cx.activate(true),
             Err(error) => { eprintln!("Cannot open Quire's window: {error}. Check desktop and graphics access, then retry."); cx.quit(); }
@@ -517,3 +532,7 @@ mod input_tests;
 #[cfg(test)]
 #[path = "editor_excerpt_tests.rs"]
 mod excerpt_tests;
+
+#[cfg(test)]
+#[path = "editor_projection_tests.rs"]
+mod projection_tests;

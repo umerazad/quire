@@ -989,6 +989,9 @@ impl<'a> TabStopCursor<'a> {
                 .map(|chunk| (TabStopChunk::new(chunk), 0))
         }) {
             let chunk_len = chunk.text.len() as u32;
+            if chunk_len == 0 {
+                continue;
+            }
 
             if chunk.tabs == 0 {
                 let chunk_remaining = chunk_len - chunk_position;
@@ -1514,6 +1517,50 @@ mod tests {
                 assert_max_tab_chunk_bitmaps(&mut reused, &expected[start as usize..end as usize]);
             }
         }
+    }
+
+    #[gpui::test]
+    fn test_tab_stop_cursor_skips_empty_fold_chunks(cx: &mut gpui::App) {
+        let buffer = MultiBuffer::build_simple("- α\tβ ^id\tz", cx);
+        let (_, inlay) = InlayMap::new(buffer.read(cx).snapshot(cx));
+        let mut folds = FoldMap::new(inlay.clone()).0;
+        let placeholder = FoldPlaceholder {
+            collapsed_text: Some("".into()),
+            ..FoldPlaceholder::test()
+        };
+        let (mut writer, _, _) = folds.write(inlay.clone(), vec![]);
+        writer.fold(vec![
+            (
+                MultiBufferOffset(0)..MultiBufferOffset(2),
+                placeholder.clone(),
+            ),
+            (MultiBufferOffset(7)..MultiBufferOffset(11), placeholder),
+        ]);
+        let (snapshot, _) = folds.read(inlay, vec![]);
+        let mut cursor = TabStopCursor::new(snapshot.chunks(
+            FoldOffset(MultiBufferOffset(0))..snapshot.len(),
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
+            Default::default(),
+        ));
+        assert_eq!(
+            cursor.seek_forward(u32::MAX),
+            Some(TabStop {
+                byte_offset: 3,
+                char_offset: 2
+            })
+        );
+        assert_eq!(
+            cursor.seek_forward(u32::MAX),
+            Some(TabStop {
+                byte_offset: 6,
+                char_offset: 4
+            })
+        );
+        assert_eq!(cursor.seek_forward(u32::MAX), None);
+        assert_eq!(cursor.byte_offset(), 7);
     }
 
     #[gpui::test]

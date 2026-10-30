@@ -68,6 +68,10 @@ pub fn excerpt_context_lines(cx: &App) -> u32 {
     EXCERPT_CONTEXT_LINES.get().map(|f| f(cx)).unwrap_or(2)
 }
 
+pub type ViewEdit = (Range<MultiBufferOffset>, Arc<str>);
+/// Rewrites a view's edits before source mapping. Preserve their order and UTF-8 boundaries.
+pub type EditFilter = Arc<dyn Fn(&mut [ViewEdit], &MultiBufferSnapshot) + Send + Sync>;
+
 /// One or more [`Buffers`](Buffer) being edited in a single view.
 ///
 /// See <https://zed.dev/features#multi-buffers>
@@ -86,6 +90,7 @@ pub struct MultiBuffer {
     history: History,
     /// A single-page excerpt delegates history to its source buffer.
     shared_history_buffer: Option<Entity<Buffer>>,
+    edit_filter: Option<EditFilter>,
     /// The explicit title of the multi-buffer.
     /// If `None`, it will be derived from the underlying path or content.
     title: Option<String>,
@@ -1308,6 +1313,7 @@ impl MultiBuffer {
             buffer_changed_since_sync: Default::default(),
             history: History::default(),
             shared_history_buffer: None,
+            edit_filter: None,
         }
     }
 
@@ -1342,9 +1348,14 @@ impl MultiBuffer {
             capability: self.capability,
             history: self.history.clone(),
             shared_history_buffer: self.shared_history_buffer.clone(),
+            edit_filter: self.edit_filter.clone(),
             title: self.title.clone(),
             buffer_changed_since_sync,
         }
+    }
+
+    pub fn set_edit_filter(&mut self, filter: Option<EditFilter>) {
+        self.edit_filter = filter;
     }
 
     pub fn set_group_interval(&mut self, group_interval: Duration, cx: &mut Context<Self>) {
@@ -1520,7 +1531,7 @@ impl MultiBuffer {
         // Non-generic part of edit, hoisted out to avoid blowing up LLVM IR.
         fn edit_internal(
             this: &mut MultiBuffer,
-            edits: Vec<(Range<MultiBufferOffset>, Arc<str>)>,
+            mut edits: Vec<(Range<MultiBufferOffset>, Arc<str>)>,
             mut autoindent_mode: Option<AutoindentMode>,
             coalesce_adjacent: bool,
             autoindent_exclusion: AutoIndentExclusion,
@@ -1533,6 +1544,9 @@ impl MultiBuffer {
                 _ => Default::default(),
             };
 
+            if let Some(filter) = &this.edit_filter {
+                filter(&mut edits, this.snapshot.get_mut());
+            }
             let buffer_edits = MultiBuffer::convert_edits_to_buffer_edits(
                 edits,
                 this.snapshot.get_mut(),

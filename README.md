@@ -28,6 +28,8 @@ The native development app uses `QuireNative` data/config paths, separate from Z
 
 Run `cargo run -p quire --locked -- --excerpt-harness` in a regular desktop terminal to inspect the editable-excerpt spike. The right pane shows the first nested block from the left pane's document, with shared undo/redo. This is a source excerpt; Write rendering and hidden-identity protection remain unfinished.
 
+`cargo run -p quire --locked -- --write-harness` opens a fixed experiment with hidden syntax. The right pane hides the marker and ID of `- alpha ^abc` while sharing the left pane's source. Partial delete/paste, clearing and retyping, and delete/undo have regression tests. General Markdown span detection, checkbox/link rendering, full Write/Source switching, and the remaining structural editing cases are still pending.
+
 Reference protocol tests deliberately run through Node/Vitest. Bun's zstd decoder reports a truncated frame differently, so running those tests with `bun test` would change the compatibility oracle.
 
 The `test:vim-search`, `test:vim-command`, and `test:vim-mark` scripts run copied regressions, including comparisons with Neovim. They require `nvim` on PATH and enable Quire's embedded-asset policy so tests load the copied settings and queries.
@@ -38,6 +40,6 @@ The storage library reuses Zed's `sqlez` with a fallible file-open path, WAL/FUL
 
 Generate synthetic notebook fixtures with `bun tools/synthetic-notebook.ts <empty-folder> [pages] [seed]`. Defaults are 6,536 pages and seed 1. Generated notebooks and build output stay outside version control.
 
-Before committing copied sources, run `bun tools/verify-vendor.ts --tracked` to catch ignored build inputs. During vendoring, `bun tools/verify-upstream.ts ../zed` compares unmodified files with the pinned checkout; the eleven documented fork changes need separate diff review. This comparison is a development audit, not a build dependency. Upstream prompt fixtures intentionally contain conflict examples and whitespace, so whitespace checks apply to authored files and the documented vendor modifications while the remaining copied files retain their exact bytes.
+Before committing copied sources, run `bun tools/verify-vendor.ts --tracked` to catch ignored build inputs. During vendoring, `bun tools/verify-upstream.ts ../zed` compares unmodified files with the pinned checkout; the thirteen documented fork changes need separate diff review. This comparison is a development audit, not a build dependency. Upstream prompt fixtures intentionally contain conflict examples and whitespace, so whitespace checks apply to authored files and the documented vendor modifications while the remaining copied files retain their exact bytes.
 
 The application uses GPL-3.0-or-later; retain the licenses and font notices in `vendor/zed`. Copied components and source revisions are recorded in `vendor/zed/UPSTREAM.json` and `tests/reference/UPSTREAM.json`. The source snapshot includes the full editor's supporting crates and assets. Quire loads editor/Vim key contexts strictly and omits bindings for unrelated Zed product panels. The earlier input harness derives from `crates/gpui/examples/input.rs` at that revision.
