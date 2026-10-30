@@ -69,7 +69,7 @@ function mirror(folder: SyncFolder, root: string, device?: string) {
 
 export const nativeEngine = (probe: NativeProbe, device: string, notebook = "nb-test", peer = device): EngineFactory =>
   (folder, clock) => {
-    const { directory } = probe.request<{ directory: string }>({ op: "open", peer, notebook, device });
+    const { directory } = probe.request<{ directory: string }>({ op: "open", peer, notebook, device, now: clock() });
     const pages = new Set<string>();
     const request = <T>(op: string, fields: Record<string, unknown> = {}) => probe.request<T>({ op, peer, ...fields });
     const store: TestStore = {
@@ -93,12 +93,13 @@ export const nativeEngine = (probe: NativeProbe, device: string, notebook = "nb-
       heads: (page) => store.heads(page).map((id) => store.get(id)!),
       conflicts: () => store.pages().filter((page) => store.heads(page).length > 1),
       save: (edit) => {
-        const result = request<{ revision: string; heads: string[]; conflict: boolean; saved: boolean; replaced: string | null }>("save", {
+        const result = request<{ revision: string; heads: string[]; conflict: boolean; saved: boolean; replaced: string | null; merged: string | null; overlaps: number }>("save", {
           edit: { ...edit, deleted: edit.deleted ?? false, created: clock(), recovery: null },
         });
         const revision: Revision = JSON.parse(result.revision);
         pages.add(revision.page);
-        return { ...result, revision, replaced: result.replaced ?? undefined };
+        const merged: Revision | undefined = result.merged === null ? undefined : JSON.parse(result.merged);
+        return { ...result, revision, replaced: result.replaced ?? undefined, merged };
       },
       publish: async () => {
         mirror(folder, join(directory, "outgoing"), device);
@@ -120,10 +121,10 @@ export const nativeEngine = (probe: NativeProbe, device: string, notebook = "nb-
       },
       import: async (): Promise<ImportReport> => {
         mirror(folder, join(directory, "incoming"));
-        const report = request<Omit<ImportReport, "pages" | "conflicts"> & { pages: string[] }>("import");
+        const report = request<Omit<ImportReport, "pages" | "conflicts" | "overlapped"> & { pages: string[]; overlapped: string[] }>("import", { now: clock() });
         for (const page of report.pages) pages.add(page);
-        return { ...report, pages: new Set(report.pages), conflicts: new Set(replica.conflicts()) };
+        return { ...report, pages: new Set(report.pages), conflicts: new Set(replica.conflicts()), overlapped: new Set(report.overlapped) };
       },
     };
-    return { store, replica, rebuild: () => request("rebuild") };
+    return { store, replica, rebuild: () => request("rebuild", { now: clock() }) };
   };

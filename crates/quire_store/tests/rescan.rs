@@ -26,7 +26,7 @@ fn edit(base: Vec<String>, text: &str) -> Edit {
 }
 
 #[test]
-fn two_folder_replicas_deliver_attachments_keep_conflicts_and_merge() -> Result<()> {
+fn two_folder_replicas_deliver_attachments_and_merge_to_one_identical_revision() -> Result<()> {
     let root = tempfile::tempdir()?;
     let folder = root.path().join("notebook");
     notebook(&folder)?;
@@ -49,16 +49,54 @@ fn two_folder_replicas_deliver_attachments_keep_conflicts_and_merge() -> Result<
     let home = b.save(&edit(vec![base.revision_id().into()], "home edit"))?;
     a.publish_to(&folder, 101)?;
     b.publish_to(&folder, 102)?;
-    a.rescan(&folder, RescanLimits::default(), None)?;
+    let a_report = a.rescan(&folder, RescanLimits::default(), None)?;
+    let b_report = b.rescan(&folder, RescanLimits::default(), None)?;
+    // Each replica merges on its own, to the same revision ID with its own provenance.
+    let [a_merge] = &a_report.merged[..] else {
+        panic!("office must merge the competing heads");
+    };
+    let [b_merge] = &b_report.merged[..] else {
+        panic!("home must merge the competing heads");
+    };
+    let id = a_merge.revision.root().field("id").as_str().unwrap();
+    assert_eq!(b_merge.revision.root().field("id").as_str(), Some(id));
+    assert_eq!(
+        a_merge.revision.root().field("text").canonical()?,
+        b_merge.revision.root().field("text").canonical()?
+    );
+    assert_eq!(a_merge.overlaps, 1);
+    assert_eq!(
+        a.get(id)?.unwrap().root().field("device").as_str(),
+        Some("office")
+    );
+    assert_eq!(
+        b.get(id)?.unwrap().root().field("device").as_str(),
+        Some("home")
+    );
+    assert_eq!(a.heads("p")?, [id]);
+    assert_eq!(b.heads("p")?, [id]);
+    assert_eq!(a_report.pages[0].heads, [id]);
+    let mut parents = [office.revision_id(), home.revision_id()];
+    parents.sort();
+    assert_eq!(
+        a_merge
+            .revision
+            .root()
+            .field("parents")
+            .elements()
+            .unwrap()
+            .map(|parent| parent.as_str().unwrap())
+            .collect::<Vec<_>>(),
+        parents
+    );
+    assert_eq!(a.outbox()?, [id]);
+    assert_eq!(b.outbox()?, [id]);
+    a.publish_to(&folder, 103)?;
     b.rescan(&folder, RescanLimits::default(), None)?;
-    assert_eq!(a.heads("p")?, b.heads("p")?);
-    assert_eq!(a.heads("p")?.len(), 2);
-    assert!(a.get(office.revision_id())?.is_some());
-    assert!(b.get(home.revision_id())?.is_some());
-    let merged = b.save(&edit(b.heads("p")?, "merged"))?;
-    b.publish_to(&folder, 103)?;
-    a.rescan(&folder, RescanLimits::default(), None)?;
-    assert_eq!(a.heads("p")?, [merged.revision_id()]);
+    assert!(
+        b.outbox()?.is_empty(),
+        "office already published the identical merge"
+    );
     assert_eq!(a.heads("p")?, b.heads("p")?);
     Ok(())
 }
@@ -445,5 +483,91 @@ fn worker_rescan_keeps_file_io_off_the_caller() -> Result<()> {
     assert_eq!(block_on(heads)?, [saved.revision_id()]);
     worker.client.close()?;
     block_on(worker.stopped)?;
+    Ok(())
+}
+
+fn revision(text: &str, device: &str, parents: &[&serde_json::Value]) -> serde_json::Value {
+    let mut value = serde_json::json!({"page":"p","text":text,"path":"A.md","deleted":false,"device":device,"created":1,
+        "parents":parents.iter().map(|parent| parent["id"].as_str().unwrap()).collect::<Vec<_>>(),
+        "generation":parents.iter().map(|parent| parent["generation"].as_u64().unwrap() + 1).max().unwrap_or(0)});
+    value["id"] = quire_store::sync::format::revision_id(&value)
+        .unwrap()
+        .into();
+    value
+}
+
+fn deliver(
+    folder: &Path,
+    device: &str,
+    seq: u32,
+    previous: Option<&str>,
+    revision: &serde_json::Value,
+) -> Result<String> {
+    use quire_store::sync::format::{Kind, encode};
+    let encoded = encode(
+        &serde_json::json!({"notebook":"nb","device":device,"seq":seq,"previous":previous,"created":1,"revisions":[revision],"attachments":[]}),
+        Kind::Batch,
+    )?;
+    let log = folder.join("devices").join(device).join("log");
+    fs::create_dir_all(&log)?;
+    fs::write(log.join(&encoded.name), &encoded.data)?;
+    Ok(encoded.hash)
+}
+
+#[test]
+fn a_rebuilding_device_merges_only_after_importing_all_of_its_own_batches() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let folder = root.path().join("notebook");
+    notebook(&folder)?;
+    let base = revision("base", "office", &[]);
+    let home = revision("home", "home", &[&base]);
+    let office = revision("office", "office", &[&base]);
+    let home_later = revision("home later", "home", &[&home]);
+    let merged = revision("merged by office", "office", &[&home_later, &office]);
+    let one = deliver(&folder, "office", 1, None, &base)?;
+    let two = deliver(&folder, "office", 2, Some(&one), &office)?;
+    deliver(&folder, "office", 3, Some(&two), &merged)?;
+    let home_one = deliver(&folder, "home", 1, None, &home)?;
+    let store = NotebookStore::open(&root.path().join("rebuilt.sqlite"), "nb", "office")?;
+    let report = store.rescan(&folder, RescanLimits::default(), None)?;
+    assert!(report.problems.is_empty(), "{:?}", report.problems);
+    assert_eq!(store.heads("p")?.len(), 2);
+    assert!(report.merged.is_empty(), "own batch 3 is still waiting");
+    assert!(store.outbox()?.is_empty());
+    deliver(&folder, "home", 2, Some(&home_one), &home_later)?;
+    let report = store.rescan(&folder, RescanLimits::default(), None)?;
+    assert!(report.problems.is_empty(), "{:?}", report.problems);
+    assert_eq!(store.cursor("office")?.unwrap().seq, 3);
+    assert_eq!(store.heads("p")?, [merged["id"].as_str().unwrap()]);
+    assert!(store.outbox()?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_page_that_cannot_merge_stays_in_conflict_and_is_reported() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let folder = root.path().join("notebook");
+    notebook(&folder)?;
+    let path = root.path().join("local.sqlite");
+    let store = NotebookStore::open(&path, "nb", "local")?;
+    let base = revision("base", "office", &[]);
+    let left = revision("left", "office", &[&base]);
+    let right = revision("right", "home", &[&base]);
+    let one = deliver(&folder, "office", 1, None, &base)?;
+    deliver(&folder, "office", 2, Some(&one), &left)?;
+    deliver(&folder, "home", 1, None, &right)?;
+    let connection = sqlez::connection::Connection::try_open_file(path.to_str().unwrap())?;
+    connection.exec("CREATE TRIGGER fail_merge BEFORE INSERT ON parents WHEN (SELECT COUNT(*) FROM parents WHERE child=NEW.child)>0 BEGIN SELECT RAISE(ABORT,'injected merge failure'); END")?()?;
+    let report = store.rescan(&folder, RescanLimits::default(), None)?;
+    assert_eq!(report.applied, 3);
+    assert!(report.merged.is_empty());
+    assert_eq!(report.problems.len(), 1, "{:?}", report.problems);
+    assert!(report.problems[0].reason.contains("could not be merged"));
+    assert_eq!(store.heads("p")?.len(), 2);
+    assert!(store.outbox()?.is_empty());
+    connection.exec("DROP TRIGGER fail_merge")?()?;
+    let report = store.rescan(&folder, RescanLimits::default(), None)?;
+    assert_eq!(report.merged.len(), 1);
+    assert_eq!(store.heads("p")?.len(), 1);
     Ok(())
 }

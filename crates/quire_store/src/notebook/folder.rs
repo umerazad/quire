@@ -1,4 +1,4 @@
-use super::{BatchImport, ImportedPage, NotebookStore};
+use super::{BatchImport, ImportedPage, MergedPage, NotebookStore};
 use crate::{
     durable_files,
     sync::{
@@ -78,6 +78,8 @@ pub struct RescanReport {
     pub waiting: Vec<RescanWait>,
     pub problems: Vec<RescanProblem>,
     pub continuation: Option<RescanCursor>,
+    /// Merges made after a complete graph pass; warn about pages with overlaps.
+    pub merged: Vec<MergedPage>,
 }
 
 fn problem(device: Option<&str>, file: Option<&str>, reason: String) -> RescanProblem {
@@ -416,6 +418,27 @@ impl NotebookStore {
                     .is_none_or(|log| log.files.last_key_value().is_none_or(|(seq, _)| *seq <= at))
             {
                 self.mark_reconciled(cursor.as_ref())?;
+                // Merge only once every own batch is imported; see `merge_conflicts`.
+                if !graph_more {
+                    let merges = self.merge_conflicts()?;
+                    for merged in merges.merged {
+                        let heads = self.heads_key(&merged.page.to_json())?;
+                        pages.insert(
+                            merged.page.clone(),
+                            ImportedPage {
+                                page: merged.page.clone(),
+                                heads,
+                            },
+                        );
+                        report.merged.push(merged);
+                    }
+                    report.problems.extend(
+                        merges
+                            .failed
+                            .into_iter()
+                            .map(|failure| problem(None, None, failure.reason)),
+                    );
+                }
             } else if !current_present && let Some(cursor) = cursor {
                 report.waiting.push(RescanWait::File {
                     device: self.device.clone(),

@@ -450,51 +450,69 @@ fn a_duplicate_revision_from_a_peer_cannot_consume_the_local_frozen_outbox() -> 
     Ok(())
 }
 
+fn local_edit(base: Vec<String>, text: &str, created: u64) -> Edit {
+    Edit {
+        page: "p".into(),
+        base,
+        path: "A.md".into(),
+        text: text.into(),
+        created,
+        deleted: false,
+        recovery: None,
+    }
+}
+
+fn as_peer(saved: &quire_store::notebook::SaveAck, device: &str) -> Result<Value> {
+    let mut value: Value = serde_json::from_str(&saved.revision.canonical()?)?;
+    value["device"] = device.into();
+    value["created"] = 99.into();
+    Ok(value)
+}
+
 #[test]
-fn a_peer_observed_revision_cannot_be_coalesced_out_of_the_local_graph() -> Result<()> {
+fn a_revision_a_peer_published_leaves_the_outbox_but_stays_in_the_graph() -> Result<()> {
     let root = tempfile::tempdir()?;
     let path = root.path().join("local.sqlite");
     let store = NotebookStore::open(&path, "nb", "local")?;
     store.mark_reconciled(None)?;
-    let first = store.save(&Edit {
-        page: "p".into(),
-        base: vec![],
-        path: "A.md".into(),
-        text: "same content".into(),
-        created: 1,
-        deleted: false,
-        recovery: None,
-    })?;
-    let mut observed: Value = serde_json::from_str(&first.revision.canonical()?)?;
-    observed["device"] = "peer".into();
-    let incoming = batch("peer", 1, None, std::slice::from_ref(&observed));
+    let first = store.save(&local_edit(vec![], "root", 1))?;
+    let second = store.save(&local_edit(
+        vec![first.revision_id().into()],
+        "same content",
+        2,
+    ))?;
+    assert_eq!(store.outbox()?, [first.revision_id(), second.revision_id()]);
+    let observed = as_peer(&second, "peer")?;
+    let incoming = batch(
+        "peer",
+        1,
+        None,
+        &[as_peer(&first, "peer")?, observed.clone()],
+    );
     assert!(matches!(
         store.import_batch("peer", &incoming.name, &incoming.data)?,
         BatchImport::Applied(_)
     ));
-    assert_eq!(store.outbox()?, [first.revision_id()]);
+    assert!(store.outbox()?.is_empty());
     assert_eq!(
-        store.get(first.revision_id())?.unwrap().canonical()?,
-        first.revision.canonical()?
+        store.get(second.revision_id())?.unwrap().canonical()?,
+        second.revision.canonical()?,
+        "the local record keeps its provenance"
     );
     drop(store);
     let store = NotebookStore::open(&path, "nb", "local")?;
     store.mark_reconciled(None)?;
-    let second = store.save(&Edit {
-        page: "p".into(),
-        base: vec![first.revision_id().into()],
-        path: "A.md".into(),
-        text: "new local content".into(),
-        created: 2,
-        deleted: false,
-        recovery: None,
-    })?;
+    let third = store.save(&local_edit(
+        vec![second.revision_id().into()],
+        "new local content",
+        3,
+    ))?;
     assert!(
-        second.replaced.is_none(),
-        "a revision already observed in a peer batch must remain available to later descendants"
+        third.replaced.is_none(),
+        "a revision another computer published must remain available to its descendants"
     );
-    assert!(store.get(first.revision_id())?.is_some());
-    assert_eq!(store.outbox()?, [first.revision_id(), second.revision_id()]);
+    assert!(store.get(second.revision_id())?.is_some());
+    assert_eq!(store.outbox()?, [third.revision_id()]);
     let descendant = revision("p", "later peer edit", "peer", &[&observed]);
     let next = batch(
         "peer",
@@ -506,14 +524,86 @@ fn a_peer_observed_revision_cannot_be_coalesced_out_of_the_local_graph() -> Resu
         store.import_batch("peer", &next.name, &next.data)?,
         BatchImport::Applied(_)
     ));
-    let mut heads = store.heads("p")?;
-    heads.sort();
-    let mut expected = vec![
-        second.revision_id().to_owned(),
-        descendant["id"].as_str().unwrap().to_owned(),
-    ];
-    expected.sort();
-    assert_eq!(heads, expected);
+    assert!(store.get(descendant["id"].as_str().unwrap())?.is_some());
+    Ok(())
+}
+
+#[test]
+fn an_identical_merge_from_a_peer_removes_the_local_pending_copy() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let store = NotebookStore::open(&root.path().join("local.sqlite"), "nb", "local")?;
+    store.mark_reconciled(None)?;
+    let base = revision("p", "base", "office", &[]);
+    let left = revision("p", "left", "office", &[&base]);
+    let right = revision("p", "right", "home", &[&base]);
+    let office = batch("office", 1, None, &[base, left]);
+    store.import_batch("office", &office.name, &office.data)?;
+    let home = batch("home", 1, None, &[right]);
+    store.import_batch("home", &home.name, &home.data)?;
+    let heads = store.heads("p")?;
+    let merged = if heads.len() == 1 {
+        store.get(&heads[0])?.unwrap()
+    } else {
+        store.save(&local_edit(heads, "left\nright", 5))?.revision
+    };
+    let merge_id = merged.root().field("id").as_str().unwrap().to_owned();
+    assert_eq!(
+        merged.root().field("parents").elements().unwrap().count(),
+        2
+    );
+    assert_eq!(store.outbox()?, [merge_id.as_str()]);
+    let mut peer_copy: Value = serde_json::from_str(&merged.canonical()?)?;
+    peer_copy["device"] = "office".into();
+    peer_copy["created"] = 77.into();
+    let again = batch("office", 2, Some(&office.hash), &[peer_copy]);
+    let BatchImport::Applied(result) = store.import_batch("office", &again.name, &again.data)?
+    else {
+        panic!("the peer's identical merge must apply");
+    };
+    assert_eq!(result.applied, 0);
+    assert!(
+        store.outbox()?.is_empty(),
+        "the peer already published this merge"
+    );
+    assert_eq!(store.heads("p")?, [merge_id.as_str()]);
+    assert_eq!(
+        store
+            .get(&merge_id)?
+            .unwrap()
+            .root()
+            .field("device")
+            .as_str(),
+        Some("local")
+    );
+    let after = store.save(&local_edit(vec![merge_id.clone()], "after", 6))?;
+    assert!(after.replaced.is_none());
+    assert!(store.get(&merge_id)?.is_some());
+    assert_eq!(store.outbox()?, [after.revision_id()]);
+    Ok(())
+}
+
+#[test]
+fn a_frozen_selection_keeps_a_revision_a_peer_also_published() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let store = NotebookStore::open(&root.path().join("local.sqlite"), "nb", "local")?;
+    store.mark_reconciled(None)?;
+    let first = store.save(&local_edit(vec![], "root", 1))?;
+    let pending = store.prepare_publication(100)?.unwrap();
+    let later = store.save(&local_edit(vec![first.revision_id().into()], "later", 2))?;
+    let incoming = batch(
+        "peer",
+        1,
+        None,
+        &[as_peer(&first, "peer")?, as_peer(&later, "peer")?],
+    );
+    assert!(matches!(
+        store.import_batch("peer", &incoming.name, &incoming.data)?,
+        BatchImport::Applied(_)
+    ));
+    assert_eq!(store.outbox()?, [first.revision_id()]);
+    assert_eq!(store.pending_publication()?, Some(pending.clone()));
+    store.complete_publication(&pending)?;
+    assert!(store.outbox()?.is_empty());
     Ok(())
 }
 

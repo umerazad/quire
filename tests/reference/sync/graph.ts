@@ -4,6 +4,7 @@ import {
   type Cursor,
   type Revision,
 } from "./format";
+import { mergeText } from "../core/merge";
 
 // Page versions form a graph: each revision names the revision(s) it was
 // edited from. A page's heads are its revisions with no known successor.
@@ -184,4 +185,82 @@ export function chainStep(
         "A computer's change files do not follow on from each other. Keep its folder unchanged and reopen the notebook after the sync tool finishes.",
     };
   return { kind: "apply" };
+}
+
+// The newest revision both a and b descend from: the highest generation,
+// then the smallest id. Parents always have lower generations, so walking
+// newest first reaches every common ancestor only after its descendants.
+export function mergeBase(
+  store: RevisionStore,
+  a: string,
+  b: string,
+): Revision | undefined {
+  const marks = new Map<string, number>([
+    [a, 1],
+    [b, (a === b ? 1 : 0) | 2],
+  ]);
+  const pending = [store.get(a), store.get(b)].filter(
+    (revision): revision is Revision => !!revision,
+  );
+  const newest = (p: Revision, q: Revision) =>
+    q.generation - p.generation || (p.id < q.id ? -1 : p.id > q.id ? 1 : 0);
+  while (pending.length) {
+    pending.sort(newest);
+    const revision = pending.shift()!;
+    const mark = marks.get(revision.id)!;
+    if (mark === 3) return revision;
+    for (const id of revision.parents) {
+      const before = marks.get(id) ?? 0;
+      if ((before | mark) === before) continue;
+      marks.set(id, before | mark);
+      const parent = before ? undefined : store.get(id);
+      if (parent) pending.push(parent);
+    }
+  }
+  return undefined;
+}
+
+// One revision that follows every head of a page, so edits made on two
+// computers at once end up in one version. Text merges line by line and
+// word by word against the newest common ancestor (src/core/merge.ts),
+// keeping both versions where they overlap. An edit outlives a deletion,
+// and of two moves the newer wins. Computers that merge the same heads
+// produce the same revision, because ids do not cover who merged or when.
+export function mergeHeads(
+  store: RevisionStore,
+  page: string,
+  made: { created: number; device: string },
+): { revision: Revision; overlaps: number } | undefined {
+  const heads = store
+    .heads(page)
+    .map((id) => store.get(id))
+    .filter((head): head is Revision => !!head);
+  if (heads.length < 2) return undefined;
+  const parents = heads.map((head) => head.id);
+  const byId = (p: Revision, q: Revision) =>
+    p.id < q.id ? -1 : p.id > q.id ? 1 : 0;
+  const live = heads.filter((head) => !head.deleted);
+  const order = (live.length ? live : heads).sort(
+    (p, q) => p.created - q.created || byId(p, q),
+  );
+  let { text, path } = order[0],
+    overlaps = 0;
+  for (const head of order.slice(1)) {
+    const base = mergeBase(store, order[0].id, head.id);
+    const merged = mergeText(base?.text ?? "", text, head.text);
+    text = merged.text;
+    overlaps += merged.overlaps;
+    if (head.path !== base?.path) path = head.path;
+  }
+  return {
+    revision: createRevision(store, {
+      page,
+      parents,
+      path,
+      deleted: !live.length,
+      text,
+      ...made,
+    }),
+    overlaps,
+  };
 }

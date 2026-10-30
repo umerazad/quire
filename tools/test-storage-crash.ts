@@ -10,7 +10,7 @@ import { attachmentFileName, encodeBatch, revisionId } from "../tests/reference/
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 execFileSync("cargo", ["build", "-p", "quire_store", "--example", "storage_crash", "--locked"], { cwd: root, stdio: "inherit" });
-const metadata = JSON.parse(execFileSync("cargo", ["metadata", "--format-version", "1", "--no-deps", "--locked"], { cwd: root, encoding: "utf8" }));
+const metadata = JSON.parse(execFileSync("cargo", ["metadata", "--format-version", "1", "--no-deps", "--locked"], { cwd: root, encoding: "utf8", maxBuffer: 64 * 2 ** 20 }));
 const binary = join(metadata.target_directory, "debug/examples/storage_crash" + (process.platform === "win32" ? ".exe" : ""));
 const folder = mkdtempSync(join(tmpdir(), "quire-crash-"));
 const database = join(folder, "local.sqlite");
@@ -131,7 +131,9 @@ try {
   state = inspect();
   assert.deepEqual(state.peerCursor, { seq: 2, hash: delivered.hash });
   assert.equal(state.peerBatchHash, imported.hash);
-  assert.deepEqual(new Map(state.versions.map((version: { id: string; text: string }) => [version.id, version.text])), new Map([[afterPublication.id, "after folder acknowledgment"], [nextRevision.id, nextFields.text]]));
+  // The reconciled rescan merges the local head with the delivered peer edit before acknowledging.
+  assert.equal(state.versions.length, 1);
+  assert.equal(state.versions[0].text, "after folder acknowledgment\npeer folder rescan update");
   console.log("Storage crash checks passed: local/recovery/publication acknowledgments, atomic peer import, late attachment requests, and delivered-folder rescan.");
 } finally {
   rmSync(folder, { recursive: true, force: true });

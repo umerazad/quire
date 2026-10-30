@@ -41,6 +41,9 @@ pub struct SaveAck {
     pub changed: bool,
     pub replaced: Option<String>,
     pub stamp: Option<DraftStamp>,
+    /// The revision that merged this save with competing versions, when it left several.
+    pub merged: Option<Json>,
+    pub overlaps: usize,
 }
 
 #[derive(Debug)]
@@ -251,6 +254,7 @@ impl NotebookStore {
             .as_ref()
             .filter(|record| same_content(record.root(), edit));
         let is_replay = replay.is_some();
+        let mut merged = None;
         let (record, heads, changed, replaced) = if let Some(record) =
             replay.or_else(|| unchanged.cloned())
         {
@@ -283,6 +287,12 @@ impl NotebookStore {
                     && !observed
                     && heads == base
                     && previous.root().field("device").as_str() == Some(self.device.as_str())
+                    && previous
+                        .root()
+                        .field("parents")
+                        .elements()
+                        .map(Iterator::count)
+                        == Some(1)
             });
             let mut parents: Vec<String> = if let Some(previous) = replaces {
                 previous
@@ -329,6 +339,7 @@ impl NotebookStore {
             if changed {
                 self.connection
                     .exec_bound("INSERT INTO outbox(revision) VALUES (?)")?(id)?;
+                merged = self.merge_page(&page_key(&edit.page), edit.created)?;
             }
             let heads = self.heads(&edit.page)?;
             (record, heads, changed, replaced)
@@ -368,6 +379,8 @@ impl NotebookStore {
             changed,
             replaced,
             stamp: edit.recovery.clone(),
+            overlaps: merged.as_ref().map_or(0, |merged| merged.overlaps),
+            merged: merged.map(|merged| merged.revision),
         })
     }
 

@@ -145,7 +145,7 @@ fn saves_revisions_heads_and_outbox_together_and_reopens() {
 }
 
 #[test]
-fn idle_stale_buffers_do_not_reinstate_old_text_and_edits_keep_conflicts() {
+fn idle_stale_buffers_do_not_reinstate_old_text_and_stale_edits_merge() {
     let root = tempfile::tempdir().unwrap();
     let store = NotebookStore::open(&root.path().join("local.sqlite"), "nb", "office").unwrap();
     let first = store.save(&edit(vec![], "one")).unwrap();
@@ -160,13 +160,38 @@ fn idle_stale_buffers_do_not_reinstate_old_text_and_edits_keep_conflicts() {
     let concurrent = store
         .save(&edit(vec![first.revision_id().into()], "peer edit"))
         .unwrap();
-    assert!(concurrent.conflict);
-    let mut expected = vec![
-        second.revision_id().to_owned(),
-        concurrent.revision_id().to_owned(),
-    ];
-    expected.sort_by(|a, b| b.cmp(a));
-    assert_eq!(store.heads("p-one").unwrap(), expected);
+    assert!(!concurrent.conflict);
+    let merged = concurrent.merged.as_ref().expect("a stale save merges");
+    let merge = merged.root();
+    let mut parents = [second.revision_id(), concurrent.revision_id()];
+    parents.sort();
+    assert_eq!(
+        merge
+            .field("parents")
+            .elements()
+            .unwrap()
+            .map(|id| id.as_str().unwrap())
+            .collect::<Vec<_>>(),
+        parents
+    );
+    // Both changed the only line, so both versions stay, ordered by creation then ID.
+    assert_eq!(concurrent.overlaps, 1);
+    let expected = if parents[0] == second.revision_id() {
+        "two\npeer edit"
+    } else {
+        "peer edit\ntwo"
+    };
+    assert_eq!(merge.field("text").as_str(), Some(expected));
+    assert_eq!(concurrent.heads, [merge.field("id").as_str().unwrap()]);
+    assert_eq!(
+        store.outbox().unwrap(),
+        [
+            first.revision_id(),
+            second.revision_id(),
+            concurrent.revision_id(),
+            merge.field("id").as_str().unwrap()
+        ]
+    );
 }
 
 #[test]
@@ -192,6 +217,46 @@ fn only_certain_unpublished_current_heads_are_coalesced() {
     assert_eq!(
         third.revision.root().field("generation").as_f64(),
         Some(1.0)
+    );
+}
+
+#[test]
+fn first_versions_and_merges_are_never_coalesced() {
+    let root = tempfile::tempdir().unwrap();
+    let store = NotebookStore::open(&root.path().join("local.sqlite"), "nb", "office").unwrap();
+    store.mark_reconciled(None).unwrap();
+    let first = store.save(&edit(vec![], "one")).unwrap();
+    let second = store
+        .save(&edit(vec![first.revision_id().into()], "two"))
+        .unwrap();
+    assert!(second.replaced.is_none(), "a page's first version stays");
+    assert!(store.get(first.revision_id()).unwrap().is_some());
+    let third = store
+        .save(&edit(vec![second.revision_id().into()], "three"))
+        .unwrap();
+    assert_eq!(third.replaced.as_deref(), Some(second.revision_id()));
+
+    let other = store.save(&edit(vec![], "unrelated root")).unwrap();
+    let merge = other
+        .merged
+        .as_ref()
+        .expect("a second first version merges");
+    let merge_id = merge.root().field("id").as_str().unwrap();
+    assert_eq!(merge.root().field("parents").elements().unwrap().count(), 2);
+    let after = store
+        .save(&edit(vec![merge_id.into()], "after merge"))
+        .unwrap();
+    assert!(after.replaced.is_none(), "a merge revision stays");
+    assert!(store.get(merge_id).unwrap().is_some());
+    assert_eq!(
+        store.outbox().unwrap(),
+        vec![
+            first.revision_id(),
+            third.revision_id(),
+            other.revision_id(),
+            merge_id,
+            after.revision_id()
+        ]
     );
 }
 

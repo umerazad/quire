@@ -8,6 +8,8 @@ use quire_store::{
 use sqlez::connection::Connection;
 use std::{sync::mpsc, time::Duration};
 
+mod common;
+
 fn edit(page: &str, base: Vec<String>, text: &str) -> Edit {
     Edit {
         page: page.into(),
@@ -31,9 +33,7 @@ fn checkout_selects_one_head_and_keeps_tombstones_and_recovery_on_reopen() -> Re
     assert!(empty.draft.is_none());
     let base = store.save(&edit("p", vec![], "مرحبا 🙂"))?;
     let left = store.save(&edit("p", vec![base.revision_id().into()], "left"))?;
-    let mut deletion = edit("p", vec![base.revision_id().into()], "");
-    deletion.deleted = true;
-    let right = store.save(&deletion)?;
+    let right = common::import_branch(&store, "peer", "p", &[base.revision_id()], "", true)?;
     let heads = store.heads("p")?;
     assert_eq!(heads.len(), 2);
     let draft = Draft {
@@ -48,16 +48,14 @@ fn checkout_selects_one_head_and_keeps_tombstones_and_recovery_on_reopen() -> Re
         created: 2,
     };
     store.put_draft(&draft, None)?;
-    drop(store);
-    let store = NotebookStore::open(&path, "nb", "local")?;
     let checkout = store.checkout("p", None)?;
     assert_eq!(checkout.heads, heads);
     assert_eq!(
         checkout.selected.unwrap().root().field("id").as_str(),
         Some(heads[0].as_str())
     );
-    assert_eq!(checkout.draft, Some(draft));
-    let deleted = store.checkout("p", Some(right.revision_id()))?;
+    assert_eq!(checkout.draft, Some(draft.clone()));
+    let deleted = store.checkout("p", Some(&right))?;
     assert_eq!(
         deleted.selected.unwrap().root().field("deleted").as_bool(),
         Some(true)
@@ -69,6 +67,37 @@ fn checkout_selects_one_head_and_keeps_tombstones_and_recovery_on_reopen() -> Re
     );
     assert!(store.checkout("p", Some(base.revision_id())).is_err());
     assert!(store.checkout("absent", Some(left.revision_id())).is_err());
+    drop(store);
+    // Reopening keeps both heads; the next reconciled rescan merges them, and the edit
+    // outlives the deletion.
+    let store = NotebookStore::open(&path, "nb", "local")?;
+    assert_eq!(store.heads("p")?, heads);
+    let merges = store.merge_conflicts()?;
+    assert!(merges.failed.is_empty());
+    let [merged] = &merges.merged[..] else {
+        panic!("the competing heads must merge");
+    };
+    let merge = merged.revision.root();
+    assert_eq!(merge.field("text").as_str(), Some("left"));
+    assert_eq!(merge.field("deleted").as_bool(), Some(false));
+    let mut parents = heads.clone();
+    parents.sort();
+    assert_eq!(
+        merge
+            .field("parents")
+            .elements()
+            .unwrap()
+            .map(|id| id.as_str().unwrap())
+            .collect::<Vec<_>>(),
+        parents
+    );
+    let checkout = store.checkout("p", None)?;
+    assert_eq!(checkout.heads, [merge.field("id").as_str().unwrap()]);
+    assert_eq!(checkout.draft, Some(draft));
+    assert_eq!(
+        store.outbox()?.last().map(String::as_str),
+        merge.field("id").as_str()
+    );
     Ok(())
 }
 
@@ -116,7 +145,7 @@ fn checked_save_cannot_implicitly_merge_conflicting_heads() -> Result<()> {
     let root = tempfile::tempdir()?;
     let store = NotebookStore::open(&root.path().join("local.sqlite"), "nb", "local")?;
     store.save(&edit("p", vec![], "left"))?;
-    store.save(&edit("p", vec![], "right"))?;
+    common::import_branch(&store, "peer", "p", &[], "right", false)?;
     let heads = store.heads("p")?;
     let outbox = store.outbox()?;
     assert!(
@@ -137,10 +166,10 @@ fn checkout_does_not_read_unselected_or_unrelated_revision_bodies() -> Result<()
     let path = root.path().join("local.sqlite");
     let store = NotebookStore::open(&path, "nb", "local")?;
     let selected = store.save(&edit("p", vec![], "selected"))?;
-    let other = store.save(&edit("p", vec![], "other conflict"))?;
+    let other = common::import_branch(&store, "peer", "p", &[], "other conflict", false)?;
     let unrelated = store.save(&edit("unrelated", vec![], "large unrelated body"))?;
     let connection = Connection::try_open_file(path.to_str().unwrap())?;
-    for id in [other.revision_id(), unrelated.revision_id()] {
+    for id in [other.as_str(), unrelated.revision_id()] {
         connection.exec_bound("UPDATE revisions SET body=? WHERE id=?")?((vec![0u8], id))?;
     }
     let checkout = store.checkout("p", Some(selected.revision_id()))?;
@@ -149,7 +178,7 @@ fn checkout_does_not_read_unselected_or_unrelated_revision_bodies() -> Result<()
         checkout.selected.unwrap().root().field("text").as_str(),
         Some("selected")
     );
-    assert!(store.checkout("p", Some(other.revision_id())).is_err());
+    assert!(store.checkout("p", Some(&other)).is_err());
     assert!(store.checkout("unrelated", None).is_err());
     // A failed read rolls back its snapshot and leaves later checkouts usable.
     assert!(
