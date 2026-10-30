@@ -60,6 +60,9 @@ mod markdown_blocks;
 mod task_marker;
 
 #[cfg(feature = "full-editor")]
+mod tasks;
+
+#[cfg(feature = "full-editor")]
 mod markdown_links;
 
 #[path = "example_support/fonts.rs"]

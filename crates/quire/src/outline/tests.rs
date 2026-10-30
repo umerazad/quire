@@ -499,3 +499,25 @@ fn vim_dot_repeats_opening_a_block(cx: &mut TestAppContext) {
         cx,
     );
 }
+
+#[gpui::test]
+fn moved_blocks_keep_the_caret_when_the_parse_lags(cx: &mut TestAppContext) {
+    let window = write_view("- A\n- B|\n  - B1\n- C\n", false, cx);
+    window
+        .update(cx, |editor, _, cx| {
+            let source = editor.buffer().read(cx).as_singleton().unwrap();
+            source.update(cx, |buffer, _| {
+                buffer.set_sync_parse_timeout(Some(std::time::Duration::ZERO))
+            });
+        })
+        .unwrap();
+    expect(
+        window,
+        &[
+            ("alt-up", "- B|\n  - B1\n- A\n- C\n"),
+            ("alt-shift-down", "- A\n- B|\n  - B1\n- C\n"),
+            (&format!("{MOD}-shift-down"), "- A\n- C\n- B|\n  - B1\n"),
+        ],
+        cx,
+    );
+}

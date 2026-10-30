@@ -74,7 +74,7 @@ pub fn notice(cx: &App) -> Option<SharedString> {
         .and_then(|notice| notice.0.clone())
 }
 
-fn set_notice(message: Option<&'static str>, cx: &mut App) {
+pub(crate) fn set_notice(message: Option<&'static str>, cx: &mut App) {
     if notice(cx).as_deref() != message {
         cx.set_global(Notice(message.map(SharedString::new_static)));
     }
@@ -322,7 +322,7 @@ fn outline_folds(editor: &mut Editor, cx: &mut Context<Editor>) -> Vec<Range<usi
         .collect()
 }
 
-fn structural_edit(buffer: &Entity<MultiBuffer>, edits: &[Edit], cx: &mut App) {
+pub(crate) fn structural_edit(buffer: &Entity<MultiBuffer>, edits: &[Edit], cx: &mut App) {
     if edits.is_empty() {
         return;
     }

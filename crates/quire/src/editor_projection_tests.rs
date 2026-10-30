@@ -48,9 +48,22 @@ fn resize_and_draw(window: gpui::WindowHandle<NotebookWindow>, cx: &mut TestAppC
         .unwrap();
 }
 
+/// Task commands date completions 2026-10-29 in UTC.
+fn fixed_task_clock(cx: &mut gpui::App) {
+    cx.set_global(crate::tasks::TaskContext {
+        now: std::rc::Rc::new(|| 1_793_275_200_000),
+        calendar: Some(quire_core::daily::DailyCalendar::utc()),
+        layout: Default::default(),
+        title: std::rc::Rc::new(|_, _| None),
+    });
+}
+
 #[gpui::test]
 fn task_checkbox_edits_the_shared_marker_and_undoes_from_source(cx: &mut TestAppContext) {
-    cx.update(|cx| init(cx).expect("editor initialization"));
+    cx.update(|cx| {
+        fixed_task_clock(cx);
+        init(cx).expect("editor initialization")
+    });
     let window = cx.add_window(|window, cx| {
         let view = NotebookWindow::new("- [ ] مرحبا🙂 ^task\n", window, cx);
         crate::editor_projection::bind(&view.second, window, cx).unwrap();
@@ -76,13 +89,16 @@ fn task_checkbox_edits_the_shared_marker_and_undoes_from_source(cx: &mut TestApp
     cx.executor().run_until_parked();
     window
         .update(cx, |view, window, cx| {
-            assert_eq!(view.source.read(cx).text(cx), "- [x] مرحبا🙂 ^task\n");
+            assert_eq!(
+                view.source.read(cx).text(cx),
+                "- [x] مرحبا🙂 ✅ 2026-10-29 ^task\n"
+            );
             assert_eq!(
                 view.second.update(cx, |editor, cx| editor
                     .snapshot(window, cx)
                     .display_snapshot
                     .text()),
-                "☑ مرحبا🙂\n"
+                "☑ مرحبا🙂 ✅ 2026-10-29\n"
             );
             window.focus(&view.source.focus_handle(cx), cx);
         })
@@ -147,7 +163,10 @@ fn rendered_web_link_opens_its_url_without_editing_source(cx: &mut TestAppContex
 
 #[gpui::test]
 fn roam_checkbox_supports_keyboard_activation(cx: &mut TestAppContext) {
-    cx.update(|cx| init(cx).expect("editor initialization"));
+    cx.update(|cx| {
+        fixed_task_clock(cx);
+        init(cx).expect("editor initialization")
+    });
     let window = cx.add_window(|window, cx| {
         let view = NotebookWindow::new("- {{[[TODO]]}} task ^id\n", window, cx);
         crate::editor_projection::bind(&view.second, window, cx).unwrap();
@@ -174,14 +193,17 @@ fn roam_checkbox_supports_keyboard_activation(cx: &mut TestAppContext) {
     activate_focused_control(window, "enter", cx);
     window
         .update(cx, |view, window, cx| {
-            assert_eq!(view.source.read(cx).text(cx), "- {{[[DONE]]}} task ^id\n");
+            assert_eq!(
+                view.source.read(cx).text(cx),
+                "- {{[[DONE]]}} task ✅ 2026-10-29 ^id\n"
+            );
             assert!(view.second.focus_handle(cx).contains_focused(window, cx));
             assert_eq!(
                 view.second.update(cx, |editor, cx| editor
                     .snapshot(window, cx)
                     .display_snapshot
                     .text()),
-                "☑ task\n"
+                "☑ task ✅ 2026-10-29\n"
             );
         })
         .unwrap();

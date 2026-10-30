@@ -392,12 +392,10 @@ fn toggle_task_marker(
     if current != expected {
         return;
     }
-    let Some(task) = crate::task_marker::read(&current) else {
+    if crate::task_marker::read(&current).is_none() {
         return;
-    };
-    editor.transact(window, cx, |editor, _, cx| {
-        editor.edit([(range, task.toggled())], cx)
-    });
+    }
+    crate::tasks::toggle_at(editor, start.0, window, cx);
     window.focus(&editor.focus_handle(cx), cx);
 }
 
@@ -480,13 +478,7 @@ fn clamp_carets(
                 let content = text_start(block, &snapshot);
                 if position >= start && position < content {
                     position = match from {
-                        Some(from) if checkbox <= from && from <= content => {
-                            if position >= checkbox && position != from {
-                                position
-                            } else {
-                                checkbox
-                            }
-                        }
+                        Some(from) if checkbox <= from && from <= content => position.max(checkbox),
                         _ => content,
                     };
                 }
@@ -759,7 +751,11 @@ pub fn bind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Resul
                 match event {
                 EditorEvent::BufferEdited | EditorEvent::Focused | EditorEvent::Blurred => refresh(editor, &blocks, window, cx),
                 EditorEvent::SelectionsChanged { local: true } => {
-                    clamp_carets(editor, &blocks, window, cx);
+                    // Blocks from an older parse would clamp against moved text; the rebuild after
+                    // the next parse clamps instead.
+                    if projection_is_current(editor, cx) {
+                        clamp_carets(editor, &blocks, window, cx);
+                    }
                     refresh(editor, &blocks, window, cx);
                 }
                 _ => {}
