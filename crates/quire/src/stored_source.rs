@@ -46,6 +46,16 @@ impl PreparedSource {
 }
 
 impl StoredSource {
+    /// Follows a merged version: `baseline` must hold exactly `original`'s normalized text.
+    /// Older snapshots keep rendering through the adapter they were captured with.
+    pub fn rebased(original: SourceText, baseline: BufferSnapshot) -> Self {
+        debug_assert_eq!(original.normalized_len(), baseline.len());
+        Self {
+            original: Arc::new(original),
+            baseline,
+        }
+    }
+
     pub fn original_len(&self) -> usize {
         self.original.original().len()
     }

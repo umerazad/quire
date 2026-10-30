@@ -334,3 +334,130 @@ fn unrepresentable_page_strings_fail_without_a_lossy_buffer_or_storage_changes(
         session.client.close().unwrap();
     }
 }
+
+fn draft(page: &str, path: &str, text: &str, base: Vec<String>) -> Draft {
+    Draft {
+        page: page.into(),
+        path: path.into(),
+        text: text.into(),
+        base,
+        stamp: DraftStamp {
+            session: "previous".into(),
+            version: 3,
+        },
+        created: 2,
+    }
+}
+
+fn source_text(page: &Entity<OpenPage>, cx: &mut TestAppContext) -> String {
+    cx.update(|cx| {
+        page.read(cx)
+            .loaded()
+            .unwrap()
+            .analysis
+            .read(cx)
+            .source
+            .read(cx)
+            .text()
+    })
+}
+
+#[gpui::test]
+fn a_restored_draft_typed_into_an_older_version_merges_when_editing_starts(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| crate::editor_host::init(cx).unwrap());
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("local.sqlite");
+    let store = NotebookStore::open(&path, "nb", "local").unwrap();
+    let base = store.save(&edit("- one\n- two\n")).unwrap();
+    let base = vec![base.revision_id().to_owned()];
+    let mut newer = edit("- one\n- two\n- three\n");
+    newer.base = base.clone();
+    newer.created = 2;
+    store.save(&newer).unwrap();
+    store
+        .put_draft(
+            &draft("p", "Daily/2026-10-30.md", "- one!\n- two\n", base),
+            None,
+        )
+        .unwrap();
+    drop(store);
+    let mut session = NotebookSession::open(path.clone(), "nb".into(), "local".into()).unwrap();
+    let page = cx.update(|cx| session.open_page("p".into(), cx));
+    wait(&page, cx);
+    assert_eq!(source_text(&page, cx), "- one!\n- two\n");
+    let persistence = cx.update(|cx| page.read(cx).persistence().unwrap().clone());
+    cx.update(|cx| session.enable_editing(cx));
+    crate::page_persistence::tests::wait(&persistence, cx);
+    assert_eq!(source_text(&page, cx), "- one!\n- two\n- three\n");
+    cx.update(|cx| assert!(!persistence.read(cx).is_dirty(cx)));
+    let store = NotebookStore::open(&path, "nb", "local").unwrap();
+    let heads = store.heads("p").unwrap();
+    assert_eq!(heads.len(), 1);
+    assert_eq!(
+        store
+            .get(&heads[0])
+            .unwrap()
+            .unwrap()
+            .root()
+            .field("text")
+            .as_str(),
+        Some("- one!\n- two\n- three\n")
+    );
+    assert!(store.draft("p").unwrap().is_none());
+    session.client.close().unwrap();
+}
+
+#[gpui::test]
+fn drafts_with_an_unknown_base_or_a_moved_page_stay_for_review(cx: &mut TestAppContext) {
+    cx.update(|cx| crate::editor_host::init(cx).unwrap());
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("local.sqlite");
+    let store = NotebookStore::open(&path, "nb", "local").unwrap();
+    let mut drafts = vec![];
+    for (page, draft_path, known) in [
+        ("unknown", "unknown.md", false),
+        ("moved", "Elsewhere.md", true),
+    ] {
+        let mut first = edit("first\n");
+        first.page = page.into();
+        first.path = format!("{page}.md");
+        let saved = store.save(&first).unwrap();
+        let mut newer = first.clone();
+        newer.base = vec![saved.revision_id().into()];
+        newer.text = "newer\n".into();
+        store.save(&newer).unwrap();
+        let base = if known {
+            vec![saved.revision_id().to_owned()]
+        } else {
+            vec!["0".repeat(64)]
+        };
+        let restored = draft(page, draft_path, "draft\n", base);
+        store.put_draft(&restored, None).unwrap();
+        drafts.push(restored);
+    }
+    drop(store);
+    let mut session = NotebookSession::open(path.clone(), "nb".into(), "local".into()).unwrap();
+    cx.update(|cx| session.enable_editing(cx));
+    for restored in &drafts {
+        let page = cx.update(|cx| session.open_page(restored.page.clone(), cx));
+        wait(&page, cx);
+        assert_eq!(source_text(&page, cx), "draft\n");
+        cx.update(|cx| {
+            assert!(page.read(cx).persistence().is_none());
+            assert!(
+                page.read(cx)
+                    .status(cx)
+                    .contains("recovered unsaved changes kept for review")
+            );
+        });
+    }
+    cx.executor().run_until_parked();
+    let store = NotebookStore::open(&path, "nb", "local").unwrap();
+    for restored in drafts {
+        assert_eq!(store.heads(&restored.page).unwrap().len(), 1);
+        assert_eq!(store.draft(&restored.page).unwrap(), Some(restored));
+    }
+    session.client.close().unwrap();
+}
