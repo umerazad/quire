@@ -6,6 +6,7 @@ publish = false
 license = "GPL-3.0-or-later"
 
 [dependencies]
+quire_core = { workspace = true, optional = true }
 gpui.workspace = true
 gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
 unicode-segmentation.workspace = true
@@ -36,4 +37,4 @@ serde_json.workspace = true
 [features]
 default = ["full-editor"]
 test-support = ["gpui/test-support", "gpui_platform/test-support"]
-full-editor = ["dep:editor", "dep:ui", "dep:http_client", "dep:search", "dep:workspace", "dep:language", "dep:multi_buffer", "dep:grammars", "dep:tree-sitter-md", "dep:tree-sitter", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:assets", "dep:util", "dep:zed_actions"]
+full-editor = ["dep:quire_core", "dep:editor", "dep:ui", "dep:http_client", "dep:search", "dep:workspace", "dep:language", "dep:multi_buffer", "dep:grammars", "dep:tree-sitter-md", "dep:tree-sitter", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:assets", "dep:util", "dep:zed_actions"]

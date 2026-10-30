@@ -15,6 +15,8 @@
   {"name":"frontmatter","source":"---\ntitle: A ^not-id\ntags:\n  - fake ^fake\n---\n\n- real ^real\n"},
   {"name":"bom-frontmatter","source":"﻿---\ntitle: Test\n---\n\n# heading ^head\n"},
   {"name":"frontmatter-only","source":"---\ntitle: Test\n---\n"},
+  {"name":"empty-frontmatter-followed-by-metadata","source":"---\n---\nprivate ^private\n---\n\n- visible ^visible\n"},
+  {"name":"empty-frontmatter-with-later-eof-close","source":"---\n---\nprivate ^private\n---"},
   {"name":"unicode","source":"🙂 first\n\n- مرحبا بكم ^arabic\n  - اُردُو 👩🏽‍💻 ^urdu\n"},
   {"name":"combining","source":"- é text ^combining\n"},
   {"name":"crlf","source":"- first ^first\r\n  - second\r\n\r\nparagraph ^para\r\n"},

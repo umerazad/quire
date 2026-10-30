@@ -4,7 +4,7 @@ Read [the architecture and contracts](native-rewrite.md) and [the parity ledger]
 
 Execute in dependency order. Every task needs changed paths, exact commands, observed output, and unresolved risk in its proof notes. If a task proves too large for one focused implementation session, split it into named child tasks with their own verification before starting it. Never mark a whole task done because only its happy path passes.
 
-Read formatted source in a completed tool call before preparing a patch, including newly created files after running the formatter. Use the observed identifier and surrounding text as the anchor. Keep inspection and mutation in separate tool calls; a read followed by a prewritten patch in the same call is not an inspection gate. For import edits, read the current import block after the last formatter run; never reconstruct a merged import line from an earlier layout. For scripted replacements, require each exact anchor to match once before writing.
+Read formatted source in a completed tool call before preparing a patch, including newly created files after running the formatter. Use the observed identifier and surrounding text as the anchor. Keep inspection and mutation in separate tool calls; a read followed by a prewritten patch in the same call is not an inspection gate. For import edits, read the current import block after the last formatter run; never reconstruct a merged import line from an earlier layout. For nested branches, anchor the patch to the named surrounding branch rather than an isolated closing brace. For scripted replacements, require each exact anchor to match once before writing.
 
 Shared acceptance rules: build independently of sibling repos; preserve source notices; keep failures actionable; no private notebook contents in fixtures; no silent reductions of feature or durability contracts. The task status field is authoritative. Gate descriptions do not grant release or publication authority.
 
@@ -503,7 +503,23 @@ Write set: `crates/quire_core/src/markdown/`, parser/reference fixtures.
 Dependencies: NR01.
 Verify: Differential block/reference output across existing Markdown fixtures and randomized edits; preserve no-setext behavior, code/frontmatter exclusions, Unicode offsets, lists, CRLF boundaries, and imported identifiers.
 Proof notes: pending.
-Status: pending
+Status: in_progress
+
+#### NR10.1: Port shared page-name, relative-path, and frontmatter-boundary helpers
+
+What to do: Establish the planned `quire_core` crate with pure UTF-8 metadata helpers derived from the frozen Markdown module. Reuse existing Unicode normalization for new-page names and preserve logical link-resolution behavior without changing notebook contents.
+Constraints: Return byte offsets for native text and compare them explicitly with the legacy UTF-16 offsets. Match ECMAScript trimming, NFC, reserved names, strict URI decoding, fragments, and vault traversal. Logical link resolution is not filesystem authorization; file adapters must enforce notebook boundaries and ordinary-file policies. Preserve raw source and existing IDs. Do not claim lone-surrogate native editing or complete Markdown parity.
+Verify: Frozen-oracle fixtures cover Unicode, limits, reserved names, malformed escapes, relative/root links, CRLF/BOM frontmatter, incomplete delimiters, and deterministic generated inputs. Verify the new package introduces no external dependency version, and keep the full Markdown/identity parent open.
+Proof notes: Added `quire_core` with `page_name`, `safe_page_path`, `relative_vault_path`, and frontmatter byte-boundary helpers. New names reuse the existing pinned Unicode normalization package, ECMAScript whitespace, UTF-16 length limits, and reserved-name checks. URI decoding rejects malformed percent sequences and invalid UTF-8 before logical traversal resolution. The logical result still requires filesystem validation before use. The package has no editor, storage, or JavaScript runtime dependency. Its only runtime dependency is the existing Unicode normalization version; the lockfile adds only the local package and the optional editor edge.
+
+`tools/metadata-vectors.ts` generates 640 deterministic fixtures directly from the frozen Markdown module. Rust tests compare outputs/error text and explicitly translate frontmatter byte offsets to the oracle's UTF-16 lengths. They cover BOM/CRLF, incomplete and empty envelopes, Unicode normalization/trimming/limits, reserved/control characters, fragments, strict escapes, and root-relative/traversal cases. A second test proves streaming scans stop at a verified delimiter or an invalid opener without consuming the remaining page. Both fixture generators reproduce their checked-in output exactly; the development generator passes strict TypeScript checking with the temporary tooling recorded in NR09.3.3.
+
+Two new native fixtures reproduced the prior editor scanner treating the first body line as a closing delimiter, exposing later metadata as ordinary blocks. The shared scanner now consumes borrowed rope characters with constant scanner state and no page or line string allocation; it preserves the frozen envelope rule that requires a body newline before a closing delimiter. Editor block analysis uses that scanner, replacing its separate implementation. All 49 Markdown block/span vectors match, including both red regressions. Source text and IDs are not rewritten.
+
+`CARGO_HOME=/private/tmp/quire-cargo cargo test -p quire -p quire_core --offline --features quire/test-support` passes all 99 native app tests and the metadata fixture test; after adding the bounded-consumption regression, `cargo test -p quire_core --locked` passes both core tests. `bun run test:reference` passes 57 tests. Combined Quire/core all-target Clippy with test support and `-D warnings`, `cargo check -p quire --no-default-features --locked`, native build, formatting, strict generator checking, prose lint, and scoped whitespace pass. The existing debug unwind warning remains. No vendor file changed.
+
+Sequential review checked frozen-source provenance, new versus existing path semantics, percent decoding/traversal, UTF-8/UTF-16 bounds, Unicode trimming/NFC/reserved names, streamed delimiter state and early termination, editor feature gating, native regressions, and dependency changes. The simplification pass keeps one streaming metadata implementation shared by text and rope callers. Full page-title/frontmatter tags, references, identity operations, incremental semantic analysis, notebook page creation/navigation, native lone-surrogate editing policy, and the rest of NR10 remain open. The 10,000 sync schedule run continues independently.
+Status: done
 
 ### NR11: Complete one native daily-page workflow
 

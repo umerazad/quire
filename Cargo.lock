@@ -11346,6 +11346,7 @@ dependencies = [
  "http_client",
  "language",
  "multi_buffer",
+ "quire_core",
  "release_channel",
  "search",
  "semver",
@@ -11362,6 +11363,14 @@ dependencies = [
  "vim",
  "workspace",
  "zed_actions",
+]
+
+[[package]]
+name = "quire_core"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "unicode-normalization",
 ]
 
 [[package]]

@@ -194,29 +194,6 @@ fn trim_end(snapshot: &BufferSnapshot, start: usize, end: usize, whitespace: boo
     end.saturating_sub(removed).max(start)
 }
 
-fn frontmatter_end(snapshot: &BufferSnapshot) -> usize {
-    let mut offset = 0;
-    let mut line = String::new();
-    let mut first = true;
-    for c in snapshot.chars_at(0) {
-        offset += c.len_utf8();
-        if c != '\n' {
-            line.push(c);
-            continue;
-        }
-        if first {
-            if line.strip_prefix('\u{feff}').unwrap_or(&line) != "---" {
-                return 0;
-            }
-            first = false;
-        } else if line == "---" {
-            return offset;
-        }
-        line.clear();
-    }
-    if !first && line == "---" { offset } else { 0 }
-}
-
 pub fn blocks(snapshot: &BufferSnapshot) -> Option<Vec<Block>> {
     let layer = snapshot
         .syntax_layers()
@@ -260,7 +237,7 @@ fn collect_blocks(
 ) -> Vec<Block> {
     let source_len = snapshot.text.len();
     let mut stack = vec![(root, 0, None::<String>)];
-    let frontmatter = frontmatter_end(snapshot);
+    let frontmatter = quire_core::markdown::frontmatter_length_chars(snapshot.chars_at(0));
     let mut result = Vec::<Block>::new();
     let mut merge_paragraph = false;
     while let Some((node, depth, parent)) = stack.pop() {

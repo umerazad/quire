@@ -661,6 +661,44 @@
     "spans": []
   },
   {
+    "name": "empty-frontmatter-followed-by-metadata",
+    "source": "---\n---\nprivate ^private\n---\n\n- visible ^visible\n",
+    "text": "---\n---\nprivate ^private\n---\n\n- visible ^visible\n",
+    "blocks": [
+      {
+        "key": "visible",
+        "id": "visible",
+        "from": 30,
+        "to": 48,
+        "contentFrom": 32,
+        "contentTo": 48,
+        "subtreeTo": 48,
+        "depth": 0,
+        "kind": "list",
+        "text": "visible"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          30,
+          32
+        ],
+        "id": [
+          39,
+          48
+        ]
+      }
+    ]
+  },
+  {
+    "name": "empty-frontmatter-with-later-eof-close",
+    "source": "---\n---\nprivate ^private\n---",
+    "text": "---\n---\nprivate ^private\n---",
+    "blocks": [],
+    "spans": []
+  },
+  {
     "name": "unicode",
     "source": "🙂 first\n\n- مرحبا بكم ^arabic\n  - اُردُو 👩🏽‍💻 ^urdu\n",
     "text": "🙂 first\n\n- مرحبا بكم ^arabic\n  - اُردُو 👩🏽‍💻 ^urdu\n",
