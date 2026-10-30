@@ -613,3 +613,75 @@ mod reference_filter_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod tag_edit_tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use quire_core::tag_edits::Retag;
+    use quire_store::notebook::{Edit, NotebookStore};
+
+    #[gpui::test]
+    async fn bulk_tag_edits_plan_only_pages_the_index_says_they_touch(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("local.sqlite");
+        let store = NotebookStore::open(&database, "nb", "local").unwrap();
+        let pages = [
+            ("Nested.md", "- #Area/home chores\n"),
+            ("Front.md", "---\ntags: [area, other]\n---\n- text\n"),
+            ("Longer.md", "- #areas is another tag\n"),
+            ("Code.md", "- `#area` in code\n"),
+        ];
+        for (path, text) in pages {
+            store
+                .save(&Edit {
+                    page: path.into(),
+                    path: path.into(),
+                    text: text.into(),
+                    base: vec![],
+                    deleted: false,
+                    created: 1,
+                    recovery: None,
+                })
+                .unwrap();
+        }
+        let sync = cx
+            .update(|cx| IndexSync::spawn(database, default_config(DailyCalendar::utc()), cx))
+            .unwrap();
+        let client = cx.read(|cx| sync.read(cx).client().clone());
+        super::tests::settle(&client, cx).await;
+
+        let plan = async |rename: Option<&str>, cx: &mut TestAppContext| {
+            let retag = Retag::new(&["#area"], rename).unwrap();
+            let mut planned = Vec::new();
+            for page in client.tag_edit_pages(retag.clone()).unwrap().await.unwrap() {
+                let text = pages.iter().find(|(path, _)| *path == page.path).unwrap().1;
+                let work =
+                    cx.update(|cx| crate::page_index::edit_tags(text.into(), retag.clone(), cx));
+                if let Some(edit) = cx.background_executor.spawn(work).await {
+                    planned.push((page.path, edit.text));
+                }
+            }
+            planned
+        };
+        assert_eq!(
+            plan(Some("job"), cx).await,
+            [
+                (
+                    "Front.md".into(),
+                    "---\ntags: [job, other]\n---\n- text\n".into()
+                ),
+                ("Nested.md".into(), "- #job/home chores\n".into()),
+            ]
+        );
+        assert_eq!(
+            plan(None, cx).await,
+            [(
+                "Front.md".into(),
+                "---\ntags: [other]\n---\n- text\n".into()
+            )]
+        );
+    }
+}

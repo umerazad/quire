@@ -4,6 +4,7 @@
 use super::{IndexedLink, IndexedTag, QueryIndex, block_key, page_key, strip_markdown, tag_key};
 use crate::sync::json::{JsString, Json};
 use anyhow::{Context as _, Result};
+use quire_core::tag_edits::Retag;
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, HashMap},
@@ -308,6 +309,25 @@ impl QueryIndex {
             .collect();
         names.sort_by(|a, b| self.collator.compare(&a.label, &b.label));
         Ok(names)
+    }
+
+    /// Pages whose block or front matter tags this edit would change, ordered by path.
+    pub fn tag_edit_pages(&self, retag: &Retag) -> Result<Vec<PageRef>> {
+        self.refresh()?;
+        let rows: Vec<(String, String)> = self.connection.select(
+            "SELECT revision,tag_key FROM live_tagged UNION SELECT revision,tag FROM live_front_tags",
+        )?()?;
+        let touched: BTreeSet<String> = rows
+            .into_iter()
+            .filter(|(_, tag)| retag.touches(&tag_key(tag)))
+            .map(|(revision, _)| revision)
+            .collect();
+        let mut pages = Vec::new();
+        for revision in touched {
+            pages.extend(self.pages_where("p.revision=?", &revision)?);
+        }
+        pages.sort_by(|a, b| self.compare_paths(&a.path, &b.path));
+        Ok(pages)
     }
 }
 

@@ -19,6 +19,7 @@ use crate::worker::{Client, QueueError, QueueLimits, Reply, Worker};
 use anyhow::{Context as _, Result, bail, ensure};
 use quire_core::daily::{DailyCalendar, DailyLayout, DailyParser, write_settings};
 use quire_core::reference_filter::{FilterNames, ReferenceContext, ReferenceFilter};
+use quire_core::tag_edits::Retag;
 use serde::{Deserialize, Serialize};
 use sqlez::connection::Connection;
 use std::{
@@ -125,15 +126,7 @@ pub fn block_key(target: &str) -> &str {
         .map_or(target, |index| &target[index + 2..])
 }
 
-/// Matches the reference `tagKey`: no leading `#`, NFC, lowercase.
-pub fn tag_key(tag: &str) -> String {
-    use unicode_normalization::UnicodeNormalization;
-    tag.strip_prefix('#')
-        .unwrap_or(tag)
-        .nfc()
-        .collect::<String>()
-        .to_lowercase()
-}
+pub use quire_core::tag_edits::tag_key;
 
 fn strip_markdown(path: &str) -> &str {
     let split = path.len().saturating_sub(3);
@@ -448,6 +441,9 @@ impl Client<QueryIndex> {
     }
     pub fn tag_names(&self) -> Answer<Vec<TagCount>> {
         self.request(64, QueryIndex::tag_names)
+    }
+    pub fn tag_edit_pages(&self, retag: Retag) -> Answer<Vec<PageRef>> {
+        self.request(256, move |index| index.tag_edit_pages(&retag))
     }
     pub fn search(&self, query: String) -> Answer<Vec<SearchHit>> {
         self.request(128 + query.len(), move |index| index.search(&query))

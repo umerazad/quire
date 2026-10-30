@@ -170,3 +170,165 @@ mod tests {
         );
     }
 }
+
+/// Plans a bulk tag edit for one page using the editor's own tag recognition, so tags in code
+/// and links stay. Parsing happens in the returned future.
+#[cfg(test)]
+pub fn edit_tags(
+    text: String,
+    retag: quire_core::tag_edits::Retag,
+    cx: &mut App,
+) -> impl Future<Output = Option<quire_core::tag_edits::PageTagEdit>> + Send + use<> {
+    let snapshot = crate::markdown::detached_snapshot(&text, cx);
+    async move {
+        let inline = analyze_inline(&snapshot.await)?;
+        quire_core::tag_edits::edit_page(&text, &inline.tags, &retag)
+    }
+}
+
+#[cfg(test)]
+mod tag_edit_tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use quire_core::tag_edits::{INVALID_NAME, NOTHING_CHOSEN, Retag, TagChange};
+
+    async fn plan(
+        pages: &[(&str, &str)],
+        chosen: &[&str],
+        rename: Option<&str>,
+        cx: &mut TestAppContext,
+    ) -> Vec<(String, String, Vec<TagChange>)> {
+        let retag = Retag::new(chosen, rename).unwrap();
+        let mut edits = Vec::new();
+        for (path, text) in pages {
+            let work = cx.update(|cx| edit_tags((*text).into(), retag.clone(), cx));
+            if let Some(edit) = cx.background_executor.spawn(work).await {
+                edits.push(((*path).to_owned(), edit.text, edit.changes));
+            }
+        }
+        edits
+    }
+
+    fn texts(edits: Vec<(String, String, Vec<TagChange>)>) -> Vec<(String, String)> {
+        edits
+            .into_iter()
+            .map(|(path, text, _)| (path, text))
+            .collect()
+    }
+
+    #[gpui::test]
+    async fn renames_nested_tags_and_merges_but_leaves_code_and_links(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let pages = [
+            ("A.md", "- call #Area and #area/home\n- #areas stays\n"),
+            (
+                "B.md",
+                "- `#area` in code and [[#area]] stay\n- #work too\n",
+            ),
+            ("C.md", "- nothing here\n"),
+        ];
+        assert_eq!(
+            texts(plan(&pages, &["#area", "#work"], Some("#job"), cx).await),
+            [
+                (
+                    "A.md".into(),
+                    "- call #job and #job/home\n- #areas stays\n".into()
+                ),
+                (
+                    "B.md".into(),
+                    "- `#area` in code and [[#area]] stay\n- #job too\n".into()
+                ),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn deletes_only_chosen_tags_keeping_words_and_markers_apart(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let pages = [(
+            "A.md",
+            "- task #next\n- #next first\n- a #next b\n- #next\n- [ ] #next\n- #next/soon stays\n",
+        )];
+        assert_eq!(
+            texts(plan(&pages, &["#next"], None, cx).await),
+            [(
+                "A.md".into(),
+                "- task\n- first\n- a b\n- \n- [ ] \n- #next/soon stays\n".into()
+            )]
+        );
+    }
+
+    #[gpui::test]
+    async fn rewrites_front_matter_tags_in_the_form_the_page_uses(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let pages = [
+            ("Inline.md", "---\ntags: [project, area]\n---\n- text\n"),
+            ("Plain.md", "---\ntags: project, area\n---\n"),
+            (
+                "List.md",
+                "---\ntitle: List\ntags:\n  - project\n  - other\n---\n",
+            ),
+            ("Only.md", "---\ntags: [project]\n---\n"),
+        ];
+        assert_eq!(
+            texts(plan(&pages, &["#project"], Some("work/project"), cx).await),
+            [
+                (
+                    "Inline.md".into(),
+                    "---\ntags: [work/project, area]\n---\n- text\n".into()
+                ),
+                (
+                    "Plain.md".into(),
+                    "---\ntags: work/project, area\n---\n".into()
+                ),
+                (
+                    "List.md".into(),
+                    "---\ntitle: List\ntags:\n  - work/project\n  - other\n---\n".into()
+                ),
+                ("Only.md".into(), "---\ntags: [work/project]\n---\n".into()),
+            ]
+        );
+        assert_eq!(
+            texts(plan(&pages[3..], &["#project"], None, cx).await),
+            [("Only.md".into(), "---\ntags: []\n---\n".into())]
+        );
+    }
+
+    #[gpui::test]
+    async fn refuses_invalid_names_and_reports_each_change(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        assert_eq!(
+            Retag::new(&["#old"], Some("two words")).unwrap_err(),
+            INVALID_NAME
+        );
+        assert_eq!(
+            Retag::new(&[] as &[&str], None).unwrap_err(),
+            NOTHING_CHOSEN
+        );
+        let edits = plan(
+            &[("A.md", "- #old one\n"), ("B.md", "- #old two\n")],
+            &["#old"],
+            Some("new"),
+            cx,
+        )
+        .await;
+        let changes: Vec<_> = edits
+            .into_iter()
+            .flat_map(|(path, _, changes)| {
+                changes
+                    .into_iter()
+                    .map(move |change| (path.clone(), change))
+            })
+            .collect();
+        let expected = |path: &str| {
+            (
+                path.to_owned(),
+                TagChange {
+                    before: "#old".into(),
+                    after: "#new".into(),
+                },
+            )
+        };
+        assert_eq!(changes, [expected("A.md"), expected("B.md")]);
+    }
+}
