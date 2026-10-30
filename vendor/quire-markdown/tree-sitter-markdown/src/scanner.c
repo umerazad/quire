@@ -54,6 +54,7 @@ typedef enum {
     PLUS_METADATA,
     PIPE_TABLE_START,
     PIPE_TABLE_LINE_ENDING,
+    PARAGRAPH_PIPE_CHECK,
 } TokenType;
 
 // Description of a block on the block stack.
@@ -122,7 +123,6 @@ static const char *const HTML_TAG_NAMES_RULE_7[NUM_HTML_TAG_NAMES_RULE_7] = {
 
 // For explanation of the tokens see grammar.js
 #define QUIRE_SETEXT_HEADINGS false
-#define QUIRE_TABLES_INTERRUPT_PARAGRAPHS false
 
 static const bool paragraph_interrupt_symbols[] = {
     false, // LINE_ENDING,
@@ -170,8 +170,9 @@ static const bool paragraph_interrupt_symbols[] = {
     false, // EOF,
     false, // MINUS_METADATA,
     false, // PLUS_METADATA,
-    QUIRE_TABLES_INTERRUPT_PARAGRAPHS, // PIPE_TABLE_START,
+    false, // PIPE_TABLE_START, checked separately by table_interrupts
     false, // PIPE_TABLE_LINE_ENDING,
+    false, // PARAGRAPH_PIPE_CHECK,
 };
 
 // State bitflags used with `Scanner.state`
@@ -182,6 +183,11 @@ static const uint8_t STATE_MATCHING = 0x1 << 0;
 static const uint8_t STATE_WAS_SOFT_LINE_BREAK = 0x1 << 1;
 // Block should be closed after next line break
 static const uint8_t STATE_CLOSE_BLOCK = 0x1 << 4;
+// The first line of the open paragraph has been checked for a pipe
+static const uint8_t STATE_PIPE_CHECKED = 0x1 << 5;
+// The first line of the open paragraph has an unescaped pipe, so no table can
+// interrupt it (Lezer attaches its table parser to such a paragraph)
+static const uint8_t STATE_FIRST_LINE_PIPE = 0x1 << 6;
 
 static size_t roundup_32(size_t x) {
     x--;
@@ -195,6 +201,173 @@ static size_t roundup_32(size_t x) {
     x++;
 
     return x;
+}
+
+// Lezer's GFM table `endLeaf` check, which lets a table interrupt a paragraph:
+// the current line has an unescaped pipe (`hasPipe`), the raw next line
+// matches `delimiterLine`, and `parseRow` counts the same cells in both lines
+// from the current line's base position.
+typedef struct {
+    size_t count;
+    bool first;
+    bool cell;
+    bool escaped;
+} RowCount;
+
+typedef enum {
+    DELIMITER_PREFIX,
+    DELIMITER_AFTER_PIPE,
+    DELIMITER_AFTER_PIPE_SPACE,
+    DELIMITER_COLON,
+    DELIMITER_DASHES,
+    DELIMITER_AFTER_CELL,
+    DELIMITER_INVALID,
+} DelimiterState;
+
+typedef struct {
+    bool active;
+    // 0: the current line, 1: the next line, 2: done
+    uint8_t line;
+    bool after_cr;
+    bool pipe;
+    size_t base;
+    size_t index;
+    size_t header;
+    RowCount row;
+    DelimiterState delimiter;
+    size_t groups;
+} TableRows;
+
+static void row_count_reset(RowCount *row) {
+    row->count = 0;
+    row->first = true;
+    row->cell = false;
+    row->escaped = false;
+}
+
+static void row_count_feed(RowCount *row, int32_t c) {
+    if (c == '|' && !row->escaped) {
+        if (!row->first || row->cell) {
+            row->count++;
+        }
+        row->first = false;
+        row->cell = false;
+    } else if (row->escaped || (c != ' ' && c != '\t')) {
+        row->cell = true;
+    }
+    row->escaped = !row->escaped && c == '\\';
+}
+
+static size_t row_count_finish(const RowCount *row) {
+    return row->count + (row->cell ? 1 : 0);
+}
+
+static bool js_space(int32_t c) {
+    return c == ' ' || c == '\t' || c == '\v' || c == '\f' || c == '\r' ||
+           c == 0xa0 || c == 0x1680 || (c >= 0x2000 && c <= 0x200a) ||
+           c == 0x2028 || c == 0x2029 || c == 0x202f || c == 0x205f ||
+           c == 0x3000 || c == 0xfeff;
+}
+
+static DelimiterState delimiter_feed(DelimiterState state, size_t *groups,
+                                     int32_t c) {
+    switch (state) {
+        case DELIMITER_PREFIX:
+            if (c == '>' || js_space(c)) return DELIMITER_PREFIX;
+            if (c == '|') return DELIMITER_AFTER_PIPE_SPACE;
+            break;
+        case DELIMITER_AFTER_PIPE:
+        case DELIMITER_AFTER_PIPE_SPACE:
+            if (js_space(c)) return DELIMITER_AFTER_PIPE_SPACE;
+            break;
+        case DELIMITER_COLON:
+            return c == '-' ? DELIMITER_DASHES : DELIMITER_INVALID;
+        case DELIMITER_DASHES:
+            if (c == '-') return DELIMITER_DASHES;
+            if (c == ':') return DELIMITER_AFTER_CELL;
+            if (js_space(c)) return DELIMITER_AFTER_CELL;
+            if (c == '|') {
+                (*groups)++;
+                return DELIMITER_AFTER_PIPE;
+            }
+            return DELIMITER_INVALID;
+        case DELIMITER_AFTER_CELL:
+            if (js_space(c)) return DELIMITER_AFTER_CELL;
+            if (c == '|') {
+                (*groups)++;
+                return DELIMITER_AFTER_PIPE;
+            }
+            return DELIMITER_INVALID;
+        case DELIMITER_INVALID:
+            return DELIMITER_INVALID;
+    }
+    if (c == ':') return DELIMITER_COLON;
+    if (c == '-') return DELIMITER_DASHES;
+    return DELIMITER_INVALID;
+}
+
+static bool delimiter_matches(DelimiterState state, size_t groups) {
+    switch (state) {
+        case DELIMITER_AFTER_PIPE:
+        case DELIMITER_DASHES:
+        case DELIMITER_AFTER_CELL:
+            return groups > 0;
+        default:
+            return false;
+    }
+}
+
+static void table_rows_start(TableRows *rows, size_t base) {
+    rows->active = true;
+    rows->line = 0;
+    rows->after_cr = false;
+    rows->pipe = false;
+    rows->base = base;
+    rows->index = 0;
+    rows->header = 0;
+    row_count_reset(&rows->row);
+    rows->delimiter = DELIMITER_PREFIX;
+    rows->groups = 0;
+}
+
+static void table_rows_end_line(TableRows *rows) {
+    if (rows->line == 0) {
+        rows->header = row_count_finish(&rows->row);
+        row_count_reset(&rows->row);
+    }
+    rows->line++;
+}
+
+static void table_rows_feed(TableRows *rows, int32_t c) {
+    if (rows->line > 1) {
+        return;
+    }
+    if (c == '\n' && rows->after_cr) {
+        rows->after_cr = false;
+        return;
+    }
+    rows->after_cr = c == '\r';
+    if (c == '\n' || c == '\r') {
+        table_rows_end_line(rows);
+        return;
+    }
+    if (rows->line == 0) {
+        if (c == '|' && !rows->row.escaped) {
+            rows->pipe = true;
+        }
+        row_count_feed(&rows->row, c);
+        return;
+    }
+    rows->delimiter = delimiter_feed(rows->delimiter, &rows->groups, c);
+    if (rows->index++ >= rows->base) {
+        row_count_feed(&rows->row, c);
+    }
+}
+
+static bool table_rows_interrupt(const TableRows *rows) {
+    return rows->pipe && rows->line > 0 &&
+           delimiter_matches(rows->delimiter, rows->groups) &&
+           rows->header == row_count_finish(&rows->row);
 }
 
 typedef struct {
@@ -219,6 +392,11 @@ typedef struct {
     uint8_t fenced_code_block_delimiter_length;
 
     bool simulate;
+
+    // Transient, never serialized: characters advanced, and the Lezer table
+    // interrupt check fed by every advance while it is active.
+    size_t advanced;
+    TableRows rows;
 } Scanner;
 
 static void push_block(Scanner *s, Block b) {
@@ -333,8 +511,58 @@ static size_t advance(Scanner *s, TSLexer *lexer) {
     } else {
         s->column = (s->column + 1) % 4;
     }
+    s->advanced++;
+    if (s->rows.active) {
+        table_rows_feed(&s->rows, lexer->lookahead);
+    }
     lexer->advance(lexer, false);
     return size;
+}
+
+// Finish the table interrupt check started at the line ending, reading the
+// rest of the current line and the next line.
+static bool table_interrupts(Scanner *s, TSLexer *lexer) {
+    if (!s->rows.active) {
+        return false;
+    }
+    while (s->rows.line < 2 && !lexer->eof(lexer)) {
+        advance(s, lexer);
+    }
+    if (s->rows.line == 0) {
+        table_rows_end_line(&s->rows);
+    }
+    return table_rows_interrupt(&s->rows);
+}
+
+// Emit the zero-width check that records whether the first line of a new
+// paragraph has an unescaped pipe. `has_pipe` is negative when the rest of the
+// line still has to be read.
+static bool paragraph_pipe_check(Scanner *s, TSLexer *lexer, int has_pipe) {
+    if (has_pipe < 0) {
+        mark_end(s, lexer);
+        has_pipe = 0;
+        bool escaped = false;
+        while (lexer->lookahead != '\n' && lexer->lookahead != '\r' &&
+               !lexer->eof(lexer)) {
+            if (lexer->lookahead == '|' && !escaped) {
+                has_pipe = 1;
+                break;
+            }
+            escaped = !escaped && lexer->lookahead == '\\';
+            advance(s, lexer);
+        }
+    }
+    s->state |= STATE_PIPE_CHECKED;
+    if (has_pipe) {
+        s->state |= STATE_FIRST_LINE_PIPE;
+    }
+    lexer->result_symbol = PARAGRAPH_PIPE_CHECK;
+    return true;
+}
+
+static bool needs_pipe_check(Scanner *s, const bool *valid_symbols) {
+    return !s->simulate && valid_symbols[PARAGRAPH_PIPE_CHECK] &&
+           !(s->state & (STATE_PIPE_CHECKED | STATE_WAS_SOFT_LINE_BREAK));
 }
 
 // Try to match the given block, i.e. consume all tokens that belong to the
@@ -606,7 +834,8 @@ static bool parse_atx_heading(Scanner *s, TSLexer *lexer,
         }
         if (level <= 6 &&
             (lexer->lookahead == ' ' || lexer->lookahead == '\t' ||
-             lexer->lookahead == '\n' || lexer->lookahead == '\r')) {
+             lexer->lookahead == '\n' || lexer->lookahead == '\r' ||
+             lexer->eof(lexer))) {
             lexer->result_symbol = ATX_H1_MARKER + (level - 1);
             s->indentation = 0;
             mark_end(s, lexer);
@@ -1187,7 +1416,7 @@ static bool parse_html_block(Scanner *s, TSLexer *lexer,
 }
 
 static bool parse_pipe_table(Scanner *s, TSLexer *lexer,
-                             const bool *valid_symbols) {
+                             const bool *valid_symbols, int *has_pipe) {
 
     // unused
     (void)(valid_symbols);
@@ -1225,6 +1454,7 @@ static bool parse_pipe_table(Scanner *s, TSLexer *lexer,
             }
         }
     }
+    *has_pipe = starting_pipe || cell_count > 0;
     if (empty && cell_count == 0 && !(starting_pipe && ending_pipe)) {
         return false;
     }
@@ -1341,6 +1571,7 @@ static bool scan(Scanner *s, TSLexer *lexer, const bool *valid_symbols) {
     // them all
     if (lexer->eof(lexer)) {
         if (valid_symbols[TOKEN_EOF]) {
+            s->state &= ~(STATE_PIPE_CHECKED | STATE_FIRST_LINE_PIPE);
             lexer->result_symbol = TOKEN_EOF;
             return true;
         }
@@ -1354,6 +1585,14 @@ static bool scan(Scanner *s, TSLexer *lexer, const bool *valid_symbols) {
     }
 
     if (!(s->state & STATE_MATCHING)) {
+        // Inside the first line of a paragraph no block can start, and the
+        // previous token cannot be a backslash: the start of the line emits
+        // the check unless a block-start parser or indentation consumed input.
+        if (needs_pipe_check(s, valid_symbols) &&
+            !valid_symbols[BLANK_LINE_START] &&
+            !valid_symbols[PIPE_TABLE_START]) {
+            return paragraph_pipe_check(s, lexer, -1);
+        }
         // Parse any preceeding whitespace and remember its length. This makes a
         // lot of parsing quite a bit easier.
         for (;;) {
@@ -1436,10 +1675,21 @@ static bool scan(Scanner *s, TSLexer *lexer, const bool *valid_symbols) {
                 // A < could mark the beginning of a html block
                 return parse_html_block(s, lexer, valid_symbols);
         }
-        if (lexer->lookahead != '\r' && lexer->lookahead != '\n' &&
-            valid_symbols[PIPE_TABLE_START] &&
-            (QUIRE_TABLES_INTERRUPT_PARAGRAPHS || !(s->state & STATE_WAS_SOFT_LINE_BREAK))) {
-            return parse_pipe_table(s, lexer, valid_symbols);
+        bool line_content = lexer->lookahead != '\r' &&
+                            lexer->lookahead != '\n' && !lexer->eof(lexer);
+        // Only a check that starts where this call started is zero-width;
+        // otherwise the first token inside the paragraph emits it.
+        bool check_here = needs_pipe_check(s, valid_symbols) &&
+                          s->advanced == 0 && line_content;
+        int has_pipe = -1;
+        if (line_content && valid_symbols[PIPE_TABLE_START] &&
+            !(s->state & STATE_WAS_SOFT_LINE_BREAK)) {
+            if (parse_pipe_table(s, lexer, valid_symbols, &has_pipe)) {
+                return true;
+            }
+        }
+        if (check_here) {
+            return paragraph_pipe_check(s, lexer, has_pipe);
         }
     } else { // we are in the state of trying to match all currently open blocks
         bool partial_success = false;
@@ -1490,6 +1740,7 @@ static bool scan(Scanner *s, TSLexer *lexer, const bool *valid_symbols) {
         } else {
             advance(s, lexer);
         }
+        size_t line_start = s->advanced;
         s->indentation = 0;
         s->column = 0;
         if (!(s->state & STATE_CLOSE_BLOCK) &&
@@ -1516,8 +1767,20 @@ static bool scan(Scanner *s, TSLexer *lexer, const bool *valid_symbols) {
                 }
             }
             bool all_will_be_matched = s->matched == s->open_blocks.size;
-            if (!lexer->eof(lexer) &&
-                !scan(s, lexer, paragraph_interrupt_symbols)) {
+            if (valid_symbols[SOFT_LINE_ENDING] &&
+                !valid_symbols[PIPE_TABLE_LINE_ENDING] &&
+                !(s->state & STATE_FIRST_LINE_PIPE) && s->indentation < 4) {
+                size_t consumed = s->advanced - line_start;
+                table_rows_start(&s->rows, consumed > s->indentation
+                                               ? consumed - s->indentation
+                                               : 0);
+            }
+            bool continues =
+                !lexer->eof(lexer) &&
+                !scan(s, lexer, paragraph_interrupt_symbols) &&
+                !table_interrupts(s, lexer);
+            s->rows.active = false;
+            if (continues) {
                 s->matched = matched_temp;
                 // If the last line break ended a paragraph and no new block
                 // opened, the last line break should have been a soft line
@@ -1566,7 +1829,8 @@ static bool scan(Scanner *s, TSLexer *lexer, const bool *valid_symbols) {
                 s->state &= (~STATE_MATCHING);
             }
             // reset some state variables
-            s->state &= (~STATE_WAS_SOFT_LINE_BREAK);
+            s->state &= ~(STATE_WAS_SOFT_LINE_BREAK | STATE_PIPE_CHECKED |
+                          STATE_FIRST_LINE_PIPE);
             lexer->result_symbol = LINE_ENDING;
             return true;
         }
@@ -1583,6 +1847,8 @@ void *tree_sitter_quire_markdown_external_scanner_create(void) {
     assert(ATX_H6_MARKER == ATX_H1_MARKER + 5);
 #endif
     deserialize(s, NULL, 0);
+    s->advanced = 0;
+    s->rows.active = false;
 
     return s;
 }
@@ -1591,6 +1857,8 @@ bool tree_sitter_quire_markdown_external_scanner_scan(void *payload, TSLexer *le
                                                 const bool *valid_symbols) {
     Scanner *scanner = (Scanner *)payload;
     scanner->simulate = false;
+    scanner->advanced = 0;
+    scanner->rows.active = false;
     return scan(scanner, lexer, valid_symbols);
 }
 

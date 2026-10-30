@@ -1920,8 +1920,17 @@
             ]
           },
           {
-            "type": "SYMBOL",
-            "name": "_newline"
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_newline"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "_eof"
+              }
+            ]
           }
         ]
       }
@@ -1949,8 +1958,17 @@
             ]
           },
           {
-            "type": "SYMBOL",
-            "name": "_newline"
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_newline"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "_eof"
+              }
+            ]
           }
         ]
       }
@@ -1978,8 +1996,17 @@
             ]
           },
           {
-            "type": "SYMBOL",
-            "name": "_newline"
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_newline"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "_eof"
+              }
+            ]
           }
         ]
       }
@@ -2007,8 +2034,17 @@
             ]
           },
           {
-            "type": "SYMBOL",
-            "name": "_newline"
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_newline"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "_eof"
+              }
+            ]
           }
         ]
       }
@@ -2036,8 +2072,17 @@
             ]
           },
           {
-            "type": "SYMBOL",
-            "name": "_newline"
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_newline"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "_eof"
+              }
+            ]
           }
         ]
       }
@@ -2065,8 +2110,17 @@
             ]
           },
           {
-            "type": "SYMBOL",
-            "name": "_newline"
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_newline"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "_eof"
+              }
+            ]
           }
         ]
       }
@@ -3367,6 +3421,18 @@
             "members": [
               {
                 "type": "SYMBOL",
+                "name": "_paragraph_pipe_check"
+              },
+              {
+                "type": "BLANK"
+              }
+            ]
+          },
+          {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
                 "name": "_whitespace"
               },
               {
@@ -3729,6 +3795,10 @@
                 {
                   "type": "SYMBOL",
                   "name": "_soft_line_break"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "_paragraph_pipe_check"
                 }
               ]
             }
@@ -5318,6 +5388,10 @@
     [
       "link_reference_definition",
       "_line"
+    ],
+    [
+      "link_reference_definition",
+      "paragraph"
     ]
   ],
   "precedences": [
@@ -5540,6 +5614,10 @@
     {
       "type": "SYMBOL",
       "name": "_pipe_table_line_ending"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_paragraph_pipe_check"
     }
   ],
   "inline": [],

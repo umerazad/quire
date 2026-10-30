@@ -71749,5 +71749,1519 @@
    }
   ],
   "frontTags": []
+ },
+ {
+  "name": "blocks-indented-quote",
+  "source": "  > quote ^q1\n   > more #t\n",
+  "blocks": [
+   {
+    "key": "at-2",
+    "id": null,
+    "from": 2,
+    "to": 26,
+    "contentFrom": 2,
+    "contentTo": 26,
+    "subtreeTo": 26,
+    "depth": 0,
+    "kind": "quote",
+    "parent": null,
+    "text": "> quote ^q1\n   > more #t"
+   }
+  ],
+  "links": [],
+  "tagged": [
+   {
+    "tag": "#t",
+    "from": 2,
+    "blockId": null,
+    "snippet": "> quote ^q1\n   > more #t"
+   }
+  ],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-indented-fence",
+  "source": " ```js\n code\n ```\n   ~~~\n x\n   ~~~\n",
+  "blocks": [
+   {
+    "key": "at-1",
+    "id": null,
+    "from": 1,
+    "to": 17,
+    "contentFrom": 1,
+    "contentTo": 17,
+    "subtreeTo": 17,
+    "depth": 0,
+    "kind": "code",
+    "parent": null,
+    "text": "```js\n code\n ```"
+   },
+   {
+    "key": "at-21",
+    "id": null,
+    "from": 21,
+    "to": 34,
+    "contentFrom": 21,
+    "contentTo": 34,
+    "subtreeTo": 34,
+    "depth": 0,
+    "kind": "code",
+    "parent": null,
+    "text": "~~~\n x\n   ~~~"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-indented-heading",
+  "source": "   # h ^id\n  ## two\n",
+  "blocks": [
+   {
+    "key": "id",
+    "id": "id",
+    "from": 3,
+    "to": 10,
+    "contentFrom": 3,
+    "contentTo": 10,
+    "subtreeTo": 10,
+    "depth": 0,
+    "kind": "heading",
+    "parent": null,
+    "text": "# h"
+   },
+   {
+    "key": "at-13",
+    "id": null,
+    "from": 13,
+    "to": 19,
+    "contentFrom": 13,
+    "contentTo": 19,
+    "subtreeTo": 19,
+    "depth": 0,
+    "kind": "heading",
+    "parent": null,
+    "text": "## two"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-nested-list-base",
+  "source": "- a\n   - b\n  - c\n\n   > q\n -   x\n      - y\n1.  r\n     - s\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 3,
+    "contentFrom": 2,
+    "contentTo": 3,
+    "subtreeTo": 24,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "a"
+   },
+   {
+    "key": "at-6",
+    "id": null,
+    "from": 6,
+    "to": 10,
+    "contentFrom": 9,
+    "contentTo": 10,
+    "subtreeTo": 10,
+    "depth": 1,
+    "kind": "list",
+    "parent": "at-0",
+    "text": "b"
+   },
+   {
+    "key": "at-13",
+    "id": null,
+    "from": 13,
+    "to": 16,
+    "contentFrom": 15,
+    "contentTo": 16,
+    "subtreeTo": 16,
+    "depth": 1,
+    "kind": "list",
+    "parent": "at-0",
+    "text": "c"
+   },
+   {
+    "key": "at-25",
+    "id": null,
+    "from": 25,
+    "to": 31,
+    "contentFrom": 30,
+    "contentTo": 31,
+    "subtreeTo": 41,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "x"
+   },
+   {
+    "key": "at-37",
+    "id": null,
+    "from": 37,
+    "to": 41,
+    "contentFrom": 40,
+    "contentTo": 41,
+    "subtreeTo": 41,
+    "depth": 1,
+    "kind": "list",
+    "parent": "at-25",
+    "text": "y"
+   },
+   {
+    "key": "at-42",
+    "id": null,
+    "from": 42,
+    "to": 47,
+    "contentFrom": 46,
+    "contentTo": 47,
+    "subtreeTo": 56,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "r"
+   },
+   {
+    "key": "at-52",
+    "id": null,
+    "from": 52,
+    "to": 56,
+    "contentFrom": 55,
+    "contentTo": 56,
+    "subtreeTo": 56,
+    "depth": 1,
+    "kind": "list",
+    "parent": "at-42",
+    "text": "s"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-quoted-list-base",
+  "source": ">  - a\n>   - b\n> - c\n>  - d\n>- e\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 32,
+    "contentFrom": 0,
+    "contentTo": 32,
+    "subtreeTo": 32,
+    "depth": 0,
+    "kind": "quote",
+    "parent": null,
+    "text": ">  - a\n>   - b\n> - c\n>  - d\n>- e"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-tab-list-base",
+  "source": "-\ta\n\t- b\n>\tq\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 3,
+    "contentFrom": 2,
+    "contentTo": 3,
+    "subtreeTo": 8,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "a"
+   },
+   {
+    "key": "at-5",
+    "id": null,
+    "from": 5,
+    "to": 8,
+    "contentFrom": 7,
+    "contentTo": 8,
+    "subtreeTo": 8,
+    "depth": 1,
+    "kind": "list",
+    "parent": "at-0",
+    "text": "b"
+   },
+   {
+    "key": "at-9",
+    "id": null,
+    "from": 9,
+    "to": 12,
+    "contentFrom": 9,
+    "contentTo": 12,
+    "subtreeTo": 12,
+    "depth": 0,
+    "kind": "quote",
+    "parent": null,
+    "text": ">\tq"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-list-trailing-space",
+  "source": "- a  \n- b\t\n\n  \npara  \n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 3,
+    "contentFrom": 2,
+    "contentTo": 3,
+    "subtreeTo": 5,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "a"
+   },
+   {
+    "key": "at-6",
+    "id": null,
+    "from": 6,
+    "to": 9,
+    "contentFrom": 8,
+    "contentTo": 9,
+    "subtreeTo": 10,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "b"
+   },
+   {
+    "key": "at-15",
+    "id": null,
+    "from": 15,
+    "to": 21,
+    "contentFrom": 15,
+    "contentTo": 21,
+    "subtreeTo": 21,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "para"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-unclosed-fence-in-list",
+  "source": "- x\n  ```\n  c\n\n\nnext\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 13,
+    "contentFrom": 2,
+    "contentTo": 13,
+    "subtreeTo": 15,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "x\n  ```\n  c"
+   },
+   {
+    "key": "at-16",
+    "id": null,
+    "from": 16,
+    "to": 20,
+    "contentFrom": 16,
+    "contentTo": 20,
+    "subtreeTo": 20,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "next"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-unclosed-fence-in-quote",
+  "source": "> ```\n> a\n\nz\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 9,
+    "contentFrom": 0,
+    "contentTo": 9,
+    "subtreeTo": 9,
+    "depth": 0,
+    "kind": "quote",
+    "parent": null,
+    "text": "> ```\n> a"
+   },
+   {
+    "key": "at-11",
+    "id": null,
+    "from": 11,
+    "to": 12,
+    "contentFrom": 11,
+    "contentTo": 12,
+    "subtreeTo": 12,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "z"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-unclosed-fence-between-items",
+  "source": "- ```\n  q  \n  \n- b\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 9,
+    "contentFrom": 2,
+    "contentTo": 9,
+    "subtreeTo": 14,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "```\n  q"
+   },
+   {
+    "key": "at-15",
+    "id": null,
+    "from": 15,
+    "to": 18,
+    "contentFrom": 17,
+    "contentTo": 18,
+    "subtreeTo": 18,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "b"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-unclosed-fence-at-eof",
+  "source": "text\n```\ncode\n\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 4,
+    "contentFrom": 0,
+    "contentTo": 4,
+    "subtreeTo": 4,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "text"
+   },
+   {
+    "key": "at-5",
+    "id": null,
+    "from": 5,
+    "to": 15,
+    "contentFrom": 5,
+    "contentTo": 15,
+    "subtreeTo": 15,
+    "depth": 0,
+    "kind": "code",
+    "parent": null,
+    "text": "```\ncode"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-unclosed-fence-in-nested-list",
+  "source": "- a\n  - ```\n    x\n\n\nnext\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 3,
+    "contentFrom": 2,
+    "contentTo": 3,
+    "subtreeTo": 19,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "a"
+   },
+   {
+    "key": "at-6",
+    "id": null,
+    "from": 6,
+    "to": 17,
+    "contentFrom": 8,
+    "contentTo": 17,
+    "subtreeTo": 19,
+    "depth": 1,
+    "kind": "list",
+    "parent": "at-0",
+    "text": "```\n    x"
+   },
+   {
+    "key": "at-20",
+    "id": null,
+    "from": 20,
+    "to": 24,
+    "contentFrom": 20,
+    "contentTo": 24,
+    "subtreeTo": 24,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "next"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-heading-at-eof",
+  "source": "para\n# h",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 4,
+    "contentFrom": 0,
+    "contentTo": 4,
+    "subtreeTo": 4,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "para"
+   },
+   {
+    "key": "at-5",
+    "id": null,
+    "from": 5,
+    "to": 8,
+    "contentFrom": 5,
+    "contentTo": 8,
+    "subtreeTo": 8,
+    "depth": 0,
+    "kind": "heading",
+    "parent": null,
+    "text": "# h"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-bare-heading-at-eof",
+  "source": "a\n#",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 1,
+    "contentFrom": 0,
+    "contentTo": 1,
+    "subtreeTo": 1,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "a"
+   },
+   {
+    "key": "at-2",
+    "id": null,
+    "from": 2,
+    "to": 3,
+    "contentFrom": 2,
+    "contentTo": 3,
+    "subtreeTo": 3,
+    "depth": 0,
+    "kind": "heading",
+    "parent": null,
+    "text": "#"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-heading-in-list",
+  "source": "- #\n  - child ^c\n- # h ^h\n  - d\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 3,
+    "contentFrom": 2,
+    "contentTo": 3,
+    "subtreeTo": 16,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "#"
+   },
+   {
+    "key": "c",
+    "id": "c",
+    "from": 6,
+    "to": 16,
+    "contentFrom": 8,
+    "contentTo": 16,
+    "subtreeTo": 16,
+    "depth": 1,
+    "kind": "list",
+    "parent": "at-0",
+    "text": "child"
+   },
+   {
+    "key": "h",
+    "id": "h",
+    "from": 17,
+    "to": 25,
+    "contentFrom": 19,
+    "contentTo": 25,
+    "subtreeTo": 31,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "# h"
+   },
+   {
+    "key": "at-28",
+    "id": null,
+    "from": 28,
+    "to": 31,
+    "contentFrom": 30,
+    "contentTo": 31,
+    "subtreeTo": 31,
+    "depth": 1,
+    "kind": "list",
+    "parent": "h",
+    "text": "d"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-interrupts-paragraph",
+  "source": "a #t\n| x |\n| - |\n| y |\n\nb | c\n| x |\n| - |\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 4,
+    "contentFrom": 0,
+    "contentTo": 4,
+    "subtreeTo": 4,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "a #t"
+   },
+   {
+    "key": "at-5",
+    "id": null,
+    "from": 5,
+    "to": 22,
+    "contentFrom": 5,
+    "contentTo": 22,
+    "subtreeTo": 22,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "| x |\n| - |\n| y |"
+   },
+   {
+    "key": "at-24",
+    "id": null,
+    "from": 24,
+    "to": 41,
+    "contentFrom": 24,
+    "contentTo": 41,
+    "subtreeTo": 41,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "b | c\n| x |\n| - |"
+   }
+  ],
+  "links": [],
+  "tagged": [
+   {
+    "tag": "#t",
+    "from": 0,
+    "blockId": null,
+    "snippet": "a #t"
+   }
+  ],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-ends-lazy-quote",
+  "source": "> q\n | v |\n| - |\n| w |\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 3,
+    "contentFrom": 0,
+    "contentTo": 3,
+    "subtreeTo": 3,
+    "depth": 0,
+    "kind": "quote",
+    "parent": null,
+    "text": "> q"
+   },
+   {
+    "key": "at-5",
+    "id": null,
+    "from": 5,
+    "to": 22,
+    "contentFrom": 5,
+    "contentTo": 22,
+    "subtreeTo": 22,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "| v |\n| - |\n| w |"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-ends-lazy-list",
+  "source": "- item\n| v |\n| - |\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 6,
+    "contentFrom": 2,
+    "contentTo": 6,
+    "subtreeTo": 6,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "item"
+   },
+   {
+    "key": "at-7",
+    "id": null,
+    "from": 7,
+    "to": 18,
+    "contentFrom": 7,
+    "contentTo": 18,
+    "subtreeTo": 18,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "| v |\n| - |"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-in-quote",
+  "source": "> q\n> | v |\n> | - |\n> | w |\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 27,
+    "contentFrom": 0,
+    "contentTo": 27,
+    "subtreeTo": 27,
+    "depth": 0,
+    "kind": "quote",
+    "parent": null,
+    "text": "> q\n> | v |\n> | - |\n> | w |"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-cell-count-mismatch",
+  "source": "a\n| x | y |\n| - |\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 17,
+    "contentFrom": 0,
+    "contentTo": 17,
+    "subtreeTo": 17,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "a\n| x | y |\n| - |"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-escaped-first-pipe",
+  "source": "a \\| b\n| x |\n| - |\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 6,
+    "contentFrom": 0,
+    "contentTo": 6,
+    "subtreeTo": 6,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "a \\| b"
+   },
+   {
+    "key": "at-7",
+    "id": null,
+    "from": 7,
+    "to": 18,
+    "contentFrom": 7,
+    "contentTo": 18,
+    "subtreeTo": 18,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "| x |\n| - |"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-delimiter-trailing-space",
+  "source": "a\n| x |\n| - | \n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 14,
+    "contentFrom": 0,
+    "contentTo": 14,
+    "subtreeTo": 14,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "a\n| x |\n| - |"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-indented-header",
+  "source": "a\n    | x |\n| - |\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 17,
+    "contentFrom": 0,
+    "contentTo": 17,
+    "subtreeTo": 17,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "a\n    | x |\n| - |"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-after-link-reference",
+  "source": "[a]: /b\n| x |\n| - |\n\n[c] | d\n| x |\n| - |\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 7,
+    "contentFrom": 0,
+    "contentTo": 7,
+    "subtreeTo": 7,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "[a]: /b"
+   },
+   {
+    "key": "at-8",
+    "id": null,
+    "from": 8,
+    "to": 19,
+    "contentFrom": 8,
+    "contentTo": 19,
+    "subtreeTo": 19,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "| x |\n| - |"
+   },
+   {
+    "key": "at-21",
+    "id": null,
+    "from": 21,
+    "to": 40,
+    "contentFrom": 21,
+    "contentTo": 40,
+    "subtreeTo": 40,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "[c] | d\n| x |\n| - |"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-after-block-start-character",
+  "source": "#a | b\n| x |\n| - |\n\n-a\n| x |\n| - |\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 18,
+    "contentFrom": 0,
+    "contentTo": 18,
+    "subtreeTo": 18,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "#a | b\n| x |\n| - |"
+   },
+   {
+    "key": "at-20",
+    "id": null,
+    "from": 20,
+    "to": 22,
+    "contentFrom": 20,
+    "contentTo": 22,
+    "subtreeTo": 22,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "-a"
+   },
+   {
+    "key": "at-23",
+    "id": null,
+    "from": 23,
+    "to": 34,
+    "contentFrom": 23,
+    "contentTo": 34,
+    "subtreeTo": 34,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "| x |\n| - |"
+   }
+  ],
+  "links": [],
+  "tagged": [
+   {
+    "tag": "#a",
+    "from": 0,
+    "blockId": null,
+    "snippet": "#a | b\n| x |\n| - |"
+   }
+  ],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-rows-continue",
+  "source": "| a |\n| - |\n| b |\nlazy row\n    indented\n\nafter\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 39,
+    "contentFrom": 0,
+    "contentTo": 39,
+    "subtreeTo": 39,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "| a |\n| - |\n| b |\nlazy row\n    indented"
+   },
+   {
+    "key": "at-41",
+    "id": null,
+    "from": 41,
+    "to": 46,
+    "contentFrom": 41,
+    "contentTo": 46,
+    "subtreeTo": 46,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "after"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-interrupts-crlf",
+  "source": "a\r\n| x |\r\n| - |\r\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 1,
+    "contentFrom": 0,
+    "contentTo": 1,
+    "subtreeTo": 1,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "a"
+   },
+   {
+    "key": "at-2",
+    "id": null,
+    "from": 2,
+    "to": 13,
+    "contentFrom": 2,
+    "contentTo": 13,
+    "subtreeTo": 13,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "| x |\n| - |"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-lazy-after-quote-pipe",
+  "source": "> a | b\n | x |\n| - |\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 20,
+    "contentFrom": 0,
+    "contentTo": 20,
+    "subtreeTo": 20,
+    "depth": 0,
+    "kind": "quote",
+    "parent": null,
+    "text": "> a | b\n | x |\n| - |"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-lazy-delimiter-in-quote",
+  "source": "> a\n> | x |\n| - |\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 17,
+    "contentFrom": 0,
+    "contentTo": 17,
+    "subtreeTo": 17,
+    "depth": 0,
+    "kind": "quote",
+    "parent": null,
+    "text": "> a\n> | x |\n| - |"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-in-list-continuation",
+  "source": "- a\n  | x |\n  | - |\n  | y |\n- b\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 27,
+    "contentFrom": 2,
+    "contentTo": 27,
+    "subtreeTo": 27,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "a\n  | x |\n  | - |\n  | y |"
+   },
+   {
+    "key": "at-28",
+    "id": null,
+    "from": 28,
+    "to": 31,
+    "contentFrom": 30,
+    "contentTo": 31,
+    "subtreeTo": 31,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "b"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-after-list-pipe",
+  "source": "- a | b\nc\n| x |\n| - |\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 21,
+    "contentFrom": 2,
+    "contentTo": 21,
+    "subtreeTo": 21,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "a | b\nc\n| x |\n| - |"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-inside-table-rows",
+  "source": "a\n| x |\n| - |\nb\n| y |\n| - |\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 1,
+    "contentFrom": 0,
+    "contentTo": 1,
+    "subtreeTo": 1,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "a"
+   },
+   {
+    "key": "at-2",
+    "id": null,
+    "from": 2,
+    "to": 27,
+    "contentFrom": 2,
+    "contentTo": 27,
+    "subtreeTo": 27,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "| x |\n| - |\nb\n| y |\n| - |"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-escaped-header-pipe",
+  "source": "a\n| x \\| y |\n| - |\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 1,
+    "contentFrom": 0,
+    "contentTo": 1,
+    "subtreeTo": 1,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "a"
+   },
+   {
+    "key": "at-2",
+    "id": null,
+    "from": 2,
+    "to": 18,
+    "contentFrom": 2,
+    "contentTo": 18,
+    "subtreeTo": 18,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "| x \\| y |\n| - |"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-aligned-delimiter",
+  "source": "a\n|x|y|\n|:-|-:|\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 1,
+    "contentFrom": 0,
+    "contentTo": 1,
+    "subtreeTo": 1,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "a"
+   },
+   {
+    "key": "at-2",
+    "id": null,
+    "from": 2,
+    "to": 15,
+    "contentFrom": 2,
+    "contentTo": 15,
+    "subtreeTo": 15,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "|x|y|\n|:-|-:|"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-three-space-header",
+  "source": "a\n   |x|\n|-|\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 1,
+    "contentFrom": 0,
+    "contentTo": 1,
+    "subtreeTo": 1,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "a"
+   },
+   {
+    "key": "at-5",
+    "id": null,
+    "from": 5,
+    "to": 12,
+    "contentFrom": 5,
+    "contentTo": 12,
+    "subtreeTo": 12,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "|x|\n|-|"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-after-astral",
+  "source": "🙂 [[P]]\n| x |\n| - |\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 8,
+    "contentFrom": 0,
+    "contentTo": 8,
+    "subtreeTo": 8,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "🙂 [[P]]"
+   },
+   {
+    "key": "at-9",
+    "id": null,
+    "from": 9,
+    "to": 20,
+    "contentFrom": 9,
+    "contentTo": 20,
+    "subtreeTo": 20,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "| x |\n| - |"
+   }
+  ],
+  "links": [
+   {
+    "kind": "page",
+    "syntax": "wiki",
+    "target": "P",
+    "label": null,
+    "media": null,
+    "from": 3,
+    "to": 8,
+    "text": "🙂 [[P]]"
+   }
+  ],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-table-before-list",
+  "source": "| a |\n| - |\n\n- l\n1. a\n| x |\n| - |\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 11,
+    "contentFrom": 0,
+    "contentTo": 11,
+    "subtreeTo": 11,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "| a |\n| - |"
+   },
+   {
+    "key": "at-13",
+    "id": null,
+    "from": 13,
+    "to": 16,
+    "contentFrom": 15,
+    "contentTo": 16,
+    "subtreeTo": 16,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "l"
+   },
+   {
+    "key": "at-17",
+    "id": null,
+    "from": 17,
+    "to": 21,
+    "contentFrom": 20,
+    "contentTo": 21,
+    "subtreeTo": 21,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "a"
+   },
+   {
+    "key": "at-22",
+    "id": null,
+    "from": 22,
+    "to": 33,
+    "contentFrom": 22,
+    "contentTo": 33,
+    "subtreeTo": 33,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "| x |\n| - |"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-pipes-in-code",
+  "source": "    a\n    | x |\n    | - |\n```\nb\n| x |\n| - |\n```\n",
+  "blocks": [
+   {
+    "key": "at-4",
+    "id": null,
+    "from": 4,
+    "to": 25,
+    "contentFrom": 4,
+    "contentTo": 25,
+    "subtreeTo": 25,
+    "depth": 0,
+    "kind": "code",
+    "parent": null,
+    "text": "a\n    | x |\n    | - |"
+   },
+   {
+    "key": "at-26",
+    "id": null,
+    "from": 26,
+    "to": 47,
+    "contentFrom": 26,
+    "contentTo": 47,
+    "subtreeTo": 47,
+    "depth": 0,
+    "kind": "code",
+    "parent": null,
+    "text": "```\nb\n| x |\n| - |\n```"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-heading-forms",
+  "source": "##\n####### x\n#\tx\n# #\n #",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 2,
+    "contentFrom": 0,
+    "contentTo": 2,
+    "subtreeTo": 2,
+    "depth": 0,
+    "kind": "heading",
+    "parent": null,
+    "text": "##"
+   },
+   {
+    "key": "at-3",
+    "id": null,
+    "from": 3,
+    "to": 12,
+    "contentFrom": 3,
+    "contentTo": 12,
+    "subtreeTo": 12,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "####### x"
+   },
+   {
+    "key": "at-13",
+    "id": null,
+    "from": 13,
+    "to": 16,
+    "contentFrom": 13,
+    "contentTo": 16,
+    "subtreeTo": 16,
+    "depth": 0,
+    "kind": "heading",
+    "parent": null,
+    "text": "#\tx"
+   },
+   {
+    "key": "at-17",
+    "id": null,
+    "from": 17,
+    "to": 20,
+    "contentFrom": 17,
+    "contentTo": 20,
+    "subtreeTo": 20,
+    "depth": 0,
+    "kind": "heading",
+    "parent": null,
+    "text": "# #"
+   },
+   {
+    "key": "at-22",
+    "id": null,
+    "from": 22,
+    "to": 23,
+    "contentFrom": 22,
+    "contentTo": 23,
+    "subtreeTo": 23,
+    "depth": 0,
+    "kind": "heading",
+    "parent": null,
+    "text": "#"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
  }
 ]
