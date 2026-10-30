@@ -14,6 +14,64 @@ fn projected_window(cx: &mut TestAppContext) -> gpui::WindowHandle<NotebookWindo
 }
 
 #[gpui::test]
+fn switching_to_source_releases_id_guards_and_keeps_shared_undo(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let window = projected_window(cx);
+    let toggle = if cfg!(target_os = "macos") {
+        "cmd-shift-m"
+    } else {
+        "ctrl-shift-m"
+    };
+    cx.simulate_keystrokes(window.into(), toggle);
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                "- alpha ^abc\n"
+            );
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "shift-d");
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "- \n");
+            window.focus(&view.source.focus_handle(cx), cx);
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "u");
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "- alpha ^abc\n");
+            window.focus(&view.second.focus_handle(cx), cx);
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), toggle);
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                "alpha\n"
+            );
+            assert_eq!(
+                view.source.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                "- alpha ^abc\n"
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn hidden_syntax_uses_the_shared_source_without_display_ellipsis(cx: &mut TestAppContext) {
     cx.update(|cx| init(cx).expect("editor initialization"));
     let window = projected_window(cx);
@@ -28,6 +86,122 @@ fn hidden_syntax_uses_the_shared_source_without_display_ellipsis(cx: &mut TestAp
                     .text()),
                 "alpha\n"
             );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn presentation_button_supports_keyboard_activation_and_returns_editor_focus(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let window = projected_window(cx);
+    window
+        .update(cx, |view, window, cx| {
+            window.blur(cx);
+            window.focus_next(cx);
+            assert!(!view.source.focus_handle(cx).contains_focused(window, cx));
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+    cx.update_window(window.into(), |_, window, cx| {
+        window.draw(cx).clear(cx);
+        let keystroke = gpui::Keystroke::parse_with_os("enter", cx.platform_info().os).unwrap();
+        window.dispatch_event(
+            gpui::PlatformInput::KeyDown(gpui::KeyDownEvent {
+                keystroke: keystroke.clone(),
+                is_held: false,
+                prefer_character_input: false,
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            gpui::PlatformInput::KeyUp(gpui::KeyUpEvent { keystroke }),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, window, cx| {
+            assert!(crate::editor_projection::enabled(view.source.read(cx)));
+            assert!(crate::editor_projection::enabled(view.second.read(cx)));
+            assert!(view.source.focus_handle(cx).contains_focused(window, cx));
+            assert_eq!(view.source.read(cx).text(cx), "- alpha ^abc\n");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn repeated_mode_changes_keep_user_folds_and_reparse_source_edits(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let window = projected_window(cx);
+    let toggle = if cfg!(target_os = "macos") {
+        "cmd-shift-m"
+    } else {
+        "ctrl-shift-m"
+    };
+    window
+        .update(cx, |view, window, cx| {
+            view.second.update(cx, |editor, cx| {
+                editor.fold_ranges(
+                    vec![MultiBufferOffset(3)..MultiBufferOffset(4)],
+                    false,
+                    window,
+                    cx,
+                )
+            });
+        })
+        .unwrap();
+    for _ in 0..3 {
+        cx.simulate_keystrokes(window.into(), toggle);
+        window
+            .update(cx, |view, window, cx| {
+                assert_eq!(
+                    view.second.update(cx, |editor, cx| editor
+                        .snapshot(window, cx)
+                        .display_snapshot
+                        .text()),
+                    "- a⋯pha ^abc\n"
+                );
+            })
+            .unwrap();
+        cx.simulate_keystrokes(window.into(), toggle);
+    }
+    cx.simulate_keystrokes(window.into(), toggle);
+    window
+        .update(cx, |view, window, cx| {
+            view.source.update(cx, |editor, cx| {
+                let end = editor.buffer().read(cx).snapshot(cx).len();
+                editor.transact(window, cx, |editor, _, cx| {
+                    editor.edit([(end..end, "- beta ^b\n")], cx)
+                });
+            });
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                "- a⋯pha ^abc\n- beta ^b\n"
+            );
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), toggle);
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                "a⋯pha\nbeta\n"
+            );
+            assert_eq!(view.source.read(cx).text(cx), "- alpha ^abc\n- beta ^b\n");
         })
         .unwrap();
 }

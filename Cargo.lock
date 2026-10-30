@@ -11354,6 +11354,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "tree-sitter-md",
+ "ui",
  "unicode-segmentation",
  "util",
  "vim",

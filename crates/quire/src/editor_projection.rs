@@ -296,6 +296,7 @@ fn rebuild(
 
 pub fn bind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Result<(), String> {
     editor.update(cx, |editor, cx| {
+        if enabled(editor) { return Ok(()); }
         let sources: Vec<_> = editor.buffer().read(cx).all_buffers_iter().collect();
         let [source] = sources.as_slice() else {
             return Err("Cannot enable Write for a view containing multiple pages. Open one page or subtree and retry.".into());
@@ -326,4 +327,21 @@ pub fn bind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Resul
         rebuild(editor, &source, window, cx);
         Ok(())
     })
+}
+
+pub fn enabled(editor: &Editor) -> bool {
+    editor.addon::<Projection>().is_some()
+}
+
+pub fn unbind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
+    editor.update(cx, |editor, cx| {
+        if !enabled(editor) {
+            return;
+        }
+        editor.unregister_addon::<Projection>();
+        editor
+            .buffer()
+            .update(cx, |buffer, _| buffer.set_edit_filter(None));
+        refresh(editor, &[], window, cx);
+    });
 }

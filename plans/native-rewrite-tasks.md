@@ -10,6 +10,8 @@ Shared acceptance rules: build independently of sibling repos; preserve source n
 
 For GPUI tests, inspect the actual assertion APIs before writing them. Editor selections use `MultiBufferOffset` and a `DisplaySnapshot` obtained inside an entity update; `FocusHandle::is_focused` takes only the window. `Editor::snapshot` also needs mutable app access: call it inside `editor.update`, never through `editor.read(cx).snapshot(window, cx)`. Keep these details in local helpers rather than repeating guessed calls. Find selects a range with Vim off and a cursor with Vim on; assert the intended mode explicitly. Route search submission using the actual focus handle: Vim can focus query input without updating the search bar's cached query-focus flag.
 
+Before using a copied UI API for the first time, read its signature and a local call site. `Tooltip::text` returns the tooltip closure, `ButtonCommon::tab_index` needs an `isize`, and window focus mutations take app access. Button keyboard tests need a focused draw followed by both key-down and key-up events; `simulate_keystrokes` sends key-down only. Use the copied GPUI activation tests as the reference rather than changing product behavior to accommodate an incomplete test event sequence.
+
 ## Foundation and feasibility
 
 ### NR01: Freeze source behavior and benchmark fixtures
@@ -201,6 +203,18 @@ Proof notes: The inspected `rt` HEAD is `4985e4080d2302b2abb416f2db7fa390080786c
 Projection now subscribes to the shared source's parse/language events. It rejects pending or interpolated trees and caches the current text version plus syntax update count. Only ranges fully contained in an excerpt are mapped into that view. Existing editing tests now use semantic spans; added integration cases cover new Source blocks, Unicode ID protection, obsolete background parses, and an excerpt after edits outside its range. The first excerpt fixture accidentally included a lazy list continuation; the corrected fixture separates the outside paragraph and bounds the excerpt before its newline.
 
 Final gates: 64 native application tests and 47 reference tests pass. Combined all-target Clippy for Quire/editor/multi-buffer passes with `-D warnings`; the native build passes with the existing debug unwind warning. Formatting, authored whitespace, prose lint, tracked-vendor checks, and comparison of 3,023 unchanged vendor files pass. No vendor implementation changed in this slice. Sequential review covered parse freshness, source/view coordinate conversion, subscription lifetime, lockfile scope, and parent feature limits. Full legacy decoration/widget behavior, dirty-subtree updates, performance measurements, native desktop acceptance, and the existing full-workspace sandbox failure remain open.
+Status: done
+
+##### NR04.2.3: Switch each pane between Write and Source
+
+What to do: Expose each pane's presentation through a native button and a focused-editor keyboard action. Disabling Write removes its folds, edit policy, and parse subscription; enabling it derives current spans again.
+Constraints: Keep the same editor, source buffer, history, selections, and unrelated user folds. Mode state belongs to the projection addon rather than a second host flag. Use the copied native UI controls.
+Verify: Keyboard switching affects the focused pane, Source can edit formerly hidden IDs, undo works across views, and edits made while Source is active appear after switching back. Repeated switching must retain user folds and avoid duplicate subscriptions. Native visual/accessibility acceptance remains open until it can run outside the sandbox.
+Proof notes: `editor_projection.rs` now exposes idempotent enable/disable operations using the addon as mode state. Disabling drops its subscriptions, removes only its typed folds, and clears the view edit hook. `editor_host.rs` adds a native copied-UI button to each pane and Cmd-Shift-M / Ctrl-Shift-M for the focused editor; successful changes return focus to that editor. Errors remain visible in the window. The direct `ui` dependency uses the existing copied crate and adds no package/version to the graph.
+
+The keyboard red run left `alpha` projected after the toggle. The implementation now exposes the source, allows deletion of the formerly hidden ID, shares undo from the other pane, and rebuilds the projection. Three new integration tests cover that sequence, repeated switching with retained user folds and edits while disabled, and actual button focus traversal/Enter activation. The button test initially sent key-down without key-up; it now follows the copied GPUI activation test sequence, draws with `TestAppContext::update_window` to avoid borrowing the rendered root entity, and checks returned editor focus.
+
+`cargo test -p quire --locked --features test-support` passes all 67 tests. Combined Quire/editor/multi-buffer all-target Clippy with test support and `-D warnings`, native build, formatting, authored whitespace, prose lint, and tracked-vendor checks pass. The existing debug unwind warning remains. Sequential review checked view-local ownership, typed fold removal, subscription drop/rebind, current parse reuse, focus routing, error display, and the one-edge lockfile change. Native visual/accessibility acceptance, complete Write rendering/edit semantics, and performance remain open parent requirements.
 Status: done
 
 ### NR05: Prove native typography and input

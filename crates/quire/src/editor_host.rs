@@ -1,6 +1,9 @@
 use editor::Editor;
 use gpui::{App, AppContext, Entity, Focusable, KeyBinding, UpdateGlobal, Window, prelude::*};
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
+use ui::{Button, ButtonCommon, Clickable, Tooltip};
+
+gpui::actions!(quire, [TogglePresentation]);
 
 pub(super) fn init(cx: &mut App) -> Result<(), String> {
     settings::init(cx);
@@ -81,6 +84,15 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     }
     crate::editor_search::bind_keys(cx);
     crate::editor_command::bind_keys(cx);
+    cx.bind_keys([KeyBinding::new(
+        if cfg!(target_os = "macos") {
+            "cmd-shift-m"
+        } else {
+            "ctrl-shift-m"
+        },
+        TogglePresentation,
+        Some("Editor"),
+    )]);
     Ok(())
 }
 
@@ -123,9 +135,68 @@ struct NotebookWindow {
     second_search: Entity<BufferSearchBar>,
     mode: Entity<vim::ModeIndicator>,
     commands: Entity<crate::editor_command::CommandPrompt>,
+    presentation_error: Option<String>,
 }
 
 impl NotebookWindow {
+    fn change_presentation(
+        &mut self,
+        editor: &Entity<Editor>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.presentation_error = if crate::editor_projection::enabled(editor.read(cx)) {
+            crate::editor_projection::unbind(editor, window, cx);
+            None
+        } else {
+            crate::editor_projection::bind(editor, window, cx).err()
+        };
+        window.focus(&editor.focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    fn toggle_presentation(
+        &mut self,
+        _: &TogglePresentation,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let editor = if self.source.focus_handle(cx).contains_focused(window, cx) {
+            self.source.clone()
+        } else if self.second.focus_handle(cx).contains_focused(window, cx) {
+            self.second.clone()
+        } else {
+            cx.propagate();
+            return;
+        };
+        self.change_presentation(&editor, window, cx);
+    }
+
+    fn presentation_button(
+        &self,
+        id: &'static str,
+        editor: &Entity<Editor>,
+        cx: &mut gpui::Context<Self>,
+    ) -> Button {
+        let write = crate::editor_projection::enabled(editor.read(cx));
+        let label = if write { "Write" } else { "Source" };
+        let target = if write {
+            "Switch to Source"
+        } else {
+            "Switch to Write"
+        };
+        let editor = editor.clone();
+        Button::new(id, label)
+            .aria_label(format!("{label} view. {target}"))
+            .tab_index(0_isize)
+            .tooltip(Tooltip::text(target))
+            .on_click(
+                cx.listener(move |this, _, window, cx| {
+                    this.change_presentation(&editor, window, cx)
+                }),
+            )
+    }
+
     fn open_command(
         &mut self,
         _: &crate::editor_command::OpenCommand,
@@ -193,6 +264,7 @@ impl NotebookWindow {
             second_search,
             commands,
             mode,
+            presentation_error: None,
         }
     }
 }
@@ -208,6 +280,7 @@ impl Render for NotebookWindow {
             .flex_col()
             .flex_1()
             .min_w_0()
+            .child(self.presentation_button("source-presentation", &self.source, cx))
             .when(!self.source_search.read(cx).is_dismissed(), |div| {
                 div.child(self.source_search.clone())
             })
@@ -221,6 +294,7 @@ impl Render for NotebookWindow {
             .flex_col()
             .flex_1()
             .min_w_0()
+            .child(self.presentation_button("second-presentation", &self.second, cx))
             .when(!self.second_search.read(cx).is_dismissed(), |div| {
                 div.child(self.second_search.clone())
             })
@@ -229,6 +303,7 @@ impl Render for NotebookWindow {
             .size_full()
             .on_action(cx.listener(Self::search_submit))
             .on_action(cx.listener(Self::open_command))
+            .on_action(cx.listener(Self::toggle_presentation))
             .flex()
             .flex_col()
             .child(gpui::div().p_3().child("Welcome"))
@@ -242,6 +317,9 @@ impl Render for NotebookWindow {
             )
             .when(self.commands.read(cx).is_open(), |div| {
                 div.child(self.commands.clone())
+            })
+            .when_some(self.presentation_error.as_ref(), |div, error| {
+                div.child(gpui::div().p_2().child(error.clone()))
             })
             .child(gpui::div().p_2().child(self.mode.clone()))
     }

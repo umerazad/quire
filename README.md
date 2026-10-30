@@ -26,9 +26,11 @@ bun run dev
 
 The native development app uses `QuireNative` data/config paths, separate from Zed and the Electron app. The earlier input harness is available through `cargo run -p quire -- --input-harness`. The current debug executable produces a macOS linker warning about large unwind metadata; release performance and native desktop acceptance remain unverified.
 
-Run `cargo run -p quire --locked -- --excerpt-harness` in a regular desktop terminal to inspect the editable-excerpt spike. The right pane shows the first nested block from the left pane's document, with shared undo/redo. This is a source excerpt; Write rendering and hidden-identity protection remain unfinished.
+Run `cargo run -p quire --locked -- --excerpt-harness` in a regular desktop terminal to inspect the editable-excerpt spike. The right pane shows the first nested block from the left pane's document, with shared undo/redo. It starts in Source; its mode control can enable the current Write projection. Complete Write rendering and hidden-identity protection remain unfinished.
 
-`cargo run -p quire --locked -- --write-harness` opens the example note with list markers and block IDs hidden in the right pane. Both panes edit the same source. Projection spans come from the current Markdown parse and update after edits, including newly inserted blocks. Partial delete/paste, clearing and retyping, delete/undo, stale parses, and subtree mapping have regression tests. Checkbox/link rendering, full Write/Source switching, and the remaining structural editing cases are still pending.
+`cargo run -p quire --locked -- --write-harness` opens the example note with list markers and block IDs hidden in the right pane. Both panes edit the same source. Projection spans come from the current Markdown parse and update after edits, including newly inserted blocks. Partial delete/paste, clearing and retyping, delete/undo, stale parses, and subtree mapping have regression tests. Checkbox/link rendering and the remaining structural editing cases are still pending.
+
+Each pane's Source/Write button switches its presentation. Cmd-Shift-M on macOS, or Ctrl-Shift-M elsewhere, switches the focused editor. Source exposes the original syntax for direct editing. Switching keeps the same buffer and shared undo history, retains user folds, and rebuilds Write spans from the current parse.
 
 Reference protocol tests deliberately run through Node/Vitest. Bun's zstd decoder reports a truncated frame differently, so running those tests with `bun test` would change the compatibility oracle.
 
