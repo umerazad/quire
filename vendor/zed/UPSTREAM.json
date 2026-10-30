@@ -204,7 +204,7 @@
     },
     {
       "path": "crates/vim/src/vim.rs",
-      "change": "Add editor-local weak search-bar association, targeted submission and command-prefix hooks for embedded hosts; retain workspace lookup and preserve the bar association across Vim toggles. Keep embedded visual/local marks in the Vim session when no workspace exists. Expose initialization with session register retention while leaving default initialization unchanged. Export typed page-command parsing for persistence-aware hosts."
+      "change": "Add editor-local weak search-bar association, targeted submission and command-prefix hooks for embedded hosts; retain workspace lookup and preserve the bar association across Vim toggles. Keep embedded visual/local marks in the Vim session when no workspace exists. Expose initialization with session register retention while leaving default initialization unchanged. Export typed page-command parsing for persistence-aware hosts. Let a host editing command start recorded Insert mode or record itself for dot-repeat, without depending on host types."
     },
     {
       "path": "crates/vim/src/normal/search.rs",
@@ -228,7 +228,7 @@
     },
     {
       "path": "crates/multi_buffer/src/multi_buffer.rs",
-      "change": "Add an exact-range single-page excerpt constructor sharing its source history while retaining non-singleton display mapping. Preserve this association on clone/grouping. Add an optional per-view edit rewrite hook before source mapping; mutable slices retain edit counts for autoindent metadata. Default constructors retain their original behavior. Add scoped opt-in view edit intent with restoration on drop and independent default intent on clone."
+      "change": "Add an exact-range single-page excerpt constructor sharing its source history while retaining non-singleton display mapping. Preserve this association on clone/grouping. Add an optional per-view edit rewrite hook before source mapping; mutable slices retain edit counts for autoindent metadata. Default constructors retain their original behavior. Add scoped opt-in view edit intent with restoration on drop and independent default intent on clone. A Structural intent marks exact source edits from host outline commands, which view filters leave unchanged."
     },
     {
       "path": "crates/multi_buffer/src/transaction.rs",

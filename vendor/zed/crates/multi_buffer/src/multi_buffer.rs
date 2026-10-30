@@ -81,6 +81,8 @@ pub enum ViewEditIntent {
     Change,
     /// The caller supplies complete source-line selections, including hidden syntax.
     DeleteLines,
+    /// The caller supplies exact source edits for a structural command; filters keep them as given.
+    Structural,
 }
 
 struct ViewEditFilter {

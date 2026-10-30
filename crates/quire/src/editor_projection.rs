@@ -24,6 +24,7 @@ struct Projection {
     blocks: Arc<[AnchoredBlock]>,
     links: Vec<AnchoredLink>,
     parsed: Option<(text::BufferSnapshot, usize)>,
+    heads: Vec<Anchor>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -36,6 +37,10 @@ struct AnchoredLink {
     data: Arc<crate::markdown_links::Link>,
 }
 impl Addon for Projection {
+    fn extend_key_context(&self, context: &mut gpui::KeyContext, _: &App) {
+        context.add("QuireWrite");
+    }
+
     fn text_regions(
         &self,
         editor: &Entity<Editor>,
@@ -436,6 +441,9 @@ fn checkbox_placeholder(
     }
 }
 
+/// Keeps carets on visible text. On a task line the checkbox is visible too: a caret on the
+/// text start or checkbox that jumps to the line start (Home, Vim's `0` or `^`) lands on the
+/// checkbox, and one from further along lands on the text, so each jump moves.
 fn clamp_carets(
     editor: &mut Editor,
     blocks: &[AnchoredBlock],
@@ -443,22 +451,44 @@ fn clamp_carets(
     cx: &mut Context<Editor>,
 ) {
     let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let previous: Vec<MultiBufferOffset> = editor
+        .addon::<Projection>()
+        .map(|projection| {
+            projection
+                .heads
+                .iter()
+                .map(|head| head.to_offset(&snapshot))
+                .collect()
+        })
+        .unwrap_or_default();
     let mut changed = false;
     let selections = editor
         .selections
         .disjoint_anchors_arc()
         .iter()
-        .map(|selection| {
+        .enumerate()
+        .map(|(index, selection)| {
             let mut selection = selection.clone().map(|anchor| anchor.to_offset(&snapshot));
             if selection.start != selection.end {
                 return selection;
             }
+            let from = previous.get(index).copied();
             let mut position = selection.start;
             for block in blocks {
                 let start = block.marker.start.to_offset(&snapshot);
+                let checkbox = block.marker.end.to_offset(&snapshot);
                 let content = text_start(block, &snapshot);
                 if position >= start && position < content {
-                    position = content;
+                    position = match from {
+                        Some(from) if checkbox <= from && from <= content => {
+                            if position >= checkbox && position != from {
+                                position
+                            } else {
+                                checkbox
+                            }
+                        }
+                        _ => content,
+                    };
                 }
                 if let Some(id) = id_range(block, &snapshot)
                     && position > id.start
@@ -473,6 +503,12 @@ fn clamp_carets(
             selection
         })
         .collect::<Vec<_>>();
+    if let Some(projection) = editor.addon_mut::<Projection>() {
+        projection.heads = selections
+            .iter()
+            .map(|selection| snapshot.anchor_before(selection.head()))
+            .collect();
+    }
     if changed {
         editor.change_selections(editor::SelectionEffects::no_scroll(), window, cx, |s| {
             s.select(selections)
@@ -486,6 +522,9 @@ fn filter_edits(
     snapshot: &MultiBufferSnapshot,
     intent: ViewEditIntent,
 ) {
+    if intent == ViewEditIntent::Structural {
+        return;
+    }
     for (range, inserted) in edits {
         if !inserted.is_empty()
             && range.start == MultiBufferOffset(0)
@@ -736,7 +775,7 @@ pub fn bind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Resul
             }
         });
         editor.register_addon(Projection {
-            blocks: Arc::default(), links: Vec::new(), parsed: None,
+            blocks: Arc::default(), links: Vec::new(), parsed: None, heads: Vec::new(),
             _subscriptions: vec![editor_subscription, source_subscription, theme_subscription],
         });
         apply_spans(editor, &[], window, cx);

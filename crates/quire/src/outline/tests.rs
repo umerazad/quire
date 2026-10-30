@@ -1,0 +1,501 @@
+use super::*;
+use gpui::{AppContext as _, Focusable, TestAppContext, UpdateGlobal as _, WindowHandle};
+
+const MOD: &str = if cfg!(target_os = "macos") {
+    "cmd"
+} else {
+    "ctrl"
+};
+
+/// A Write view of `marked`, whose `|` is the caret, with Vim on or off.
+fn write_view(marked: &str, vim: bool, cx: &mut TestAppContext) -> WindowHandle<Editor> {
+    cx.update(|cx| {
+        crate::editor_host::init(cx).expect("editor initialization");
+        if !vim {
+            let result = settings::SettingsStore::update_global(cx, |store, cx| {
+                store.set_user_settings(
+                    r#"{"vim_mode":false,"session":{"restore_unsaved_buffers":false}}"#,
+                    cx,
+                )
+            });
+            assert!(!matches!(
+                result.parse_status,
+                settings::ParseStatus::Failed { .. }
+            ));
+        }
+    });
+    let cursor = marked.find('|').expect("caret marker");
+    let text = marked.replacen('|', "", 1);
+    let window = cx.add_window(|window, cx| {
+        let buffer = crate::markdown::buffer(text, cx);
+        let editor = Editor::for_buffer(buffer, None, window, cx);
+        window.focus(&editor.focus_handle(cx), cx);
+        editor
+    });
+    let editor = window.root(cx).unwrap();
+    cx.update_window(window.into(), |_, window, cx| {
+        crate::editor_projection::bind(&editor, window, cx).expect("Write projection")
+    })
+    .unwrap();
+    cx.executor().run_until_parked();
+    place(window, cursor, cx);
+    window
+}
+
+fn place(window: WindowHandle<Editor>, cursor: usize, cx: &mut TestAppContext) {
+    window
+        .update(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([MultiBufferOffset(cursor)..MultiBufferOffset(cursor)])
+            })
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+}
+
+fn state(window: WindowHandle<Editor>, cx: &mut TestAppContext) -> String {
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |editor, _, cx| {
+            let text = editor.text(cx);
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let head = editor
+                .selections
+                .newest_anchor()
+                .head()
+                .to_offset(&snapshot)
+                .0;
+            format!("{}|{}", &text[..head], &text[head..])
+        })
+        .unwrap()
+}
+
+fn keys(window: WindowHandle<Editor>, keys: &str, cx: &mut TestAppContext) {
+    cx.simulate_keystrokes(window.into(), keys);
+    cx.executor().run_until_parked();
+}
+
+fn expect(window: WindowHandle<Editor>, steps: &[(&str, &str)], cx: &mut TestAppContext) {
+    for (input, expected) in steps {
+        keys(window, input, cx);
+        assert_eq!(state(window, cx), *expected, "after {input:?}");
+    }
+}
+
+fn displayed(window: WindowHandle<Editor>, cx: &mut TestAppContext) -> String {
+    window
+        .update(cx, |editor, window, cx| {
+            editor.snapshot(window, cx).display_snapshot.text()
+        })
+        .unwrap()
+}
+
+fn undo(vim: bool) -> String {
+    if vim { "u".into() } else { format!("{MOD}-z") }
+}
+
+#[gpui::test]
+fn enter_continues_splits_and_ends_list_items(cx: &mut TestAppContext) {
+    for vim in [false, true] {
+        let insert = if vim { "i " } else { "" };
+        let window = write_view("- [x] Act|ion ^t\n- Next\n", vim, cx);
+        expect(
+            window,
+            &[
+                (
+                    &format!("{insert}enter"),
+                    "- [x] Act ^t\n- [ ] |ion\n- Next\n",
+                ),
+                ("x", "- [x] Act ^t\n- [ ] x|ion\n- Next\n"),
+            ],
+            cx,
+        );
+        if vim {
+            // Vim undoes a whole Insert session, as Vim does.
+            keys(window, "escape", cx);
+        } else {
+            keys(window, &undo(vim), cx);
+            assert_eq!(
+                state(window, cx).replace('|', ""),
+                "- [x] Act ^t\n- [ ] ion\n- Next\n"
+            );
+        }
+        keys(window, &undo(vim), cx);
+        assert_eq!(
+            state(window, cx).replace('|', ""),
+            "- [x] Action ^t\n- Next\n"
+        );
+
+        let window = write_view("- Parent\n  - Kid|\n", vim, cx);
+        expect(
+            window,
+            &[
+                (&format!("{insert}enter"), "- Parent\n  - Kid\n  - |\n"),
+                ("enter", "- Parent\n  - Kid\n- |\n"),
+                ("enter", "- Parent\n  - Kid\n|\n"),
+                ("enter", "- Parent\n  - Kid\n\n|\n"),
+            ],
+            cx,
+        );
+
+        let window = write_view("- Parent ^p|\n  - Kid\n", vim, cx);
+        expect(
+            window,
+            &[(&format!("{insert}enter"), "- Parent ^p\n  - |\n  - Kid\n")],
+            cx,
+        );
+
+        let window = write_view("Plain| paragraph ^p\n", vim, cx);
+        expect(
+            window,
+            &[(&format!("{insert}enter"), "Plain\n|paragraph ^p\n")],
+            cx,
+        );
+        let window = write_view("Paragraph| ^p\n", vim, cx);
+        expect(
+            window,
+            &[(&format!("{insert}enter"), "Paragraph ^p\n|\n")],
+            cx,
+        );
+    }
+}
+
+#[gpui::test]
+fn enter_keeps_code_inside_list_items_literal(cx: &mut TestAppContext) {
+    let window = write_view(
+        "- Parent ^p\n  ```js\n  con|sole.log(1);\n  ```\n",
+        false,
+        cx,
+    );
+    keys(window, "enter", cx);
+    assert!(
+        state(window, cx).starts_with("- Parent ^p\n  ```js\n  con\n"),
+        "{}",
+        state(window, cx)
+    );
+}
+
+#[gpui::test]
+fn numbered_lists_continue_and_renumber_in_one_undo_step(cx: &mut TestAppContext) {
+    let window = write_view("1. One|\n2. Two\n   - Kid\n", false, cx);
+    expect(
+        window,
+        &[
+            ("enter", "1. One\n2. |\n3. Two\n   - Kid\n"),
+            ("t", "1. One\n2. t|\n3. Two\n   - Kid\n"),
+        ],
+        cx,
+    );
+    keys(window, &undo(false), cx);
+    keys(window, &undo(false), cx);
+    assert_eq!(
+        state(window, cx).replace('|', ""),
+        "1. One\n2. Two\n   - Kid\n"
+    );
+}
+
+#[gpui::test]
+fn tab_and_vim_shift_move_subtrees(cx: &mut TestAppContext) {
+    let window = write_view(
+        "- Parent ^p\n- Sib|ling ^s\n  - Leaf ^l\n- After ^a\n",
+        false,
+        cx,
+    );
+    expect(
+        window,
+        &[
+            (
+                "tab",
+                "- Parent ^p\n  - Sib|ling ^s\n    - Leaf ^l\n- After ^a\n",
+            ),
+            (
+                "shift-tab",
+                "- Parent ^p\n- Sib|ling ^s\n  - Leaf ^l\n- After ^a\n",
+            ),
+        ],
+        cx,
+    );
+    let window = write_view("- Abc\n-|", false, cx);
+    expect(window, &[("tab", "- Abc\n  - |")], cx);
+
+    let window = write_view("- One\n- T|wo\n  - Kid\n- Three\n", true, cx);
+    expect(
+        window,
+        &[
+            ("> >", "- One\n  - |Two\n    - Kid\n- Three\n"),
+            ("j j 0", "- One\n  - Two\n    - Kid\n- |Three\n"),
+            (".", "- One\n  - Two\n    - Kid\n  - |Three\n"),
+            ("< <", "- One\n  - Two\n    - Kid\n- |Three\n"),
+        ],
+        cx,
+    );
+    keys(window, "u", cx);
+    assert_eq!(
+        state(window, cx).replace('|', ""),
+        "- One\n  - Two\n    - Kid\n  - Three\n"
+    );
+}
+
+#[gpui::test]
+fn blocks_move_with_children(cx: &mut TestAppContext) {
+    for vim in [false, true] {
+        let window = write_view("- A\n- B|\n  - B1\n- C\n", vim, cx);
+        expect(
+            window,
+            &[
+                ("alt-up", "- B|\n  - B1\n- A\n- C\n"),
+                ("alt-up", "- B|\n  - B1\n- A\n- C\n"),
+                ("alt-shift-down", "- A\n- B|\n  - B1\n- C\n"),
+                (&format!("{MOD}-shift-down"), "- A\n- C\n- B|\n  - B1\n"),
+            ],
+            cx,
+        );
+        keys(window, &undo(vim), cx);
+        assert_eq!(
+            state(window, cx).replace('|', ""),
+            "- A\n- B\n  - B1\n- C\n"
+        );
+    }
+}
+
+#[gpui::test]
+fn backspace_and_delete_merge_or_remove_empty_bullets(cx: &mut TestAppContext) {
+    for vim in [false, true] {
+        let insert = if vim { "i " } else { "" };
+        let window = write_view("- |\n  - Kid\n    - Grand\n- Next\n", vim, cx);
+        expect(
+            window,
+            &[(&format!("{insert}backspace"), "- |Kid\n  - Grand\n- Next\n")],
+            cx,
+        );
+        let window = write_view("- Alpha\n- |\n- Beta\n", vim, cx);
+        expect(
+            window,
+            &[(&format!("{insert}delete"), "- Alpha\n- |Beta\n")],
+            cx,
+        );
+        let window = write_view("- |\n", vim, cx);
+        expect(window, &[(&format!("{insert}backspace"), "- |\n")], cx);
+        let window = write_view("- Alpha\n- |Beta\n  - Kid\n", vim, cx);
+        expect(
+            window,
+            &[(&format!("{insert}backspace"), "- Alpha|Beta\n  - Kid\n")],
+            cx,
+        );
+        let window = write_view("- Alpha|\n- [ ] Beta\n", vim, cx);
+        expect(
+            window,
+            &[(&format!("{insert}delete"), "- Alpha|Beta\n")],
+            cx,
+        );
+        let window = write_view("- Alpha\n- |Beta ^ref\n", vim, cx);
+        keys(window, &format!("{insert}backspace"), cx);
+        assert_eq!(state(window, cx), "- Alpha\n- |Beta ^ref\n");
+        assert_eq!(
+            cx.update(|cx| notice(cx)).as_deref(),
+            Some(model::REFERENCED)
+        );
+        keys(window, "x", cx);
+        assert_eq!(cx.update(|cx| notice(cx)), None);
+    }
+}
+
+#[gpui::test]
+fn task_line_start_reaches_text_then_checkbox(cx: &mut TestAppContext) {
+    let text = "- One ^a\n- [ ] Ta|sk\n";
+    let window = write_view(text, false, cx);
+    expect(
+        window,
+        &[
+            ("home", "- One ^a\n- [ ] |Task\n"),
+            ("home", "- One ^a\n- |[ ] Task\n"),
+            ("right", "- One ^a\n- [ ]| Task\n"),
+            ("right", "- One ^a\n- [ ] |Task\n"),
+            ("left", "- One ^a\n- [ ]| Task\n"),
+            ("left", "- One ^a\n- |[ ] Task\n"),
+            ("left", "- One| ^a\n- [ ] Task\n"),
+        ],
+        cx,
+    );
+    let window = write_view(text, true, cx);
+    expect(
+        window,
+        &[
+            ("0", "- One ^a\n- [ ] |Task\n"),
+            ("0", "- One ^a\n- |[ ] Task\n"),
+            ("l l", "- One ^a\n- [ ] |Task\n"),
+            ("l ^", "- One ^a\n- [ ] |Task\n"),
+            ("^", "- One ^a\n- |[ ] Task\n"),
+        ],
+        cx,
+    );
+    let window = write_view("- Plain te|xt\n", true, cx);
+    expect(
+        window,
+        &[("0", "- |Plain text\n"), ("0", "- |Plain text\n")],
+        cx,
+    );
+}
+
+#[gpui::test]
+fn folding_collapses_children_and_enter_adds_a_sibling(cx: &mut TestAppContext) {
+    let window = write_view("- Parent|\n  - Kid\n    - Grand\n- After\n", true, cx);
+    keys(window, "z c", cx);
+    assert_eq!(displayed(window, cx), "Parent⋯\nAfter\n");
+    expect(
+        window,
+        &[("i enter", "- Parent\n  - Kid\n    - Grand\n- |\n- After\n")],
+        cx,
+    );
+    keys(window, "escape k z o", cx);
+    assert_eq!(displayed(window, cx), "Parent\n  Kid\n    Grand\n\nAfter\n");
+
+    let window = write_view("- Parent\n  - Kid|\n- After\n", false, cx);
+    keys(window, &format!("{MOD}-alt-["), cx);
+    assert_eq!(state(window, cx), "- Parent|\n  - Kid\n- After\n");
+    assert_eq!(displayed(window, cx), "Parent⋯\nAfter\n");
+    keys(window, &format!("{MOD}-alt-]"), cx);
+    assert_eq!(displayed(window, cx), "Parent\n  Kid\nAfter\n");
+}
+
+#[gpui::test]
+fn vim_open_and_join_follow_the_outline(cx: &mut TestAppContext) {
+    let window = write_view("- O|ne ^a\n  - Kid\n- Two\n", true, cx);
+    expect(
+        window,
+        &[
+            ("o x escape", "- One ^a\n  - |x\n  - Kid\n- Two\n"),
+            (
+                "j j shift-o y escape",
+                "- One ^a\n  - x\n  - Kid\n- |y\n- Two\n",
+            ),
+            ("k shift-j", "- One ^a\n  - x\n  - Kid| y\n- Two\n"),
+        ],
+        cx,
+    );
+    let window = write_view("- O|ne\n- Two ^t\n", true, cx);
+    keys(window, "shift-j", cx);
+    assert_eq!(state(window, cx), "- O|ne\n- Two ^t\n");
+    assert_eq!(
+        cx.update(|cx| notice(cx)).as_deref(),
+        Some(model::REFERENCED)
+    );
+}
+
+#[gpui::test]
+fn pasting_lines_into_a_bullet_makes_blocks(cx: &mut TestAppContext) {
+    let window = write_view("- Alpha|Omega\n", false, cx);
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+        "- one\n- two\n  - two-kid\n- three".into(),
+    ));
+    expect(
+        window,
+        &[(
+            &format!("{MOD}-v"),
+            "- Alphaone\n- two\n  - two-kid\n- three|Omega\n",
+        )],
+        cx,
+    );
+    keys(window, &undo(false), cx);
+    assert_eq!(state(window, cx).replace('|', ""), "- AlphaOmega\n");
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string("single".into()));
+    expect(
+        window,
+        &[(&format!("{MOD}-v"), "- Alphasingle|Omega\n")],
+        cx,
+    );
+}
+
+#[gpui::test]
+fn numbered_list_toggles_and_converts_by_style(cx: &mut TestAppContext) {
+    let original =
+        "Intro\n\n- One\n- T|wo\n  - Child\n    more child text\n- [ ] Three ^t\n\nAfter\n";
+    let window = write_view(original, false, cx);
+    keys(window, &format!("{MOD}-shift-7"), cx);
+    assert_eq!(
+        state(window, cx).replace('|', ""),
+        "Intro\n\n1. One\n2. Two\n   - Child\n     more child text\n3. [ ] Three ^t\n\nAfter\n"
+    );
+    keys(window, &format!("{MOD}-shift-7"), cx);
+    assert_eq!(state(window, cx), original);
+    window
+        .update(cx, |_, window, cx| {
+            window.dispatch_action(NumberList.boxed_clone(), cx)
+        })
+        .unwrap();
+    window
+        .update(cx, |_, window, cx| {
+            window.dispatch_action(NumberList.boxed_clone(), cx)
+        })
+        .unwrap();
+    assert!(state(window, cx).contains("2. T|wo"));
+    window
+        .update(cx, |_, window, cx| {
+            window.dispatch_action(BulletList.boxed_clone(), cx)
+        })
+        .unwrap();
+    assert_eq!(state(window, cx), original);
+    let window = write_view("Just a para|graph\n", false, cx);
+    keys(window, &format!("{MOD}-shift-7"), cx);
+    assert_eq!(cx.update(|cx| notice(cx)).as_deref(), Some(lists::NO_LIST));
+    assert_eq!(state(window, cx), "Just a para|graph\n");
+}
+
+#[gpui::test]
+fn source_view_keeps_ordinary_editing(cx: &mut TestAppContext) {
+    let window = write_view("- On|e ^a\n- \n- Next\n", false, cx);
+    let editor = window.root(cx).unwrap();
+    cx.update_window(window.into(), |_, window, cx| {
+        crate::editor_projection::unbind(&editor, window, cx)
+    })
+    .unwrap();
+    keys(window, "enter", cx);
+    let after = state(window, cx);
+    assert!(
+        after.starts_with("- On\n") && after.ends_with("e ^a\n- \n- Next\n"),
+        "{after}"
+    );
+    place(
+        window,
+        after.replacen('|', "", 1).find("- \n").unwrap() + 2,
+        cx,
+    );
+    keys(window, "backspace", cx);
+    assert!(
+        state(window, cx).contains("-|\n- Next\n"),
+        "{}",
+        state(window, cx)
+    );
+}
+
+#[gpui::test]
+fn merging_never_edits_collapsed_children(cx: &mut TestAppContext) {
+    let window = write_view("- Parent|\n  - Kid\n- After\n", false, cx);
+    keys(window, &format!("{MOD}-alt-["), cx);
+    expect(window, &[("delete", "- Parent|\n  - Kid\n- After\n")], cx);
+    place(window, "- Parent\n  - Kid\n- ".len(), cx);
+    expect(
+        window,
+        &[("backspace", "- Parent\n  - Kid\n- |After\n")],
+        cx,
+    );
+    place(window, "- Parent".len(), cx);
+    keys(window, &format!("{MOD}-alt-]"), cx);
+    place(window, "- Parent\n  - Kid\n- ".len(), cx);
+    expect(window, &[("backspace", "- Parent\n  - Kid|After\n")], cx);
+}
+
+/// Vim replays recorded insertions only through a workspace, which Quire's editors lack, so
+/// `.` repeats the outline command without its typed text.
+#[gpui::test]
+fn vim_dot_repeats_opening_a_block(cx: &mut TestAppContext) {
+    let window = write_view("- O|ne\n", true, cx);
+    expect(
+        window,
+        &[
+            ("o n e w escape", "- One\n- ne|w\n"),
+            (".", "- One\n- new\n- |\n"),
+        ],
+        cx,
+    );
+}

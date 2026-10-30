@@ -51,6 +51,9 @@ mod editor_projection;
 mod markdown;
 
 #[cfg(feature = "full-editor")]
+mod outline;
+
+#[cfg(feature = "full-editor")]
 mod markdown_blocks;
 
 #[cfg(feature = "full-editor")]

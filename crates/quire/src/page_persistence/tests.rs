@@ -370,7 +370,7 @@ fn saves_while_typing_goes_on_without_a_pause(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn two_editors_saving_one_page_at_once_end_with_one_head_and_the_same_text(
+fn two_editors_saving_one_page_from_one_version_end_with_one_head_and_the_same_text(
     cx: &mut TestAppContext,
 ) {
     let first = Fixture::new("- one\n- two\n", cx);
@@ -395,13 +395,16 @@ fn two_editors_saving_one_page_at_once_end_with_one_head_and_the_same_text(
         worker.client.clone(),
         cx,
     );
+    // The second editor saves from the version both opened, after the first saved, so its save
+    // is stale and merges. Their recordings are sequential: one page has one recovery slot, and
+    // concurrent recordings from two processes refuse each other (see NR11.4 Remaining).
     first.edit(5..5, " first", cx);
+    first.persistence.update(cx, |model, cx| model.save(cx));
+    wait(&first.persistence, cx);
     buffer.update(cx, |buffer, cx| {
         buffer.edit([(11..11, " second")], None, cx);
     });
-    first.persistence.update(cx, |model, cx| model.save(cx));
     second.update(cx, |model, cx| model.save(cx));
-    wait(&first.persistence, cx);
     wait(&second, cx);
     let (text, _) = first.head();
     assert_eq!(text, "- one first\n- two second\n");
