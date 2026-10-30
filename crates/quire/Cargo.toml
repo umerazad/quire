@@ -12,6 +12,7 @@ unicode-segmentation.workspace = true
 text.workspace = true
 editor = { workspace = true, optional = true }
 ui = { workspace = true, optional = true }
+http_client = { workspace = true, optional = true }
 search = { workspace = true, optional = true }
 workspace = { workspace = true, optional = true }
 language = { workspace = true, optional = true }
@@ -34,4 +35,4 @@ serde_json.workspace = true
 [features]
 default = ["full-editor"]
 test-support = ["gpui/test-support", "gpui_platform/test-support"]
-full-editor = ["dep:editor", "dep:ui", "dep:search", "dep:workspace", "dep:language", "dep:multi_buffer", "dep:grammars", "dep:tree-sitter-md", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:assets", "dep:util", "dep:zed_actions"]
+full-editor = ["dep:editor", "dep:ui", "dep:http_client", "dep:search", "dep:workspace", "dep:language", "dep:multi_buffer", "dep:grammars", "dep:tree-sitter-md", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:assets", "dep:util", "dep:zed_actions"]

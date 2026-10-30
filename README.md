@@ -28,11 +28,13 @@ The native development app uses `QuireNative` data/config paths, separate from Z
 
 Run `cargo run -p quire --locked -- --excerpt-harness` in a regular desktop terminal to inspect the editable-excerpt spike. The right pane shows the first nested block from the left pane's document, with shared undo/redo. It starts in Source; its mode control can enable the current Write projection. Complete Write rendering and hidden-identity protection remain unfinished.
 
-`cargo run -p quire --locked -- --write-harness` opens the example note with list markers and block IDs hidden in the right pane. Both panes edit the same source. Projection spans come from the current Markdown parse and update after edits, including newly inserted blocks. Partial delete/paste, clearing and retyping, delete/undo, stale parses, and subtree mapping have regression tests. Rendered links and the remaining structural editing cases are still pending.
+`cargo run -p quire --locked -- --write-harness` opens the example note with list markers and block IDs hidden in the right pane. Both panes edit the same source. Projection spans come from the current Markdown parse and update after edits, including newly inserted blocks. Partial delete/paste, clearing and retyping, delete/undo, stale parses, and subtree mapping have regression tests. The remaining structural editing cases are still pending.
 
 Each pane's Source/Write button switches its presentation. Cmd-Shift-M on macOS, or Ctrl-Shift-M elsewhere, switches the focused editor. Source exposes the original syntax for direct editing. Switching keeps the same buffer and shared undo history, retains user folds, and rebuilds Write spans from the current parse.
 
 Write renders square task markers and Roam TODO/DONE markers as native checkboxes. Click or focus a checkbox and press Enter/Space to toggle its marker; Escape returns to the editor. This developer view uses the legacy editor-only fallback. Completion dates, task state tags, and notebook task workflows still require the planned task service. A callback from an obsolete widget cannot toggle text that has become code.
+
+Plain-label inline HTTP/HTTPS links render as underlined native controls. Pointer or keyboard activation requests the URL without editing the note; Source exposes the complete syntax. Rich labels, images, reference links, and other destinations currently retain their source presentation. Internal notebook navigation and complete wrapping/selection behavior remain unfinished. Headless tests intercept URL requests; native browser and accessibility acceptance remain open.
 
 Reference protocol tests deliberately run through Node/Vitest. Bun's zstd decoder reports a truncated frame differently, so running those tests with `bun test` would change the compatibility oracle.
 

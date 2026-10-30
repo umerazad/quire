@@ -19,8 +19,15 @@ struct AnchoredBlock {
 
 struct Projection {
     blocks: Arc<[AnchoredBlock]>,
+    links: Vec<AnchoredLink>,
     parsed: Option<(text::BufferSnapshot, usize)>,
     _subscriptions: Vec<Subscription>,
+}
+
+#[derive(Clone)]
+struct AnchoredLink {
+    range: Range<Anchor>,
+    data: Arc<crate::markdown_links::Link>,
 }
 impl Addon for Projection {
     fn to_any(&self) -> &dyn Any {
@@ -105,16 +112,130 @@ fn refresh(
         type_tag: Some(TypeId::of::<Projection>()),
         ..Default::default()
     };
+    let links = editor
+        .addon::<Projection>()
+        .map(|projection| projection.links.clone())
+        .unwrap_or_default();
+    let links = links.into_iter().filter_map(|link| {
+        let range = link.range.start.to_offset(&snapshot)..link.range.end.to_offset(&snapshot);
+        let current: String = snapshot.text_for_range(range.clone()).collect();
+        (current == link.data.source)
+            .then(|| Crease::simple(range, link_placeholder(cx.entity().downgrade(), link.data)))
+    });
     editor.fold_creases(
         hidden
             .into_iter()
             .map(|range| Crease::simple(range, placeholder.clone()))
             .chain(tasks)
+            .chain(links)
             .collect(),
         false,
         window,
         cx,
     );
+}
+
+fn projection_is_current(editor: &Editor, cx: &App) -> bool {
+    let Some(projection) = editor.addon::<Projection>() else {
+        return false;
+    };
+    let Some(source) = editor.buffer().read(cx).all_buffers_iter().next() else {
+        return false;
+    };
+    let source = source.read(cx);
+    let snapshot = source.snapshot();
+    let idle = *source.parse_status().borrow() == language::ParseStatus::Idle;
+    idle && projection.parsed.as_ref().is_some_and(|(text, count)| {
+        text.version() == snapshot.version() && *count == snapshot.syntax_update_count()
+    })
+}
+
+fn open_web_link(editor: &Editor, range: Range<Anchor>, expected: &str, cx: &mut App) {
+    if !projection_is_current(editor, cx) {
+        return;
+    }
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let offsets = range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot);
+    let Some(link) = editor
+        .addon::<Projection>()
+        .unwrap()
+        .links
+        .iter()
+        .find(|link| {
+            link.range.start.to_offset(&snapshot) == offsets.start
+                && link.range.end.to_offset(&snapshot) == offsets.end
+                && link.data.source == expected
+        })
+    else {
+        return;
+    };
+    let current: String = snapshot.text_for_range(offsets).collect();
+    if current == expected {
+        cx.open_url(&link.data.url);
+    }
+}
+
+fn inline_control(
+    id: impl Into<gpui::ElementId>,
+    editor: WeakEntity<Editor>,
+) -> gpui::Stateful<gpui::Div> {
+    gpui::div()
+        .id(id)
+        .key_context("QuireControl")
+        .tab_index(0_isize)
+        .tab_stop(true)
+        .on_key_down(move |event, window, cx| {
+            if event.keystroke.key == "escape" {
+                editor
+                    .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx), cx))
+                    .ok();
+            }
+            if !matches!(event.keystroke.key.as_str(), "enter" | "space" | "tab") {
+                window.prevent_default();
+                cx.stop_propagation();
+            }
+        })
+        .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+            window.prevent_default();
+            cx.stop_propagation();
+        })
+}
+
+fn link_placeholder(
+    editor: WeakEntity<Editor>,
+    link: Arc<crate::markdown_links::Link>,
+) -> FoldPlaceholder {
+    use ui::LabelCommon;
+    let label: gpui::SharedString = link.label.clone().into();
+    FoldPlaceholder {
+        collapsed_text: Some("⋯".into()),
+        constrain_width: false,
+        merge_adjacent: false,
+        type_tag: Some(TypeId::of::<Projection>()),
+        render: Arc::new(move |id, range, _| {
+            let editor = editor.clone();
+            let link = link.clone();
+            inline_control(id, editor.clone())
+                .debug_selector(|| "quire-web-link".into())
+                .role(gpui::Role::Link)
+                .aria_label(label.clone())
+                .cursor_pointer()
+                .child(
+                    ui::Label::new(label.clone())
+                        .color(ui::Color::Accent)
+                        .underline(),
+                )
+                .on_click(move |_, _, cx| {
+                    cx.stop_propagation();
+                    editor
+                        .update(cx, |editor, cx| {
+                            open_web_link(editor, range.clone(), &link.source, cx)
+                        })
+                        .ok();
+                })
+                .into_any_element()
+        }),
+    }
 }
 
 fn toggle_task_marker(
@@ -127,17 +248,7 @@ fn toggle_task_marker(
     let Some(projection) = editor.addon::<Projection>() else {
         return;
     };
-    let Some(source) = editor.buffer().read(cx).all_buffers_iter().next() else {
-        return;
-    };
-    let source = source.read(cx);
-    let source_snapshot = source.snapshot();
-    let fresh = *source.parse_status().borrow() == language::ParseStatus::Idle
-        && projection.parsed.as_ref().is_some_and(|(text, count)| {
-            text.version() == source_snapshot.version()
-                && *count == source_snapshot.syntax_update_count()
-        });
-    if !fresh {
+    if !projection_is_current(editor, cx) {
         return;
     }
     let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -174,11 +285,8 @@ fn checkbox_placeholder(
         type_tag: Some(TypeId::of::<Projection>()),
         render: Arc::new(move |id, range, _| {
             let editor = editor.clone();
-            let key_editor = editor.clone();
             let source = source.clone();
-            gpui::div()
-                .id(id)
-                .key_context("QuireControl")
+            inline_control(id, editor.clone())
                 .debug_selector(|| "quire-task-checkbox".into())
                 .role(gpui::Role::CheckBox)
                 .aria_label(if checked {
@@ -191,24 +299,7 @@ fn checkbox_placeholder(
                 } else {
                     gpui::Toggled::False
                 })
-                .tab_index(0_isize)
-                .tab_stop(true)
                 .child(ui::Checkbox::new("task-marker", checked.into()).visualization_only(true))
-                .on_key_down(move |event, window, cx| {
-                    if event.keystroke.key == "escape" {
-                        key_editor
-                            .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx), cx))
-                            .ok();
-                    }
-                    if !matches!(event.keystroke.key.as_str(), "enter" | "space" | "tab") {
-                        window.prevent_default();
-                        cx.stop_propagation();
-                    }
-                })
-                .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
-                    window.prevent_default();
-                    cx.stop_propagation();
-                })
                 .on_click(move |_, window, cx| {
                     cx.stop_propagation();
                     editor
@@ -374,7 +465,31 @@ fn rebuild(
     let Some(spans) = crate::markdown_blocks::syntax_spans(&snapshot) else {
         return;
     };
+    let Some(links) = crate::markdown_links::links(&snapshot) else {
+        return;
+    };
     let view = editor.buffer().read(cx).snapshot(cx);
+    let links = links
+        .into_iter()
+        .filter_map(|link| {
+            if !view.excerpts().any(|excerpt| {
+                excerpt.context.start.buffer_id == snapshot.remote_id()
+                    && text::ToOffset::to_offset(&excerpt.context.start, &snapshot.text)
+                        <= link.range.start
+                    && link.range.end
+                        <= text::ToOffset::to_offset(&excerpt.context.end, &snapshot.text)
+            }) {
+                return None;
+            }
+            let start = view.anchor_in_buffer(snapshot.anchor_before(link.range.start))?;
+            let end = view.anchor_in_buffer(snapshot.anchor_before(link.range.end))?;
+            Some(AnchoredLink {
+                range: start..end,
+                data: Arc::new(link),
+            })
+        })
+        .collect();
+    editor.addon_mut::<Projection>().unwrap().links = links;
     let spans: Vec<_> = spans
         .into_iter()
         .filter_map(|span| {
@@ -439,7 +554,7 @@ pub fn bind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Resul
             if matches!(event, language::BufferEvent::Reparsed | language::BufferEvent::LanguageChanged(_)) { rebuild(editor, source, window, cx); }
         });
         editor.register_addon(Projection {
-            blocks: Arc::default(), parsed: None,
+            blocks: Arc::default(), links: Vec::new(), parsed: None,
             _subscriptions: vec![editor_subscription, source_subscription],
         });
         apply_spans(editor, &[], window, cx);
@@ -469,6 +584,54 @@ pub fn unbind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn old_link_cannot_open_a_url_after_the_source_becomes_code(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let note = "- [Link](https://example.com) ^id\n";
+        let source = cx.update(|cx| crate::markdown::buffer(note, cx));
+        let window =
+            cx.add_window(|window, cx| Editor::for_buffer(source.clone(), None, window, cx));
+        let editor = window.update(cx, |_, _, cx| cx.entity()).unwrap();
+        cx.update_window(window.into(), |_, window, cx| {
+            bind(&editor, window, cx).unwrap()
+        })
+        .unwrap();
+        cx.executor().run_until_parked();
+        let link = window
+            .update(cx, |editor, _, _| {
+                editor.addon::<Projection>().unwrap().links[0].clone()
+            })
+            .unwrap();
+        source.update(cx, |source, cx| {
+            source.set_sync_parse_timeout(None);
+            source.edit(
+                [(0..0, "```md\n"), (note.len()..note.len(), "```\n")],
+                None,
+                cx,
+            );
+        });
+        window
+            .update(cx, |editor, _, cx| {
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                assert_eq!(
+                    snapshot
+                        .text_for_range(link.range.clone())
+                        .collect::<String>(),
+                    link.data.source
+                );
+                open_web_link(editor, link.range.clone(), &link.data.source, cx);
+            })
+            .unwrap();
+        assert!(cx.opened_url().is_none());
+        cx.executor().run_until_parked();
+        window
+            .update(cx, |editor, _, cx| {
+                open_web_link(editor, link.range.clone(), &link.data.source, cx)
+            })
+            .unwrap();
+        assert!(cx.opened_url().is_none());
+    }
 
     #[gpui::test]
     fn old_checkbox_cannot_toggle_a_task_moved_into_code(cx: &mut TestAppContext) {

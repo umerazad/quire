@@ -88,6 +88,55 @@ fn task_checkbox_edits_the_shared_marker_and_undoes_from_source(cx: &mut TestApp
 }
 
 #[gpui::test]
+fn rendered_web_link_opens_its_url_without_editing_source(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let text = "- [مرحبا🙂](https://example.com/path?q=1) ^id\n";
+    let window = cx.add_window(|window, cx| {
+        let view = NotebookWindow::new(text, window, cx);
+        crate::editor_projection::bind(&view.second, window, cx).unwrap();
+        view
+    });
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                "⋯\n"
+            );
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+    let bounds = visual
+        .debug_bounds("quire-web-link")
+        .expect("rendered web link");
+    visual.simulate_click(bounds.center(), Default::default());
+    assert_eq!(
+        cx.opened_url().as_deref(),
+        Some("https://example.com/path?q=1")
+    );
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(view.source.read(cx).text(cx), text);
+            let editor = view.second.clone();
+            view.change_presentation(&editor, window, cx);
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                text
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn roam_checkbox_supports_keyboard_activation(cx: &mut TestAppContext) {
     cx.update(|cx| init(cx).expect("editor initialization"));
     let window = cx.add_window(|window, cx| {
@@ -150,6 +199,128 @@ fn roam_checkbox_supports_keyboard_activation(cx: &mut TestAppContext) {
         .update(cx, |view, window, cx| {
             assert!(view.second.focus_handle(cx).is_focused(window));
             assert_eq!(view.source.read(cx).text(cx), "- {{[[TODO]]}} task ^id\n");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn link_excerpts_track_source_edits_and_leave_cut_links_as_source(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).unwrap());
+    let note = "outside [Before](https://example.com/out)\n\n- [Inside](https://example.com/in) ^id\n\nend\n";
+    let source = cx.update(|cx| crate::markdown::buffer(note, cx));
+    let full = cx.update(|cx| {
+        crate::editor_excerpt::buffer(
+            source.clone(),
+            note.find("- [Inside]").unwrap()..note.find("\n\nend").unwrap(),
+            cx,
+        )
+        .unwrap()
+    });
+    let partial_range = note.find("[Inside]").unwrap()
+        ..note.find("https://example.com/in").unwrap() + "https://".len();
+    let partial = cx.update(|cx| {
+        crate::editor_excerpt::buffer(source.clone(), partial_range.clone(), cx).unwrap()
+    });
+    let full = cx.add_window(|window, cx| {
+        let view = NotebookWindow::for_buffer(source.clone(), Some(full), window, cx);
+        crate::editor_projection::bind(&view.second, window, cx).unwrap();
+        view
+    });
+    let partial = cx.add_window(|window, cx| {
+        let view = NotebookWindow::for_buffer(source.clone(), Some(partial), window, cx);
+        crate::editor_projection::bind(&view.second, window, cx).unwrap();
+        view
+    });
+    cx.executor().run_until_parked();
+    let url = note.find("https://example.com/in").unwrap();
+    let tail = url + "https://example.com/".len();
+    assert!(
+        tail >= partial_range.end,
+        "the URL edit must stay outside the partial excerpt"
+    );
+    source.update(cx, |source, cx| {
+        source.edit(
+            [
+                (0..0, "prefix\n"),
+                (tail..url + "https://example.com/in".len(), "new"),
+            ],
+            None,
+            cx,
+        )
+    });
+    cx.executor().run_until_parked();
+    full.update(cx, |view, window, cx| {
+        assert_eq!(
+            view.second.update(cx, |editor, cx| editor
+                .snapshot(window, cx)
+                .display_snapshot
+                .text()),
+            "⋯"
+        );
+        assert_eq!(
+            view.source.read(cx).text(cx),
+            format!(
+                "prefix\n{}",
+                note.replace("https://example.com/in", "https://example.com/new")
+            )
+        );
+    })
+    .unwrap();
+    partial
+        .update(cx, |view, window, cx| {
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                &note[partial_range]
+            )
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(full.into(), cx);
+    visual.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+    let bounds = visual.debug_bounds("quire-web-link").unwrap();
+    visual.simulate_click(bounds.center(), Default::default());
+    assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/new"));
+    let mut visual = gpui::VisualTestContext::from_window(partial.into(), cx);
+    visual.update(|window, cx| {
+        window.draw(cx).clear(cx);
+    });
+    assert!(visual.debug_bounds("quire-web-link").is_none());
+}
+
+#[gpui::test]
+fn long_web_link_supports_keyboard_activation_without_editing(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).unwrap());
+    let label = format!("{}🙂", "a".repeat(512));
+    let text = format!("- [{label}](https://example.com/long) ^id\n");
+    let window = cx.add_window(|window, cx| {
+        let view = NotebookWindow::new(&text, window, cx);
+        crate::editor_projection::bind(&view.second, window, cx).unwrap();
+        view
+    });
+    cx.executor().run_until_parked();
+    cx.update_window(window.into(), |_, window, cx| {
+        window.draw(cx).clear(cx);
+    })
+    .unwrap();
+    window
+        .update(cx, |view, window, cx| {
+            window.blur(cx);
+            for _ in 0..3 {
+                window.focus_next(cx);
+            }
+            assert!(!view.second.focus_handle(cx).is_focused(window));
+            assert!(view.second.focus_handle(cx).contains_focused(window, cx));
+        })
+        .unwrap();
+    activate_focused_control(window, "enter", cx);
+    assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/long"));
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.source.read(cx).text(cx), text)
         })
         .unwrap();
 }

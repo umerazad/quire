@@ -11343,6 +11343,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "grammars",
+ "http_client",
  "language",
  "multi_buffer",
  "release_channel",
