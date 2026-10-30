@@ -6,6 +6,9 @@ use unicode_normalization::UnicodeNormalization as _;
 mod frontmatter;
 pub use frontmatter::{frontmatter_tags, page_title};
 
+mod references;
+pub use references::{Reference, ReferenceKind, ReferenceMedia, ReferenceSyntax, references};
+
 pub fn page_name(path: &str) -> &str {
     if path.len() >= 3
         && path

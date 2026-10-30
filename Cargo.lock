@@ -11369,6 +11369,7 @@ dependencies = [
 name = "quire_core"
 version = "0.1.0"
 dependencies = [
+ "regex",
  "ryu-js",
  "serde",
  "serde_json",
