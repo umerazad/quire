@@ -24,6 +24,8 @@ Write set: `tests/reference/`, `tests/fixtures/`, `tools/fixtures/`, source mani
 Dependencies: none.
 Verify: Generate 1x/5x fixtures reproducibly; capture baseline first-editable timings and RSS with a documented environment; map every existing storage-inventory row and additional UI row to a test or explicit gap. Record source and dependency hashes.
 Proof notes: Source baseline advanced to clean `rt` commit `e91f3e23603c76a1b1d824ec3dd64c60096e5d01` (the added commit only supplies a Windows copy target). Copied format/graph/replica modules and eight codec tests run independently through Node/Vitest: `bun run test:reference`, 8 passed. `tests/reference/UPSTREAM.json` records hashes. Synthetic seed 1 produced 6,536 pages/13,023,130 bytes and 32,680 pages/65,503,501 bytes. Remaining: reference harness/semantic coverage, reproducibility manifest, and fresh first-editable/RSS baseline. Native launch is unavailable in this sandbox; previous source-plan timings are not new measurements.
+
+Rebaseline on 2026-10-30: the source baseline is now `rt` 0.9.57 at `5ea5c22310ff`, after auditing all 42 commits from `e6583d2a3e66`. `sync/format.ts`, `core/markdown.ts`, `core/daily-layout.ts`, and the `localDate` extraction are unchanged, so the codec, Markdown, and daily oracles stay valid. `sync/graph.ts` and `sync/replica.ts` changed in `c3a036587871` and `71b62cba83e3`; `tests/sync/harness.ts` changed in `71b62cba83e3`; `core/workspace.ts` changed `namespaceOf` and added `projectStatus` in `957da33d4766` and `6d992ad96d9e`. Refresh those frozen copies and their recorded hashes before NR09.3.3, NR09.4, and NR16 claim parity. New shared fixtures to copy: `tests/fixtures/merges.json`, `task-queries.json`, `reference-filters.json`, `outline-parity.json`, `sync-vectors/`, and the `model-parity` and `model-edge` dumps. The Go terminal app in `rt/tui` is a separate product and out of scope; NR09.4, NR09.5, and NR35 carry the interoperability it requires. The Ghostty terminal pane from `60c7184abec0` was removed in `74d4636e2c98` and needs no port.
 Status: in_progress
 
 ### NR02: Build a standalone GPUI application
@@ -374,6 +376,8 @@ The implementation uses the already locked `tempfile` crate, promoted from a dev
 Five attachment tests pass: content naming/reopen/save, invalid names and changed bytes, symlink rejection, catalog failure with file retention/retry, and worker ordering. The full storage suite passes 52 tests and scoped Clippy passes. The crash harness adds a sixth child kill after attachment acknowledgment; a later process saves its reference using the retained file/catalog. Non-Unix directory synchronization returns an error; Windows implementation/acceptance remains open. Linux runtime and power-loss checks are also unverified.
 
 Review leaves NR08 in progress: semantic dependency classification needs the Markdown layer; editor integration, Windows attachment synchronization, and fuller commit-I/O fault injection remain open. No notebook UI uses this service yet. The entire-workspace test gate remains open. The source `rt` sync format/graph/replica files remain unchanged through `ae02aab13f0725000a9ba09e72c9849b4d6eb9cb`; its current Go terminal-client work remains independent of the native GUI rewrite.
+
+Rebaseline note for `rt` 0.9.57: `71b62cba83e3` narrows coalescing in `replica.ts` `save`. Only a revision with exactly one parent may be replaced, so a page's first version and every merge revision stay: another computer can create the identical ID and build on it. The native rule in `crates/quire_store/src/notebook/revision.rs` (`save_one`, the `replaces` filter) does not check the parent count, so it still replaces pending root and multi-parent revisions. Add that condition with regressions for both cases. `c3a036587871` stops replacing a revision while a publish writes it; the native frozen-selection rule already guarantees that.
 Status: in_progress
 
 ### NR09: Port publication and replica convergence
@@ -383,7 +387,7 @@ Constraints: Per-device ownership and distinct writer identities; immutable dura
 Write set: `crates/quire_store/src/sync/`, durable-file adapters, replay fixtures.
 Dependencies: NR08.
 Verify: At least the existing 10,000 reproducible schedules plus real-filesystem kill cases; delayed/duplicate/partial delivery, missing parents, stale office window, collisions, late attachments, uncertain publish, and copied device identity. Inject edits while a batch write is in flight; coalescing cannot discard a revision already selected for publication. Check saved content and final heads in both runtimes.
-Proof notes: NR09.1 connects frozen publication to durable folder files; NR09.2 adds atomic graph/cursor import. Folder convergence, status/checkpoints, watcher/rescan, mixed-runtime schedules, Windows synchronization, and cloud-provider acceptance remain open.
+Proof notes: NR09.1 connects frozen publication to durable folder files; NR09.2 adds atomic graph/cursor import. Folder convergence, status/checkpoints, watcher/rescan, mixed-runtime schedules, Windows synchronization, and cloud-provider acceptance remain open. Since `rt` 0.9.53, convergence also means deterministic merging of competing heads (NR09.4) and the live publication and status timing in NR09.5; NR09.3.2a and NR09.3.3 are reopened against that contract.
 Status: in_progress
 
 #### NR09.1: Publish frozen local batches and attachments to the notebook folder
@@ -418,6 +422,7 @@ The final storage suite passes 80 tests, including 13 import integration cases a
 Application regression tests pass all 99, the final scoped storage run passes all 80, and reference tests pass all 55. Native/store build, storage all-target Clippy with `-D warnings`, formatting, scoped whitespace, prose lint, and tracked-vendor checks pass. Upstream comparison remains at 3,013 unchanged files and 23 documented forks. The existing debug unwind-metadata linker warning remains.
 
 Sequential review checked chain ordering, missing-versus-invalid graph handling before writes, transaction rollback, retained local heads/outbox/recovery, origin-preserving duplicate insertion, own-publication durability, borrowed wire values and lossless reports, worker admission, and unchanged schema/dependencies. The simplification pass reuses the existing insertion/storage path instead of adding a second graph store. Older batches follow the frozen duplicate rule without a historical hash lookup; folder scans still need to detect colliding sequence files. Filesystem discovery, dependency retries across devices, late attachment caching, checkpoints, 10,000 mixed-runtime schedules, Windows synchronization, performance measurements, and editor integration remain open parent work.
+Rebaseline note: `rt` `71b62cba83e3` keeps this atomic import contract but merges competing heads after every import, after a save that leaves several heads, and at open. That merge step belongs to NR09.4; the transaction boundary implemented here is unchanged.
 Status: done
 
 #### NR09.3: Rescan notebook folders and converge delivered device chains
@@ -425,7 +430,7 @@ Status: done
 What to do: Connect verified format 1 folder reads to atomic batch import. Discover safe device/log entries, group sequence candidates, detect collisions, report partial or missing delivery, and repeat dependency waits while imports make progress. Route frozen own batches through durable publication adoption and copy/hash-verify delivered attachments into the local cache.
 Constraints: Preserve all source files and local pending work. Validate notebook identity and reject linked/escaping paths; keep current protocol errors distinct from waiting delivery and newer formats. Retain bounded batch reads and off-thread I/O. Do not claim a watcher or cloud guarantee from a manual rescan.
 Verify: Two native replicas and mixed TypeScript/native fixtures converge after delayed/reordered/duplicate delivery, retry missing parents and late attachments, preserve conflicts and tombstones, reject writer forks and partial files, and recover own frozen publication without consuming later saves. Add real-filesystem process-failure cases. The parent task still requires at least 10,000 reproducible schedules, checkpoints/status, watcher/rescan lifecycle, and OS acceptance.
-Proof notes: NR09.3.1 provides restart-safe attachment requests and known batch history. NR09.3.2 connects folder discovery, dependency retries, fair continuations, streamed delivery, and frozen publication adoption. The full mixed-runtime schedule gate, checkpoints/status, watcher lifecycle, scale measurements, and OS acceptance remain required before this parent can close.
+Proof notes: NR09.3.1 provides restart-safe attachment requests and known batch history. NR09.3.2 connects folder discovery, dependency retries, fair continuations, streamed delivery, and frozen publication adoption. The full mixed-runtime schedule gate, checkpoints/status, watcher lifecycle, scale measurements, and OS acceptance remain required before this parent can close. The mixed-runtime gate now uses the 0.9.53 invariant that no replica ends with competing versions.
 Status: in_progress
 
 ##### NR09.3.1: Retain attachment requests and batch hashes across rescans
@@ -481,7 +486,9 @@ Proof notes: The focused `a_peer_observed_revision_cannot_be_coalesced_out_of_th
 The regression now verifies unchanged provenance/outbox, close/reopen and restored publication certainty, retained ancestors, and successful later peer descendants with both concurrent heads. A cursor-failure test proves observation metadata rolls back and retry protects the parent. Schema 2 upgrade tests preserve pending saves, refuse unsafe rollback, allow a frozen down/up round trip, and roll back a failed backfill/history commit before successful reopen. Existing populated schema 1, full-disk migration, damaged-body, and rollback refusal tests remain green. `cargo test -p quire_store --locked` passes 109 tests; `bun run test:reference` passes 55; `CARGO_HOME=/private/tmp/quire-cargo bun run test:storage-crash` passes the 12 process-kill checks. Storage all-target Clippy with `-D warnings`, native build, formatting, prose lint, and scoped whitespace pass. The existing debug unwind warning remains.
 
 Sequential review checked observation timing, rejected/duplicate batches, rollback atomicity, safe publication selection, conservative migration, unchanged schemas, and deletion restrictions. The simplification pass retains existing save/import/publication paths and adds only the persistent protection needed by the reproduced failure. Migration prevents future coalescing loss; it cannot recover revisions already deleted by an older build. The 10,000 schedule gate and parent feature work remain open.
-Status: done
+
+Reopened for `rt` 0.9.57. `71b62cba83e3` changed the reference for this case: `replica.ts` import now removes every revision in any imported batch from the local outbox, not only this device's, because two computers can publish the identical merge and others may build on it. Such a revision is no longer this computer's to publish or replace. The native import (`crates/quire_store/src/notebook/import.rs`, the `observed_revisions` insert in `import_batch`) keeps it in the outbox and later republishes it. Peers treat the copy as a duplicate, so no content is lost, but the log grows and outbox counts differ from the reference that NR09.3.3 compares. Remove unselected outbox rows for imported revision IDs in the import transaction, keep frozen selections with their exact bytes, retain the observation protection for frozen rows, and add a regression with an identical peer merge.
+Status: in_progress
 
 ##### NR09.3.3: Verify at least 10,000 reproducible replica schedules across runtimes
 
@@ -495,7 +502,29 @@ Proof notes: Added the persistent `quire_store` example `replica_probe`, a synch
 The example build and Clippy with `-D warnings`, strict TypeScript 5.9.3 checking, formatting, prose lint, and scoped whitespace pass. Type checking used temporary tooling outside the repository (`@types/node` 24.3.0 and `@types/bun` 1.3.0); no production dependency or vendor fork was added. Sequential review checked transport framing/UTF-8, owned fixture cleanup, real storage ownership, incoming versus own-folder isolation, crash timing, exact selection acknowledgment, canonical records, native diagnostics, seeded replay, and the unchanged scheduler. The simplification pass reuses production rescan/selection/publication APIs rather than adding a second native replica implementation.
 
 The full acceptance command, CARGO_HOME=/private/tmp/quire-cargo bun run test:sync-schedules --count 10000 --runtime alternating, finished with exit 0 on 2026-10-30. All seeds 1 through 10,000 pass at 60 actions per schedule: 5,000 native-only and 5,000 mixed-runtime schedules, plus seven focused cases. The real process handle was polled to terminal completion. It used Node v26.11.1, took 7,414.943 seconds, and handled 1,878,501 native requests. Scheduled native work includes 79,089 saves, 144,084 imports, 115,941 selections, 26,679 completed publications, 3,605 uncertain-publication paths, and 6,988 rebuilds. The harness/native executable was built from e08c7e68ea06 with the observed-revision retention repair; later metadata/JSON extraction did not change the exercised storage/codec algorithms. No failing seed or new regression was discovered in this run. The runner prints progress and retains failing databases/folder views with a request/reply trace and replay command. Its default runs both runtimes for all 10,000 seeds; alternating mode runs 10,000 total schedules, 5,000 per runtime. Native placeholders become invalid empty files until delivery, so diagnostic classification can differ from unavailable TypeScript reads. This harness covers synthetic UTF-8 edits and simulated delivery on Unix, not native editing of lone-surrogate wire text, real cloud/power-loss behavior, Windows, or release performance. Existing storage/process-kill checks remain separate evidence.
-Status: done
+
+Reopened for `rt` 0.9.57: the scheduler pinned from `4985e4080d23` is superseded. `71b62cba83e3` changed `tests/sync/harness.ts` and `replica.ts`. A stale save that the replica reports as merged now continues from the merge, settling runs up to 12 rounds until every outbox is empty, and every schedule fails if any computer ends with competing versions; the earlier careful-mode-only conflict check is gone. `c3a036587871` adds two focused cases: a save during publication keeps the version being published, and a forgotten own revision is read back from this device's change files. Native replicas do not merge heads yet, so mixed schedules against the current reference cannot pass until NR09.4 lands. Refresh the frozen graph, replica, and harness copies and hashes, add the two focused cases, and rerun the 10,000-schedule gate. The 2026-10-30 run above is valid evidence for the 0.9.49 contract only.
+Status: in_progress
+
+#### NR09.4: Merge competing page heads deterministically
+
+What to do: Port `src/core/merge.ts` and `mergeBase`/`mergeHeads` from `src/desktop/sync/graph.ts`. The merge is three-way against the newest common ancestor: lines changed on one side apply, lines both sides changed merge word by word, and only overlapping words keep both versions, the older head first, with a repeated block ID dropped from the second copy. Merge every page with several heads after each import, after a save that leaves several heads, and once at open for heads kept by older builds. Put the merge revision in the outbox, report overlapped pages for a warning naming the page, and show the conflict state only when a merge itself fails.
+Constraints: Results must be byte-identical to the TypeScript and Go implementations: Myers diff with common prefix and suffix trimmed, the fixed tie rule, the 2,000-edit cap, `[ \t]+|[^ \t]+` word tokens, heads ordered by `created` then ID, an edit outliving a deletion, and the newer path winning between two moves. Merge revisions carry this device and the current clock, but their IDs equal any other computer's merge of the same heads, so same-ID peer duplicates become routine. Never coalesce a merge or root revision (NR08). Operate on lossless wire strings, including lone surrogates, and merge inside the transaction that created the heads.
+Write set: `quire_core` merge module, merge hooks in `crates/quire_store/src/notebook/{revision,import}.rs`, merge fixtures and oracle.
+Dependencies: NR09.2, NR09.3.2.
+Verify: Every case in `rt/tests/fixtures/merges.json`; at least 4,000 seeded random cases against the frozen TypeScript merge, as `rt/tests/merge-go.test.ts` does for Go; identical merge IDs from two native replicas and from a mixed pair; overlap warnings; deletion revival; competing moves; open-time merging of legacy heads; rollback when a merge cannot be stored; and the reopened NR09.3.3 schedules.
+Proof notes: pending. Source: `rt` `71b62cba83e3` and `plans/live-sync.md`. The native store keeps competing heads until an explicit multi-parent save, which diverges from every 0.9.53 or later replica.
+Status: pending
+
+#### NR09.5: Port live publication timing, status heartbeats, and retrying imports
+
+What to do: Match the 0.9.53 sync scheduler. Publish 150 ms after the last save, at most 1 s, while another Quire app on this computer is nearby; otherwise after 1 s, at most 5 s. Rewrite `devices/<device-id>/status.json` only when the outbox count changes, once a minute as a heartbeat, and at notebook open. A status from another device with the same `label` and a heartbeat under two minutes old counts as nearby. Rerun an import requested while one runs. React to watcher events within 50 ms and ignore dot-prefixed temporary files. Retry an unreadable change file after 1 s, and warn only when the same problem survives the retry.
+Constraints: Keep `status.json` fields and `label` semantics compatible with the desktop and the Go terminal app, which sets `label` to the host name and `app` to `quire-tui <version>`. One computer may hold several writers on one notebook, each with its own device ID. Timing changes cannot weaken durability ordering or uncertain-publication handling.
+Write set: notebook sync scheduler, status writer and reader, folder watcher adapter, scheduler tests.
+Dependencies: NR09.3, NR11.
+Verify: Injected-clock tests for both publish windows, heartbeat suppression and refresh, nearby detection with stale and other-label statuses, an import rerun after a late file, a partial-file retry without a first-attempt warning, and dot-file filtering. Measure native-to-desktop and native-to-terminal latency on one computer; the source reports 0.72 to 1.02 s desktop to terminal and 0.10 to 0.11 s back.
+Proof notes: pending. Source: `rt` `71b62cba83e3` (`engine.ts`, `replica.ts`, the `main.ts` watcher, `SyncStatus.tsx`).
+Status: pending
 
 ### NR10: Port Markdown analysis and identity
 
@@ -686,12 +715,12 @@ Status: done
 
 ### NR11: Complete one native daily-page workflow
 
-What to do: Wire the editor to the native service: create/open a daily page, edit in either presentation, record recovery, save, close, restart, and show a peer's update or conflict.
+What to do: Wire the editor to the native service: create/open a daily page, edit in either presentation, record recovery, save, close, restart, and merge a peer's update into the open page.
 Constraints: Shared buffers keyed by notebook/page identity; expected-version checks on asynchronous operations. Opening a notebook loads metadata and the needed page, not every body. Refresh mounted-page heads after a rescan error as well as success, because already committed batches can precede a later failure.
 Write set: notebook session/buffer registry, service command types, native vertical-slice tests.
 Dependencies: NR04, NR05, NR08, NR09, NR10.
-Verify: An end-to-end native test covers editing through an embed, undo, crash recovery, local save, publication, remote update, and a refused stale write. Measure first-editable latency and loaded body count.
-Proof notes: The transactional page boundary and asynchronous native page registry are implemented below. The default editor remains an in-memory example; explicit native database arguments open stored pages. Existing healthy pages now support recovery, local saves, and guarded close/quit. Daily creation, navigation, synchronization integration, and complete parent acceptance remain open.
+Verify: An end-to-end native test covers editing through an embed, undo, crash recovery, local save, publication, remote update, a peer update merged into unsaved typing, and a stale save merged from its opened base. Measure first-editable latency and loaded body count.
+Proof notes: The transactional page boundary and asynchronous native page registry are implemented below. The default editor remains an in-memory example; explicit native database arguments open stored pages. Existing healthy pages now support recovery, local saves, and guarded close/quit. Daily creation, navigation, synchronization integration, and complete parent acceptance remain open. Since `rt` 0.9.53, peer updates and stale saves merge instead of producing a conflict; NR11.4 owns that workflow.
 Status: in_progress
 
 #### NR11.1: Check out one page and refuse a stale native save
@@ -709,6 +738,7 @@ Eight focused tests cover empty pages, conflicts, explicit selection, tombstones
 The initial focused test build failed for the missing API, then the six initial cases passed. `CARGO_HOME=/private/tmp/quire-cargo cargo test -p quire_store --locked` passes all 111 tests after the concurrency/version cases were added (`/private/tmp/quire-checkout-storage-tests.log`). All-target storage Clippy with -D warnings passes (`/private/tmp/quire-checkout-clippy.log`). Formatting, prose lint, and staged whitespace pass. Sequential review checked transaction isolation, read-lock behavior, rollback reuse, lossless representation, parent matching, one-body loading, queue closure/admission, and unchanged conflict-producing protocol saves. The simplification pass reuses the existing transaction and save implementations, adding no dependency, schema, or storage representation.
 
 This completes only the storage boundary. Canonical native buffer registration, recovery/save acknowledgments tied to buffer versions, daily-page routing, rescan refresh after both success and error, and end-to-end UI/performance acceptance remain NR11 work.
+Rebaseline note: `rt` `71b62cba83e3` no longer refuses a stale save in Quire notebooks; the engine saves it from its opened base and merges. This checked primitive stays as the internal guard. NR11.4 owns the merge path, and refusal remains for an unknown base revision or a path now held by another page.
 Status: done
 
 #### NR11.2: Open stored pages through one native buffer registry
@@ -791,7 +821,8 @@ The notebook session enables eligible existing pages only after window-close and
 Eight coordinator tests cover timer boundaries, mixed-source recovery/save/reopen, prior-session draft adoption, later typing during an older save, busy-queue retry, stopped storage, stale heads, and the format-reversion race. Five native-window tests cover keyboard save, semantic-excerpt edit/source undo, successful guarded close, successful resumed native quit, and quit failure with accessible text/clipboard. Final app/core/store testing passes 272 tests (141 app, 20 core, 111 storage; `/private/tmp/quire-persistence-all-final-tests.log`). All-target app/core/store Clippy with warnings denied passes using the existing optional `gpui_platform/runtime_shaders` feature (`/private/tmp/quire-persistence-runtime-clippy.log`). Plain Clippy attempts fail before app checking because Xcode lacks the Metal toolchain (`/private/tmp/quire-persistence-app-clippy.log`); this diagnostic feature does not satisfy the normal or clean precompiled-shader build gate. The locked normal native build passes with existing dependency artifacts (`/private/tmp/quire-persistence-build.log`), retaining the existing linker unwind warning. Formatting, prose lint, and scoped whitespace checks pass. No build defaults or vendor source changed.
 
 Sequential review checked current-versus-captured acknowledgments, queued snapshots, draft compare-and-swap, retries after partial success, original ancestry, format-only edits, timer cancellation, deferred-close rechecks, root/entity borrow boundaries, task ownership, and read-only exclusions. The simplification pass reuses the source adapter, worker, native saved-version API, existing shared analysis, and copied quit hook. The only lockfile change adds an application edge to the existing UUID dependency for editor-session identities. Native desktop event acceptance, Vim write commands, daily-page routing, live rescan refresh, global notebook ownership, and first-editable/release measurements remain parent work.
-Status: done
+Reopened for `rt` 0.9.57. `71b62cba83e3` changed two contracts this slice froze. In Quire notebooks the legacy store still saves at 450 ms idle, but no later than 2 s after the first unsaved edit during steady typing (`saveIdle` and `saveLatest` in `src/core/store.ts`); the native autosave has only the idle timer. Pages with competing heads, stale saves, and recovery based on older heads no longer stay read-only; they merge as NR11.4 describes. Add the 2 s ceiling here; the merge workflow is NR11.4.
+Status: in_progress
 
 ##### NR11.3.4: Route Vim writes through native page persistence
 
@@ -807,6 +838,16 @@ Final app testing passes all 145 tests (`/private/tmp/quire-vim-write-final-app-
 
 Sequential review checked parser reuse, unchanged workspace dispatch, exact typed write filtering, default/read-only rejection, command-target lifetime and stale async results, action focus routing, captured versus current saves, recovery-only versus local-save close criteria, deferred rechecks, and error visibility. The simplification pass adds typed host requests to the existing parser and close coordinator rather than adding another parser, workspace, or persistence stream. Native desktop acceptance remains open under NR11/NR33; daily-page routing, synchronization integration, global notebook ownership, and release measurements remain parent requirements.
 Status: done
+
+#### NR11.4: Merge incoming and stale edits into open pages
+
+What to do: When an imported revision reaches a page with unsaved edits, merge the edits made since the last saved text into the incoming text and keep autosaving. When a save's base is stale, save from the opened base, let NR09.4 merge, and show the merged text while keeping typing made during the save. At open, save each recovery draft whose base is known and whose page is still at its path, which merges it; keep other drafts for review. Saving to a page deleted elsewhere revives it; unchanged text saved from a deleted version stays deleted with an actionable message.
+Constraints: Apply a merge to the shared buffer as one edit that keeps selections anchored and undo usable. Never merge a draft with an unknown base, including drafts restored from a backup or migrated from `rt` 0.9.52 and older, whose `base_known` column is 0. Refuse only an unknown base revision or a path now held by another page. Folder notebooks keep their existing conflict behavior. Show the overlap warning naming the page.
+Write set: page persistence coordinator, notebook session import handling, native persistence tests.
+Dependencies: NR09.4, NR11.3.
+Verify: Port the `rt/tests/store-merge.test.ts` scenarios: merging while typing, a stale save merged while typing continues, kept-both lines with a warning, saves during steady typing, and a restored draft keeping its own base. Add native two-window and native-plus-reference-replica tests that edit one page at the same moment and end with one head and identical text.
+Proof notes: pending. Source: `rt` `71b62cba83e3` (`absorb` in `src/core/store.ts`; `save` and `settleDrafts` in `engine.ts`).
+Status: pending
 
 ### NR12: Serve indexed queries with a live overlay
 
@@ -827,6 +868,33 @@ Verify: Differential UTF-16 titles, valid native fast path, source preservation,
 Proof notes: Titles are extracted at a lossless UTF-16 boundary (`crates/quire_core/tests/lossless_titles.rs` against `tests/fixtures/markdown/lossless-title-vectors.json` from `tools/lossless-title-vectors.ts`). Schema 4 adds `revision_metadata`, maintained inside save, import, and coalescing transactions (`crates/quire_store/src/notebook/metadata.rs`). `crates/quire_store/tests/metadata.rs` covers body-free head reads with zeroed bodies, editor line-break titles without source rewrites, malformed numeric head columns, coalescing/conflict/tombstone ordering, raw UTF-16 import with rollback on failure, row and byte page limits with an oversized row progressing alone, corruption requiring rebuild, and `StorageClient::page_metadata`. Migration unit tests cover schema-3 upgrade with offline rollback, current-head-only backfill, failed-backfill retry, and corrupt-head abort; query-plan tests reject full `revisions` scans. Passing on 2026-10-30: `CARGO_HOME=/private/tmp/quire-cargo cargo clippy -p quire_core -p quire_store --locked --all-targets --no-deps -- -D warnings`, `CARGO_HOME=/private/tmp/quire-cargo cargo test -p quire -p quire_core -p quire_store --locked --features quire/test-support`, and `bun run test:reference` (57 tests). `cargo clippy -p quire` could not run on this host because the Metal Toolchain is missing (`xcodebuild -downloadComponent MetalToolchain`).
 Status: done
 
+#### NR12.2: Analyze stored heads into a rebuildable query index
+
+What to do: Analyze each current head with the same native block, reference, and tag code the editor uses, by building a detached Zed `BufferSnapshot` on the background executor. Store plain rows in a separate `query-index.sqlite` attached to the store connection, keyed by immutable revision ID and analyzer version. Serve block-identifier resolution, page lookup by name/title/date, backlinks, mentions, tagged blocks, and the tag catalogue with the reference's ordering and ambiguity rules. Report how many heads are not yet analyzed.
+Constraints: The index is a cache. It is never part of backups, rollback, or the authoritative schema; a missing, damaged, foreign-version, or analyzer-version-mismatched index is discarded and rebuilt without touching revisions. Queries join through current heads so rows for superseded revisions never surface; bounded garbage collection removes them. Parsing and SQLite stay off the UI thread. Analysis uses editor-normalized text, exactly as the reference analyzes `editorText`. Daily-date link ownership follows the configured daily layout; a layout change re-derives date keys without reparsing pages.
+Write set: `crates/quire/src/page_index*`, `crates/quire_store/src/index*`, worker APIs, frozen query fixtures from the pinned reference store, tests and README.
+Verify: Block/reference/tag rows from detached snapshots match the existing frozen vectors. Query results match a frozen reference oracle over a fixture notebook covering duplicate titles, name-versus-title precedence, date links, block references with `#^`, ambiguous and missing IDs, tag case/NFC folding, conflicts, and tombstones. Index deletion, corruption, and version bumps rebuild; superseded revisions never appear; query plans avoid full scans of revision bodies.
+Proof notes: pending. Rationale for a separate file: derived, parser-versioned data should not need authoritative schema migrations, checksummed rollback, or backup space, and a separate file can be deleted safely at any time.
+Status: in_progress
+
+#### NR12.3: Serve block full-text search from the index
+
+What to do: Add an FTS5 index over analyzed blocks and page titles matching the reference search: terms from `[\p{L}\p{N}_-]+`, prefix AND matching, bm25 ranking, 24-token snippets, 40 results, and a title row per page.
+Constraints: Maintain the FTS table in the same index transaction as its block rows. Short and Unicode queries must behave as in the reference; add trigram support only if it preserves those results.
+Write set: `crates/quire_store/src/index*`, worker API, frozen search fixtures, tests.
+Verify: Differential hits, order, and snippets against the reference `SearchIndex` over the fixture notebook; Unicode, single-character, hyphenated, and empty queries; query-plan and work-count checks at 1x and 5x notebook size.
+Proof notes: pending.
+Status: pending
+
+#### NR12.4: Overlay unsaved buffers on indexed queries
+
+What to do: Let open dirty buffers replace their page's committed contribution in every NR12.2/NR12.3 query, using the buffer's current native analysis. Expose a query generation that changes when committed heads, the index, or any overlay changes, so callers can discard stale pages of results.
+Constraints: Never count a page's committed and unsaved versions together. Pin overlay snapshots while a query runs; bound overlay memory to open buffers. Reject results computed against an older generation.
+Write set: live-overlay coordinator in `crates/quire`, query merge logic, tests.
+Verify: Differential results against the reference store with unsaved edits applied; deterministic invalidation and race tests (save during query, close dirty buffer, external import).
+Proof notes: pending. Task, template, and daily-date catalogues reuse this mechanism once NR18, NR20, and NR16 port their analyzers.
+Status: pending
+
 ### NR13: Open existing Markdown folder notebooks
 
 What to do: Add the folder adapter with ordinary files, watched external edits, revision checks, recoverable saves, history, and shared query indexing.
@@ -843,7 +911,7 @@ Gate B: Both backends must run the daily-page workflow. Format compatibility, re
 
 ### NR14: Port complete outline editing
 
-What to do: Implement Enter, indent/outdent, block movement/join, multi-line paste, numbered lists, folding, zoom, and corresponding Vim overrides.
+What to do: Implement Enter, indent/outdent, block movement/join, multi-line paste, numbered lists, folding, zoom, and corresponding Vim overrides. Backspace or Delete on an empty bullet with blocks after it, including a page's first bullet, removes it and lifts its children; a lone empty bullet stays (`957da33d4766`). On a task line, Home, `0`, and `^` reach the text, then the checkbox, and arrowing left from the checkbox reaches the line above (`35e673677291`). List conversion accepts an explicit bullet or numbered style.
 Constraints: Preserve descendants, IDs, caret placement, selection, and shared undo; retain ordinary paragraph behavior.
 Write set: notebook editor commands and structural-edit tests.
 Dependencies: NR11, NR10.
@@ -864,7 +932,7 @@ Status: pending
 ### NR16: Port navigation and daily layout
 
 What to do: Add physical files, logical pages/namespaces, daily browser, completion/search palette, split tabs, history, favorites, recents, and daily-layout settings.
-Constraints: Namespace navigation does not reorganize files. Workspace state is local and notebook-scoped; date/title matching follows current rules.
+Constraints: Namespace navigation does not reorganize files. Namespaces follow the `rt` 0.9.52 `namespaceOf` rule in parity row S20; refresh the frozen `workspace.ts` first. With Vim on, Insert-starting keys pressed while focus is outside a text field or dialog go to the last-used page editor, or the open page (`23287a0e2516`). Workspace state is local and notebook-scoped; date/title matching follows current rules.
 Write set: workspace/navigation views, daily/layout core, preference persistence.
 Dependencies: NR12, NR15.
 Verify: Native keyboard/mouse/tab/history tests plus daily-layout fixtures, duplicate dates, profile switches, restored reading position, and empty folders. Lists remain virtualized.
@@ -898,6 +966,15 @@ All 282 app/core/storage tests pass (145 app, 26 core, 111 storage; `/private/tm
 Final sequential review checked explicit timezone ownership, no ambient clock reads, compatible gap/fold normalization, numeric versus string constructor rules, midnight versus noon, maximum-year arithmetic, discovery/error boundaries, parser isolation, timestamp errors, and unchanged source/settings preservation. The simplification pass uses one existing date library for both civil arithmetic and timezone rules and adds no JavaScript runtime to the app. This completes the shared helper and injected-calendar slice. Indexed title lookup, guarded page creation, native daily navigation, unsupported native UTF-16 layout display, and full NR16 acceptance remain open.
 Status: done
 
+#### NR16.2: Port pointer menus and in-place rename
+
+What to do: Give Files, Recent, tabs, and the page one shared pointer menu, also opened with Shift-F10. File items offer Open, Open beside, Copy link, favorites, New note here, New folder here, Rename, Move to, Reveal in Finder or Explorer, and Delete page; Recent adds Remove from recent. Rename, also F2, edits the name in place: Enter or clicking away applies and Escape cancels. The page menu offers Cut, Copy, Paste, Select all, toggled inline marks on a selection (Bold with Command/Ctrl-B, Italic as `_`, Strikethrough, Code, Link to page), Bullet or Numbered list with the current style ticked, task actions, Copy block reference or embed, and Ask AI. A right-click outside the selection moves the caret first.
+Constraints: Menu actions call the commands owned by NR14, NR18, NR25, and NR28 rather than duplicating them. Mark toggling matches `toggleMark` in `src/editor/page-menu.ts` and applies as one undo step. Keyboard access and accessible names are required.
+Dependencies: NR14, NR18, NR25, NR28.
+Verify: Port `rt/tests/page-menu.test.ts`, the menu cases in `file-actions` and `tab-menu`, and the e2e editor menu scenarios to native pointer and keyboard tests.
+Proof notes: pending. Source: `rt` `35e673677291`.
+Status: pending
+
 ### NR17: Port tag pages and linked references
 
 What to do: Add normalized tag completion/index, grouped context, filters, reference ordering, task filters, and source navigation.
@@ -906,6 +983,22 @@ Write set: tag and linked-reference views, query contract tests.
 Dependencies: NR12, NR15, NR16.
 Verify: Port tag/tag-page/linked-reference scenarios; check unsaved edits, nested/Unicode tags, ancestor context, ordering, and rapid filter changes without stale results.
 Proof notes: pending.
+Status: pending
+
+#### NR17.1: Filter linked references
+
+What to do: Add the reference filter line with `#tag`, `[[Page]]`, `project:Name`, and word terms, each negatable with `-`. A reference matches when every term holds for its context: the referring block, its ancestors, its children, and its page, whose title counts as a link and whose front matter tags count as tags. Show chips for the most frequent tags, pages, and projects (click adds, Alt-click excludes) and an "N of M" count. Keep the filter per page for the session.
+Constraints: Evaluate over bounded indexed results with the live overlay; rapid filter edits cannot show stale results.
+Verify: Every case in `rt/tests/fixtures/reference-filters.json`, which the Go terminal app also runs, plus ports of the `reference-filter` and `linked-references-filter` tests.
+Proof notes: pending. Source: `rt` `42de3c8949e1` (`src/core/reference-filter.ts`).
+Status: pending
+
+#### NR17.2: Rename and delete tags in bulk
+
+What to do: Let Tags select several tags. Rename moves each chosen tag, and the tags nested under it, to a new name, merging into an existing tag; Delete removes only the chosen tags. Both rewrite blocks and front matter `tags`, preview every changed page, and apply as one change of at most 1,000 pages.
+Constraints: Leave tags inside code and links unchanged, preserve spacing and the three front matter forms, reject invalid names, and refuse a stale preview. Apply through the shared atomic multi-page edit path on both backends.
+Verify: Port `rt/tests/tag-edits.test.ts` and the notebook-browser rename case; test the 1,000-page bound and stale-preview refusal.
+Proof notes: pending. Source: `rt` `957da33d4766` (`src/core/tag-edits.ts`).
 Status: pending
 
 ### NR18: Port task semantics and dates
@@ -920,7 +1013,7 @@ Status: pending
 
 ### NR19: Build task and project workflows
 
-What to do: Add Due/Inbox/Next/Waiting/Someday/Projects/Done views, capture, selection, date controls, missing-next-action indicators, and keyboard task commands.
+What to do: Projects shows Active (at least one open action), Inactive, and All with counts and remembers the choice (`957da33d4766`). Add Due/Inbox/Next/Waiting/Someday/Projects/Done views, capture, selection, date controls, missing-next-action indicators, and keyboard task commands.
 Constraints: Source edits, card edits, embeds, and AI task writes share NR18 commands. Keep task capture drafts local until submitted.
 Write set: task/project views and editor action bindings.
 Dependencies: NR16, NR18.
@@ -928,14 +1021,23 @@ Verify: Native capture/triage/project flows, bulk updates, focus retention, save
 Proof notes: pending.
 Status: pending
 
-### NR20: Port templates and supported macro controls
+#### NR19.1: Render live task lists
 
-What to do: Add `jj` completion, template expansion, fresh referenced IDs, supported date/task/random/breadcrumb commands, and recognized Roam controls.
-Constraints: Unsupported commands fail before editing; imported JavaScript stays inert. Inject clock/randomness for deterministic tests.
-Write set: template/macro core, completion UI, expansion fixtures.
+What to do: Render a block holding only `{{tasks: QUERY}}` or `{{[[tasks]]: QUERY}}` as a live list of matching tasks that can be ticked in place; `{{tasks}}` means `here`. Support states (`inbox`, `next`, `waiting`, `someday`, `done`, `open`, `due`, `upcoming`, `all`, default `open`), `#tag`, `[[Page]]`, `here`, `project:Name`, words and quoted words with `-` negation, `by:page`, `by:project`, `by:state`, `sort:due`, and `limit:N` (default 50). Show a malformed query's error in place. On the Templates page, show the line as written.
+Constraints: Results come from indexed task queries with the live overlay. Ticking uses NR18 commands through the source page's shared buffer, and the query text stays unchanged.
+Dependencies: NR12, NR15, NR18.
+Verify: Every case in `rt/tests/fixtures/task-queries.json`, which the Go terminal app also runs, plus ports of `task-query` and the editor test that ticks a task through the list.
+Proof notes: pending. Source: `rt` `42de3c8949e1` (`src/core/task-query.ts`, `src/ui/TaskQueryEmbed.tsx`).
+Status: pending
+
+### NR20: Port the Templates page and placeholders
+
+What to do: Read templates only from `Templates.md` at the notebook root, opened from a pinned sidebar entry that creates it with the Meeting, Project, Person, and My Day starters. Each top-level block with indented children is a template named by its text. Add `jj` completion with narrowing, and expand `{cursor}`, `{today}`, `{date: phrase}` (today, tomorrow, yesterday, `+N`, `-N`, a weekday, or YYYY-MM-DD), `{time}`, `{weekday}`, `{page}`, `{ask: question}` (asked once per question), and `{pick: #tag}`. The picker lists names used before in blocks with that tag, newest first with use counts, narrows by fuzzy match, and offers a Create row. Show the guide with its fourteen examples and Add buttons outside the page text.
+Constraints: Copy every other brace form, including `{{tasks: ...}}` and `{{query: ...}}`, as written. Roam SmartBlock markers and commands are no longer read; imported JavaScript stays inert. Inserted blocks get fresh IDs with internal links following, the trigger block keeps its ID, and insertion is one undo step. An unknown placeholder, a dismissed question, or a changed template stops before editing. Inject the clock and picker input for deterministic tests.
+Write set: template core, Templates page and guide, `jj` and picker UI, expansion fixtures.
 Dependencies: NR15, NR18.
-Verify: Existing template fixtures compare text, IDs, references, and single-step undo; query-backed commands work with pages not currently loaded.
-Proof notes: pending.
+Verify: Port the `templates`, `templates-page`, `template-pick`, `fuzzy`, and editor `jj` tests: discovery only on the Templates page, every placeholder and date phrase, `pastNames` ranking, live lists copied, cancellation, fresh IDs, refusal of a changed template, starter and example expansion with no placeholder left, and `{pick}` working when the tagged pages are not loaded.
+Proof notes: pending. The source contract changed in `rt` `fc05bce17c2f` and `a153d8aa7ffb`; `plans/templates-page.md` supersedes `plans/roam-template-commands.md`. Template discovery no longer needs a notebook-wide tag index, only `Templates.md` and the tag-scoped `pastNames` query.
 Status: pending
 
 ### NR21: Add attachments and inline media
@@ -990,10 +1092,26 @@ Verify: Local multi-page atomicity, kill/restart at move steps, external changes
 Proof notes: pending.
 Status: pending
 
+#### NR25.1: Delete pages and folders
+
+What to do: Offer Delete for a page or folder with a dialog naming what goes, pages and other files, and how many links will stop resolving. Folder notebooks move the files to the system Trash. Quire notebooks record tombstones so every computer removes the page while its history stays, and forget the deleted folder and the empty folders inside it. Close tabs, favorites, and recent entries for deleted pages.
+Constraints: All or nothing: refuse with an actionable message when a page changed after the choice or a page appeared in the folder. No in-app restore, and no promise of history by path. Automated tests never fill the real Trash.
+Verify: Port the `vault` deletion cases, the `engine` case that deletes pages and folders on every computer including the peer's sync, and the `file-actions` dialog and link-count cases.
+Proof notes: pending. Source: `rt` `957da33d4766`; this replaces the earlier "no general delete UI" limitation.
+Status: pending
+
+#### NR25.2: Rename a page with its title
+
+What to do: Add Rename beside Move. Rename changes the file name and the page title together, rewrites every link to follow, and updates a front matter `title`; Move keeps preserving the title.
+Constraints: Reuse the journaled relocation path and its preview; keep IDs and history.
+Verify: Port the rename cases added to `rt/tests/relocate.test.ts` and the in-place rename e2e scenario.
+Proof notes: pending. Source: `rt` `35e673677291` (`planRelocation` with `rename`).
+Status: pending
+
 ### NR26: Implement verified backup and restore
 
 What to do: Add consistent staged snapshots, manifests/hashes, scheduling/listing, and restore into a new notebook identity. Include recovery, hidden metadata, archives, attachments, and folder journals.
-Constraints: No raw copy of a live SQLite file. Preserve unpublished work or fail explicitly; never claim a partial snapshot completed.
+Constraints: No raw copy of a live SQLite file. Preserve unpublished work or fail explicitly; never claim a partial snapshot completed. Restored recovery drafts carry an unknown base and are offered for review, never merged automatically (`rt` `71b62cba83e3`).
 Write set: backup/restore service, settings UI, snapshot fixtures.
 Dependencies: NR23, NR24, NR25.
 Verify: Restore both backends into fresh roots; compare content, heads/history, drafts, archives, attachments, and query results; inject damage/full-disk/interruption and retain older completed backups.
@@ -1045,7 +1163,7 @@ Status: pending
 ### NR31: Port AI-assisted PDF and Word export
 
 What to do: Flatten source with NR23, run the selected CLI in an isolated temporary export directory, validate the result, and offer save/cancel with progress.
-Constraints: Preserve current backend sandbox behavior and transcript privacy. Failures leave the notebook untouched and clean temporary files.
+Constraints: Preserve current backend sandbox behavior and transcript privacy. Failures leave the notebook untouched and clean temporary files. Remove the temporary export folder before reporting completion (`rt` `9cbf33a8b95e`).
 Write set: document-export runner/UI, artifact validation fixtures.
 Dependencies: NR23, NR28.
 Verify: Fake-runner failure/cancel/malformed-artifact tests plus actual PDF/DOCX export from a synthetic page; re-open outputs to confirm valid formats and retained content.
@@ -1054,7 +1172,7 @@ Status: pending
 
 ### NR32: Port preferences, help, and the showcase
 
-What to do: Add font/spacing/Vim/tag preferences, system/light/dark themes, offline help/shortcuts, and the isolated editable README sample with reset.
+What to do: Add font/spacing/Vim/tag preferences, system/light/dark themes, offline help/shortcuts, and the isolated editable README sample with reset. Tag tones cover 24 tags, adding #question, #doc, and #learning (`2e50ffbee508`). External links get a separate color, dotted underline, trailing arrow, and address tooltip, and bare URLs render as links outside the block being edited (`42de3c8949e1`).
 Constraints: Apply appearance before first draw; sample content never enters real queries/backups/exports. Respect reduced motion and accessible focus.
 Write set: preferences/theme/help/showcase modules and bundled assets.
 Dependencies: NR16, NR19, NR20, NR21, NR22, NR30.
@@ -1087,7 +1205,7 @@ Status: pending
 ### NR35: Package and verify native applications
 
 What to do: Build macOS/Windows packages and Linux artifacts with icons, fonts, grammars, PDF/formatter dependencies, CLI/MCP mode, and correct application identities.
-Constraints: No Zed/rt checkout or developer runtime at build/run acceptance. Keep development identity/data distinct until cutover; signing status must be explicit.
+Constraints: No Zed/rt checkout or developer runtime at build/run acceptance. Keep development identity/data distinct until cutover; signing status must be explicit. The Go terminal app installs a `quire` command and keeps data in `$XDG_DATA_HOME/quire` (default `~/.local/share/quire`); the native CLI/MCP executable and data root must not collide with either.
 Write set: packaging/CI configuration, manifests/notices, native acceptance harness.
 Dependencies: NR05, NR06, NR31, NR33, NR34.
 Verify: Clean isolated builds and install/open/update smoke checks; native input/IME/clipboard/accessibility, dialogs, scale factors, close saves, media, formatters, and terminal tools on each OS. Report unsigned/notarization status accurately.
@@ -1097,7 +1215,7 @@ Status: pending
 ### NR36: Demonstrate full-state migration and rollback
 
 What to do: Implement the documented transfer of old local-only saves/drafts, settings, and history to the native data root. Rehearse copied format 1 and folder-notebook adoption and rollback after new native edits.
-Constraints: Never reuse an old writer ID, delete source state, or imply Markdown export preserves all history. Require explicit conversion before changing storage mode.
+Constraints: Never reuse an old writer ID, delete source state, or imply Markdown export preserves all history. Legacy drafts whose `base_known` is 0 stay review-only. Stores from `rt` 0.9.49 and older can lack revisions their own change files hold; read those back from the published log, as `c3a036587871` does, instead of treating the store as complete. Require explicit conversion before changing storage mode.
 Write set: migration/recovery utilities, migration report and synthetic acceptance fixtures.
 Dependencies: NR24, NR25, NR26, NR27, NR35.
 Verify: Before/after manifests cover text, IDs, history, drafts, archives, attachments, and profile isolation. Interrupt migration, resume safely, then demonstrate return to the legacy app with post-cutover edits retained through a supported path.
