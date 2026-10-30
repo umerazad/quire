@@ -1,5 +1,6 @@
 use crate::notebook::{
-    Cursor, Draft, DraftStamp, Edit, NotebookStore, PendingPublication, PublicationAck, SaveAck,
+    BatchImport, Cursor, Draft, DraftStamp, Edit, NotebookStore, PendingPublication,
+    PublicationAck, SaveAck,
 };
 use crate::sync::json::Json;
 use anyhow::{Context as _, Result, anyhow, ensure};
@@ -338,5 +339,19 @@ impl StorageClient {
         self.request(128 + root.as_os_str().len(), move |store| {
             store.publish_to(&root, created)
         })
+    }
+    pub fn import_batch(
+        &self,
+        device: String,
+        name: String,
+        data: Vec<u8>,
+    ) -> std::result::Result<Reply<BatchImport>, QueueError> {
+        self.request(
+            256usize
+                .saturating_add(device.capacity())
+                .saturating_add(name.capacity())
+                .saturating_add(data.capacity()),
+            move |store| store.import_batch(&device, &name, &data),
+        )
     }
 }

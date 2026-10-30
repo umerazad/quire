@@ -282,7 +282,7 @@ impl NotebookStore {
                     .exec_bound("DELETE FROM revisions WHERE id=?")?(id.as_str())?;
             }
             let id = record.root().field("id").as_str().unwrap();
-            let changed = self.insert_revision(&record)?;
+            let changed = self.insert_revision(record.root())?;
             if changed {
                 self.connection
                     .exec_bound("INSERT INTO outbox(revision) VALUES (?)")?(id)?;
@@ -328,8 +328,7 @@ impl NotebookStore {
         })
     }
 
-    pub(super) fn insert_revision(&self, record: &Json) -> Result<bool> {
-        let value = record.root();
+    pub(super) fn insert_revision(&self, value: ValueRef<'_>) -> Result<bool> {
         format::validate_revision_ref(value)?;
         let id = value.field("id").as_str().unwrap();
         if self.get(id)?.is_some() {
@@ -358,7 +357,7 @@ impl NotebookStore {
             value.field("generation").as_f64() == Some(generation as f64),
             "A revision has an incorrect generation. Preserve the change file and retry reconciliation."
         );
-        let text = record.canonical()?;
+        let text = value.canonical()?;
         let (hash, body) = pack(text.as_bytes())?;
         let path = value.field("path");
         let path_key = path

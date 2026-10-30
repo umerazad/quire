@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { encodeBatch, revisionId } from "../tests/reference/sync/format.ts";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 execFileSync("cargo", ["build", "-p", "quire_store", "--example", "storage_crash", "--locked"], { cwd: root, stdio: "inherit" });
@@ -98,7 +99,18 @@ try {
   assert.deepEqual(state.outbox, []);
   assert.notEqual(afterPublication.id, latest.id);
   assert(readFileSync(log).length > 0);
-  console.log("Storage crash checks passed: attachment/save/recovery acknowledgments, frozen publication, interrupted transaction, and folder publication/reopen.");
+  const fields = { page: "p-process", parents: [], generation: 0, path: "Crash.md", deleted: false, text: "peer update مرحبا 🙂" };
+  const revision = { ...fields, id: revisionId(fields), created: 99, device: "peer-crash" };
+  const incoming = encodeBatch({ notebook: "nb-crash", device: "peer-crash", seq: 1, previous: null, created: 99, revisions: [revision], attachments: [] });
+  const incomingFile = join(folder, incoming.name);
+  writeFileSync(incomingFile, incoming.data);
+  const imported = await killAfterAck("import", "1", incomingFile);
+  state = inspect();
+  assert.equal(imported.applied, 1);
+  assert.deepEqual(state.peerCursor, { seq: imported.seq, hash: imported.hash });
+  assert.deepEqual(new Map(state.versions.map((version: { id: string; text: string }) => [version.id, version.text])), new Map([[afterPublication.id, "after folder acknowledgment"], [revision.id, fields.text]]));
+  assert.deepEqual(state.outbox, []);
+  console.log("Storage crash checks passed: attachment/save/recovery, frozen publication, interrupted transaction, folder publication/reopen, and atomic peer import.");
 } finally {
   rmSync(folder, { recursive: true, force: true });
 }

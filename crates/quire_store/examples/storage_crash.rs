@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result, bail};
 use quire_store::{
     database::open_writable,
-    notebook::{Draft, DraftStamp, Edit, NotebookStore},
+    notebook::{BatchImport, Draft, DraftStamp, Edit, NotebookStore},
 };
 use serde_json::json;
 use std::{
@@ -12,7 +12,7 @@ use std::{
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let mode = args.get(1).context(
-        "Specify attach, save, draft, select, publish, interrupt, or inspect and a database path.",
+        "Specify attach, save, draft, select, publish, import, interrupt, or inspect and a database path.",
     )?;
     let path = Path::new(
         args.get(2)
@@ -81,6 +81,19 @@ fn main() -> Result<()> {
                 .context("No revision to publish.")?;
             json!({"mode":mode,"name":published.name,"seq":published.cursor.seq,"hash":published.cursor.hash})
         }
+        "import" => {
+            let file = Path::new(&text);
+            let name = file
+                .file_name()
+                .and_then(|name| name.to_str())
+                .context("Specify the incoming batch file as the final argument.")?;
+            let BatchImport::Applied(imported) =
+                store.import_batch("peer-crash", name, &std::fs::read(file)?)?
+            else {
+                bail!("The crash probe's incoming batch did not apply.");
+            };
+            json!({"mode":mode,"seq":imported.cursor.seq,"hash":imported.cursor.hash,"applied":imported.applied})
+        }
         "interrupt" => {
             let connection = open_writable(path)?;
             connection.exec("BEGIN IMMEDIATE")?()?;
@@ -105,14 +118,22 @@ fn main() -> Result<()> {
                 })
                 .transpose()?
                 .flatten();
+            let versions = store
+                .heads(page)?
+                .into_iter()
+                .map(|id| -> Result<_> {
+                    let record = store.get(&id)?.context("An imported head is missing.")?;
+                    Ok(json!({"id":id,"text":record.root().field("text").as_str()}))
+                })
+                .collect::<Result<Vec<_>>>()?;
             println!(
                 "{}",
-                json!({"text":text,"draft":store.draft(page)?,"outbox":store.outbox()?,"pending":store.pending_publication()?.map(|pending| pending.name),"cursor":store.cursor(store.device_id())?})
+                json!({"text":text,"versions":versions,"draft":store.draft(page)?,"outbox":store.outbox()?,"pending":store.pending_publication()?.map(|pending| pending.name),"cursor":store.cursor(store.device_id())?,"peerCursor":store.cursor("peer-crash")?})
             );
             return Ok(());
         }
         _ => bail!(
-            "Unknown crash probe mode. Use attach, save, draft, select, publish, interrupt, or inspect."
+            "Unknown crash probe mode. Use attach, save, draft, select, publish, import, interrupt, or inspect."
         ),
     };
     println!("{ready}");

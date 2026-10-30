@@ -10,10 +10,12 @@ use std::{
 };
 
 mod attachment;
+mod import;
 mod publication;
 mod publisher;
 mod recovery;
 mod revision;
+pub use import::{BatchImport, ImportedBatch, ImportedPage};
 pub use publication::PendingPublication;
 pub use publisher::PublicationAck;
 pub use recovery::{Draft, DraftStamp};
