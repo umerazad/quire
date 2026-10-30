@@ -16,6 +16,18 @@
     "Node/Vitest must run the codec tests; Bun zstd truncation diagnostics differ.",
     "Markdown and RangeSet are copied unchanged; the development oracle pins Lezer and emits normalized editor text with UTF-16 offsets."
   ],
+  "schedule_harness": {
+    "repository": "rt",
+    "revision": "4985e4080d2302b2abb416f2db7fa390080786c8",
+    "source": "tests/sync/harness.ts",
+    "sha256": "7103ecc3abe4761d7629b587b135c4653d09f58f67eedbb404b120f3c65cf6d6",
+    "destination": "../sync/harness.ts",
+    "adaptations": [
+      "Imports use the existing frozen protocol, graph, and replica snapshot.",
+      "Engine/store interfaces contain only methods the scheduler uses; TypeScript backing stores retain the full mutation interface.",
+      "The ancestry traversal is copied unchanged from the frozen graph with a read-only get interface."
+    ]
+  },
   "markdown_dependencies": {
     "@lezer/common": "1.5.4",
     "@lezer/markdown": "1.8.1"
