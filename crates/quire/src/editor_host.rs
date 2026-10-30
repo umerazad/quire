@@ -98,6 +98,20 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     crate::editor_search::bind_keys(cx);
     crate::editor_command::bind_keys(cx);
     stored::bind_keys(cx);
+    crate::navigation::bind_keys(cx);
+    if !cx.has_global::<db::AppDatabase>() {
+        let name = format!("quire-interface-{}", uuid::Uuid::new_v4());
+        let connection = futures::executor::block_on(
+            db::sqlez::thread_safe_connection::ThreadSafeConnection::builder::<db::AppMigrator>(
+                &name, false,
+            )
+            .build(),
+        )
+        .map_err(|error| {
+            format!("Cannot prepare Quire's interface state: {error:#}. Restart Quire; if this repeats, reinstall it.")
+        })?;
+        cx.set_global(db::AppDatabase(connection));
+    }
     cx.bind_keys([KeyBinding::new(
         if cfg!(target_os = "macos") {
             "cmd-shift-m"

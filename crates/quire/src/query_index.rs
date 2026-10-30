@@ -35,13 +35,19 @@ struct Tracked {
     _subscriptions: Vec<Subscription>,
 }
 
-/// The standard daily layout until notebook settings reach the app (NR16).
-pub fn default_config(calendar: DailyCalendar) -> IndexConfig {
+/// The index configuration for a notebook's daily layout, read from its settings page.
+pub fn config(layout: DailyLayout, calendar: DailyCalendar) -> IndexConfig {
     IndexConfig {
         analyzer: ANALYZER_VERSION,
-        layout: DailyLayout::default(),
+        layout,
         calendar,
     }
+}
+
+/// The standard daily layout, for notebooks without settings.
+#[cfg(test)]
+pub fn default_config(calendar: DailyCalendar) -> IndexConfig {
+    config(DailyLayout::default(), calendar)
 }
 
 fn describe(error: impl std::fmt::Display) -> String {
@@ -131,7 +137,6 @@ impl IndexSync {
         }
     }
 
-    #[cfg(test)]
     pub fn client(&self) -> &IndexClient {
         &self.client
     }

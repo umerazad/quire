@@ -94,7 +94,7 @@ async fn preview(
             retag,
             notebook.session.open_pages(),
             notebook.index.clone(),
-            notebook.session.client().clone(),
+            notebook.session.storage(),
             cx,
         )
     });
@@ -106,7 +106,7 @@ async fn run(
     plan: TagEditPlan,
     cx: &mut TestAppContext,
 ) -> Result<usize, String> {
-    let work = cx.update(|cx| apply(plan, notebook.session.client().clone(), cx));
+    let work = cx.update(|cx| apply(plan, notebook.session.storage(), cx));
     let result = work.await;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {

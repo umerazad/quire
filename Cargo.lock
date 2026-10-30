@@ -11339,6 +11339,7 @@ name = "quire"
 version = "0.1.0"
 dependencies = [
  "assets",
+ "db",
  "editor",
  "futures 0.3.34",
  "gpui",
@@ -11346,7 +11347,9 @@ dependencies = [
  "grammars",
  "http_client",
  "language",
+ "menu",
  "multi_buffer",
+ "picker",
  "quire_core",
  "quire_store",
  "release_channel",

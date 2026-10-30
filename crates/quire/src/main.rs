@@ -27,6 +27,9 @@ mod query_index;
 mod notebook_session;
 
 #[cfg(feature = "full-editor")]
+mod navigation;
+
+#[cfg(feature = "full-editor")]
 mod stored_source;
 
 #[cfg(all(feature = "full-editor", test))]

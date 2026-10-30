@@ -1,7 +1,7 @@
 use super::*;
 use crate::editor_command::{SaveAndClosePage, SavePage};
 use crate::notebook_session::{NotebookSession, OpenPage};
-use crate::query_index::{IndexSync, default_config};
+use crate::query_index::IndexSync;
 use quire_core::daily::DailyCalendar;
 use std::{
     cell::{Cell, RefCell},
@@ -10,6 +10,8 @@ use std::{
     rc::Rc,
 };
 use theme::ActiveTheme;
+
+mod navigation;
 
 pub(super) fn bind_keys(cx: &mut App) {
     cx.bind_keys([KeyBinding::new(
@@ -96,6 +98,7 @@ impl OpenOptions {
 
     pub fn open(self, cx: &mut App) -> Result<(), String> {
         let database = self.database.clone();
+        let notebook = self.notebook.clone();
         let mut session = NotebookSession::open(self.database, self.notebook, self.writer)?;
         let page = session.open_page(self.page, cx);
         let options = gpui::WindowOptions {
@@ -108,7 +111,7 @@ impl OpenOptions {
         };
         cx.open_window(options, move |window, cx| {
             window.set_window_title("Quire Native");
-            cx.new(|cx| StoredWindow::new(session, page, database, window, cx))
+            cx.new(|cx| StoredWindow::new(session, page, database, notebook, window, cx))
         }).map_err(|error| format!("Cannot open Quire's window: {error}. Check desktop and graphics access, then retry."))?;
         cx.activate(true);
         Ok(())
@@ -125,6 +128,7 @@ struct StoredWindow {
     copy_task: Option<gpui::Task<()>>,
     copy_error: Option<gpui::SharedString>,
     index: Result<Entity<IndexSync>, gpui::SharedString>,
+    nav: navigation::Navigation,
 }
 
 impl StoredWindow {
@@ -132,6 +136,7 @@ impl StoredWindow {
         session: NotebookSession,
         page: Entity<OpenPage>,
         database: std::path::PathBuf,
+        notebook: String,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> Self {
@@ -147,28 +152,15 @@ impl StoredWindow {
             let closing = closing.clone();
             move |_, cx| allow_close(session.clone(), closing.clone(), CloseIntent::Window, cx)
         });
-        for observed in session.borrow().open_pages() {
-            cx.observe_in(&observed, window, |this, _, window, cx| {
-                this.attach_editor(window, cx);
-                this.finish_close(window, cx);
-                cx.notify();
-            })
-            .detach();
-        }
         session.borrow().enable_editing(cx);
-        let index = DailyCalendar::system()
-            .map_err(|error| format!("Cannot read the system time zone for daily pages: {error}. Set a valid time zone and reopen the notebook."))
-            .and_then(|calendar| IndexSync::spawn(database, default_config(calendar), cx))
-            .map_err(gpui::SharedString::from);
-        if let Ok(index) = &index {
-            cx.observe(index, |_, _, cx| cx.notify()).detach();
-            let pages = session.borrow().open_pages();
-            index.update(cx, |index, cx| {
-                for page in pages {
-                    index.track(page, cx);
-                }
-            });
-        }
+        let calendar = DailyCalendar::system()
+            .map_err(|error| gpui::SharedString::from(format!("Cannot read the system time zone for daily pages: {error}. Set a valid time zone and reopen the notebook.")));
+        let index = match &calendar {
+            Ok(_) => Err("Reading notebook settings…".into()),
+            Err(error) => Err(error.clone()),
+        };
+        let nav = navigation::Navigation::new(&database, &notebook, calendar.ok());
+        let id = page.read(cx).id().to_owned();
         let mut this = Self {
             session,
             closing,
@@ -179,8 +171,17 @@ impl StoredWindow {
             copy_task: None,
             copy_error: None,
             index,
+            nav,
         };
-        this.attach_editor(window, cx);
+        let pages = this.session.borrow().open_pages();
+        for observed in pages {
+            this.watch(&observed, window, cx);
+        }
+        this.visit(quire_core::workspace::Destination::page(id), window, cx);
+        if let Some(side) = this.nav.workspace.side.clone() {
+            this.place_beside(side, false, window, cx);
+        }
+        this.load_settings(cx);
         this
     }
 
@@ -194,27 +195,30 @@ impl StoredWindow {
         }
     }
 
-    fn attach_editor(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
-        if self.editor.is_some() {
-            return;
+    /// The editor for a loaded page, built once per page and kept while the window lives.
+    fn editor_for(
+        &mut self,
+        page: &Entity<OpenPage>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> Option<Entity<NotebookWindow>> {
+        if let Some(editor) = self.cached_editor(page) {
+            return Some(editor);
         }
-        let Some(page) = self.page.read(cx).loaded() else {
-            return;
-        };
-        let analysis = page.analysis.clone();
-        let title = page.path.as_deref().unwrap_or("Unsaved page");
-        window.set_window_title(&format!("{title} · Quire Native"));
+        let loaded = page.read(cx).loaded()?;
+        let analysis = loaded.analysis.clone();
         eprintln!(
             "Quire page buffer ready: {} checkout revision bodies, {} source bytes, {} heads, recovery={}, deleted={}, {:.1} ms to buffer ready.",
-            page.loaded_revision_bodies,
-            page.source.original_len(),
-            page.heads.len(),
-            page.recovered,
-            page.deleted,
-            page.load_time.as_secs_f64() * 1000.
+            loaded.loaded_revision_bodies,
+            loaded.source.original_len(),
+            loaded.heads.len(),
+            loaded.recovered,
+            loaded.deleted,
+            loaded.load_time.as_secs_f64() * 1000.
         );
-        let writes_enabled = page.persistence.is_some();
-        self.editor = Some(cx.new(|cx| {
+        let writes_enabled = loaded.persistence.is_some();
+        let previous = window.focused(cx);
+        let editor = cx.new(|cx| {
             let editor = NotebookWindow::for_page(analysis, None, window, cx);
             if writes_enabled {
                 editor
@@ -222,7 +226,27 @@ impl StoredWindow {
                     .update(cx, |commands, _| commands.enable_writes());
             }
             editor
-        }));
+        });
+        if let Some(previous) = previous {
+            window.focus(&previous, cx);
+        }
+        self.cache_editor(page, editor.clone());
+        Some(editor)
+    }
+
+    fn attach_editor(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        self.attach_side(window, cx);
+        if self.editor.is_some() {
+            return;
+        }
+        let page = self.page.clone();
+        self.editor = self.editor_for(&page, window, cx);
+        if self.editor.is_some() {
+            self.update_title(window, cx);
+            if self.nav.palette.is_none() {
+                self.focus_active(window, cx);
+            }
+        }
     }
 
     fn save_page(&mut self, cx: &mut gpui::Context<Self>) {
@@ -315,8 +339,9 @@ impl StoredWindow {
 }
 
 impl Render for StoredWindow {
-    fn render(&mut self, _: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let page = self.page.read(cx);
+        let loading = page.is_loading();
         let header = gpui::div()
             .p_2()
             .flex()
@@ -351,14 +376,14 @@ impl Render for StoredWindow {
                     )),
                 )
             });
-        gpui::div()
+        let root = gpui::div()
             .size_full()
-            .on_action(cx.listener(|this, _: &SavePage, _, cx| this.save_page(cx)))
-            .on_action(
-                cx.listener(|this, _: &SaveAndClosePage, window, cx| {
-                    this.save_and_close(window, cx)
-                }),
-            )
+            .relative()
+            .on_action(cx.listener(|this, _: &SavePage, window, cx| this.save_focused(window, cx)))
+            .on_action(cx.listener(|this, _: &SaveAndClosePage, window, cx| {
+                this.save_and_close(window, cx)
+            }));
+        Self::register_navigation(root, cx)
             .flex()
             .flex_col()
             .bg(cx.theme().colors().editor_background)
@@ -372,11 +397,25 @@ impl Render for StoredWindow {
             .when_some(self.index_status(cx), |div, error| {
                 div.child(gpui::div().p_2().child(error))
             })
-            .when(page.is_loading(), |div| {
+            .when_some(self.nav.error.clone(), |div, error| {
+                div.child(gpui::div().p_2().child(error))
+            })
+            .when(loading, |div| {
                 div.child(gpui::div().p_2().child("Opening notebook storage…"))
             })
-            .when_some(self.editor.clone(), |div, editor| {
-                div.child(gpui::div().flex_1().min_h_0().child(editor))
+            .child(self.render_body(window, cx))
+            .when_some(self.nav.palette.clone(), |div, palette| {
+                div.child(
+                    gpui::div()
+                        .absolute()
+                        .top_16()
+                        .left_0()
+                        .right_0()
+                        .flex()
+                        .justify_center()
+                        .occlude()
+                        .child(palette),
+                )
             })
     }
 }
@@ -413,7 +452,7 @@ mod tests {
         let mut session = NotebookSession::open(path.clone(), "nb".into(), "local".into()).unwrap();
         let page = cx.update(|cx| session.open_page("p".into(), cx));
         let window = cx.add_window(|window, cx| {
-            StoredWindow::new(session, page.clone(), path.clone(), window, cx)
+            StoredWindow::new(session, page.clone(), path.clone(), "nb".into(), window, cx)
         });
         crate::notebook_session::tests::wait(&page, cx);
         cx.executor().run_until_parked();
@@ -884,7 +923,7 @@ mod tests {
         let mut session = NotebookSession::open(path.clone(), "nb".into(), "local".into()).unwrap();
         let page = cx.update(|cx| session.open_page("p".into(), cx));
         let window = cx.add_window(|window, cx| {
-            StoredWindow::new(session, page.clone(), path.clone(), window, cx)
+            StoredWindow::new(session, page.clone(), path.clone(), "nb".into(), window, cx)
         });
         crate::notebook_session::tests::wait(&page, cx);
         cx.executor().run_until_parked();
