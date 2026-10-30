@@ -3,6 +3,8 @@ use std::ops::Range;
 
 pub struct Link {
     pub range: Range<usize>,
+    pub label_range: Range<usize>,
+    pub block_range: Range<usize>,
     pub label: String,
     pub url: String,
     pub source: String,
@@ -37,14 +39,16 @@ pub fn links(
                 continue;
             }
             let range = node.byte_range();
-            let block = blocks.get(blocks.partition_point(|block| block.content_to <= range.start));
-            if !block.is_some_and(|block| {
-                block.kind != "code"
-                    && block.content_from <= range.start
-                    && range.end <= block.content_to
-            }) {
+            let Some(block) = blocks
+                .get(blocks.partition_point(|block| block.content_to <= range.start))
+                .filter(|block| {
+                    block.kind != "code"
+                        && block.content_from <= range.start
+                        && range.end <= block.content_to
+                })
+            else {
                 continue;
-            }
+            };
             let mut ancestor = primary.descendant_for_byte_range(range.start, range.end);
             let mut code = false;
             while let Some(node) = ancestor {
@@ -69,7 +73,8 @@ pub fn links(
             if label.named_child_count() != 0 || destination.named_child_count() != 0 {
                 continue;
             }
-            let label: String = snapshot.text_for_range(label.byte_range()).collect();
+            let label_range = label.byte_range();
+            let label: String = snapshot.text_for_range(label_range.clone()).collect();
             if label.is_empty() || label.contains(['\n', '\r']) {
                 continue;
             }
@@ -87,6 +92,8 @@ pub fn links(
             links.push(Link {
                 source: snapshot.text_for_range(range.clone()).collect(),
                 range,
+                label_range,
+                block_range: block.from..block.content_to,
                 label,
                 url: url.to_owned(),
             });

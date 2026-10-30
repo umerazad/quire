@@ -1407,10 +1407,31 @@ impl EditorElement {
             .iter()
             .map(|(key, overlays)| (*key, overlays.clone()))
             .collect::<Vec<_>>();
-        if overlay_sets.is_empty() {
+        let map = &snapshot.display_snapshot;
+        let start = map.clip_point(
+            DisplayPoint::new(visible_display_row_range.start, 0),
+            Bias::Left,
+        );
+        let end = map.clip_point(
+            DisplayPoint::new(visible_display_row_range.end, 0),
+            Bias::Right,
+        );
+        let visible_source_range =
+            start.to_offset(map, Bias::Left)..end.to_offset(map, Bias::Right);
+        let mut text_regions: Vec<_> = self
+            .editor
+            .read(cx)
+            .addons
+            .values()
+            .flat_map(|addon| {
+                addon.text_regions(&self.editor, visible_source_range.clone(), window, cx)
+            })
+            .collect();
+        if overlay_sets.is_empty() && text_regions.is_empty() {
             return Vec::new();
         }
         overlay_sets.sort_by_key(|(key, _)| *key);
+        text_regions.sort_by(|a, b| a.range.start.cmp(&b.range.start, map.buffer_snapshot()));
 
         let layout_context = NavigationOverlayLayoutContext {
             display_snapshot: &snapshot.display_snapshot,
@@ -1437,6 +1458,77 @@ impl EditorElement {
                     &mut navigation_overlay_paint_commands,
                 );
             }
+        }
+
+        for region in text_regions {
+            let source_range = region.range.start.to_offset(map.buffer_snapshot())
+                ..region.range.end.to_offset(map.buffer_snapshot());
+            let mut fragments = Vec::new();
+            for range in map.isomorphic_display_point_ranges_for_buffer_range(source_range) {
+                let end_row = if range.end.column() == 0 {
+                    range.end.row()
+                } else {
+                    range.end.row().next_row()
+                };
+                let rows = range.start.row().max(visible_display_row_range.start)
+                    ..end_row.min(visible_display_row_range.end);
+                for row in rows.iter_rows() {
+                    let Some(line) =
+                        line_layouts.get(row.minus(visible_display_row_range.start) as usize)
+                    else {
+                        continue;
+                    };
+                    let alignment = line
+                        .alignment_offset(layout_context.text_align, layout_context.content_width);
+                    let start_x = if row == range.start.row() {
+                        line.x_for_index(range.start.column() as usize)
+                    } else {
+                        px(0.)
+                    };
+                    let end_x = if row == range.end.row() {
+                        line.x_for_index(range.end.column() as usize)
+                    } else {
+                        line.width
+                    };
+                    let y: Pixels = ((row.as_f64() - scroll_position.y)
+                        * ScrollPixelOffset::from(line_height))
+                    .into();
+                    let origin = content_origin
+                        + point(
+                            start_x.min(end_x) + alignment - Pixels::from(scroll_pixel_position.x),
+                            y,
+                        );
+                    let bounds = Bounds::new(
+                        origin,
+                        size(start_x.max(end_x) - start_x.min(end_x), line_height),
+                    )
+                    .intersect(&text_hitbox.bounds);
+                    if bounds.size.width > px(0.) && bounds.size.height > px(0.) {
+                        fragments.push(bounds);
+                    }
+                }
+            }
+            let Some(bounds) = fragments.iter().copied().reduce(|a, b| a.union(&b)) else {
+                continue;
+            };
+            let mut element = (region.render)(&crate::TextRegionLayout { bounds, fragments }, cx);
+            window.with_element_namespace("navigation_overlays", |window| {
+                element.prepaint_as_root(
+                    bounds.origin,
+                    size(
+                        AvailableSpace::Definite(bounds.size.width),
+                        AvailableSpace::Definite(bounds.size.height),
+                    ),
+                    window,
+                    cx,
+                )
+            });
+            navigation_overlay_paint_commands.push(NavigationOverlayPaintCommand::Label(
+                NavigationLabelLayout {
+                    element,
+                    origin: bounds.origin,
+                },
+            ));
         }
 
         navigation_overlay_paint_commands
@@ -12722,6 +12814,88 @@ mod tests {
             narrow_label_origin.x < wide_label_origin.x,
             "expected inline label to recompute its horizontal position for the wrapped row"
         );
+    }
+
+    #[gpui::test]
+    fn test_text_regions_follow_native_wrapping_and_clip_without_changing_text(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+        struct RegionProbe {
+            range: Range<crate::Anchor>,
+            layouts: Arc<std::sync::Mutex<Vec<(Bounds<Pixels>, usize)>>>,
+        }
+        impl crate::Addon for RegionProbe {
+            fn to_any(&self) -> &dyn std::any::Any {
+                self
+            }
+            fn text_regions(
+                &self,
+                _: &Entity<Editor>,
+                _: Range<crate::MultiBufferOffset>,
+                _: &Window,
+                _: &App,
+            ) -> Vec<crate::TextRegion> {
+                let layouts = self.layouts.clone();
+                vec![crate::TextRegion {
+                    range: self.range.clone(),
+                    render: Arc::new(move |layout, _| {
+                        layouts
+                            .lock()
+                            .unwrap()
+                            .push((layout.bounds, layout.fragments.len()));
+                        div().id("text-region-probe").size_full().into_any_element()
+                    }),
+                }]
+            }
+        }
+        let text = "native text region wraps ".repeat(10);
+        let layouts = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple(&text, cx);
+            let snapshot = buffer.read(cx).snapshot(cx);
+            let range = snapshot.anchor_before(crate::MultiBufferOffset(0))
+                ..snapshot.anchor_after(snapshot.len());
+            let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+            editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
+            editor.register_addon(RegionProbe {
+                range,
+                layouts: layouts.clone(),
+            });
+            editor
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let editor = window.root(cx).unwrap();
+        cx.simulate_resize(size(px(520.), px(260.)));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let wide_layout = *layouts.lock().unwrap().last().unwrap();
+        cx.simulate_resize(size(px(140.), px(260.)));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let narrow_layout = *layouts.lock().unwrap().last().unwrap();
+        assert!(
+            narrow_layout.1 > wide_layout.1,
+            "narrow text must create more wrapped fragments: wide={wide_layout:?}, narrow={narrow_layout:?}"
+        );
+        for (width, (bounds, _)) in [(px(520.), wide_layout), (px(140.), narrow_layout)] {
+            assert!(bounds.left() >= px(0.) && bounds.right() <= width);
+            assert!(bounds.top() >= px(0.) && bounds.bottom() <= px(260.));
+        }
+        editor.update(cx, |editor, cx| {
+            editor.unregister_addon::<RegionProbe>();
+            cx.notify();
+        });
+        let rendered = layouts.lock().unwrap().len();
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        assert_eq!(layouts.lock().unwrap().len(), rendered);
+        assert_eq!(editor.read_with(cx, |editor, cx| editor.text(cx)), text);
     }
 
     #[gpui::test]

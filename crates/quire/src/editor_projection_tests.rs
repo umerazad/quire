@@ -39,6 +39,15 @@ fn activate_focused_control(
     cx.executor().run_until_parked();
 }
 
+fn resize_and_draw(window: gpui::WindowHandle<NotebookWindow>, cx: &mut TestAppContext) {
+    cx.simulate_window_resize(window.into(), gpui::size(gpui::px(360.), gpui::px(600.)));
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+        .unwrap();
+    cx.executor().run_until_parked();
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+        .unwrap();
+}
+
 #[gpui::test]
 fn task_checkbox_edits_the_shared_marker_and_undoes_from_source(cx: &mut TestAppContext) {
     cx.update(|cx| init(cx).expect("editor initialization"));
@@ -104,7 +113,7 @@ fn rendered_web_link_opens_its_url_without_editing_source(cx: &mut TestAppContex
                     .snapshot(window, cx)
                     .display_snapshot
                     .text()),
-                "⋯\n"
+                "مرحبا🙂\n"
             );
         })
         .unwrap();
@@ -255,7 +264,7 @@ fn link_excerpts_track_source_edits_and_leave_cut_links_as_source(cx: &mut TestA
                 .snapshot(window, cx)
                 .display_snapshot
                 .text()),
-            "⋯"
+            "Inside"
         );
         assert_eq!(
             view.source.read(cx).text(cx),
@@ -321,6 +330,254 @@ fn long_web_link_supports_keyboard_activation_without_editing(cx: &mut TestAppCo
     window
         .update(cx, |view, _, cx| {
             assert_eq!(view.source.read(cx).text(cx), text)
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn rendered_link_labels_wrap_inside_the_editor_viewport(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).unwrap());
+    for (label, key) in [
+        ("مرحبا🙂 alpha beta gamma ".repeat(16), "enter"),
+        (format!("{}🙂", "a".repeat(512)), "space"),
+    ] {
+        let text = format!("- [{label}](https://example.com/long) ^id\n");
+        let window = cx.add_window(|window, cx| {
+            let view = NotebookWindow::new(&text, window, cx);
+            crate::editor_projection::bind(&view.second, window, cx).unwrap();
+            view.second.update(cx, |editor, cx| {
+                editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx)
+            });
+            view
+        });
+        cx.executor().run_until_parked();
+        resize_and_draw(window, cx);
+        let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+        let bounds = visual
+            .debug_bounds("quire-web-link")
+            .expect("rendered link");
+        assert!(
+            bounds.right() <= gpui::px(360.),
+            "link overflows the window: {bounds:?}"
+        );
+        assert!(
+            bounds.size.height > gpui::px(40.),
+            "link should span multiple wrapped rows: {bounds:?}"
+        );
+        let fragment = visual
+            .debug_bounds(if key == "enter" {
+                "quire-web-link-first-fragment"
+            } else {
+                "quire-web-link-last-fragment"
+            })
+            .unwrap();
+        visual.simulate_click(fragment.center(), Default::default());
+        assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/long"));
+        let keyboard_url = format!("https://example.com/{key}");
+        window
+            .update(cx, |view, _, cx| {
+                let source = view
+                    .source
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .unwrap();
+                let start = text.find("https://example.com/long").unwrap();
+                source.update(cx, |source, cx| {
+                    source.edit(
+                        [(
+                            start..start + "https://example.com/long".len(),
+                            keyboard_url.as_str(),
+                        )],
+                        None,
+                        cx,
+                    )
+                });
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        window
+            .update(cx, |_, window, cx| {
+                window.blur(cx);
+                for _ in 0..3 {
+                    window.focus_next(cx);
+                }
+            })
+            .unwrap();
+        activate_focused_control(window, key, cx);
+        assert_eq!(cx.opened_url().as_deref(), Some(keyboard_url.as_str()));
+        window
+            .update(cx, |view, _, cx| {
+                assert_eq!(
+                    view.source.read(cx).text(cx),
+                    text.replace("https://example.com/long", &keyboard_url)
+                )
+            })
+            .unwrap();
+    }
+}
+
+#[gpui::test]
+fn focused_link_editing_and_copying_use_the_original_source(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).unwrap());
+    super::search_tests::set_vim_mode(cx, false);
+    let text = "- [مرحبا🙂 link](https://example.com) ^id\n";
+    let window = cx.add_window(|window, cx| {
+        let view = NotebookWindow::new(text, window, cx);
+        crate::editor_projection::bind(&view.second, window, cx).unwrap();
+        window.focus(&view.second.focus_handle(cx), cx);
+        view
+    });
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                "[مرحبا🙂 link](https://example.com)\n"
+            );
+            view.second.update(cx, |editor, cx| {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_ranges([MultiBufferOffset(3)..MultiBufferOffset(3 + "مر".len())])
+                })
+            });
+        })
+        .unwrap();
+    cx.simulate_keystrokes(
+        window.into(),
+        if cfg!(target_os = "macos") {
+            "cmd-c"
+        } else {
+            "ctrl-c"
+        },
+    );
+    cx.update(|cx| {
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().as_deref(),
+            Some("مر")
+        )
+    });
+    cx.simulate_keystrokes(window.into(), "n e w");
+    let edited = text.replace("مر", "new");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.source.read(cx).text(cx), edited)
+        })
+        .unwrap();
+    cx.simulate_keystrokes(
+        window.into(),
+        if cfg!(target_os = "macos") {
+            "cmd-a cmd-c"
+        } else {
+            "ctrl-a ctrl-c"
+        },
+    );
+    cx.update(|cx| {
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().as_deref(),
+            Some(edited.as_str())
+        )
+    });
+    window
+        .update(cx, |view, window, cx| {
+            window.focus(&view.source.focus_handle(cx), cx)
+        })
+        .unwrap();
+    cx.simulate_keystrokes(
+        window.into(),
+        if cfg!(target_os = "macos") {
+            "cmd-z"
+        } else {
+            "ctrl-z"
+        },
+    );
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.source.read(cx).text(cx), text)
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn wrapped_link_overlay_preserves_selection_in_fragment_gaps(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).unwrap());
+    let text = format!(
+        "- pre [{}x](https://example.com/gap) ^id\n",
+        "word ".repeat(11)
+    );
+    let window = cx.add_window(|window, cx| {
+        let view = NotebookWindow::new(&text, window, cx);
+        crate::editor_projection::bind(&view.second, window, cx).unwrap();
+        view.second.update(cx, |editor, cx| {
+            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx)
+        });
+        view
+    });
+    cx.executor().run_until_parked();
+    resize_and_draw(window, cx);
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    let bounds = visual.debug_bounds("quire-web-link").unwrap();
+    let first = visual
+        .debug_bounds("quire-web-link-first-fragment")
+        .unwrap();
+    assert!(
+        bounds.right() > first.right() + gpui::px(2.),
+        "fixture needs a gap beside a wrapped fragment: union {bounds:?}, first {first:?}"
+    );
+    let point = gpui::point((first.right() + bounds.right()) / 2., first.center().y);
+    visual.simulate_click(point, Default::default());
+    assert!(cx.opened_url().is_none());
+    window
+        .update(cx, |view, window, cx| {
+            assert!(view.second.focus_handle(cx).is_focused(window));
+            assert_eq!(view.source.read(cx).text(cx), text);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn user_folds_hide_link_controls_and_survive_source_switching(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).unwrap());
+    let text = "- [Link](https://example.com/fold) ^id\n";
+    let window = cx.add_window(|window, cx| {
+        let view = NotebookWindow::new(text, window, cx);
+        crate::editor_projection::bind(&view.second, window, cx).unwrap();
+        view
+    });
+    cx.executor().run_until_parked();
+    let end = text.find(" ^id").unwrap();
+    window
+        .update(cx, |view, window, cx| {
+            view.second.update(cx, |editor, cx| {
+                editor.fold_creases(
+                    vec![editor::display_map::Crease::simple(
+                        MultiBufferOffset(2)..MultiBufferOffset(end),
+                        editor::FoldPlaceholder::default(),
+                    )],
+                    false,
+                    window,
+                    cx,
+                )
+            });
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    assert!(visual.debug_bounds("quire-web-link").is_none());
+    window
+        .update(cx, |view, window, cx| {
+            crate::editor_projection::unbind(&view.second, window, cx);
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                "- ⋯ ^id\n"
+            );
+            assert_eq!(view.source.read(cx).text(cx), text);
         })
         .unwrap();
 }

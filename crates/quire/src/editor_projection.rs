@@ -30,15 +30,71 @@ struct Projection {
 #[derive(Clone)]
 struct AnchoredLink {
     range: Range<Anchor>,
+    label: Range<Anchor>,
+    block: Range<Anchor>,
+    id: u64,
     data: Arc<crate::markdown_links::Link>,
 }
 impl Addon for Projection {
+    fn text_regions(
+        &self,
+        editor: &Entity<Editor>,
+        visible: Range<MultiBufferOffset>,
+        window: &Window,
+        cx: &App,
+    ) -> Vec<editor::TextRegion> {
+        let view = editor.read(cx);
+        let snapshot = view.buffer().read(cx).snapshot(cx);
+        let start = self
+            .links
+            .partition_point(|link| link.range.end.to_offset(&snapshot) < visible.start);
+        self.links[start..]
+            .iter()
+            .take_while(|link| link.range.start.to_offset(&snapshot) <= visible.end)
+            .filter(|link| rendered_link(view, link, &snapshot, window, cx))
+            .map(|link| {
+                let link = link.clone();
+                let editor = editor.downgrade();
+                editor::TextRegion {
+                    range: link.label.clone(),
+                    render: Arc::new(move |layout, _| link_region(&editor, &link, layout)),
+                }
+            })
+            .collect()
+    }
+
     fn to_any(&self) -> &dyn Any {
         self
     }
     fn to_any_mut(&mut self) -> Option<&mut dyn Any> {
         Some(self)
     }
+}
+
+fn rendered_link(
+    editor: &Editor,
+    link: &AnchoredLink,
+    snapshot: &MultiBufferSnapshot,
+    window: &Window,
+    cx: &App,
+) -> bool {
+    if editor.focus_handle(cx).is_focused(window) {
+        let head = editor
+            .selections
+            .disjoint_anchors_arc()
+            .last()
+            .map(|selection| selection.head().to_offset(snapshot));
+        if head.is_some_and(|head| {
+            link.block.start.to_offset(snapshot) <= head
+                && head <= link.block.end.to_offset(snapshot)
+        }) {
+            return false;
+        }
+    }
+    let start = link.range.start.to_offset(snapshot);
+    let end = link.range.end.to_offset(snapshot);
+    end.0.saturating_sub(start.0) == link.data.source.len()
+        && snapshot.contains_str_at(start, &link.data.source)
 }
 
 fn text_start(block: &AnchoredBlock, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
@@ -142,18 +198,40 @@ fn refresh(
         .addon::<Projection>()
         .map(|projection| projection.links.clone())
         .unwrap_or_default();
-    let links = links.into_iter().filter_map(|link| {
-        let range = link.range.start.to_offset(&snapshot)..link.range.end.to_offset(&snapshot);
-        let current: String = snapshot.text_for_range(range.clone()).collect();
-        (current == link.data.source)
-            .then(|| Crease::simple(range, link_placeholder(cx.entity().downgrade(), link.data)))
-    });
+    let mut labels = Vec::new();
+    for link in links.iter() {
+        labels.push(link.label.clone());
+        if rendered_link(editor, link, &snapshot, window, cx) {
+            hidden
+                .push(link.range.start.to_offset(&snapshot)..link.label.start.to_offset(&snapshot));
+            hidden.push(link.label.end.to_offset(&snapshot)..link.range.end.to_offset(&snapshot));
+        }
+    }
+    let key = editor::HighlightKey::NavigationOverlay(editor::NavigationOverlayKey::unique::<
+        Projection,
+    >());
+    editor.clear_highlights(key, cx);
+    if !labels.is_empty() {
+        use theme::ActiveTheme;
+        editor.highlight_text(
+            key,
+            labels,
+            gpui::HighlightStyle {
+                color: Some(cx.theme().colors().link_text_hover),
+                underline: Some(gpui::UnderlineStyle {
+                    thickness: gpui::px(1.),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            cx,
+        );
+    }
     editor.fold_creases(
         hidden
             .into_iter()
             .map(|range| Crease::simple(range, placeholder.clone()))
             .chain(tasks)
-            .chain(links)
             .collect(),
         false,
         window,
@@ -201,7 +279,7 @@ fn open_web_link(editor: &Editor, range: Range<Anchor>, expected: &str, cx: &mut
     }
 }
 
-fn inline_control(
+fn focusable_control(
     id: impl Into<gpui::ElementId>,
     editor: WeakEntity<Editor>,
 ) -> gpui::Stateful<gpui::Div> {
@@ -221,47 +299,66 @@ fn inline_control(
                 cx.stop_propagation();
             }
         })
-        .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
-            window.prevent_default();
-            cx.stop_propagation();
-        })
 }
 
-fn link_placeholder(
+fn inline_control(
+    id: impl Into<gpui::ElementId>,
     editor: WeakEntity<Editor>,
-    link: Arc<crate::markdown_links::Link>,
-) -> FoldPlaceholder {
-    use ui::LabelCommon;
-    let label: gpui::SharedString = link.label.clone().into();
-    FoldPlaceholder {
-        collapsed_text: Some("⋯".into()),
-        constrain_width: false,
-        merge_adjacent: false,
-        type_tag: Some(TypeId::of::<Projection>()),
-        render: Arc::new(move |id, range, _| {
+) -> gpui::Stateful<gpui::Div> {
+    focusable_control(id, editor).on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+        window.prevent_default();
+        cx.stop_propagation();
+    })
+}
+
+fn link_region(
+    editor: &WeakEntity<Editor>,
+    link: &AnchoredLink,
+    layout: &editor::TextRegionLayout,
+) -> gpui::AnyElement {
+    gpui::div()
+        .id(("quire-web-link", link.id))
+        .size_full()
+        .debug_selector(|| "quire-web-link".into())
+        .children(layout.fragments.iter().enumerate().map(|(index, bounds)| {
+            let local = bounds.origin - layout.bounds.origin;
             let editor = editor.clone();
-            let link = link.clone();
-            inline_control(id, editor.clone())
-                .debug_selector(|| "quire-web-link".into())
-                .role(gpui::Role::Link)
-                .aria_label(label.clone())
+            let source_range = link.range.clone();
+            let data = link.data.clone();
+            let fragment = if index == 0 {
+                focusable_control(index, editor.clone())
+                    .role(gpui::Role::Link)
+                    .aria_label(link.data.label.clone())
+            } else {
+                gpui::div().id(index)
+            };
+            fragment
+                .absolute()
+                .left(local.x)
+                .top(local.y)
+                .w(bounds.size.width)
+                .h(bounds.size.height)
                 .cursor_pointer()
-                .child(
-                    ui::Label::new(label.clone())
-                        .color(ui::Color::Accent)
-                        .underline(),
-                )
+                .when(index == 0, |div| {
+                    div.debug_selector(|| "quire-web-link-first-fragment".into())
+                })
+                .when(index + 1 == layout.fragments.len(), |div| {
+                    div.debug_selector(|| "quire-web-link-last-fragment".into())
+                })
+                .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                })
                 .on_click(move |_, _, cx| {
                     cx.stop_propagation();
                     editor
                         .update(cx, |editor, cx| {
-                            open_web_link(editor, range.clone(), &link.source, cx)
+                            open_web_link(editor, source_range.clone(), &data.source, cx)
                         })
                         .ok();
                 })
-                .into_any_element()
-        }),
-    }
+        }))
+        .into_any_element()
 }
 
 fn toggle_task_marker(
@@ -553,8 +650,17 @@ fn apply_blocks(
             }
             let start = view.anchor_in_buffer(snapshot.anchor_before(link.range.start))?;
             let end = view.anchor_in_buffer(snapshot.anchor_before(link.range.end))?;
+            let label = view.anchor_in_buffer(snapshot.anchor_before(link.label_range.start))?
+                ..view.anchor_in_buffer(snapshot.anchor_before(link.label_range.end))?;
+            let block = view.anchor_in_buffer(snapshot.anchor_before(link.block_range.start))?
+                ..view.anchor_in_buffer(snapshot.anchor_before(link.block_range.end))?;
+            let mut hasher = std::hash::DefaultHasher::new();
+            std::hash::Hash::hash(&(start, end), &mut hasher);
             Some(AnchoredLink {
                 range: start..end,
+                label,
+                block,
+                id: std::hash::Hasher::finish(&hasher),
                 data: Arc::new(link),
             })
         })
@@ -612,9 +718,10 @@ pub fn bind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Resul
             |editor, _, event: &EditorEvent, window, cx| {
                 let Some(blocks) = editor.addon::<Projection>().map(|p| p.blocks.clone()) else { return; };
                 match event {
-                EditorEvent::BufferEdited => refresh(editor, &blocks, window, cx),
+                EditorEvent::BufferEdited | EditorEvent::Focused | EditorEvent::Blurred => refresh(editor, &blocks, window, cx),
                 EditorEvent::SelectionsChanged { local: true } => {
-                    clamp_carets(editor, &blocks, window, cx)
+                    clamp_carets(editor, &blocks, window, cx);
+                    refresh(editor, &blocks, window, cx);
                 }
                 _ => {}
                 }
@@ -623,9 +730,14 @@ pub fn bind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Resul
         let source_subscription = cx.subscribe_in(&source, window, |editor, source, event: &language::BufferEvent, window, cx| {
             if matches!(event, language::BufferEvent::Reparsed | language::BufferEvent::LanguageChanged(_)) { rebuild(editor, source, window, cx); }
         });
+        let theme_subscription = cx.observe_global_in::<theme::GlobalTheme>(window, |editor, window, cx| {
+            if let Some(blocks) = editor.addon::<Projection>().map(|projection| projection.blocks.clone()) {
+                refresh(editor, &blocks, window, cx);
+            }
+        });
         editor.register_addon(Projection {
             blocks: Arc::default(), links: Vec::new(), parsed: None,
-            _subscriptions: vec![editor_subscription, source_subscription],
+            _subscriptions: vec![editor_subscription, source_subscription, theme_subscription],
         });
         apply_spans(editor, &[], window, cx);
         rebuild(editor, &source, window, cx);

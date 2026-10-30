@@ -276,7 +276,15 @@
     },
     {
       "path": "crates/editor/src/clipboard.rs",
-      "change": "Retain a filtered view's complete source selection during clipboard paste rather than clipping its hidden prefix through a display round trip. Reuse the input helper and original paste/autoindent/history paths; partial selections and ordinary views retain their existing resolution."
+      "change": "Retain a filtered view's complete source selection during clipboard copy and paste rather than clipping its hidden prefix through a display round trip. Reuse the input helper and original clipboard/autoindent/history paths; partial selections and ordinary views retain their existing resolution."
+    },
+    {
+      "path": "crates/editor/src/editor.rs",
+      "change": "Let editor addons supply source-anchored interaction regions for the visible viewport, retaining native text layout and selection. Expose clipped fragment geometry to their renderers."
+    },
+    {
+      "path": "crates/editor/src/element.rs",
+      "change": "Lay out addon text regions over native shaped and wrapped source fragments, excluding folded text and clipping to the viewport. Reuse the navigation overlay lifecycle and element namespace; test resize, clipping, stateful elements, removal, and unchanged source text."
     }
   ]
 }

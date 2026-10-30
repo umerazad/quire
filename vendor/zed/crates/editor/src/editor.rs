@@ -788,6 +788,18 @@ impl BufferSerialization {
 pub trait Addon: 'static {
     fn extend_key_context(&self, _: &mut KeyContext, _: &App) {}
 
+    /// Adds interaction over native buffer text without replacing its layout or selection.
+    /// The source range covers only the current viewport; returned regions are clipped to it.
+    fn text_regions(
+        &self,
+        _: &Entity<Editor>,
+        _: Range<MultiBufferOffset>,
+        _: &Window,
+        _: &App,
+    ) -> Vec<TextRegion> {
+        Vec::new()
+    }
+
     fn render_buffer_header_controls(
         &self,
         _: &ExcerptBoundaryInfo,
@@ -1285,6 +1297,19 @@ pub struct EditorSnapshot {
     current_line_highlight: CurrentLineHighlight,
     gutter_hovered: bool,
     semantic_tokens_enabled: bool,
+}
+
+/// An interactive overlay whose geometry follows native shaped and wrapped text.
+pub struct TextRegion {
+    pub range: Range<Anchor>,
+    pub render: Arc<dyn Fn(&TextRegionLayout, &mut App) -> AnyElement + Send + Sync>,
+}
+
+pub struct TextRegionLayout {
+    /// Global pixel bounds used as the returned element's root layout bounds.
+    pub bounds: Bounds<Pixels>,
+    /// Global pixel rectangles for visible text fragments, clipped to the text viewport.
+    pub fragments: Vec<Bounds<Pixels>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

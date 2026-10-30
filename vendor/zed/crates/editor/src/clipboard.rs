@@ -582,7 +582,11 @@ impl Editor {
     }
 
     fn do_copy(&self, strip_leading_indents: bool, cx: &mut Context<Self>) {
-        let selections = self.selections.all::<Point>(&self.display_snapshot(cx));
+        let snapshot = self.display_snapshot(cx);
+        let selections = self.full_view_selection(&snapshot, cx).map_or_else(
+            || self.selections.all::<Point>(&snapshot),
+            |selection| vec![selection.map(|offset| offset.to_point(snapshot.buffer_snapshot()))],
+        );
         let buffer = self.buffer.read(cx).read(cx);
         let mut text = String::new();
         let mut clipboard_selections = Vec::with_capacity(selections.len());
