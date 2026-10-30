@@ -111,5 +111,39 @@
       "source": "Page and edit generators copied from rt tests/merge-go.test.ts at this revision (seed 42), plus edge cases and 300 seeded head graphs passed through the frozen mergeHeads.",
       "bun": "1.4.2"
     }
+  },
+  "task_extractions": {
+    "repository": "rt",
+    "revision": "5ea5c22310fff0c3d97f069930500fd85067fa96",
+    "files": [
+      {
+        "source": "src/core/tasks.ts",
+        "source_sha256": "cd7d1e5537a8e4b05f2dfc917a571a86cf1c0fa6f9203bf7c18445d31d1ef83c",
+        "destination": "core/tasks.ts",
+        "sha256": "d5f9bfeb46c73c422d2e64cebf21596942e72206b6c9d92fc7057dc4ce81cba9",
+        "change": "Copied unchanged except import paths: ../markdown/markdown, ../daily/workspace (dailyDate is unchanged since the base revision), ../daily/daily-layout."
+      },
+      {
+        "source": "src/core/store.ts",
+        "source_sha256": "69f7e2038290f39a86d8ac07cd41b334ea35a7f98b8c9f46df9a36cff3f21d6e",
+        "destination": "core/task-commands.ts",
+        "sha256": "38886de3fb1ca8e7c9ebf1a617abd1be744d45b5b66d96c4e037986529001f0a",
+        "change": "Keeps the bodies of nextTaskAction, insideCode, currentTask, setTaskDate, createdStamp, taskAt, tasksIn and captureTask. Notebook state becomes parameters (text, blocks, tasks, title, today, project link, stamp); each returns its changes instead of editing; ChangeSet.mapPos(position, -1) for taskAt's two insertions is written out."
+      }
+    ],
+    "test": {
+      "source": "tests/tasks.test.ts",
+      "source_sha256": "2fdcdd49d26502220e40baf1dc0c60f6fc774ce38e4badbcfce69f1ec0d752a5",
+      "destination": "tasks.test.ts",
+      "change": "Expectations of the task command cases rerun through the extraction instead of a Notebook; undo, catalogue refresh and selection-state cases are ported to native tests."
+    },
+    "vectors": {
+      "tool": "tools/task-vectors.ts",
+      "output": "tests/fixtures/task-vectors.json",
+      "timezone": "UTC",
+      "today": "2026-10-29",
+      "bun": "1.4.2",
+      "source": "48 handwritten pages (the rt tasks.test.ts inputs plus marker, stamp, inherited date, Roam, Unicode, quote, code and table edges) and 120 seeded pages, under the default and a {MMMM} {DD}, {YYYY} daily layout."
+    }
   }
 }
