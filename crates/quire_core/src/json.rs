@@ -6,6 +6,8 @@ use serde::{Deserialize, Deserializer, de::Visitor};
 use serde_json::value::RawValue;
 use std::{cmp::Ordering, collections::BTreeMap, fmt, fmt::Write};
 
+mod coercion;
+
 #[derive(Clone, Debug)]
 pub struct JsString(Vec<u8>);
 
@@ -19,6 +21,10 @@ impl JsString {
     }
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+    /// Preserves JavaScript code units, including lone surrogates that as_str cannot represent.
+    pub fn utf16_units(&self) -> impl Iterator<Item = u16> + '_ {
+        self.units()
     }
     fn units(&self) -> Utf16<'_> {
         Utf16 {

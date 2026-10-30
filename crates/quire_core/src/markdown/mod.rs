@@ -3,6 +3,9 @@
 use std::fmt;
 use unicode_normalization::UnicodeNormalization as _;
 
+mod frontmatter;
+pub use frontmatter::{frontmatter_tags, page_title};
+
 pub fn page_name(path: &str) -> &str {
     if path.len() >= 3
         && path
