@@ -1,0 +1,7010 @@
+[
+  {
+    "zone": "UTC",
+    "formatted": [
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-29",
+        "title": "2011-12-29",
+        "path": "2011-12-29.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-30",
+        "title": "2011-12-30",
+        "path": "2011-12-30.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-31",
+        "title": "2011-12-31",
+        "path": "2011-12-31.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "1892-07-04",
+        "title": "1892-07-04",
+        "path": "1892-07-04.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "1993-08-21",
+        "title": "1993-08-21",
+        "path": "1993-08-21.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2018-11-04",
+        "title": "2018-11-04",
+        "path": "2018-11-04.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-03-08",
+        "title": "2026-03-08",
+        "path": "2026-03-08.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-11-01",
+        "title": "2026-11-01",
+        "path": "2026-11-01.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-10-29",
+        "title": "2026-10-29",
+        "path": "2026-10-29.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "0000-02-29",
+        "title": "0000-02-29",
+        "path": "0000-02-29.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "0099-01-01",
+        "title": "0099-01-01",
+        "path": "0099-01-01.md",
+        "parsed": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "9999-12-31",
+        "title": "9999-12-31",
+        "path": "9999-12-31.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-29",
+        "title": "2011-12-29-Thursday",
+        "path": "Daily/2011/12-December/2011-12-29-Thursday.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-30",
+        "title": "2011-12-30-Friday",
+        "path": "Daily/2011/12-December/2011-12-30-Friday.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-31",
+        "title": "2011-12-31-Saturday",
+        "path": "Daily/2011/12-December/2011-12-31-Saturday.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "1892-07-04",
+        "title": "1892-07-04-Monday",
+        "path": "Daily/1892/07-July/1892-07-04-Monday.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "1993-08-21",
+        "title": "1993-08-21-Saturday",
+        "path": "Daily/1993/08-August/1993-08-21-Saturday.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2018-11-04",
+        "title": "2018-11-04-Sunday",
+        "path": "Daily/2018/11-November/2018-11-04-Sunday.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-03-08",
+        "title": "2026-03-08-Sunday",
+        "path": "Daily/2026/03-March/2026-03-08-Sunday.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-11-01",
+        "title": "2026-11-01-Sunday",
+        "path": "Daily/2026/11-November/2026-11-01-Sunday.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-10-29",
+        "title": "2026-10-29-Thursday",
+        "path": "Daily/2026/10-October/2026-10-29-Thursday.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "0000-02-29",
+        "title": "0000-02-29-Thursday",
+        "path": "Daily/0000/02-February/0000-02-29-Thursday.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "0099-01-01",
+        "title": "0099-01-01-Friday",
+        "path": "Daily/0099/01-January/0099-01-01-Friday.md",
+        "parsed": "0099-01-01",
+        "date": "0099-01-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "9999-12-31",
+        "title": "9999-12-31-Friday",
+        "path": "Daily/9999/12-December/9999-12-31-Friday.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-29",
+        "title": "29 December 2011",
+        "path": "29 December 2011.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-30",
+        "title": "30 December 2011",
+        "path": "30 December 2011.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-31",
+        "title": "31 December 2011",
+        "path": "31 December 2011.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "1892-07-04",
+        "title": "04 July 1892",
+        "path": "04 July 1892.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "1993-08-21",
+        "title": "21 August 1993",
+        "path": "21 August 1993.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2018-11-04",
+        "title": "04 November 2018",
+        "path": "04 November 2018.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-03-08",
+        "title": "08 March 2026",
+        "path": "08 March 2026.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-11-01",
+        "title": "01 November 2026",
+        "path": "01 November 2026.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-10-29",
+        "title": "29 October 2026",
+        "path": "29 October 2026.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "0000-02-29",
+        "title": "29 February 0000",
+        "path": "29 February 0000.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "0099-01-01",
+        "title": "01 January 0099",
+        "path": "01 January 0099.md",
+        "parsed": "0099-01-01",
+        "date": "0099-01-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "9999-12-31",
+        "title": "31 December 9999",
+        "path": "31 December 9999.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      }
+    ],
+    "parsed": [
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      }
+    ],
+    "clocks": [
+      {
+        "milliseconds": 1325239199999,
+        "date": "2011-12-30"
+      },
+      {
+        "milliseconds": 1325239200000,
+        "date": "2011-12-30"
+      },
+      {
+        "milliseconds": 1793309400000,
+        "date": "2026-10-29"
+      },
+      {
+        "milliseconds": 1772953199000,
+        "date": "2026-03-08"
+      },
+      {
+        "milliseconds": 1772953200000,
+        "date": "2026-03-08"
+      },
+      {
+        "milliseconds": 1793511000000,
+        "date": "2026-11-01"
+      },
+      {
+        "milliseconds": 1793514600000,
+        "date": "2026-11-01"
+      }
+    ],
+    "detection": {
+      "paths": [
+        "Daily/2011-12-30-Friday.md",
+        "Daily/2011-12-30-Saturday.md",
+        "Other/2011-12-31.md"
+      ],
+      "layout": {
+        "folder": "Daily",
+        "title": "{YYYY}-{MM}-{DD}-{dddd}"
+      }
+    }
+  },
+  {
+    "zone": "Asia/Riyadh",
+    "formatted": [
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-29",
+        "title": "2011-12-29",
+        "path": "2011-12-29.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-30",
+        "title": "2011-12-30",
+        "path": "2011-12-30.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-31",
+        "title": "2011-12-31",
+        "path": "2011-12-31.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "1892-07-04",
+        "title": "1892-07-04",
+        "path": "1892-07-04.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "1993-08-21",
+        "title": "1993-08-21",
+        "path": "1993-08-21.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2018-11-04",
+        "title": "2018-11-04",
+        "path": "2018-11-04.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-03-08",
+        "title": "2026-03-08",
+        "path": "2026-03-08.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-11-01",
+        "title": "2026-11-01",
+        "path": "2026-11-01.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-10-29",
+        "title": "2026-10-29",
+        "path": "2026-10-29.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "0000-02-29",
+        "title": "0000-02-29",
+        "path": "0000-02-29.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "0099-01-01",
+        "title": "0099-01-01",
+        "path": "0099-01-01.md",
+        "parsed": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "9999-12-31",
+        "title": "9999-12-31",
+        "path": "9999-12-31.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-29",
+        "title": "2011-12-29-Thursday",
+        "path": "Daily/2011/12-December/2011-12-29-Thursday.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-30",
+        "title": "2011-12-30-Friday",
+        "path": "Daily/2011/12-December/2011-12-30-Friday.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-31",
+        "title": "2011-12-31-Saturday",
+        "path": "Daily/2011/12-December/2011-12-31-Saturday.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "1892-07-04",
+        "title": "1892-07-04-Monday",
+        "path": "Daily/1892/07-July/1892-07-04-Monday.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "1993-08-21",
+        "title": "1993-08-21-Saturday",
+        "path": "Daily/1993/08-August/1993-08-21-Saturday.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2018-11-04",
+        "title": "2018-11-04-Sunday",
+        "path": "Daily/2018/11-November/2018-11-04-Sunday.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-03-08",
+        "title": "2026-03-08-Sunday",
+        "path": "Daily/2026/03-March/2026-03-08-Sunday.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-11-01",
+        "title": "2026-11-01-Sunday",
+        "path": "Daily/2026/11-November/2026-11-01-Sunday.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-10-29",
+        "title": "2026-10-29-Thursday",
+        "path": "Daily/2026/10-October/2026-10-29-Thursday.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "0000-02-29",
+        "title": "0000-02-29-Thursday",
+        "path": "Daily/0000/02-February/0000-02-29-Thursday.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "0099-01-01",
+        "title": "0099-01-01-Friday",
+        "path": "Daily/0099/01-January/0099-01-01-Friday.md",
+        "parsed": "0099-01-01",
+        "date": "0099-01-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "9999-12-31",
+        "title": "9999-12-31-Friday",
+        "path": "Daily/9999/12-December/9999-12-31-Friday.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-29",
+        "title": "29 December 2011",
+        "path": "29 December 2011.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-30",
+        "title": "30 December 2011",
+        "path": "30 December 2011.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-31",
+        "title": "31 December 2011",
+        "path": "31 December 2011.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "1892-07-04",
+        "title": "04 July 1892",
+        "path": "04 July 1892.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "1993-08-21",
+        "title": "21 August 1993",
+        "path": "21 August 1993.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2018-11-04",
+        "title": "04 November 2018",
+        "path": "04 November 2018.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-03-08",
+        "title": "08 March 2026",
+        "path": "08 March 2026.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-11-01",
+        "title": "01 November 2026",
+        "path": "01 November 2026.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-10-29",
+        "title": "29 October 2026",
+        "path": "29 October 2026.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "0000-02-29",
+        "title": "29 February 0000",
+        "path": "29 February 0000.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "0099-01-01",
+        "title": "01 January 0099",
+        "path": "01 January 0099.md",
+        "parsed": "0099-01-01",
+        "date": "0099-01-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "9999-12-31",
+        "title": "31 December 9999",
+        "path": "31 December 9999.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      }
+    ],
+    "parsed": [
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      }
+    ],
+    "clocks": [
+      {
+        "milliseconds": 1325239199999,
+        "date": "2011-12-30"
+      },
+      {
+        "milliseconds": 1325239200000,
+        "date": "2011-12-30"
+      },
+      {
+        "milliseconds": 1793309400000,
+        "date": "2026-10-30"
+      },
+      {
+        "milliseconds": 1772953199000,
+        "date": "2026-03-08"
+      },
+      {
+        "milliseconds": 1772953200000,
+        "date": "2026-03-08"
+      },
+      {
+        "milliseconds": 1793511000000,
+        "date": "2026-11-01"
+      },
+      {
+        "milliseconds": 1793514600000,
+        "date": "2026-11-01"
+      }
+    ],
+    "detection": {
+      "paths": [
+        "Daily/2011-12-30-Friday.md",
+        "Daily/2011-12-30-Saturday.md",
+        "Other/2011-12-31.md"
+      ],
+      "layout": {
+        "folder": "Daily",
+        "title": "{YYYY}-{MM}-{DD}-{dddd}"
+      }
+    }
+  },
+  {
+    "zone": "America/New_York",
+    "formatted": [
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-29",
+        "title": "2011-12-29",
+        "path": "2011-12-29.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-30",
+        "title": "2011-12-30",
+        "path": "2011-12-30.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-31",
+        "title": "2011-12-31",
+        "path": "2011-12-31.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "1892-07-04",
+        "title": "1892-07-04",
+        "path": "1892-07-04.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "1993-08-21",
+        "title": "1993-08-21",
+        "path": "1993-08-21.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2018-11-04",
+        "title": "2018-11-04",
+        "path": "2018-11-04.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-03-08",
+        "title": "2026-03-08",
+        "path": "2026-03-08.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-11-01",
+        "title": "2026-11-01",
+        "path": "2026-11-01.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-10-29",
+        "title": "2026-10-29",
+        "path": "2026-10-29.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "0000-02-29",
+        "title": "0000-02-29",
+        "path": "0000-02-29.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "0099-01-01",
+        "title": "0099-01-01",
+        "path": "0099-01-01.md",
+        "parsed": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "9999-12-31",
+        "title": "9999-12-31",
+        "path": "9999-12-31.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-29",
+        "title": "2011-12-29-Thursday",
+        "path": "Daily/2011/12-December/2011-12-29-Thursday.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-30",
+        "title": "2011-12-30-Friday",
+        "path": "Daily/2011/12-December/2011-12-30-Friday.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-31",
+        "title": "2011-12-31-Saturday",
+        "path": "Daily/2011/12-December/2011-12-31-Saturday.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "1892-07-04",
+        "title": "1892-07-04-Monday",
+        "path": "Daily/1892/07-July/1892-07-04-Monday.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "1993-08-21",
+        "title": "1993-08-21-Saturday",
+        "path": "Daily/1993/08-August/1993-08-21-Saturday.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2018-11-04",
+        "title": "2018-11-04-Sunday",
+        "path": "Daily/2018/11-November/2018-11-04-Sunday.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-03-08",
+        "title": "2026-03-08-Sunday",
+        "path": "Daily/2026/03-March/2026-03-08-Sunday.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-11-01",
+        "title": "2026-11-01-Sunday",
+        "path": "Daily/2026/11-November/2026-11-01-Sunday.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-10-29",
+        "title": "2026-10-29-Thursday",
+        "path": "Daily/2026/10-October/2026-10-29-Thursday.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "0000-02-29",
+        "title": "0000-02-29-Thursday",
+        "path": "Daily/0000/02-February/0000-02-29-Thursday.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "0099-01-01",
+        "title": "0099-01-01-Friday",
+        "path": "Daily/0099/01-January/0099-01-01-Friday.md",
+        "parsed": "0099-01-01",
+        "date": "0099-01-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "9999-12-31",
+        "title": "9999-12-31-Friday",
+        "path": "Daily/9999/12-December/9999-12-31-Friday.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-29",
+        "title": "29 December 2011",
+        "path": "29 December 2011.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-30",
+        "title": "30 December 2011",
+        "path": "30 December 2011.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-31",
+        "title": "31 December 2011",
+        "path": "31 December 2011.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "1892-07-04",
+        "title": "04 July 1892",
+        "path": "04 July 1892.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "1993-08-21",
+        "title": "21 August 1993",
+        "path": "21 August 1993.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2018-11-04",
+        "title": "04 November 2018",
+        "path": "04 November 2018.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-03-08",
+        "title": "08 March 2026",
+        "path": "08 March 2026.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-11-01",
+        "title": "01 November 2026",
+        "path": "01 November 2026.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-10-29",
+        "title": "29 October 2026",
+        "path": "29 October 2026.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "0000-02-29",
+        "title": "29 February 0000",
+        "path": "29 February 0000.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "0099-01-01",
+        "title": "01 January 0099",
+        "path": "01 January 0099.md",
+        "parsed": "0099-01-01",
+        "date": "0099-01-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "9999-12-31",
+        "title": "31 December 9999",
+        "path": "31 December 9999.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      }
+    ],
+    "parsed": [
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      }
+    ],
+    "clocks": [
+      {
+        "milliseconds": 1325239199999,
+        "date": "2011-12-30"
+      },
+      {
+        "milliseconds": 1325239200000,
+        "date": "2011-12-30"
+      },
+      {
+        "milliseconds": 1793309400000,
+        "date": "2026-10-29"
+      },
+      {
+        "milliseconds": 1772953199000,
+        "date": "2026-03-08"
+      },
+      {
+        "milliseconds": 1772953200000,
+        "date": "2026-03-08"
+      },
+      {
+        "milliseconds": 1793511000000,
+        "date": "2026-11-01"
+      },
+      {
+        "milliseconds": 1793514600000,
+        "date": "2026-11-01"
+      }
+    ],
+    "detection": {
+      "paths": [
+        "Daily/2011-12-30-Friday.md",
+        "Daily/2011-12-30-Saturday.md",
+        "Other/2011-12-31.md"
+      ],
+      "layout": {
+        "folder": "Daily",
+        "title": "{YYYY}-{MM}-{DD}-{dddd}"
+      }
+    }
+  },
+  {
+    "zone": "Australia/Lord_Howe",
+    "formatted": [
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-29",
+        "title": "2011-12-29",
+        "path": "2011-12-29.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-30",
+        "title": "2011-12-30",
+        "path": "2011-12-30.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-31",
+        "title": "2011-12-31",
+        "path": "2011-12-31.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "1892-07-04",
+        "title": "1892-07-04",
+        "path": "1892-07-04.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "1993-08-21",
+        "title": "1993-08-21",
+        "path": "1993-08-21.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2018-11-04",
+        "title": "2018-11-04",
+        "path": "2018-11-04.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-03-08",
+        "title": "2026-03-08",
+        "path": "2026-03-08.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-11-01",
+        "title": "2026-11-01",
+        "path": "2026-11-01.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-10-29",
+        "title": "2026-10-29",
+        "path": "2026-10-29.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "0000-02-29",
+        "title": "0000-02-29",
+        "path": "0000-02-29.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "0099-01-01",
+        "title": "0099-01-01",
+        "path": "0099-01-01.md",
+        "parsed": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "9999-12-31",
+        "title": "9999-12-31",
+        "path": "9999-12-31.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-29",
+        "title": "2011-12-29-Thursday",
+        "path": "Daily/2011/12-December/2011-12-29-Thursday.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-30",
+        "title": "2011-12-30-Friday",
+        "path": "Daily/2011/12-December/2011-12-30-Friday.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-31",
+        "title": "2011-12-31-Saturday",
+        "path": "Daily/2011/12-December/2011-12-31-Saturday.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "1892-07-04",
+        "title": "1892-07-04-Monday",
+        "path": "Daily/1892/07-July/1892-07-04-Monday.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "1993-08-21",
+        "title": "1993-08-21-Saturday",
+        "path": "Daily/1993/08-August/1993-08-21-Saturday.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2018-11-04",
+        "title": "2018-11-04-Sunday",
+        "path": "Daily/2018/11-November/2018-11-04-Sunday.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-03-08",
+        "title": "2026-03-08-Sunday",
+        "path": "Daily/2026/03-March/2026-03-08-Sunday.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-11-01",
+        "title": "2026-11-01-Sunday",
+        "path": "Daily/2026/11-November/2026-11-01-Sunday.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-10-29",
+        "title": "2026-10-29-Thursday",
+        "path": "Daily/2026/10-October/2026-10-29-Thursday.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "0000-02-29",
+        "title": "0000-02-29-Thursday",
+        "path": "Daily/0000/02-February/0000-02-29-Thursday.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "0099-01-01",
+        "title": "0099-01-01-Friday",
+        "path": "Daily/0099/01-January/0099-01-01-Friday.md",
+        "parsed": "0099-01-01",
+        "date": "0099-01-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "9999-12-31",
+        "title": "9999-12-31-Friday",
+        "path": "Daily/9999/12-December/9999-12-31-Friday.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-29",
+        "title": "29 December 2011",
+        "path": "29 December 2011.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-30",
+        "title": "30 December 2011",
+        "path": "30 December 2011.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-31",
+        "title": "31 December 2011",
+        "path": "31 December 2011.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "1892-07-04",
+        "title": "04 July 1892",
+        "path": "04 July 1892.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "1993-08-21",
+        "title": "21 August 1993",
+        "path": "21 August 1993.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2018-11-04",
+        "title": "04 November 2018",
+        "path": "04 November 2018.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-03-08",
+        "title": "08 March 2026",
+        "path": "08 March 2026.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-11-01",
+        "title": "01 November 2026",
+        "path": "01 November 2026.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-10-29",
+        "title": "29 October 2026",
+        "path": "29 October 2026.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "0000-02-29",
+        "title": "29 February 0000",
+        "path": "29 February 0000.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "0099-01-01",
+        "title": "01 January 0099",
+        "path": "01 January 0099.md",
+        "parsed": "0099-01-01",
+        "date": "0099-01-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "9999-12-31",
+        "title": "31 December 9999",
+        "path": "31 December 9999.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      }
+    ],
+    "parsed": [
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      }
+    ],
+    "clocks": [
+      {
+        "milliseconds": 1325239199999,
+        "date": "2011-12-30"
+      },
+      {
+        "milliseconds": 1325239200000,
+        "date": "2011-12-30"
+      },
+      {
+        "milliseconds": 1793309400000,
+        "date": "2026-10-30"
+      },
+      {
+        "milliseconds": 1772953199000,
+        "date": "2026-03-08"
+      },
+      {
+        "milliseconds": 1772953200000,
+        "date": "2026-03-08"
+      },
+      {
+        "milliseconds": 1793511000000,
+        "date": "2026-11-01"
+      },
+      {
+        "milliseconds": 1793514600000,
+        "date": "2026-11-01"
+      }
+    ],
+    "detection": {
+      "paths": [
+        "Daily/2011-12-30-Friday.md",
+        "Daily/2011-12-30-Saturday.md",
+        "Other/2011-12-31.md"
+      ],
+      "layout": {
+        "folder": "Daily",
+        "title": "{YYYY}-{MM}-{DD}-{dddd}"
+      }
+    }
+  },
+  {
+    "zone": "Pacific/Apia",
+    "formatted": [
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-29",
+        "title": "2011-12-29",
+        "path": "2011-12-29.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-30",
+        "title": "2011-12-30",
+        "path": "2011-12-30.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-31",
+        "title": "2011-12-31",
+        "path": "2011-12-31.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "1892-07-04",
+        "title": "1892-07-04",
+        "path": "1892-07-04.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "1993-08-21",
+        "title": "1993-08-21",
+        "path": "1993-08-21.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2018-11-04",
+        "title": "2018-11-04",
+        "path": "2018-11-04.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-03-08",
+        "title": "2026-03-08",
+        "path": "2026-03-08.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-11-01",
+        "title": "2026-11-01",
+        "path": "2026-11-01.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-10-29",
+        "title": "2026-10-29",
+        "path": "2026-10-29.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "0000-02-29",
+        "title": "0000-02-29",
+        "path": "0000-02-29.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "0099-01-01",
+        "title": "0099-01-01",
+        "path": "0099-01-01.md",
+        "parsed": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "9999-12-31",
+        "title": "9999-12-31",
+        "path": "9999-12-31.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-29",
+        "title": "2011-12-29-Thursday",
+        "path": "Daily/2011/12-December/2011-12-29-Thursday.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-30",
+        "title": "2011-12-30-Saturday",
+        "path": "Daily/2011/12-December/2011-12-30-Saturday.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-31",
+        "title": "2011-12-31-Saturday",
+        "path": "Daily/2011/12-December/2011-12-31-Saturday.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "1892-07-04",
+        "title": "1892-07-04-Monday",
+        "path": "Daily/1892/07-July/1892-07-04-Monday.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "1993-08-21",
+        "title": "1993-08-21-Saturday",
+        "path": "Daily/1993/08-August/1993-08-21-Saturday.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2018-11-04",
+        "title": "2018-11-04-Sunday",
+        "path": "Daily/2018/11-November/2018-11-04-Sunday.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-03-08",
+        "title": "2026-03-08-Sunday",
+        "path": "Daily/2026/03-March/2026-03-08-Sunday.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-11-01",
+        "title": "2026-11-01-Sunday",
+        "path": "Daily/2026/11-November/2026-11-01-Sunday.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-10-29",
+        "title": "2026-10-29-Thursday",
+        "path": "Daily/2026/10-October/2026-10-29-Thursday.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "0000-02-29",
+        "title": "0000-02-29-Thursday",
+        "path": "Daily/0000/02-February/0000-02-29-Thursday.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "0099-01-01",
+        "title": "0099-01-01-Friday",
+        "path": "Daily/0099/01-January/0099-01-01-Friday.md",
+        "parsed": "0099-01-01",
+        "date": "0099-01-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "9999-12-31",
+        "title": "9999-12-31-Friday",
+        "path": "Daily/9999/12-December/9999-12-31-Friday.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-29",
+        "title": "29 December 2011",
+        "path": "29 December 2011.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-30",
+        "title": "30 December 2011",
+        "path": "30 December 2011.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-31",
+        "title": "31 December 2011",
+        "path": "31 December 2011.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "1892-07-04",
+        "title": "04 July 1892",
+        "path": "04 July 1892.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "1993-08-21",
+        "title": "21 August 1993",
+        "path": "21 August 1993.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2018-11-04",
+        "title": "04 November 2018",
+        "path": "04 November 2018.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-03-08",
+        "title": "08 March 2026",
+        "path": "08 March 2026.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-11-01",
+        "title": "01 November 2026",
+        "path": "01 November 2026.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-10-29",
+        "title": "29 October 2026",
+        "path": "29 October 2026.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "0000-02-29",
+        "title": "29 February 0000",
+        "path": "29 February 0000.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "0099-01-01",
+        "title": "01 January 0099",
+        "path": "01 January 0099.md",
+        "parsed": "0099-01-01",
+        "date": "0099-01-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "9999-12-31",
+        "title": "31 December 9999",
+        "path": "31 December 9999.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      }
+    ],
+    "parsed": [
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      }
+    ],
+    "clocks": [
+      {
+        "milliseconds": 1325239199999,
+        "date": "2011-12-29"
+      },
+      {
+        "milliseconds": 1325239200000,
+        "date": "2011-12-31"
+      },
+      {
+        "milliseconds": 1793309400000,
+        "date": "2026-10-30"
+      },
+      {
+        "milliseconds": 1772953199000,
+        "date": "2026-03-08"
+      },
+      {
+        "milliseconds": 1772953200000,
+        "date": "2026-03-08"
+      },
+      {
+        "milliseconds": 1793511000000,
+        "date": "2026-11-01"
+      },
+      {
+        "milliseconds": 1793514600000,
+        "date": "2026-11-01"
+      }
+    ],
+    "detection": {
+      "paths": [
+        "Daily/2011-12-30-Friday.md",
+        "Daily/2011-12-30-Saturday.md",
+        "Other/2011-12-31.md"
+      ],
+      "layout": {
+        "folder": "Other",
+        "title": "{YYYY}-{MM}-{DD}"
+      }
+    }
+  },
+  {
+    "zone": "Pacific/Kwajalein",
+    "formatted": [
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-29",
+        "title": "2011-12-29",
+        "path": "2011-12-29.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-30",
+        "title": "2011-12-30",
+        "path": "2011-12-30.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-31",
+        "title": "2011-12-31",
+        "path": "2011-12-31.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "1892-07-04",
+        "title": "1892-07-04",
+        "path": "1892-07-04.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "1993-08-21",
+        "title": "1993-08-21",
+        "path": "1993-08-21.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2018-11-04",
+        "title": "2018-11-04",
+        "path": "2018-11-04.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-03-08",
+        "title": "2026-03-08",
+        "path": "2026-03-08.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-11-01",
+        "title": "2026-11-01",
+        "path": "2026-11-01.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-10-29",
+        "title": "2026-10-29",
+        "path": "2026-10-29.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "0000-02-29",
+        "title": "0000-02-29",
+        "path": "0000-02-29.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "0099-01-01",
+        "title": "0099-01-01",
+        "path": "0099-01-01.md",
+        "parsed": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "9999-12-31",
+        "title": "9999-12-31",
+        "path": "9999-12-31.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-29",
+        "title": "2011-12-29-Thursday",
+        "path": "Daily/2011/12-December/2011-12-29-Thursday.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-30",
+        "title": "2011-12-30-Friday",
+        "path": "Daily/2011/12-December/2011-12-30-Friday.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-31",
+        "title": "2011-12-31-Saturday",
+        "path": "Daily/2011/12-December/2011-12-31-Saturday.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "1892-07-04",
+        "title": "1892-07-04-Monday",
+        "path": "Daily/1892/07-July/1892-07-04-Monday.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "1993-08-21",
+        "title": "1993-08-21-Sunday",
+        "path": "Daily/1993/08-August/1993-08-21-Sunday.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2018-11-04",
+        "title": "2018-11-04-Sunday",
+        "path": "Daily/2018/11-November/2018-11-04-Sunday.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-03-08",
+        "title": "2026-03-08-Sunday",
+        "path": "Daily/2026/03-March/2026-03-08-Sunday.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-11-01",
+        "title": "2026-11-01-Sunday",
+        "path": "Daily/2026/11-November/2026-11-01-Sunday.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-10-29",
+        "title": "2026-10-29-Thursday",
+        "path": "Daily/2026/10-October/2026-10-29-Thursday.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "0000-02-29",
+        "title": "0000-02-29-Thursday",
+        "path": "Daily/0000/02-February/0000-02-29-Thursday.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "0099-01-01",
+        "title": "0099-01-01-Friday",
+        "path": "Daily/0099/01-January/0099-01-01-Friday.md",
+        "parsed": "0099-01-01",
+        "date": "0099-01-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "9999-12-31",
+        "title": "9999-12-31-Friday",
+        "path": "Daily/9999/12-December/9999-12-31-Friday.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-29",
+        "title": "29 December 2011",
+        "path": "29 December 2011.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-30",
+        "title": "30 December 2011",
+        "path": "30 December 2011.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-31",
+        "title": "31 December 2011",
+        "path": "31 December 2011.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "1892-07-04",
+        "title": "04 July 1892",
+        "path": "04 July 1892.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "1993-08-21",
+        "title": "21 August 1993",
+        "path": "21 August 1993.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2018-11-04",
+        "title": "04 November 2018",
+        "path": "04 November 2018.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-03-08",
+        "title": "08 March 2026",
+        "path": "08 March 2026.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-11-01",
+        "title": "01 November 2026",
+        "path": "01 November 2026.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-10-29",
+        "title": "29 October 2026",
+        "path": "29 October 2026.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "0000-02-29",
+        "title": "29 February 0000",
+        "path": "29 February 0000.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "0099-01-01",
+        "title": "01 January 0099",
+        "path": "01 January 0099.md",
+        "parsed": "0099-01-01",
+        "date": "0099-01-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "9999-12-31",
+        "title": "31 December 9999",
+        "path": "31 December 9999.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      }
+    ],
+    "parsed": [
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "1993-08-21",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-22"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "1993-08-21",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-22"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "1993-08-21",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-22"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      }
+    ],
+    "clocks": [
+      {
+        "milliseconds": 1325239199999,
+        "date": "2011-12-30"
+      },
+      {
+        "milliseconds": 1325239200000,
+        "date": "2011-12-30"
+      },
+      {
+        "milliseconds": 1793309400000,
+        "date": "2026-10-30"
+      },
+      {
+        "milliseconds": 1772953199000,
+        "date": "2026-03-08"
+      },
+      {
+        "milliseconds": 1772953200000,
+        "date": "2026-03-08"
+      },
+      {
+        "milliseconds": 1793511000000,
+        "date": "2026-11-01"
+      },
+      {
+        "milliseconds": 1793514600000,
+        "date": "2026-11-01"
+      }
+    ],
+    "detection": {
+      "paths": [
+        "Daily/2011-12-30-Friday.md",
+        "Daily/2011-12-30-Saturday.md",
+        "Other/2011-12-31.md"
+      ],
+      "layout": {
+        "folder": "Daily",
+        "title": "{YYYY}-{MM}-{DD}-{dddd}"
+      }
+    }
+  },
+  {
+    "zone": "America/Sao_Paulo",
+    "formatted": [
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-29",
+        "title": "2011-12-29",
+        "path": "2011-12-29.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-30",
+        "title": "2011-12-30",
+        "path": "2011-12-30.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-31",
+        "title": "2011-12-31",
+        "path": "2011-12-31.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "1892-07-04",
+        "title": "1892-07-04",
+        "path": "1892-07-04.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "1993-08-21",
+        "title": "1993-08-21",
+        "path": "1993-08-21.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2018-11-04",
+        "title": "2018-11-04",
+        "path": "2018-11-04.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-03-08",
+        "title": "2026-03-08",
+        "path": "2026-03-08.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-11-01",
+        "title": "2026-11-01",
+        "path": "2026-11-01.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-10-29",
+        "title": "2026-10-29",
+        "path": "2026-10-29.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "0000-02-29",
+        "title": "0000-02-29",
+        "path": "0000-02-29.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "0099-01-01",
+        "title": "0099-01-01",
+        "path": "0099-01-01.md",
+        "parsed": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "9999-12-31",
+        "title": "9999-12-31",
+        "path": "9999-12-31.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-29",
+        "title": "2011-12-29-Thursday",
+        "path": "Daily/2011/12-December/2011-12-29-Thursday.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-30",
+        "title": "2011-12-30-Friday",
+        "path": "Daily/2011/12-December/2011-12-30-Friday.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-31",
+        "title": "2011-12-31-Saturday",
+        "path": "Daily/2011/12-December/2011-12-31-Saturday.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "1892-07-04",
+        "title": "1892-07-04-Monday",
+        "path": "Daily/1892/07-July/1892-07-04-Monday.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "1993-08-21",
+        "title": "1993-08-21-Saturday",
+        "path": "Daily/1993/08-August/1993-08-21-Saturday.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2018-11-04",
+        "title": "2018-11-04-Sunday",
+        "path": "Daily/2018/11-November/2018-11-04-Sunday.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-03-08",
+        "title": "2026-03-08-Sunday",
+        "path": "Daily/2026/03-March/2026-03-08-Sunday.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-11-01",
+        "title": "2026-11-01-Sunday",
+        "path": "Daily/2026/11-November/2026-11-01-Sunday.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-10-29",
+        "title": "2026-10-29-Thursday",
+        "path": "Daily/2026/10-October/2026-10-29-Thursday.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "0000-02-29",
+        "title": "0000-02-29-Thursday",
+        "path": "Daily/0000/02-February/0000-02-29-Thursday.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "0099-01-01",
+        "title": "0099-01-01-Friday",
+        "path": "Daily/0099/01-January/0099-01-01-Friday.md",
+        "parsed": "0099-01-01",
+        "date": "0099-01-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "9999-12-31",
+        "title": "9999-12-31-Friday",
+        "path": "Daily/9999/12-December/9999-12-31-Friday.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-29",
+        "title": "29 December 2011",
+        "path": "29 December 2011.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-30",
+        "title": "30 December 2011",
+        "path": "30 December 2011.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-31",
+        "title": "31 December 2011",
+        "path": "31 December 2011.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "1892-07-04",
+        "title": "04 July 1892",
+        "path": "04 July 1892.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "1993-08-21",
+        "title": "21 August 1993",
+        "path": "21 August 1993.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2018-11-04",
+        "title": "04 November 2018",
+        "path": "04 November 2018.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-03-08",
+        "title": "08 March 2026",
+        "path": "08 March 2026.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-11-01",
+        "title": "01 November 2026",
+        "path": "01 November 2026.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-10-29",
+        "title": "29 October 2026",
+        "path": "29 October 2026.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "0000-02-29",
+        "title": "29 February 0000",
+        "path": "29 February 0000.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "0099-01-01",
+        "title": "01 January 0099",
+        "path": "01 January 0099.md",
+        "parsed": "0099-01-01",
+        "date": "0099-01-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "9999-12-31",
+        "title": "31 December 9999",
+        "path": "31 December 9999.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      }
+    ],
+    "parsed": [
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      }
+    ],
+    "clocks": [
+      {
+        "milliseconds": 1325239199999,
+        "date": "2011-12-30"
+      },
+      {
+        "milliseconds": 1325239200000,
+        "date": "2011-12-30"
+      },
+      {
+        "milliseconds": 1793309400000,
+        "date": "2026-10-29"
+      },
+      {
+        "milliseconds": 1772953199000,
+        "date": "2026-03-08"
+      },
+      {
+        "milliseconds": 1772953200000,
+        "date": "2026-03-08"
+      },
+      {
+        "milliseconds": 1793511000000,
+        "date": "2026-11-01"
+      },
+      {
+        "milliseconds": 1793514600000,
+        "date": "2026-11-01"
+      }
+    ],
+    "detection": {
+      "paths": [
+        "Daily/2011-12-30-Friday.md",
+        "Daily/2011-12-30-Saturday.md",
+        "Other/2011-12-31.md"
+      ],
+      "layout": {
+        "folder": "Daily",
+        "title": "{YYYY}-{MM}-{DD}-{dddd}"
+      }
+    }
+  },
+  {
+    "zone": "Europe/Paris",
+    "formatted": [
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-29",
+        "title": "2011-12-29",
+        "path": "2011-12-29.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-30",
+        "title": "2011-12-30",
+        "path": "2011-12-30.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2011-12-31",
+        "title": "2011-12-31",
+        "path": "2011-12-31.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "1892-07-04",
+        "title": "1892-07-04",
+        "path": "1892-07-04.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "1993-08-21",
+        "title": "1993-08-21",
+        "path": "1993-08-21.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2018-11-04",
+        "title": "2018-11-04",
+        "path": "2018-11-04.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-03-08",
+        "title": "2026-03-08",
+        "path": "2026-03-08.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-11-01",
+        "title": "2026-11-01",
+        "path": "2026-11-01.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "2026-10-29",
+        "title": "2026-10-29",
+        "path": "2026-10-29.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "0000-02-29",
+        "title": "0000-02-29",
+        "path": "0000-02-29.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "0099-01-01",
+        "title": "0099-01-01",
+        "path": "0099-01-01.md",
+        "parsed": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "iso": "9999-12-31",
+        "title": "9999-12-31",
+        "path": "9999-12-31.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-29",
+        "title": "2011-12-29-Thursday",
+        "path": "Daily/2011/12-December/2011-12-29-Thursday.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-30",
+        "title": "2011-12-30-Friday",
+        "path": "Daily/2011/12-December/2011-12-30-Friday.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2011-12-31",
+        "title": "2011-12-31-Saturday",
+        "path": "Daily/2011/12-December/2011-12-31-Saturday.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "1892-07-04",
+        "title": "1892-07-04-Monday",
+        "path": "Daily/1892/07-July/1892-07-04-Monday.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "1993-08-21",
+        "title": "1993-08-21-Saturday",
+        "path": "Daily/1993/08-August/1993-08-21-Saturday.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2018-11-04",
+        "title": "2018-11-04-Sunday",
+        "path": "Daily/2018/11-November/2018-11-04-Sunday.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-03-08",
+        "title": "2026-03-08-Sunday",
+        "path": "Daily/2026/03-March/2026-03-08-Sunday.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-11-01",
+        "title": "2026-11-01-Sunday",
+        "path": "Daily/2026/11-November/2026-11-01-Sunday.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "2026-10-29",
+        "title": "2026-10-29-Thursday",
+        "path": "Daily/2026/10-October/2026-10-29-Thursday.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "0000-02-29",
+        "title": "0000-02-29-Thursday",
+        "path": "Daily/0000/02-February/0000-02-29-Thursday.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "0099-01-01",
+        "title": "0099-01-01-Friday",
+        "path": "Daily/0099/01-January/0099-01-01-Friday.md",
+        "parsed": "0099-01-01",
+        "date": "0099-01-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "iso": "9999-12-31",
+        "title": "9999-12-31-Friday",
+        "path": "Daily/9999/12-December/9999-12-31-Friday.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-29",
+        "title": "29 December 2011",
+        "path": "29 December 2011.md",
+        "parsed": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-30",
+        "title": "30 December 2011",
+        "path": "30 December 2011.md",
+        "parsed": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2011-12-31",
+        "title": "31 December 2011",
+        "path": "31 December 2011.md",
+        "parsed": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "1892-07-04",
+        "title": "04 July 1892",
+        "path": "04 July 1892.md",
+        "parsed": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "1993-08-21",
+        "title": "21 August 1993",
+        "path": "21 August 1993.md",
+        "parsed": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2018-11-04",
+        "title": "04 November 2018",
+        "path": "04 November 2018.md",
+        "parsed": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-03-08",
+        "title": "08 March 2026",
+        "path": "08 March 2026.md",
+        "parsed": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-11-01",
+        "title": "01 November 2026",
+        "path": "01 November 2026.md",
+        "parsed": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "2026-10-29",
+        "title": "29 October 2026",
+        "path": "29 October 2026.md",
+        "parsed": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "0000-02-29",
+        "title": "29 February 0000",
+        "path": "29 February 0000.md",
+        "parsed": null,
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "0099-01-01",
+        "title": "01 January 0099",
+        "path": "01 January 0099.md",
+        "parsed": "0099-01-01",
+        "date": "0099-01-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "iso": "9999-12-31",
+        "title": "31 December 9999",
+        "path": "31 December 9999.md",
+        "parsed": "9999-12-31",
+        "date": "9999-12-31"
+      }
+    ],
+    "parsed": [
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{YYYY}-{MM}-{DD}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "Daily/{YYYY}/{MM}-{MMMM}",
+          "title": "{YYYY}-{MM}-{DD}-{dddd}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-29",
+        "date": "2011-12-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-31",
+        "date": "2011-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "1892-07-04",
+        "date": "1892-07-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "1993-08-21",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2018-11-04",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-03-08",
+        "date": "2026-03-08"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-11-01",
+        "date": "2026-11-01"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2026-10-29",
+        "date": "2026-10-29"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "0000-02-29",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "0099-01-01",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "9999-12-31",
+        "date": "9999-12-31"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30-Friday",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "2011-12-30-Saturday",
+        "date": null
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "December 30th, 2011",
+        "date": "2011-12-30"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "August 21st, 1993",
+        "date": "1993-08-21"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "November 4th, 2018",
+        "date": "2018-11-04"
+      },
+      {
+        "layout": {
+          "folder": "",
+          "title": "{DD} {MMMM} {YYYY}"
+        },
+        "title": "July 4th, 1892",
+        "date": "1892-07-04"
+      }
+    ],
+    "clocks": [
+      {
+        "milliseconds": 1325239199999,
+        "date": "2011-12-30"
+      },
+      {
+        "milliseconds": 1325239200000,
+        "date": "2011-12-30"
+      },
+      {
+        "milliseconds": 1793309400000,
+        "date": "2026-10-29"
+      },
+      {
+        "milliseconds": 1772953199000,
+        "date": "2026-03-08"
+      },
+      {
+        "milliseconds": 1772953200000,
+        "date": "2026-03-08"
+      },
+      {
+        "milliseconds": 1793511000000,
+        "date": "2026-11-01"
+      },
+      {
+        "milliseconds": 1793514600000,
+        "date": "2026-11-01"
+      }
+    ],
+    "detection": {
+      "paths": [
+        "Daily/2011-12-30-Friday.md",
+        "Daily/2011-12-30-Saturday.md",
+        "Other/2011-12-31.md"
+      ],
+      "layout": {
+        "folder": "Daily",
+        "title": "{YYYY}-{MM}-{DD}-{dddd}"
+      }
+    }
+  }
+]

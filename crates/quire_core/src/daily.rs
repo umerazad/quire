@@ -1,5 +1,9 @@
 use crate::json::Json;
-use chrono::{Datelike, Days, NaiveDate};
+use jiff::{
+    Span, Timestamp,
+    civil::Date,
+    tz::{AmbiguousOffset, TimeZone},
+};
 use regex::Regex;
 use std::{collections::HashMap, sync::LazyLock};
 
@@ -84,13 +88,15 @@ impl DailyLayout {
         None
     }
 
-    pub fn folder(&self, iso: &str) -> Result<String, &'static str> {
-        Ok(format_daily(&self.folder, iso)?.trim_matches('/').into())
+    pub fn folder(&self, iso: &str, calendar: &DailyCalendar) -> Result<String, &'static str> {
+        Ok(format_daily(&self.folder, iso, calendar)?
+            .trim_matches('/')
+            .into())
     }
 
-    pub fn path(&self, iso: &str) -> Result<String, &'static str> {
-        let folder = self.folder(iso)?;
-        let title = format_daily(&self.title, iso)?;
+    pub fn path(&self, iso: &str, calendar: &DailyCalendar) -> Result<String, &'static str> {
+        let folder = self.folder(iso, calendar)?;
+        let title = format_daily(&self.title, iso, calendar)?;
         Ok(format!(
             "{}{title}.md",
             if folder.is_empty() {
@@ -117,18 +123,85 @@ fn constructor_year(year: i32) -> i32 {
     if year <= 99 { year + 1900 } else { year }
 }
 
+#[derive(Clone)]
+pub struct DailyCalendar {
+    timezone: TimeZone,
+}
+
+impl DailyCalendar {
+    pub fn utc() -> Self {
+        Self {
+            timezone: TimeZone::UTC,
+        }
+    }
+
+    /// Resolve zone data off the foreground thread, then retain the calendar.
+    pub fn named(name: &str) -> Result<Self, String> {
+        TimeZone::get(name).map(|timezone| Self { timezone }).map_err(|error| format!("Cannot load time zone {name:?}: {error}. Check the system time zone data and choose a valid zone before opening daily pages."))
+    }
+
+    pub fn system() -> Result<Self, String> {
+        TimeZone::try_system().map(|timezone| Self { timezone }).map_err(|error| format!("Cannot load the system time zone: {error}. Correct the system time zone settings before opening daily pages."))
+    }
+
+    /// The caller supplies the clock instant; no process clock or timezone is read.
+    pub fn date_at(&self, unix_milliseconds: i64) -> Result<String, String> {
+        let instant = Timestamp::from_millisecond(unix_milliseconds).map_err(|error| format!("Cannot read this daily-page clock value: {error}. Supply an instant in the supported calendar range."))?;
+        Ok(date_string(instant.to_zoned(self.timezone.clone()).date()))
+    }
+
+    fn local_date(&self, year: i32, month: u32, day: u32, hour: i8) -> Option<Date> {
+        if !(1..=31).contains(&day) {
+            return None;
+        }
+        let date = civil_date(year, month, 1)?
+            .checked_add(Span::new().days(i64::from(day - 1)))
+            .ok()?;
+        let local = date.at(hour, 0, 0, 0);
+        // Compatible disambiguation advances a gap and keeps a fold's civil date.
+        // Inspect offsets directly so the last valid four-digit date needs no
+        // intermediate timestamp beyond Jiff's narrower timestamp upper bound.
+        let local = match self.timezone.to_ambiguous_timestamp(local).offset() {
+            AmbiguousOffset::Gap { before, after } => local
+                .checked_add(
+                    Span::new().seconds(i64::from(after.seconds()) - i64::from(before.seconds())),
+                )
+                .ok()?,
+            _ => local,
+        };
+        Some(local.date())
+    }
+}
+
+fn civil_date(year: i32, month: u32, day: u32) -> Option<Date> {
+    Date::new(
+        year.try_into().ok()?,
+        month.try_into().ok()?,
+        day.try_into().ok()?,
+    )
+    .ok()
+}
+
+fn date_string(date: Date) -> String {
+    format!("{}-{:02}-{:02}", date.year(), date.month(), date.day())
+}
+
 /// Formats a validated civil ISO date. Invalid dates return an error, never a path.
-pub fn format_daily(pattern: &str, iso: &str) -> Result<String, &'static str> {
+pub fn format_daily(
+    pattern: &str,
+    iso: &str,
+    calendar: &DailyCalendar,
+) -> Result<String, &'static str> {
     let invalid =
         "Cannot format this daily date. Use an existing calendar date in YYYY-MM-DD form.";
     let (year, month, day) = iso_parts(iso).ok_or(invalid)?;
-    NaiveDate::from_ymd_opt(year, month, day).ok_or(invalid)?;
+    civil_date(year, month, day).ok_or(invalid)?;
     // JavaScript's numeric Date constructor interprets years 0..99 as 1900..1999.
-    let weekday = NaiveDate::from_ymd_opt(constructor_year(year), month, 1)
-        .and_then(|first| first.checked_add_days(Days::new(u64::from(day - 1))))
+    let weekday = calendar
+        .local_date(constructor_year(year), month, day, 12)
         .ok_or(invalid)?
         .weekday()
-        .num_days_from_sunday() as usize;
+        .to_sunday_zero_offset() as usize;
     Ok(TOKENS
         .replace_all(pattern, |capture: &regex::Captures<'_>| match &capture[1] {
             "YYYY" => iso[..4].to_owned(),
@@ -197,7 +270,7 @@ impl Pattern {
         })
     }
 
-    fn parse(&self, title: &str) -> Option<String> {
+    fn parse(&self, title: &str, calendar: &DailyCalendar) -> Option<String> {
         let canonical = regex_case(title);
         let captures = self.regex.captures(&canonical)?;
         let value = |name| {
@@ -216,29 +289,40 @@ impl Pattern {
             Some(format!("{:02}", index + 1))
         })?;
         let day = value("DD")?;
-        NaiveDate::from_ymd_opt(
+        let normalized = calendar.local_date(
             constructor_year(year.parse().ok()?),
             month.parse().ok()?,
             day.parse().ok()?,
+            12,
         )?;
+        if u32::try_from(normalized.month()).ok()? != month.parse::<u32>().ok()?
+            || u32::try_from(normalized.day()).ok()? != day.parse::<u32>().ok()?
+        {
+            return None;
+        }
         let iso = format!("{year}-{month}-{day}");
-        (format_daily(&self.source, &iso).ok()?.to_lowercase() == title.to_lowercase())
-            .then_some(iso)
+        (format_daily(&self.source, &iso, calendar)
+            .ok()?
+            .to_lowercase()
+            == title.to_lowercase())
+        .then_some(iso)
     }
 }
 
-pub fn parse_daily(title: &str, pattern: &str) -> Option<String> {
-    Pattern::new(pattern)?.parse(title)
+pub fn parse_daily(title: &str, pattern: &str, calendar: &DailyCalendar) -> Option<String> {
+    Pattern::new(pattern)?.parse(title, calendar)
 }
 
 /// Retain one parser per notebook/layout; configuration is never process-global.
 pub struct DailyParser {
     configured: Option<Pattern>,
+    calendar: DailyCalendar,
 }
 
 impl DailyParser {
-    pub fn new(layout: &DailyLayout) -> Self {
+    pub fn new(layout: &DailyLayout, calendar: DailyCalendar) -> Self {
         Self {
+            calendar,
             configured: (layout.title != DEFAULT_TITLE)
                 .then(|| Pattern::new(&layout.title))
                 .flatten(),
@@ -254,18 +338,21 @@ impl DailyParser {
             return None;
         }
         if WEEKDAY_TITLE.is_match(title) {
-            return ISO_WEEKDAY.parse(title);
+            return ISO_WEEKDAY.parse(title, &self.calendar);
         }
         if let Some(date) = self
             .configured
             .as_ref()
-            .and_then(|pattern| pattern.parse(title))
+            .and_then(|pattern| pattern.parse(title, &self.calendar))
         {
             return Some(date);
         }
         if let Some((year, month, day)) = iso_parts(title)
             && year >= 1000
-            && NaiveDate::from_ymd_opt(year, month, day).is_some()
+            && self
+                .calendar
+                .local_date(year, month, day, 12)
+                .is_some_and(|date| date_string(date) == title)
         {
             return Some(title.into());
         }
@@ -285,29 +372,27 @@ impl DailyParser {
         } else if year < 100 {
             year += 1900;
         }
-        let date = NaiveDate::from_ymd_opt(year, month, 1)?
-            .checked_add_days(Days::new(u64::from(day - 1)))?;
-        Some(format!(
-            "{}-{:02}-{:02}",
-            date.year(),
-            date.month(),
-            date.day()
-        ))
+        self.calendar
+            .local_date(year, month, day, 0)
+            .map(date_string)
     }
 }
 
-pub fn daily_date(title: &str, layout: &DailyLayout) -> Option<String> {
-    DailyParser::new(layout).date(title)
+pub fn daily_date(title: &str, layout: &DailyLayout, calendar: &DailyCalendar) -> Option<String> {
+    DailyParser::new(layout, calendar.clone()).date(title)
 }
 
-pub fn detect_layout<'a>(paths: impl IntoIterator<Item = &'a str>) -> Option<DailyLayout> {
+pub fn detect_layout<'a>(
+    paths: impl IntoIterator<Item = &'a str>,
+    calendar: &DailyCalendar,
+) -> Option<DailyLayout> {
     let mut counts = Vec::<(DailyLayout, usize)>::new();
     let mut indices = HashMap::new();
     for path in paths {
         let (folder, title) = path.rsplit_once('/').unwrap_or(("", path));
         let title = crate::markdown::page_name(title);
         for pattern in [&*ISO_WEEKDAY, &*ISO_PATTERN] {
-            let Some(date) = pattern.parse(title) else {
+            let Some(date) = pattern.parse(title, calendar) else {
                 continue;
             };
             let (_, month, _) = iso_parts(&date).unwrap();

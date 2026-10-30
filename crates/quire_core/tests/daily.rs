@@ -1,12 +1,18 @@
 use quire_core::daily::{
-    DailyLayout, daily_date, detect_layout, format_daily, parse_daily, read_settings,
-    write_settings,
+    DailyCalendar, DailyLayout, daily_date, detect_layout, format_daily, parse_daily,
+    read_settings, write_settings,
 };
 use serde_json::Value;
 
 #[test]
 fn unicode_page_names_do_not_panic_during_layout_detection() {
-    assert_eq!(detect_layout(["🙂", "اردو", "ی", "Folder/میٹنگ.md"]), None);
+    assert_eq!(
+        detect_layout(
+            ["🙂", "اردو", "ی", "Folder/میٹنگ.md"],
+            &DailyCalendar::utc()
+        ),
+        None
+    );
 }
 
 #[test]
@@ -20,8 +26,8 @@ fn notebook_parsers_are_isolated_and_invalid_dates_cannot_become_paths() {
         folder: "Elsewhere".into(),
         title: "Date {DD} {MMMM} {YYYY}".into(),
     };
-    let a = DailyParser::new(&first);
-    let b = DailyParser::new(&second);
+    let a = DailyParser::new(&first, DailyCalendar::utc());
+    let b = DailyParser::new(&second, DailyCalendar::utc());
     assert_eq!(a.date("Day 2026.10.29").as_deref(), Some("2026-10-29"));
     assert_eq!(b.date("Day 2026.10.29"), None);
     assert_eq!(
@@ -39,7 +45,7 @@ fn notebook_parsers_are_isolated_and_invalid_dates_cannot_become_paths() {
         "2026-10-29\n",
         "٢٠٢٦-١٠-٢٩",
     ] {
-        assert!(first.path(date).is_err(), "{date}");
+        assert!(first.path(date, &DailyCalendar::utc()).is_err(), "{date}");
     }
 }
 
@@ -79,6 +85,7 @@ fn layout(value: &Value) -> DailyLayout {
 
 #[test]
 fn daily_rules_match_the_frozen_oracle() {
+    let calendar = DailyCalendar::utc();
     let vectors: Value =
         serde_json::from_str(include_str!("../../../tests/fixtures/daily-vectors.json")).unwrap();
     assert!(vectors["formatted"].as_array().unwrap().len() >= 2000);
@@ -86,14 +93,18 @@ fn daily_rules_match_the_frozen_oracle() {
         let layout = layout(&case["layout"]);
         let iso = case["iso"].as_str().unwrap();
         assert_eq!(
-            format_daily(&layout.title, iso).unwrap(),
+            format_daily(&layout.title, iso, &calendar).unwrap(),
             case["title"],
             "{case}"
         );
-        assert_eq!(layout.folder(iso).unwrap(), case["folder"], "{case}");
-        assert_eq!(layout.path(iso).unwrap(), case["path"], "{case}");
         assert_eq!(
-            parse_daily(case["title"].as_str().unwrap(), &layout.title).as_deref(),
+            layout.folder(iso, &calendar).unwrap(),
+            case["folder"],
+            "{case}"
+        );
+        assert_eq!(layout.path(iso, &calendar).unwrap(), case["path"], "{case}");
+        assert_eq!(
+            parse_daily(case["title"].as_str().unwrap(), &layout.title, &calendar).as_deref(),
             case["parsed"].as_str(),
             "{case}"
         );
@@ -102,12 +113,12 @@ fn daily_rules_match_the_frozen_oracle() {
         let layout = layout(&case["layout"]);
         let title = case["title"].as_str().unwrap();
         assert_eq!(
-            parse_daily(title, &layout.title).as_deref(),
+            parse_daily(title, &layout.title, &calendar).as_deref(),
             case["parsed"].as_str(),
             "{case}"
         );
         assert_eq!(
-            daily_date(title, &layout).as_deref(),
+            daily_date(title, &layout, &calendar).as_deref(),
             case["date"].as_str(),
             "{case}"
         );
@@ -140,7 +151,7 @@ fn daily_rules_match_the_frozen_oracle() {
             .map(|p| p.as_str().unwrap())
             .collect();
         assert_eq!(
-            detect_layout(paths.iter().copied()),
+            detect_layout(paths.iter().copied(), &calendar),
             (!case["layout"].is_null()).then(|| layout(&case["layout"])),
             "{case}"
         );

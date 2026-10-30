@@ -11,7 +11,23 @@
     "markdown/markdown.ts": "ed2023610b8b3fbb9302fd81af889bf0fb4da6fa8b7932bf592de3d914466bb7",
     "markdown/range-set.ts": "f38e035299fb90fe0e8bc9c1b945b58d03a85dc9078dc59bb3281b7ee34b8a6c",
     "daily/daily-layout.ts": "32a3eccd9eea5de811a321f74d930788453ceb4f3d309421acd4bc7ca1bb4e24",
-    "daily/workspace.ts": "b9c05efe0846973676ce8e666f87657e091a69f732741ad933148c4110bd000e"
+    "daily/workspace.ts": "b9c05efe0846973676ce8e666f87657e091a69f732741ad933148c4110bd000e",
+    "daily/local-date.ts": "0786f47b120ae1a8759ea1cbdc840fecc82f24ab3aecb183f77d8f5e681806f6"
+  },
+  "daily_extractions": [
+    {
+      "source": "src/core/tasks.ts",
+      "destination": "daily/local-date.ts",
+      "change": "Copy the unchanged two-line localDate function from the pinned revision; exclude unrelated task imports and runtime services."
+    }
+  ],
+  "daily_vectors": {
+    "node": "26.11.1",
+    "bun": "1.4.2",
+    "civil_timezone": "UTC",
+    "timezone_groups": 8,
+    "timezone_cases": 784,
+    "clock_inputs": "Explicit Unix milliseconds; each timezone group runs in an isolated Node process."
   },
   "adaptations": [
     "Test imports point to copied modules and the local Vitest package.",
