@@ -16,7 +16,7 @@ use std::rc::Rc;
 mod completion;
 
 /// What a reference names.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Target {
     /// A page by name, path, or daily date.
     Page(String),

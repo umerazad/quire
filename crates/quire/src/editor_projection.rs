@@ -266,6 +266,21 @@ fn refresh(
             ));
         }
     }
+    let type_tag = TypeId::of::<Projection>();
+    for (spot, placeholder) in crate::embeds::headers(editor, cx.entity().downgrade(), type_tag) {
+        if shown(
+            editor,
+            &spot.range,
+            &spot.block,
+            &spot.source,
+            &snapshot,
+            window,
+            cx,
+        ) {
+            let range = spot.range.start.to_offset(&snapshot)..spot.range.end.to_offset(&snapshot);
+            tasks.push(Crease::simple(range, placeholder));
+        }
+    }
     let mut labels = Vec::new();
     for link in links.iter() {
         labels.push(link.label.clone());
@@ -384,7 +399,7 @@ fn focusable_control(
         })
 }
 
-fn inline_control(
+pub(crate) fn inline_control(
     id: impl Into<gpui::ElementId>,
     editor: WeakEntity<Editor>,
 ) -> gpui::Stateful<gpui::Div> {
@@ -649,9 +664,18 @@ pub fn preview_labels(editor: &Editor) -> Vec<String> {
         .collect()
 }
 
+/// Folds the view again, for decorations whose state changed outside a parse.
+pub(crate) fn refold(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
+    if let Some(projection) = editor.addon::<Projection>() {
+        let blocks = projection.blocks.clone();
+        refresh(editor, &blocks, window, cx);
+    }
+}
+
 /// The notebook's index answers differently: ask again for every preview.
 pub fn references_changed(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
     request_previews(editor, true, window, cx);
+    crate::embeds::requery(editor, window, cx);
 }
 
 fn checkbox_placeholder(
@@ -951,6 +975,25 @@ fn apply_blocks(
         })
         .collect();
     editor.addon_mut::<Projection>().unwrap().previews = previews;
+    let page_text = snapshot.text();
+    let spots: Vec<_> = references
+        .iter()
+        .filter(|reference| crate::markdown_links::is_full_embed(&page_text, reference))
+        .filter(|reference| shown(&reference.range))
+        .filter_map(|reference| {
+            let target = crate::references::Target::of(reference)?;
+            let block = blocks
+                .get(blocks.partition_point(|block| block.content_to <= reference.range.start))
+                .filter(|block| block.content_from <= reference.range.start)?;
+            Some(crate::embeds::Spot {
+                range: anchor(reference.range.start)?..anchor(reference.range.end)?,
+                block: anchor(block.from)?..anchor(block.content_to)?,
+                source: page_text[reference.range.clone()].to_owned(),
+                target,
+            })
+        })
+        .collect();
+    crate::embeds::sync(editor, spots, window, cx);
     let links = links
         .into_iter()
         .filter_map(|link| {
@@ -1099,6 +1142,7 @@ pub fn unbind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
             return;
         }
         editor.unregister_addon::<Projection>();
+        crate::embeds::clear(editor, cx);
         editor
             .buffer()
             .update(cx, |buffer, _| buffer.set_edit_filter(None));

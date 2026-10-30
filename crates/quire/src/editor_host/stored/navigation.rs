@@ -687,3 +687,7 @@ mod completion_tests;
 #[cfg(test)]
 #[path = "rendered_links_tests.rs"]
 mod rendered_links_tests;
+
+#[cfg(test)]
+#[path = "embeds_tests.rs"]
+mod embeds_tests;

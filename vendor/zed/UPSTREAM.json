@@ -291,6 +291,10 @@
       "change": "Make disable_word_completions public (it was test-only) so a host completion provider for page and block references does not fall back to buffer words when no page or block matches."
     },
     {
+      "path": "crates/editor/src/display_map/block_map.rs",
+      "change": "Keep a non-replacing block whose row start is folded when that fold starts at the row start and ends within the row (a hidden list marker), so Write can show editable embeds below marker-folded lines. Blocks inside folds reaching across rows stay hidden as upstream. Covered by quire's embed tests; the editor crate's own tests need settings assets that are not vendored."
+    },
+    {
       "path": "crates/gpui/src/app.rs",
       "change": "Add opt-in cancellable quit-request subscriptions before programmatic/native termination, with all-guard evaluation and reentrancy protection; preserve the final shutdown handler lifecycle."
     },

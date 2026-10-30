@@ -269,6 +269,22 @@ impl BlockPlacement<Anchor> {
     }
 }
 
+/// Whether a fold hides the start of `row`, so blocks placed on it would sit inside folded text.
+/// A fold that starts at the row start and ends within the row, such as one hiding a list marker,
+/// leaves the row and its blocks visible.
+fn row_start_hidden_by_fold(wrap_snapshot: &WrapSnapshot, row: u32) -> bool {
+    let buffer = wrap_snapshot.buffer_snapshot();
+    wrap_snapshot.intersects_fold(Point::new(row, 0))
+        && ((row > 0
+            && wrap_snapshot.intersects_fold(Point::new(
+                row - 1,
+                buffer.line_len(MultiBufferRow(row - 1)),
+            )))
+            || (row < buffer.max_point().row
+                && wrap_snapshot
+                    .intersects_fold(Point::new(row, buffer.line_len(MultiBufferRow(row))))))
+}
+
 pub struct CustomBlock {
     pub id: CustomBlockId,
     pub placement: BlockPlacement<Anchor>,
@@ -1081,14 +1097,14 @@ impl BlockMap {
                     .filter_map(|block| {
                         let placement = block.placement.to_wrap_row(wrap_snapshot)?;
                         if !matches!(placement, BlockPlacement::Replace(_))
-                            && wrap_snapshot.intersects_fold(Point::new(
+                            && row_start_hidden_by_fold(
+                                wrap_snapshot,
                                 block
                                     .placement
                                     .start()
                                     .to_point(wrap_snapshot.buffer_snapshot())
                                     .row,
-                                0,
-                            ))
+                            )
                         {
                             return None;
                         }

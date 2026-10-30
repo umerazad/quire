@@ -66,6 +66,9 @@ mod tasks;
 mod references;
 
 #[cfg(feature = "full-editor")]
+mod embeds;
+
+#[cfg(feature = "full-editor")]
 mod markdown_links;
 
 #[path = "example_support/fonts.rs"]
