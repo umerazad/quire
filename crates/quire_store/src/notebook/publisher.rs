@@ -1,16 +1,16 @@
-use super::{Cursor, NotebookStore, PendingPublication, attachment};
+use super::{
+    Cursor, NotebookStore, PendingPublication, attachment,
+    folder::{read_ordinary, verify_notebook},
+};
 use crate::{
     durable_files,
-    sync::{
-        format::{self, Expected, Kind},
-        json::Json,
-    },
+    sync::format::{self, Expected, Kind},
 };
 use anyhow::{Context as _, Result, ensure};
 use std::{
     collections::BTreeMap,
     fs::{self, File},
-    io::{self, Read, Write},
+    io::{self, Write},
     path::Path,
 };
 
@@ -20,58 +20,6 @@ pub struct PublicationAck {
     pub cursor: Cursor,
     pub revisions: usize,
     pub adopted: bool,
-}
-
-fn read_ordinary(path: &Path, limit: usize) -> Result<Vec<u8>> {
-    let metadata = fs::symlink_metadata(path).with_context(|| {
-        format!(
-            "Cannot read {}. Wait for delivery or restore the original file before retrying.",
-            path.display()
-        )
-    })?;
-    ensure!(
-        metadata.is_file() && metadata.len() <= limit as u64,
-        "Storage file {} is linked, nonordinary, or too large. Preserve it and restore the original file before retrying.",
-        path.display()
-    );
-    let mut data = Vec::new();
-    File::open(path)?
-        .take(limit as u64 + 1)
-        .read_to_end(&mut data)?;
-    ensure!(
-        data.len() <= limit,
-        "Storage file grew while reading it. Wait for delivery to finish before retrying."
-    );
-    Ok(data)
-}
-
-fn verify_notebook(root: &Path, notebook: &str, device: &str) -> Result<()> {
-    ensure!(
-        root.is_absolute(),
-        "Notebook publication needs an absolute folder path. Choose the notebook folder and retry."
-    );
-    ensure!(
-        !device.is_empty()
-            && device
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
-        "Writer identity is not a safe folder name. Restore its original local identity before publishing."
-    );
-    durable_files::ordinary_directory(root)?;
-    let identity = Json::parse(&read_ordinary(
-        &root.join("quire-notebook.json"),
-        1024 * 1024,
-    )?)?;
-    let identity = identity.root();
-    ensure!(
-        identity.field("format").as_f64() == Some(1.),
-        "Notebook format is unsupported or newer than this app. Preserve its files and use a compatible Quire version."
-    );
-    ensure!(
-        identity.field("id").as_str() == Some(notebook),
-        "This folder belongs to another notebook. Choose the original notebook folder before publishing."
-    );
-    Ok(())
 }
 
 fn scan_writer(
@@ -128,8 +76,27 @@ impl NotebookStore {
     /// Publishes one frozen batch to an existing format 1 notebook folder.
     /// Acknowledges this local folder only, never cloud or peer delivery.
     pub fn publish_to(&self, root: &Path, created: u64) -> Result<Option<PublicationAck>> {
+        self.publish_matching(root, created, None)
+    }
+
+    pub(super) fn adopt_written_publication(
+        &self,
+        root: &Path,
+        expected: &PendingPublication,
+    ) -> Result<PublicationAck> {
+        self.publish_matching(root, 0, Some(expected))?.context(
+            "The observed publication changed. Rescan this writer's folder before retrying.",
+        )
+    }
+
+    fn publish_matching(
+        &self,
+        root: &Path,
+        created: u64,
+        expected: Option<&PendingPublication>,
+    ) -> Result<Option<PublicationAck>> {
         self.require_reconciliation()?;
-        let result = self.publish_to_inner(root, created).context("Cannot publish notebook changes. Keep the locally saved versions and retry after resolving the folder or delivery error.");
+        let result = self.publish_to_inner(root, created, expected).context("Cannot publish notebook changes. Keep the locally saved versions and retry after resolving the folder or delivery error.");
         if let Err(error) = result {
             if let Err(state_error) = self.require_reconciliation() {
                 return Err(error).context(format!("Publication's uncertain state could not be recorded ({state_error:#}). Preserve the database and reopen it before retrying."));
@@ -139,7 +106,7 @@ impl NotebookStore {
         result
     }
 
-    fn require_reconciliation(&self) -> Result<()> {
+    pub(super) fn require_reconciliation(&self) -> Result<()> {
         self.transaction(|| {
             self.connection
                 .exec("UPDATE meta SET uncertain=1 WHERE singleton=1")?()?;
@@ -147,13 +114,22 @@ impl NotebookStore {
         })
     }
 
-    fn publish_to_inner(&self, root: &Path, created: u64) -> Result<Option<PublicationAck>> {
+    fn publish_to_inner(
+        &self,
+        root: &Path,
+        created: u64,
+        expected: Option<&PendingPublication>,
+    ) -> Result<Option<PublicationAck>> {
         verify_notebook(root, &self.notebook, &self.device)?;
         let devices = durable_files::directory_below(root, "devices")?;
         let writer = durable_files::directory_below(&devices, &self.device)?;
         let log = durable_files::directory_below(&writer, "log")?;
         let cursor = self.cursor(&self.device)?;
         let mut pending = self.pending_publication()?;
+        ensure!(
+            expected.is_none_or(|expected| pending.as_ref() == Some(expected)),
+            "The frozen publication changed during rescan. Keep local saves and rescan the writer before retrying."
+        );
         let adopted = scan_writer(
             &log,
             &self.notebook,
@@ -161,6 +137,10 @@ impl NotebookStore {
             cursor.as_ref(),
             pending.as_ref(),
         )?;
+        ensure!(
+            expected.is_none() || adopted,
+            "The observed publication file is no longer present. Keep local saves and retry after delivery finishes."
+        );
         if pending.is_none() {
             self.mark_reconciled(cursor.as_ref())?;
             pending = self.prepare_publication(created)?;
@@ -222,5 +202,53 @@ impl NotebookStore {
             revisions: pending.revisions.len(),
             adopted,
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::notebook::Edit;
+
+    #[test]
+    fn adoption_requires_an_existing_file_and_the_exact_frozen_selection() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let folder = root.path().join("notebook");
+        fs::create_dir(&folder)?;
+        fs::write(
+            folder.join("quire-notebook.json"),
+            br#"{"format":1,"id":"nb","created":1}"#,
+        )?;
+        let store = NotebookStore::open(&root.path().join("local.sqlite"), "nb", "office")?;
+        let edit = Edit {
+            page: "p".into(),
+            base: vec![],
+            path: "A.md".into(),
+            text: "one".into(),
+            created: 1,
+            deleted: false,
+            recovery: None,
+        };
+        let first = store.save(&edit)?;
+        store.mark_reconciled(None)?;
+        let pending = store.prepare_publication(100)?.unwrap();
+        assert!(store.adopt_written_publication(&folder, &pending).is_err());
+        let log = folder.join("devices/office/log");
+        assert_eq!(fs::read_dir(&log)?.count(), 0);
+        assert_eq!(store.pending_publication()?, Some(pending.clone()));
+        fs::write(log.join(&pending.name), &pending.data)?;
+        store.publish_to(&folder, 200)?;
+        let second = store.save(&Edit {
+            base: vec![first.revision_id().into()],
+            text: "two".into(),
+            ..edit
+        })?;
+        let selected = store.prepare_publication(300)?.unwrap();
+        assert!(store.adopt_written_publication(&folder, &pending).is_err());
+        assert_eq!(store.pending_publication()?, Some(selected));
+        assert_eq!(store.outbox()?, [second.revision_id()]);
+        assert_eq!(store.cursor("office")?.unwrap().seq, 1);
+        assert_eq!(fs::read_dir(&log)?.count(), 1);
+        Ok(())
     }
 }

@@ -119,7 +119,20 @@ try {
   state = inspect();
   assert.deepEqual(state.pendingAttachments, []);
   assert.equal(state.peerBatchHash, imported.hash);
-  console.log("Storage crash checks passed: attachment/save/recovery, frozen publication, interrupted transaction, folder publication/reopen, atomic peer import, and late attachment requests.");
+  const nextFields = { ...fields, parents: [revision.id], generation: 1, text: "peer folder rescan update" };
+  const nextRevision = { ...nextFields, id: revisionId(nextFields), device: "peer-crash", created: 100 };
+  const delivered = encodeBatch({ notebook: "nb-crash", device: "peer-crash", seq: 2, previous: incoming.hash, created: 100, revisions: [nextRevision], attachments: [] });
+  const peerLog = join(notebook, "devices/peer-crash/log");
+  mkdirSync(peerLog, { recursive: true });
+  writeFileSync(join(peerLog, delivered.name), delivered.data);
+  const rescan = await killAfterAck("rescan");
+  assert.equal(rescan.applied, 1);
+  assert.equal(rescan.batches, 1);
+  state = inspect();
+  assert.deepEqual(state.peerCursor, { seq: 2, hash: delivered.hash });
+  assert.equal(state.peerBatchHash, imported.hash);
+  assert.deepEqual(new Map(state.versions.map((version: { id: string; text: string }) => [version.id, version.text])), new Map([[afterPublication.id, "after folder acknowledgment"], [nextRevision.id, nextFields.text]]));
+  console.log("Storage crash checks passed: local/recovery/publication acknowledgments, atomic peer import, late attachment requests, and delivered-folder rescan.");
 } finally {
   rmSync(folder, { recursive: true, force: true });
 }

@@ -7,6 +7,35 @@ use quire_store::{
 use std::fs;
 
 #[test]
+fn streamed_cache_verifies_source_and_destination_and_preserves_bad_files() -> anyhow::Result<()> {
+    use std::os::unix::fs::symlink;
+    let root = tempfile::tempdir()?;
+    let store = NotebookStore::open(&root.path().join("local.sqlite"), "nb", "office")?;
+    let data: Vec<_> = (0..8 * 1024 * 1024)
+        .map(|index| (index % 251) as u8)
+        .collect();
+    let name = format::attachment_file_name(&data, "a.bin");
+    let source = root.path().join("download");
+    fs::write(&source, &data)?;
+    let linked = root.path().join("linked");
+    symlink(&source, &linked)?;
+    assert!(store.cache_attachment_file(&name, &linked).is_err());
+    assert!(!root.path().join("attachments").exists());
+    store.cache_attachment_file(&name, &source)?;
+    let cached = root.path().join("attachments").join(&name);
+    assert_eq!(fs::read(&cached)?, data);
+    fs::write(&source, b"bad download")?;
+    assert!(store.cache_attachment_file(&name, &source).is_err());
+    assert_eq!(fs::read(&source)?, b"bad download");
+    assert_eq!(fs::read(&cached)?, data);
+    fs::write(&source, &data)?;
+    fs::write(&cached, b"damaged cache")?;
+    assert!(store.cache_attachment_file(&name, &source).is_err());
+    assert_eq!(fs::read(&cached)?, b"damaged cache");
+    Ok(())
+}
+
+#[test]
 fn attachment_is_content_named_and_survives_reopen_before_a_save_uses_it() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("local.sqlite");

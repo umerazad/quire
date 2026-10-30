@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result, bail};
 use quire_store::{
     database::open_writable,
-    notebook::{BatchImport, Draft, DraftStamp, Edit, NotebookStore},
+    notebook::{BatchImport, Draft, DraftStamp, Edit, NotebookStore, RescanLimits},
 };
 use serde_json::json;
 use std::{
@@ -12,7 +12,7 @@ use std::{
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let mode = args.get(1).context(
-        "Specify attach, save, draft, select, publish, import, interrupt, or inspect and a database path.",
+        "Specify attach, save, draft, select, publish, import, rescan, interrupt, or inspect and a database path.",
     )?;
     let path = Path::new(
         args.get(2)
@@ -81,6 +81,20 @@ fn main() -> Result<()> {
                 .context("No revision to publish.")?;
             json!({"mode":mode,"name":published.name,"seq":published.cursor.seq,"hash":published.cursor.hash})
         }
+        "rescan" => {
+            let folder = path
+                .parent()
+                .context("Database has no parent folder.")?
+                .join("notebook");
+            let report = store.rescan(&folder, RescanLimits::default(), None)?;
+            if !report.problems.is_empty()
+                || !report.waiting.is_empty()
+                || report.continuation.is_some()
+            {
+                bail!("The crash probe's rescan is incomplete: {report:?}");
+            }
+            json!({"mode":mode,"applied":report.applied,"batches":report.batches,"attachments":report.attachments_completed})
+        }
         "import" => {
             let file = Path::new(&text);
             let name = file
@@ -133,7 +147,7 @@ fn main() -> Result<()> {
             return Ok(());
         }
         _ => bail!(
-            "Unknown crash probe mode. Use attach, save, draft, select, publish, import, interrupt, or inspect."
+            "Unknown crash probe mode. Use attach, save, draft, select, publish, import, rescan, interrupt, or inspect."
         ),
     };
     println!("{ready}");

@@ -7,19 +7,18 @@ use anyhow::{Context as _, Result, ensure};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},
-    io::{Read, Write},
+    io::{self, Read, Write},
     path::Path,
 };
 
 pub(super) fn verify_file(path: &Path, name: &str) -> Result<(String, i64)> {
     let expected = format::attachment_hash(name)
         .context("Invalid attachment name. Use a content-hashed attachment filename.")?;
-    let metadata = fs::symlink_metadata(path).with_context(|| {
-        format!("Local attachment {name} is missing. Download it before saving.")
-    })?;
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("Attachment {name} is missing. Download it before retrying."))?;
     ensure!(
         metadata.is_file(),
-        "Local attachment {name} is not an ordinary file. Restore its original bytes before saving."
+        "Attachment {name} is not an ordinary file. Restore its original bytes before retrying."
     );
     let mut file = File::open(path)?;
     let mut hash = Sha256::new();
@@ -34,7 +33,7 @@ pub(super) fn verify_file(path: &Path, name: &str) -> Result<(String, i64)> {
     let hash = format!("{:x}", hash.finalize());
     ensure!(
         hash == expected,
-        "Local attachment {name} failed its hash check. Preserve the damaged file and restore its original bytes before saving."
+        "Attachment {name} failed its hash check. Preserve the damaged file and restore its original bytes before retrying."
     );
     Ok((hash, i64::try_from(metadata.len())?))
 }
@@ -51,23 +50,39 @@ impl NotebookStore {
     /// Verifies downloaded bytes against their protocol name before writing them.
     /// Existing damaged files are preserved; an unregistered valid file may be adopted.
     pub fn cache_attachment(&self, name: &str, data: &[u8]) -> Result<()> {
+        self.require_usable()?;
         let expected = format::attachment_hash(name)
             .context("Invalid attachment name. Use a content-hashed attachment filename.")?;
         ensure!(
             format::sha256(data) == expected,
             "Attachment {name} does not match its content hash. Keep the source and retry the download."
         );
+        self.install_cached_attachment(name, i64::try_from(data.len())?, |file| {
+            file.write_all(data).context("Cannot write the local attachment. Keep the source and check available space before retrying.")
+        })
+    }
+
+    /// Verifies and streams an ordinary source file into the durable local cache.
+    pub fn cache_attachment_file(&self, name: &str, source: &Path) -> Result<()> {
+        self.require_usable()?;
+        let (_, size) = verify_file(source, name)?;
+        self.install_cached_attachment(name, size, |file| {
+            io::copy(&mut File::open(source)?, file).context("Cannot copy the downloaded attachment. Keep its source and check cache permissions and space before retrying.")?;
+            Ok(())
+        })
+    }
+
+    fn install_cached_attachment(
+        &self,
+        name: &str,
+        expected_size: i64,
+        write: impl FnOnce(&mut File) -> Result<()>,
+    ) -> Result<()> {
         let directory = durable_files::directory_below(&self.directory, "attachments")?;
         let path = directory.join(name);
-        let (hash, size) = durable_files::install(
-            &path,
-            |file| {
-                file.write_all(data).context("Cannot write the local attachment. Keep the source and check available space before retrying.")
-            },
-            |path| verify_file(path, name),
-        )?;
+        let (hash, size) = durable_files::install(&path, write, |path| verify_file(path, name))?;
         ensure!(
-            size == i64::try_from(data.len())?,
+            size == expected_size,
             "Attachment size changed during installation. Preserve the source and retry."
         );
         self.transaction(|| {
@@ -99,6 +114,32 @@ impl NotebookStore {
             verify_file(&path, name)? == expected,
             "Local attachment {name} differs from its catalog. Preserve the database and restore its original bytes before saving."
         );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uncertain_commit_blocks_cache_requests_before_file_io() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let store = NotebookStore::open(&root.path().join("local.sqlite"), "nb", "office")?;
+        store.poisoned.set(true);
+        let name = format::attachment_file_name(b"bytes", "a.bin");
+        for error in [
+            store.cache_attachment(&name, b"bytes").unwrap_err(),
+            store
+                .cache_attachment_file(&name, &root.path().join("not-downloaded"))
+                .unwrap_err(),
+        ] {
+            assert!(
+                error.to_string().contains("commit is uncertain"),
+                "{error:#}"
+            );
+        }
+        assert!(!root.path().join("attachments").exists());
         Ok(())
     }
 }

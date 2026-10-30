@@ -1,6 +1,6 @@
 use crate::notebook::{
     BatchImport, Cursor, Draft, DraftStamp, Edit, NotebookStore, PendingPublication,
-    PublicationAck, SaveAck,
+    PublicationAck, RescanCursor, RescanLimits, RescanReport, SaveAck,
 };
 use crate::sync::json::Json;
 use anyhow::{Context as _, Result, anyhow, ensure};
@@ -371,6 +371,25 @@ impl StorageClient {
     ) -> std::result::Result<Reply<Option<String>>, QueueError> {
         self.request(128 + device.capacity(), move |store| {
             store.batch_hash(&device, seq)
+        })
+    }
+    pub fn rescan(
+        &self,
+        root: PathBuf,
+        limits: RescanLimits,
+        resume: Option<RescanCursor>,
+    ) -> std::result::Result<Reply<RescanReport>, QueueError> {
+        let bytes = 256usize
+            .saturating_add(root.as_os_str().len())
+            .saturating_add(resume.as_ref().map_or(0, |cursor| {
+                cursor
+                    .after_device
+                    .as_ref()
+                    .map_or(0, String::capacity)
+                    .saturating_add(cursor.after_attachment.as_ref().map_or(0, String::capacity))
+            }));
+        self.request(bytes, move |store| {
+            store.rescan(&root, limits, resume.as_ref())
         })
     }
 }

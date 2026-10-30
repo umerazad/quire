@@ -8,12 +8,14 @@ use std::{
 
 mod attachment;
 mod delivery;
+mod folder;
 mod import;
 mod migration;
 mod publication;
 mod publisher;
 mod recovery;
 mod revision;
+pub use folder::{RescanCursor, RescanLimits, RescanProblem, RescanReport, RescanWait};
 pub use import::{BatchImport, ImportedBatch, ImportedPage};
 pub use publication::PendingPublication;
 pub use publisher::PublicationAck;
@@ -133,11 +135,16 @@ impl NotebookStore {
         Ok(version)
     }
 
-    fn transaction<T>(&self, run: impl FnOnce() -> Result<T>) -> Result<T> {
+    pub(super) fn require_usable(&self) -> Result<()> {
         ensure!(
             !self.poisoned.get(),
             "A previous commit is uncertain. Keep the editor contents and reopen the notebook before retrying."
         );
+        Ok(())
+    }
+
+    fn transaction<T>(&self, run: impl FnOnce() -> Result<T>) -> Result<T> {
+        self.require_usable()?;
         self.connection.exec("BEGIN IMMEDIATE").and_then(|mut begin| begin())
             .context("Cannot begin a notebook save. Keep the editor contents, check available space and write permissions, and retry after other writers finish.")?;
         match run() {
