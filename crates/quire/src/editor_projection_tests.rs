@@ -3,20 +3,14 @@ use gpui::TestAppContext;
 use multi_buffer::MultiBufferOffset;
 
 fn projected_window(cx: &mut TestAppContext) -> gpui::WindowHandle<NotebookWindow> {
-    cx.add_window(|window, cx| {
+    let window = cx.add_window(|window, cx| {
         let view = NotebookWindow::new("- alpha ^abc\n", window, cx);
-        crate::editor_projection::show(
-            &view.second,
-            &[crate::editor_projection::BlockSyntax {
-                marker: MultiBufferOffset(0)..MultiBufferOffset(2),
-                id: Some(MultiBufferOffset(7)..MultiBufferOffset(12)),
-            }],
-            window,
-            cx,
-        );
+        crate::editor_projection::bind(&view.second, window, cx).expect("Markdown projection");
         window.focus(&view.second.focus_handle(cx), cx);
         view
-    })
+    });
+    cx.executor().run_until_parked();
+    window
 }
 
 #[gpui::test]
@@ -238,6 +232,146 @@ fn source_edits_refresh_syntax_without_removing_user_folds(cx: &mut TestAppConte
                     .display_snapshot
                     .text()),
                 "Za⋯pha\n"
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn projection_recognizes_new_blocks_after_source_edits(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let window = projected_window(cx);
+    window
+        .update(cx, |view, window, cx| {
+            view.source.update(cx, |editor, cx| {
+                editor.set_text("- alpha ^abc\n- second ^two\n", window, cx)
+            });
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(
+                view.source.read(cx).text(cx),
+                "- alpha ^abc\n- second ^two\n"
+            );
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                "alpha\nsecond\n"
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn fresh_unicode_blocks_use_the_new_id_guards(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let window = projected_window(cx);
+    window
+        .update(cx, |view, window, cx| {
+            view.source.update(cx, |editor, cx| {
+                editor.set_text("- مرحبا🙂 ^ar\n- alpha ^last\n", window, cx)
+            });
+            window.focus(&view.second.focus_handle(cx), cx);
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+    cx.simulate_keystrokes(window.into(), ": 2 enter");
+    cx.executor().run_until_parked();
+    cx.simulate_keystrokes(window.into(), "l l shift-d");
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "- مرحبا🙂 ^ar\n- al ^last\n")
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn pending_parse_results_cannot_apply_obsolete_projection_spans(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let window = projected_window(cx);
+    let code = "```md\n- newest ^literal\n```\n";
+    window
+        .update(cx, |view, window, cx| {
+            let source = view
+                .source
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .unwrap();
+            source.update(cx, |source, _| source.set_sync_parse_timeout(None));
+            view.source.update(cx, |editor, cx| {
+                editor.set_text("- stale ^one\n  - old ^two\n", window, cx);
+                editor.set_text(code, window, cx);
+            });
+            assert!(
+                crate::markdown_blocks::blocks(&source.read(cx).snapshot()).is_none(),
+                "an interpolated tree must not publish semantic spans"
+            );
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(view.source.read(cx).text(cx), code);
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                code
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn semantic_spans_map_into_an_excerpt_after_outside_source_edits(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let note = "before ^outside\n- Parent ^p\n  - child🙂 ^c\n\nafter ^outside2\n";
+    let window = cx.add_window(|window, cx| {
+        let source = crate::markdown::buffer(note, cx);
+        let excerpt = crate::editor_excerpt::buffer(
+            source.clone(),
+            note.find("- Parent").unwrap()..note.find("\n\nafter").unwrap(),
+            cx,
+        )
+        .unwrap();
+        let view = NotebookWindow::for_buffer(source, Some(excerpt), window, cx);
+        crate::editor_projection::bind(&view.second, window, cx).unwrap();
+        view
+    });
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                "Parent\n  child🙂"
+            );
+            view.source.update(cx, |editor, cx| {
+                editor.transact(window, cx, |editor, _, cx| {
+                    editor.edit([(MultiBufferOffset(0)..MultiBufferOffset(0), "new\n")], cx)
+                })
+            });
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |view, window, cx| {
+            assert_eq!(view.source.read(cx).text(cx), format!("new\n{note}"));
+            assert_eq!(
+                view.second.update(cx, |editor, cx| editor
+                    .snapshot(window, cx)
+                    .display_snapshot
+                    .text()),
+                "Parent\n  child🙂"
             );
         })
         .unwrap();

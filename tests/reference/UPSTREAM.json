@@ -7,10 +7,17 @@
     "sync/graph.ts": "6ea8863244136ca980c7b79138aaee3e1c25da322cf47c048ad8822b9803bba2",
     "sync/replica.ts": "868936de064b24a2a41a8e46be59daace6efa7118211dbaf21d97981f4ffa867",
     "sync-format.test.ts": "5513f7bc56a49f9b8826cb5c24103ad0cecd071e8402b8e41c086d84511e0521",
-    "../../tools/synthetic-notebook.ts": "209c3bf86cef21f1d8f47d65bbd69fd2be17aa3b6566b15792fdfcd80cd0d52d"
+    "../../tools/synthetic-notebook.ts": "209c3bf86cef21f1d8f47d65bbd69fd2be17aa3b6566b15792fdfcd80cd0d52d",
+    "markdown/markdown.ts": "ed2023610b8b3fbb9302fd81af889bf0fb4da6fa8b7932bf592de3d914466bb7",
+    "markdown/range-set.ts": "f38e035299fb90fe0e8bc9c1b945b58d03a85dc9078dc59bb3281b7ee34b8a6c"
   },
   "adaptations": [
     "Test imports point to copied modules and the local Vitest package.",
-    "Node/Vitest must run the codec tests; Bun zstd truncation diagnostics differ."
-  ]
+    "Node/Vitest must run the codec tests; Bun zstd truncation diagnostics differ.",
+    "Markdown and RangeSet are copied unchanged; the development oracle pins Lezer and emits normalized editor text with UTF-16 offsets."
+  ],
+  "markdown_dependencies": {
+    "@lezer/common": "1.5.4",
+    "@lezer/markdown": "1.8.1"
+  }
 }

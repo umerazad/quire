@@ -27,6 +27,9 @@ assets = { workspace = true, optional = true }
 util = { workspace = true, features = ["debug-embed"], optional = true }
 zed_actions = { workspace = true, optional = true }
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [features]
 default = ["full-editor"]
 test-support = ["gpui/test-support", "gpui_platform/test-support"]

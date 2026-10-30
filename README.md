@@ -28,9 +28,11 @@ The native development app uses `QuireNative` data/config paths, separate from Z
 
 Run `cargo run -p quire --locked -- --excerpt-harness` in a regular desktop terminal to inspect the editable-excerpt spike. The right pane shows the first nested block from the left pane's document, with shared undo/redo. This is a source excerpt; Write rendering and hidden-identity protection remain unfinished.
 
-`cargo run -p quire --locked -- --write-harness` opens a fixed experiment with hidden syntax. The right pane hides the marker and ID of `- alpha ^abc` while sharing the left pane's source. Partial delete/paste, clearing and retyping, and delete/undo have regression tests. General Markdown span detection, checkbox/link rendering, full Write/Source switching, and the remaining structural editing cases are still pending.
+`cargo run -p quire --locked -- --write-harness` opens the example note with list markers and block IDs hidden in the right pane. Both panes edit the same source. Projection spans come from the current Markdown parse and update after edits, including newly inserted blocks. Partial delete/paste, clearing and retyping, delete/undo, stale parses, and subtree mapping have regression tests. Checkbox/link rendering, full Write/Source switching, and the remaining structural editing cases are still pending.
 
 Reference protocol tests deliberately run through Node/Vitest. Bun's zstd decoder reports a truncated frame differently, so running those tests with `bun test` would change the compatibility oracle.
+
+The development oracle also compares native block boundaries and hidden spans with 39 synthetic vectors from Quire's copied legacy Markdown parser. Regenerate them with `bun tools/markdown-vectors.ts`. The pinned Lezer packages are development dependencies; the native app uses the copied Markdown grammar and requires no JavaScript parser at runtime. These fixtures cover specific cases rather than establishing complete Markdown or Write parity.
 
 The `test:vim-search`, `test:vim-command`, and `test:vim-mark` scripts run copied regressions, including comparisons with Neovim. They require `nvim` on PATH and enable Quire's embedded-asset policy so tests load the copied settings and queries.
 

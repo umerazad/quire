@@ -1,0 +1,1735 @@
+[
+  {
+    "name": "empty",
+    "source": "",
+    "text": "",
+    "blocks": [],
+    "spans": []
+  },
+  {
+    "name": "basic-id",
+    "source": "- alpha ^abc\n",
+    "text": "- alpha ^abc\n",
+    "blocks": [
+      {
+        "key": "abc",
+        "id": "abc",
+        "from": 0,
+        "to": 12,
+        "contentFrom": 2,
+        "contentTo": 12,
+        "subtreeTo": 12,
+        "depth": 0,
+        "kind": "list",
+        "text": "alpha"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          2
+        ],
+        "id": [
+          7,
+          12
+        ]
+      }
+    ]
+  },
+  {
+    "name": "nested",
+    "source": "- Parent ^parent\n  - child🙂 ^child\n    - grandchild\n- sibling\n",
+    "text": "- Parent ^parent\n  - child🙂 ^child\n    - grandchild\n- sibling\n",
+    "blocks": [
+      {
+        "key": "parent",
+        "id": "parent",
+        "from": 0,
+        "to": 16,
+        "contentFrom": 2,
+        "contentTo": 16,
+        "subtreeTo": 52,
+        "depth": 0,
+        "kind": "list",
+        "text": "Parent"
+      },
+      {
+        "key": "child",
+        "id": "child",
+        "from": 19,
+        "to": 35,
+        "contentFrom": 21,
+        "contentTo": 35,
+        "subtreeTo": 52,
+        "depth": 1,
+        "kind": "list",
+        "text": "child🙂",
+        "parent": "parent"
+      },
+      {
+        "key": "at-40",
+        "from": 40,
+        "to": 52,
+        "contentFrom": 42,
+        "contentTo": 52,
+        "subtreeTo": 52,
+        "depth": 2,
+        "kind": "list",
+        "text": "grandchild",
+        "parent": "child"
+      },
+      {
+        "key": "at-53",
+        "from": 53,
+        "to": 62,
+        "contentFrom": 55,
+        "contentTo": 62,
+        "subtreeTo": 62,
+        "depth": 0,
+        "kind": "list",
+        "text": "sibling"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          2
+        ],
+        "id": [
+          8,
+          16
+        ]
+      },
+      {
+        "marker": [
+          19,
+          21
+        ],
+        "id": [
+          28,
+          35
+        ]
+      },
+      {
+        "marker": [
+          40,
+          42
+        ],
+        "id": null
+      },
+      {
+        "marker": [
+          53,
+          55
+        ],
+        "id": null
+      }
+    ]
+  },
+  {
+    "name": "list-continuation",
+    "source": "- first line\n  continuation ^long\n\n  second paragraph\n  - nested\n\n- next\n",
+    "text": "- first line\n  continuation ^long\n\n  second paragraph\n  - nested\n\n- next\n",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 53,
+        "contentFrom": 2,
+        "contentTo": 53,
+        "subtreeTo": 64,
+        "depth": 0,
+        "kind": "list",
+        "text": "first line\n  continuation ^long\n\n  second paragraph"
+      },
+      {
+        "key": "at-56",
+        "from": 56,
+        "to": 64,
+        "contentFrom": 58,
+        "contentTo": 64,
+        "subtreeTo": 64,
+        "depth": 1,
+        "kind": "list",
+        "text": "nested",
+        "parent": "at-0"
+      },
+      {
+        "key": "at-66",
+        "from": 66,
+        "to": 72,
+        "contentFrom": 68,
+        "contentTo": 72,
+        "subtreeTo": 72,
+        "depth": 0,
+        "kind": "list",
+        "text": "next"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          2
+        ],
+        "id": null
+      },
+      {
+        "marker": [
+          56,
+          58
+        ],
+        "id": null
+      },
+      {
+        "marker": [
+          66,
+          68
+        ],
+        "id": null
+      }
+    ]
+  },
+  {
+    "name": "ordered",
+    "source": "1. first ^one\n2. second\n   1) nested ^two\n",
+    "text": "1. first ^one\n2. second\n   1) nested ^two\n",
+    "blocks": [
+      {
+        "key": "one",
+        "id": "one",
+        "from": 0,
+        "to": 13,
+        "contentFrom": 3,
+        "contentTo": 13,
+        "subtreeTo": 13,
+        "depth": 0,
+        "kind": "list",
+        "text": "first"
+      },
+      {
+        "key": "at-14",
+        "from": 14,
+        "to": 23,
+        "contentFrom": 17,
+        "contentTo": 23,
+        "subtreeTo": 41,
+        "depth": 0,
+        "kind": "list",
+        "text": "second"
+      },
+      {
+        "key": "two",
+        "id": "two",
+        "from": 27,
+        "to": 41,
+        "contentFrom": 30,
+        "contentTo": 41,
+        "subtreeTo": 41,
+        "depth": 1,
+        "kind": "list",
+        "text": "nested",
+        "parent": "at-14"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          3
+        ],
+        "id": [
+          8,
+          13
+        ]
+      },
+      {
+        "marker": [
+          14,
+          17
+        ],
+        "id": null
+      },
+      {
+        "marker": [
+          27,
+          30
+        ],
+        "id": [
+          36,
+          41
+        ]
+      }
+    ]
+  },
+  {
+    "name": "tabs",
+    "source": "-\tfirst ^tab\n\t- second\n",
+    "text": "-\tfirst ^tab\n\t- second\n",
+    "blocks": [
+      {
+        "key": "tab",
+        "id": "tab",
+        "from": 0,
+        "to": 12,
+        "contentFrom": 2,
+        "contentTo": 12,
+        "subtreeTo": 22,
+        "depth": 0,
+        "kind": "list",
+        "text": "first"
+      },
+      {
+        "key": "at-14",
+        "from": 14,
+        "to": 22,
+        "contentFrom": 16,
+        "contentTo": 22,
+        "subtreeTo": 22,
+        "depth": 1,
+        "kind": "list",
+        "text": "second",
+        "parent": "tab"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          2
+        ],
+        "id": [
+          7,
+          12
+        ]
+      },
+      {
+        "marker": [
+          14,
+          16
+        ],
+        "id": null
+      }
+    ]
+  },
+  {
+    "name": "headings",
+    "source": "# Heading ^head\n\nparagraph ^para\n\n## Child\n",
+    "text": "# Heading ^head\n\nparagraph ^para\n\n## Child\n",
+    "blocks": [
+      {
+        "key": "head",
+        "id": "head",
+        "from": 0,
+        "to": 15,
+        "contentFrom": 0,
+        "contentTo": 15,
+        "subtreeTo": 15,
+        "depth": 0,
+        "kind": "heading",
+        "text": "# Heading"
+      },
+      {
+        "key": "para",
+        "id": "para",
+        "from": 17,
+        "to": 32,
+        "contentFrom": 17,
+        "contentTo": 32,
+        "subtreeTo": 32,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "paragraph"
+      },
+      {
+        "key": "at-34",
+        "from": 34,
+        "to": 42,
+        "contentFrom": 34,
+        "contentTo": 42,
+        "subtreeTo": 42,
+        "depth": 0,
+        "kind": "heading",
+        "text": "## Child"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          0
+        ],
+        "id": [
+          9,
+          15
+        ]
+      },
+      {
+        "marker": [
+          17,
+          17
+        ],
+        "id": [
+          26,
+          32
+        ]
+      }
+    ]
+  },
+  {
+    "name": "no-setext-dash",
+    "source": "paragraph\n-\nnext\n",
+    "text": "paragraph\n-\nnext\n",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 16,
+        "contentFrom": 0,
+        "contentTo": 16,
+        "subtreeTo": 16,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "paragraph\n-\nnext"
+      }
+    ],
+    "spans": []
+  },
+  {
+    "name": "no-setext-equal",
+    "source": "paragraph\n===\nnext\n",
+    "text": "paragraph\n===\nnext\n",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 18,
+        "contentFrom": 0,
+        "contentTo": 18,
+        "subtreeTo": 18,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "paragraph\n===\nnext"
+      }
+    ],
+    "spans": []
+  },
+  {
+    "name": "rule",
+    "source": "before\n\n---\n\nafter ^after\n",
+    "text": "before\n\n---\n\nafter ^after\n",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 6,
+        "contentFrom": 0,
+        "contentTo": 6,
+        "subtreeTo": 6,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "before"
+      },
+      {
+        "key": "after",
+        "id": "after",
+        "from": 13,
+        "to": 25,
+        "contentFrom": 13,
+        "contentTo": 25,
+        "subtreeTo": 25,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "after"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          13,
+          13
+        ],
+        "id": [
+          18,
+          25
+        ]
+      }
+    ]
+  },
+  {
+    "name": "fenced",
+    "source": "```md\n- fake ^fake\n```\n\n- real ^real\n",
+    "text": "```md\n- fake ^fake\n```\n\n- real ^real\n",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 22,
+        "contentFrom": 0,
+        "contentTo": 22,
+        "subtreeTo": 22,
+        "depth": 0,
+        "kind": "code",
+        "text": "```md\n- fake ^fake\n```"
+      },
+      {
+        "key": "real",
+        "id": "real",
+        "from": 24,
+        "to": 36,
+        "contentFrom": 26,
+        "contentTo": 36,
+        "subtreeTo": 36,
+        "depth": 0,
+        "kind": "list",
+        "text": "real"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          24,
+          26
+        ],
+        "id": [
+          30,
+          36
+        ]
+      }
+    ]
+  },
+  {
+    "name": "indented-code",
+    "source": "    - fake ^fake\n\n- real ^real\n",
+    "text": "    - fake ^fake\n\n- real ^real\n",
+    "blocks": [
+      {
+        "key": "at-4",
+        "from": 4,
+        "to": 16,
+        "contentFrom": 4,
+        "contentTo": 16,
+        "subtreeTo": 16,
+        "depth": 0,
+        "kind": "code",
+        "text": "- fake"
+      },
+      {
+        "key": "real",
+        "id": "real",
+        "from": 18,
+        "to": 30,
+        "contentFrom": 20,
+        "contentTo": 30,
+        "subtreeTo": 30,
+        "depth": 0,
+        "kind": "list",
+        "text": "real"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          18,
+          20
+        ],
+        "id": [
+          24,
+          30
+        ]
+      }
+    ]
+  },
+  {
+    "name": "quote",
+    "source": "> quote ^quote\n> - nested ^ignored\n\n- outside\n",
+    "text": "> quote ^quote\n> - nested ^ignored\n\n- outside\n",
+    "blocks": [
+      {
+        "key": "ignored",
+        "id": "ignored",
+        "from": 0,
+        "to": 34,
+        "contentFrom": 0,
+        "contentTo": 34,
+        "subtreeTo": 34,
+        "depth": 0,
+        "kind": "quote",
+        "text": "> quote ^quote\n> - nested"
+      },
+      {
+        "key": "at-36",
+        "from": 36,
+        "to": 45,
+        "contentFrom": 38,
+        "contentTo": 45,
+        "subtreeTo": 45,
+        "depth": 0,
+        "kind": "list",
+        "text": "outside"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          0
+        ],
+        "id": [
+          25,
+          34
+        ]
+      },
+      {
+        "marker": [
+          36,
+          38
+        ],
+        "id": null
+      }
+    ]
+  },
+  {
+    "name": "frontmatter",
+    "source": "---\ntitle: A ^not-id\ntags:\n  - fake ^fake\n---\n\n- real ^real\n",
+    "text": "---\ntitle: A ^not-id\ntags:\n  - fake ^fake\n---\n\n- real ^real\n",
+    "blocks": [
+      {
+        "key": "real",
+        "id": "real",
+        "from": 47,
+        "to": 59,
+        "contentFrom": 49,
+        "contentTo": 59,
+        "subtreeTo": 59,
+        "depth": 0,
+        "kind": "list",
+        "text": "real"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          47,
+          49
+        ],
+        "id": [
+          53,
+          59
+        ]
+      }
+    ]
+  },
+  {
+    "name": "bom-frontmatter",
+    "source": "﻿---\ntitle: Test\n---\n\n# heading ^head\n",
+    "text": "﻿---\ntitle: Test\n---\n\n# heading ^head\n",
+    "blocks": [
+      {
+        "key": "head",
+        "id": "head",
+        "from": 22,
+        "to": 37,
+        "contentFrom": 22,
+        "contentTo": 37,
+        "subtreeTo": 37,
+        "depth": 0,
+        "kind": "heading",
+        "text": "# heading"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          22,
+          22
+        ],
+        "id": [
+          31,
+          37
+        ]
+      }
+    ]
+  },
+  {
+    "name": "frontmatter-only",
+    "source": "---\ntitle: Test\n---\n",
+    "text": "---\ntitle: Test\n---\n",
+    "blocks": [],
+    "spans": []
+  },
+  {
+    "name": "unicode",
+    "source": "🙂 first\n\n- مرحبا بكم ^arabic\n  - اُردُو 👩🏽‍💻 ^urdu\n",
+    "text": "🙂 first\n\n- مرحبا بكم ^arabic\n  - اُردُو 👩🏽‍💻 ^urdu\n",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 8,
+        "contentFrom": 0,
+        "contentTo": 8,
+        "subtreeTo": 8,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "🙂 first"
+      },
+      {
+        "key": "arabic",
+        "id": "arabic",
+        "from": 10,
+        "to": 29,
+        "contentFrom": 12,
+        "contentTo": 29,
+        "subtreeTo": 54,
+        "depth": 0,
+        "kind": "list",
+        "text": "مرحبا بكم"
+      },
+      {
+        "key": "urdu",
+        "id": "urdu",
+        "from": 32,
+        "to": 54,
+        "contentFrom": 34,
+        "contentTo": 54,
+        "subtreeTo": 54,
+        "depth": 1,
+        "kind": "list",
+        "text": "اُردُو 👩🏽‍💻",
+        "parent": "arabic"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          10,
+          12
+        ],
+        "id": [
+          21,
+          29
+        ]
+      },
+      {
+        "marker": [
+          32,
+          34
+        ],
+        "id": [
+          48,
+          54
+        ]
+      }
+    ]
+  },
+  {
+    "name": "combining",
+    "source": "- é text ^combining\n",
+    "text": "- é text ^combining\n",
+    "blocks": [
+      {
+        "key": "combining",
+        "id": "combining",
+        "from": 0,
+        "to": 20,
+        "contentFrom": 2,
+        "contentTo": 20,
+        "subtreeTo": 20,
+        "depth": 0,
+        "kind": "list",
+        "text": "é text"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          2
+        ],
+        "id": [
+          9,
+          20
+        ]
+      }
+    ]
+  },
+  {
+    "name": "crlf",
+    "source": "- first ^first\r\n  - second\r\n\r\nparagraph ^para\r\n",
+    "text": "- first ^first\n  - second\n\nparagraph ^para\n",
+    "blocks": [
+      {
+        "key": "first",
+        "id": "first",
+        "from": 0,
+        "to": 14,
+        "contentFrom": 2,
+        "contentTo": 14,
+        "subtreeTo": 25,
+        "depth": 0,
+        "kind": "list",
+        "text": "first"
+      },
+      {
+        "key": "at-17",
+        "from": 17,
+        "to": 25,
+        "contentFrom": 19,
+        "contentTo": 25,
+        "subtreeTo": 25,
+        "depth": 1,
+        "kind": "list",
+        "text": "second",
+        "parent": "first"
+      },
+      {
+        "key": "para",
+        "id": "para",
+        "from": 27,
+        "to": 42,
+        "contentFrom": 27,
+        "contentTo": 42,
+        "subtreeTo": 42,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "paragraph"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          2
+        ],
+        "id": [
+          7,
+          14
+        ]
+      },
+      {
+        "marker": [
+          17,
+          19
+        ],
+        "id": null
+      },
+      {
+        "marker": [
+          27,
+          27
+        ],
+        "id": [
+          36,
+          42
+        ]
+      }
+    ]
+  },
+  {
+    "name": "empty-items",
+    "source": "- ^empty\n- \n  - ^child\n",
+    "text": "- ^empty\n- \n  - ^child\n",
+    "blocks": [
+      {
+        "key": "empty",
+        "id": "empty",
+        "from": 0,
+        "to": 8,
+        "contentFrom": 2,
+        "contentTo": 8,
+        "subtreeTo": 8,
+        "depth": 0,
+        "kind": "list",
+        "text": ""
+      },
+      {
+        "key": "at-9",
+        "from": 9,
+        "to": 11,
+        "contentFrom": 11,
+        "contentTo": 11,
+        "subtreeTo": 22,
+        "depth": 0,
+        "kind": "list",
+        "text": ""
+      },
+      {
+        "key": "child",
+        "id": "child",
+        "from": 14,
+        "to": 22,
+        "contentFrom": 16,
+        "contentTo": 22,
+        "subtreeTo": 22,
+        "depth": 1,
+        "kind": "list",
+        "text": "",
+        "parent": "at-9"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          2
+        ],
+        "id": [
+          2,
+          8
+        ]
+      },
+      {
+        "marker": [
+          9,
+          11
+        ],
+        "id": null
+      },
+      {
+        "marker": [
+          14,
+          16
+        ],
+        "id": [
+          16,
+          22
+        ]
+      }
+    ]
+  },
+  {
+    "name": "id-spelling",
+    "source": "- hyphen ^b-123_A\t \n\nplain x^not-id\n\n- caret ^bad!\n",
+    "text": "- hyphen ^b-123_A\t \n\nplain x^not-id\n\n- caret ^bad!\n",
+    "blocks": [
+      {
+        "key": "b-123_A",
+        "id": "b-123_A",
+        "from": 0,
+        "to": 17,
+        "contentFrom": 2,
+        "contentTo": 17,
+        "subtreeTo": 19,
+        "depth": 0,
+        "kind": "list",
+        "text": "hyphen"
+      },
+      {
+        "key": "at-21",
+        "from": 21,
+        "to": 35,
+        "contentFrom": 21,
+        "contentTo": 35,
+        "subtreeTo": 35,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "plain x^not-id"
+      },
+      {
+        "key": "at-37",
+        "from": 37,
+        "to": 50,
+        "contentFrom": 39,
+        "contentTo": 50,
+        "subtreeTo": 50,
+        "depth": 0,
+        "kind": "list",
+        "text": "caret ^bad!"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          2
+        ],
+        "id": [
+          8,
+          17
+        ]
+      },
+      {
+        "marker": [
+          37,
+          39
+        ],
+        "id": null
+      }
+    ]
+  },
+  {
+    "name": "tasks-links",
+    "source": "- [ ] Task [[Page]] ^task\n- [x] Done [label](https://example.com) ^done\n",
+    "text": "- [ ] Task [[Page]] ^task\n- [x] Done [label](https://example.com) ^done\n",
+    "blocks": [
+      {
+        "key": "task",
+        "id": "task",
+        "from": 0,
+        "to": 25,
+        "contentFrom": 2,
+        "contentTo": 25,
+        "subtreeTo": 25,
+        "depth": 0,
+        "kind": "list",
+        "text": "[ ] Task [[Page]]"
+      },
+      {
+        "key": "done",
+        "id": "done",
+        "from": 26,
+        "to": 71,
+        "contentFrom": 28,
+        "contentTo": 71,
+        "subtreeTo": 71,
+        "depth": 0,
+        "kind": "list",
+        "text": "[x] Done [label](https://example.com)"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          2
+        ],
+        "id": [
+          19,
+          25
+        ]
+      },
+      {
+        "marker": [
+          26,
+          28
+        ],
+        "id": [
+          65,
+          71
+        ]
+      }
+    ]
+  },
+  {
+    "name": "html",
+    "source": "<div>\n- raw ^ignored\n</div>\n\nplain ^plain\n",
+    "text": "<div>\n- raw ^ignored\n</div>\n\nplain ^plain\n",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 27,
+        "contentFrom": 0,
+        "contentTo": 27,
+        "subtreeTo": 27,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "<div>\n- raw ^ignored\n</div>"
+      },
+      {
+        "key": "plain",
+        "id": "plain",
+        "from": 29,
+        "to": 41,
+        "contentFrom": 29,
+        "contentTo": 41,
+        "subtreeTo": 41,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "plain"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          29,
+          29
+        ],
+        "id": [
+          34,
+          41
+        ]
+      }
+    ]
+  },
+  {
+    "name": "table",
+    "source": "| A | B |\n| - | - |\n| x | y |\n\n- list\n",
+    "text": "| A | B |\n| - | - |\n| x | y |\n\n- list\n",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 29,
+        "contentFrom": 0,
+        "contentTo": 29,
+        "subtreeTo": 29,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "| A | B |\n| - | - |\n| x | y |"
+      },
+      {
+        "key": "at-31",
+        "from": 31,
+        "to": 37,
+        "contentFrom": 33,
+        "contentTo": 37,
+        "subtreeTo": 37,
+        "depth": 0,
+        "kind": "list",
+        "text": "list"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          31,
+          33
+        ],
+        "id": null
+      }
+    ]
+  },
+  {
+    "name": "nested-fence",
+    "source": "- parent ^parent\n  ```md\n  - code ^ignored\n  ```\n  - child ^child\n",
+    "text": "- parent ^parent\n  ```md\n  - code ^ignored\n  ```\n  - child ^child\n",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 48,
+        "contentFrom": 2,
+        "contentTo": 48,
+        "subtreeTo": 65,
+        "depth": 0,
+        "kind": "list",
+        "text": "parent ^parent\n  ```md\n  - code ^ignored\n  ```"
+      },
+      {
+        "key": "child",
+        "id": "child",
+        "from": 51,
+        "to": 65,
+        "contentFrom": 53,
+        "contentTo": 65,
+        "subtreeTo": 65,
+        "depth": 1,
+        "kind": "list",
+        "text": "child",
+        "parent": "at-0"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          2
+        ],
+        "id": null
+      },
+      {
+        "marker": [
+          51,
+          53
+        ],
+        "id": [
+          58,
+          65
+        ]
+      }
+    ]
+  },
+  {
+    "name": "loose-list",
+    "source": "- first\n\n- second ^second\n\n  extra text\n\n- third\n",
+    "text": "- first\n\n- second ^second\n\n  extra text\n\n- third\n",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 7,
+        "contentFrom": 2,
+        "contentTo": 7,
+        "subtreeTo": 7,
+        "depth": 0,
+        "kind": "list",
+        "text": "first"
+      },
+      {
+        "key": "at-9",
+        "from": 9,
+        "to": 39,
+        "contentFrom": 11,
+        "contentTo": 39,
+        "subtreeTo": 39,
+        "depth": 0,
+        "kind": "list",
+        "text": "second ^second\n\n  extra text"
+      },
+      {
+        "key": "at-41",
+        "from": 41,
+        "to": 48,
+        "contentFrom": 43,
+        "contentTo": 48,
+        "subtreeTo": 48,
+        "depth": 0,
+        "kind": "list",
+        "text": "third"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          2
+        ],
+        "id": null
+      },
+      {
+        "marker": [
+          9,
+          11
+        ],
+        "id": null
+      },
+      {
+        "marker": [
+          41,
+          43
+        ],
+        "id": null
+      }
+    ]
+  },
+  {
+    "name": "heading-section",
+    "source": "# A\n- first\n## B\n- second\n# C\nparagraph\n",
+    "text": "# A\n- first\n## B\n- second\n# C\nparagraph\n",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 3,
+        "contentFrom": 0,
+        "contentTo": 3,
+        "subtreeTo": 3,
+        "depth": 0,
+        "kind": "heading",
+        "text": "# A"
+      },
+      {
+        "key": "at-4",
+        "from": 4,
+        "to": 11,
+        "contentFrom": 6,
+        "contentTo": 11,
+        "subtreeTo": 11,
+        "depth": 0,
+        "kind": "list",
+        "text": "first"
+      },
+      {
+        "key": "at-12",
+        "from": 12,
+        "to": 16,
+        "contentFrom": 12,
+        "contentTo": 16,
+        "subtreeTo": 16,
+        "depth": 0,
+        "kind": "heading",
+        "text": "## B"
+      },
+      {
+        "key": "at-17",
+        "from": 17,
+        "to": 25,
+        "contentFrom": 19,
+        "contentTo": 25,
+        "subtreeTo": 25,
+        "depth": 0,
+        "kind": "list",
+        "text": "second"
+      },
+      {
+        "key": "at-26",
+        "from": 26,
+        "to": 29,
+        "contentFrom": 26,
+        "contentTo": 29,
+        "subtreeTo": 29,
+        "depth": 0,
+        "kind": "heading",
+        "text": "# C"
+      },
+      {
+        "key": "at-30",
+        "from": 30,
+        "to": 39,
+        "contentFrom": 30,
+        "contentTo": 39,
+        "subtreeTo": 39,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "paragraph"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          4,
+          6
+        ],
+        "id": null
+      },
+      {
+        "marker": [
+          17,
+          19
+        ],
+        "id": null
+      }
+    ]
+  },
+  {
+    "name": "no-final-newline",
+    "source": "- final ^final",
+    "text": "- final ^final",
+    "blocks": [
+      {
+        "key": "final",
+        "id": "final",
+        "from": 0,
+        "to": 14,
+        "contentFrom": 2,
+        "contentTo": 14,
+        "subtreeTo": 14,
+        "depth": 0,
+        "kind": "list",
+        "text": "final"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          2
+        ],
+        "id": [
+          7,
+          14
+        ]
+      }
+    ]
+  },
+  {
+    "name": "setext-rule",
+    "source": "paragraph\n---\nnext\n",
+    "text": "paragraph\n---\nnext\n",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 9,
+        "contentFrom": 0,
+        "contentTo": 9,
+        "subtreeTo": 9,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "paragraph"
+      },
+      {
+        "key": "at-14",
+        "from": 14,
+        "to": 18,
+        "contentFrom": 14,
+        "contentTo": 18,
+        "subtreeTo": 18,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "next"
+      }
+    ],
+    "spans": []
+  },
+  {
+    "name": "setext-two-dashes",
+    "source": "paragraph\n--\nnext\n",
+    "text": "paragraph\n--\nnext\n",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 17,
+        "contentFrom": 0,
+        "contentTo": 17,
+        "subtreeTo": 17,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "paragraph\n--\nnext"
+      }
+    ],
+    "spans": []
+  },
+  {
+    "name": "setext-blank",
+    "source": "paragraph\n===\n\nnext ^next\n",
+    "text": "paragraph\n===\n\nnext ^next\n",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 13,
+        "contentFrom": 0,
+        "contentTo": 13,
+        "subtreeTo": 13,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "paragraph\n==="
+      },
+      {
+        "key": "next",
+        "id": "next",
+        "from": 15,
+        "to": 25,
+        "contentFrom": 15,
+        "contentTo": 25,
+        "subtreeTo": 25,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "next"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          15,
+          15
+        ],
+        "id": [
+          19,
+          25
+        ]
+      }
+    ]
+  },
+  {
+    "name": "setext-sequence",
+    "source": "paragraph\n===\nnext\n---\nlast\n",
+    "text": "paragraph\n===\nnext\n---\nlast\n",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 18,
+        "contentFrom": 0,
+        "contentTo": 18,
+        "subtreeTo": 18,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "paragraph\n===\nnext"
+      },
+      {
+        "key": "at-23",
+        "from": 23,
+        "to": 27,
+        "contentFrom": 23,
+        "contentTo": 27,
+        "subtreeTo": 27,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "last"
+      }
+    ],
+    "spans": []
+  },
+  {
+    "name": "setext-nested",
+    "source": "- paragraph\n  ===\n  next ^parent\n  - child ^child\n",
+    "text": "- paragraph\n  ===\n  next ^parent\n  - child ^child\n",
+    "blocks": [
+      {
+        "key": "parent",
+        "id": "parent",
+        "from": 0,
+        "to": 32,
+        "contentFrom": 2,
+        "contentTo": 32,
+        "subtreeTo": 49,
+        "depth": 0,
+        "kind": "list",
+        "text": "paragraph\n  ===\n  next"
+      },
+      {
+        "key": "child",
+        "id": "child",
+        "from": 35,
+        "to": 49,
+        "contentFrom": 37,
+        "contentTo": 49,
+        "subtreeTo": 49,
+        "depth": 1,
+        "kind": "list",
+        "text": "child",
+        "parent": "parent"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          2
+        ],
+        "id": [
+          24,
+          32
+        ]
+      },
+      {
+        "marker": [
+          35,
+          37
+        ],
+        "id": [
+          42,
+          49
+        ]
+      }
+    ]
+  },
+  {
+    "name": "code-eight-spaces",
+    "source": "        code ^hidden\n\n- list\n",
+    "text": "        code ^hidden\n\n- list\n",
+    "blocks": [
+      {
+        "key": "at-4",
+        "from": 4,
+        "to": 20,
+        "contentFrom": 4,
+        "contentTo": 20,
+        "subtreeTo": 20,
+        "depth": 0,
+        "kind": "code",
+        "text": "    code"
+      },
+      {
+        "key": "at-22",
+        "from": 22,
+        "to": 28,
+        "contentFrom": 24,
+        "contentTo": 28,
+        "subtreeTo": 28,
+        "depth": 0,
+        "kind": "list",
+        "text": "list"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          22,
+          24
+        ],
+        "id": null
+      }
+    ]
+  },
+  {
+    "name": "code-tab",
+    "source": "\tcode ^hidden\n\n- list\n",
+    "text": "\tcode ^hidden\n\n- list\n",
+    "blocks": [
+      {
+        "key": "at-1",
+        "from": 1,
+        "to": 13,
+        "contentFrom": 1,
+        "contentTo": 13,
+        "subtreeTo": 13,
+        "depth": 0,
+        "kind": "code",
+        "text": "code"
+      },
+      {
+        "key": "at-15",
+        "from": 15,
+        "to": 21,
+        "contentFrom": 17,
+        "contentTo": 21,
+        "subtreeTo": 21,
+        "depth": 0,
+        "kind": "list",
+        "text": "list"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          15,
+          17
+        ],
+        "id": null
+      }
+    ]
+  },
+  {
+    "name": "indented-paragraph",
+    "source": "   paragraph ^para\n\n  - item ^item\n",
+    "text": "   paragraph ^para\n\n  - item ^item\n",
+    "blocks": [
+      {
+        "key": "para",
+        "id": "para",
+        "from": 3,
+        "to": 18,
+        "contentFrom": 3,
+        "contentTo": 18,
+        "subtreeTo": 18,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "paragraph"
+      },
+      {
+        "key": "item",
+        "id": "item",
+        "from": 20,
+        "to": 34,
+        "contentFrom": 24,
+        "contentTo": 34,
+        "subtreeTo": 34,
+        "depth": 0,
+        "kind": "list",
+        "text": "item"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          3,
+          3
+        ],
+        "id": [
+          12,
+          18
+        ]
+      },
+      {
+        "marker": [
+          20,
+          24
+        ],
+        "id": [
+          28,
+          34
+        ]
+      }
+    ]
+  },
+  {
+    "name": "frontmatter-eof",
+    "source": "---\ntitle: Test\n---",
+    "text": "---\ntitle: Test\n---",
+    "blocks": [],
+    "spans": []
+  },
+  {
+    "name": "js-whitespace",
+    "source": "- body ^id\n- other﻿ ^other\n",
+    "text": "- body ^id\n- other﻿ ^other\n",
+    "blocks": [
+      {
+        "key": "id",
+        "id": "id",
+        "from": 0,
+        "to": 11,
+        "contentFrom": 2,
+        "contentTo": 11,
+        "subtreeTo": 11,
+        "depth": 0,
+        "kind": "list",
+        "text": "body"
+      },
+      {
+        "key": "other",
+        "id": "other",
+        "from": 12,
+        "to": 27,
+        "contentFrom": 14,
+        "contentTo": 27,
+        "subtreeTo": 27,
+        "depth": 0,
+        "kind": "list",
+        "text": "other"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          0,
+          2
+        ],
+        "id": [
+          7,
+          11
+        ]
+      },
+      {
+        "marker": [
+          12,
+          14
+        ],
+        "id": [
+          20,
+          27
+        ]
+      }
+    ]
+  },
+  {
+    "name": "double-bom",
+    "source": "﻿﻿---\ntitle: Test\n---\n\n- real ^real\n",
+    "text": "﻿﻿---\ntitle: Test\n---\n\n- real ^real\n",
+    "blocks": [
+      {
+        "key": "at-0",
+        "from": 0,
+        "to": 17,
+        "contentFrom": 0,
+        "contentTo": 17,
+        "subtreeTo": 17,
+        "depth": 0,
+        "kind": "paragraph",
+        "text": "﻿﻿---\ntitle: Test"
+      },
+      {
+        "key": "real",
+        "id": "real",
+        "from": 23,
+        "to": 35,
+        "contentFrom": 25,
+        "contentTo": 35,
+        "subtreeTo": 35,
+        "depth": 0,
+        "kind": "list",
+        "text": "real"
+      }
+    ],
+    "spans": [
+      {
+        "marker": [
+          23,
+          25
+        ],
+        "id": [
+          29,
+          35
+        ]
+      }
+    ]
+  }
+]

@@ -2,7 +2,7 @@ use editor::Editor;
 use gpui::{App, AppContext, Entity, Focusable, KeyBinding, UpdateGlobal, Window, prelude::*};
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
 
-fn init(cx: &mut App) -> Result<(), String> {
+pub(super) fn init(cx: &mut App) -> Result<(), String> {
     settings::init(cx);
     let result = settings::SettingsStore::update_global(cx, |store, cx| {
         store.set_user_settings(
@@ -267,7 +267,7 @@ pub fn run() {
         }
         let prefix = "# Welcome to Quire\n\n";
         let block = "- Edit this note in either pane. ^b-welcome\n  - Both panes share the same document.";
-        let text = if write_demo { "- alpha ^abc\n".to_owned() } else { format!("{prefix}{block}\n- [ ] Try Vim, undo, and redo.\n") };
+        let text = format!("{prefix}{block}\n- [ ] Try Vim, undo, and redo.\n");
         let buffer = crate::markdown::buffer(&text, cx);
         let excerpt = if excerpt_demo {
             match crate::editor_excerpt::buffer(buffer.clone(), prefix.len()..prefix.len() + block.len(), cx) {
@@ -283,12 +283,9 @@ pub fn run() {
             window.set_window_title("Quire Native");
             cx.new(|cx| {
                 let view = NotebookWindow::for_buffer(buffer, excerpt, window, cx);
-                if write_demo {
-                    use multi_buffer::MultiBufferOffset;
-                    crate::editor_projection::show(&view.second, &[crate::editor_projection::BlockSyntax {
-                        marker: MultiBufferOffset(0)..MultiBufferOffset(2),
-                        id: Some(MultiBufferOffset(7)..MultiBufferOffset(12)),
-                    }], window, cx);
+                if write_demo
+                    && let Err(error) = crate::editor_projection::bind(&view.second, window, cx) {
+                        eprintln!("{error}");
                 }
                 view
             })

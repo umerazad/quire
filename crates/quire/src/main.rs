@@ -20,6 +20,9 @@ mod editor_projection;
 #[cfg(feature = "full-editor")]
 mod markdown;
 
+#[cfg(feature = "full-editor")]
+mod markdown_blocks;
+
 #[path = "example_support/fonts.rs"]
 mod example_support;
 
