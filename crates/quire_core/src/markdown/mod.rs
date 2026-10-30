@@ -6,6 +6,13 @@ use unicode_normalization::UnicodeNormalization as _;
 mod frontmatter;
 pub use frontmatter::{frontmatter_tags, page_title};
 
+mod ranges;
+
+mod tags;
+pub use tags::{TagToken, tag_completion_range, tags};
+
+const JS_SPACE: &str = r"[\t\n\x0b\x0c\r \u{00a0}\u{1680}\u{2000}-\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}\u{feff}]";
+
 mod references;
 pub use references::{Reference, ReferenceKind, ReferenceMedia, ReferenceSyntax, references};
 

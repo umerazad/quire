@@ -1,4 +1,7 @@
-use super::{frontmatter_length, js_space};
+use super::{
+    JS_SPACE, frontmatter_length, js_space,
+    ranges::{contains, merged_ranges},
+};
 use regex::Regex;
 use std::{ops::Range, sync::LazyLock};
 
@@ -54,8 +57,6 @@ pub struct Reference {
     pub media: Option<ReferenceMedia>,
 }
 
-const JS_SPACE: &str = r"[\t\n\x0b\x0c\r \u{00a0}\u{1680}\u{2000}-\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}\u{feff}]";
-
 fn expression(pattern: &str) -> Regex {
     Regex::new(&pattern.replace("SPACE", JS_SPACE))
         .expect("Quire's static reference grammar is invalid. Fix the pattern and rebuild.")
@@ -68,27 +69,6 @@ static REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
         r"\{\{(?:embed|\[\[embed\]\]):SPACE*(?:\(\(([^)\n]+)\)\)|\[\[([^\]\n]+)\]\])SPACE*\}\}|!\[\[([^\]\n]+)\]\]|\(\(([^)\n]+)\)\)|\[\[([^\]\n]+)\]\]",
     )
 });
-
-fn merged_ranges(ranges: impl Iterator<Item = Range<usize>>) -> Vec<Range<usize>> {
-    let mut ranges: Vec<_> = ranges.filter(|range| range.start < range.end).collect();
-    ranges.sort_unstable_by_key(|range| range.start);
-    let mut merged: Vec<Range<usize>> = Vec::new();
-    for range in ranges {
-        if let Some(previous) = merged.last_mut()
-            && range.start <= previous.end
-        {
-            previous.end = previous.end.max(range.end);
-        } else {
-            merged.push(range);
-        }
-    }
-    merged
-}
-
-fn contains(ranges: &[Range<usize>], position: usize) -> bool {
-    let index = ranges.partition_point(|range| range.start <= position);
-    index > 0 && position < ranges[index - 1].end
-}
 
 /// Extracts Quire reference forms with native byte ranges, preserving raw targets and labels.
 /// The caller supplies current Markdown inline/fenced/indented code ranges. This function adds

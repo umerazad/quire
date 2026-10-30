@@ -595,6 +595,31 @@ The 57 frozen reference tests, combined all-target Clippy with -D warnings, nati
 Sequential adversarial review checked the scanner's token lookahead and soft-line state, C export/archive isolation, unchanged generated tables, original grammar coexistence, minimal edit UTF-8 boundaries, normalized source equality, Idle/stale-node checks, complete reference fields and UTF-16 positions, source pin/license/build inputs, and unchanged workspace runtime/dependency pins. The simplification pass keeps the repair in the existing external scanner rather than adding projected source or another parser layer. Production reference extraction remains a separate unfinished part of NR10.5.
 Status: done
 
+#### NR10.6: Port tag tokens and completion over explicit syntax exclusions
+
+What to do: Port inline tag recognition and completion to pure core using current source byte positions. Add deterministic raw/editor oracle fixtures covering Unicode, paths, partial input, metadata, references, and excluded Markdown forms.
+Constraints: Preserve the legacy token grammar, JavaScript whitespace, match advancement, source spelling, overlap filtering for tags, and start-only filtering for completion. The caller supplies current syntax exclusions; core adds metadata and supplied references. Byte cursor positions must be valid UTF-8 boundaries. No imported code execution or new parser/runtime dependencies.
+Verify: Compare tokens and completion ranges with the frozen Markdown module at scalar-boundary cursor positions, explicitly translating UTF-16 offsets. Test merged/reordered exclusions, overlap versus start filtering, and invalid byte cursors. Reproduce fixtures under Node and Bun, run strict TypeScript checking, core tests, and relevant app/storage checks after shared helper changes.
+Proof notes: Added native tag tokens and completion with byte positions, exact source spelling, JavaScript whitespace, Unicode L/N categories, slash-separated segments, and permissive partial completion. Tags reject any overlap with exclusions; completion checks only the tag start. Core adds metadata and supplied reference ranges. Completion inspects the partial text after the last hash without applying its expression across the entire preceding page. Invalid or out-of-range byte cursor boundaries return None.
+
+The deterministic generator reads frozen tagsOf, tagCompletionRange, and tagExcludedRanges directly. It covers 575 raw/editor pairs and 55,597 scalar-boundary completion positions. Tests explicitly translate UTF-16 fixture positions, reverse/duplicate syntax ranges, and compose the native reference helper with oracle code exclusions. Fixed/seeded cases cover Arabic/Urdu, CJK, accented/combining and astral letters, letter/number categories, whitespace/BOM/NEL, tag paths, incomplete/invalid tokens, reference forms, metadata, Markdown links/images/autolinks/HTML/escapes/code, CRLF, and no-setext boundaries. A focused test distinguishes overlap from start-only filtering and rejects invalid UTF-8 cursors. These are lexical gates with supplied syntax ranges; native exclusions remain required in NR10.7.
+
+The initial API test failed before implementation. The first standalone core run exposed missing Unicode category tables in the workspace regex feature set; core now enables unicode-gencat on the existing pinned dependency. No new package/version or parser runtime is added. The reference helper's unchanged merge/contain functions and JavaScript whitespace constant are shared privately with tags, with an overlap query added. Existing reference fixtures still pass. Node cannot directly resolve the frozen module's extensionless imports, so its generator is bundled with the existing Bun toolchain. The Node and Bun runs emit byte-identical fixtures, Bun regeneration is deterministic, and strict TypeScript checking passes.
+
+The combined app/core/storage/grammar gate passes 224 tests: 104 app, 13 core, 103 storage, and four grammar tests. The 57 frozen JavaScript reference tests also pass. Native tag widgets/completion UI, native syntax parity, notebook indexing, and release performance remain open.
+Combined all-target Clippy with -D warnings, the native locked build, core formatting, strict generator TypeScript checking, prose lint, and scoped whitespace pass. The build retains the existing linker unwind-size warning and unused crash-context patch notice.
+
+Sequential adversarial review checked category tables in standalone core builds, byte/UTF-16 cursor translation, exact token spelling and regex match advancement, partial-versus-complete tag syntax, JavaScript whitespace, last-hash completion search and trailing text, half-open overlap versus start containment, merged interval ordering, metadata/reference composition, unchanged reference logic, and Node/Bun fixture equivalence. The simplification pass shares only static whitespace and interval helpers, with three cached tag expressions and no new parser abstraction. The native exclusion/ownership gate remains open in NR10.7.
+Status: done
+
+#### NR10.7: Derive native tag exclusions and share current tag analysis
+
+What to do: Derive code/link/image/autolink/HTML/escape/reference exclusions from native syntax, compare complete native token/completion output against NR10.6 fixtures, and publish tags with the shared page analysis.
+Constraints: Reuse current block/inline syntax and background source ownership. Reject stale source, language, and syntax generations. No fixture-provided exclusion ranges may satisfy the native gate.
+Verify: Fresh and incremental native corpus checks, changed excluded forms, Unicode cursors, delayed completion, shared result reuse, and editor regressions. Record parser mismatches and repair or explicitly resolve them before marking complete.
+Proof notes: pending.
+Status: pending
+
 ### NR11: Complete one native daily-page workflow
 
 What to do: Wire the editor to the native service: create/open a daily page, edit in either presentation, record recovery, save, close, restart, and show a peer's update or conflict.
