@@ -575,3 +575,110 @@ fn applied(text: &str, edits: &[Edit]) -> String {
     }
     result
 }
+
+#[test]
+fn undated_tasks_keep_date_sources_that_any_layout_resolves() {
+    let text =
+        "- Plan [[Oct 30th, 2026]]\n  - [ ] Child [[02.11.2026]] 📅 [[nope]] ➕ [[2026-10-01]]\n";
+    let child_from = text.find("  - [ ]").unwrap() + 2;
+    let blocks = [
+        PageBlock {
+            key: "a",
+            id: None,
+            kind: "list",
+            from: 0,
+            content: (2, text.find('\n').unwrap()),
+            parent: None,
+        },
+        PageBlock {
+            key: "b",
+            id: None,
+            kind: "list",
+            from: child_from,
+            content: (child_from + 2, text.len() - 1),
+            parent: Some("a"),
+        },
+    ];
+    let link = |target: &str| {
+        let start = text.find(&format!("[[{target}]]")).unwrap();
+        Reference {
+            kind: ReferenceKind::Page,
+            syntax: ReferenceSyntax::Wiki,
+            range: start..start + target.len() + 4,
+            target: target.into(),
+            label: None,
+            media: None,
+        }
+    };
+    let references = [
+        link("Oct 30th, 2026"),
+        link("02.11.2026"),
+        link("nope"),
+        link("2026-10-01"),
+    ];
+    let page = Page {
+        text,
+        title: "Plan",
+        blocks: &blocks,
+        tags: &[],
+        references: &references,
+        syntax_ranges: &[],
+        code_ranges: &[],
+    };
+    let undated = page.undated_tasks();
+    let (task, sources) = &undated[0];
+    assert_eq!((task.created.as_deref(), task.due.as_deref()), (None, None));
+    assert_eq!(sources.due.as_deref(), Some("nope"));
+    assert_eq!(sources.created.as_deref(), Some("2026-10-01"));
+    assert_eq!(sources.links, ["02.11.2026", "nope"]);
+    assert_eq!(sources.inherited, ["Oct 30th, 2026"]);
+    let dotted = days(&json!({"folder": "", "title": "{DD}.{MM}.{YYYY}"}));
+    let iso = days(&json!({"folder": "", "title": "{YYYY}-{MM}-{DD}"}));
+    for layout in [&dotted, &iso] {
+        let resolved = sources.resolve(task.clone(), layout, None);
+        assert_eq!(resolved, page.tasks(layout)[0]);
+    }
+    assert_eq!(page.tasks(&dotted)[0].due.as_deref(), Some("2026-11-02"));
+    assert_eq!(
+        page.tasks(&iso)[0].due.as_deref(),
+        Some("2026-10-30"),
+        "without a dated link of its own the task inherits its parent's Roam date"
+    );
+    assert_eq!(
+        sources
+            .resolve(task.clone(), &iso, Some("2026-12-24"))
+            .created
+            .as_deref(),
+        Some("2026-10-01")
+    );
+}
+
+#[test]
+fn typed_dates_read_relative_phrases_weekdays_and_iso_dates() {
+    let today = "2026-10-29";
+    for (phrase, expected) in [
+        ("", None),
+        ("  ", None),
+        ("today", Some("2026-10-29")),
+        ("Tomorrow", Some("2026-10-30")),
+        ("yesterday", Some("2026-10-28")),
+        ("+3", Some("2026-11-01")),
+        ("-29", Some("2026-09-30")),
+        ("fri", Some("2026-10-30")),
+        ("thursday", Some("2026-11-05")),
+        ("Mon", Some("2026-11-02")),
+        ("2027-02-28", Some("2027-02-28")),
+    ] {
+        assert_eq!(
+            quire_core::tasks::date_phrase(phrase, today)
+                .unwrap()
+                .as_deref(),
+            expected,
+            "{phrase:?}"
+        );
+    }
+    for phrase in ["soon", "fr", "+x", "2026/10/01"] {
+        let error = quire_core::tasks::date_phrase(phrase, today).unwrap_err();
+        assert!(error.contains("is not a date"), "{phrase:?}: {error}");
+    }
+}

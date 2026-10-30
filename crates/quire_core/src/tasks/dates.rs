@@ -61,6 +61,52 @@ pub fn short_date(iso: &str, today: &str) -> String {
     }
 }
 
+const WEEKDAYS: [&str; 7] = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+];
+
+/// What a typed date means: empty clears the date; `today`, `tomorrow`, `yesterday`, `+N` and
+/// `-N` days, and a weekday name or its first three letters (the next such day after today)
+/// are relative to `today`; anything else must be a YYYY-MM-DD date.
+pub fn date_phrase(phrase: &str, today: &str) -> Result<Option<String>, String> {
+    let phrase = phrase.trim().to_lowercase();
+    let offset = match phrase.as_str() {
+        "" => return Ok(None),
+        "today" => Some(0),
+        "tomorrow" => Some(1),
+        "yesterday" => Some(-1),
+        signed if signed.starts_with(['+', '-']) => signed
+            .parse::<i64>()
+            .ok()
+            .filter(|days| days.abs() <= 36_600),
+        name => WEEKDAYS
+            .iter()
+            .position(|day| name.len() >= 3 && day.starts_with(name))
+            .and_then(|target| {
+                let (year, month, day) = parts(today)?;
+                let current = Date::new(year, month, day).ok()?.weekday();
+                let ahead =
+                    (target as i64 - i64::from(current.to_monday_zero_offset())).rem_euclid(7);
+                Some(if ahead == 0 { 7 } else { ahead })
+            }),
+    };
+    match offset {
+        Some(days) => add_days(today, days).map(Some).ok_or_else(|| {
+            format!("Cannot count {days} days from {today}. Type a YYYY-MM-DD date instead.")
+        }),
+        None if parts(&phrase).is_some() => Ok(Some(phrase)),
+        None => Err(format!(
+            "\"{phrase}\" is not a date. Type YYYY-MM-DD, today, tomorrow, +3, or a weekday."
+        )),
+    }
+}
+
 /// The task row's date label: when it was done, or when it is due.
 pub fn task_date_label(task: &Task, today: &str) -> Option<String> {
     if task.state == TaskState::Done {

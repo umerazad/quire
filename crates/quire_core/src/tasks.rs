@@ -16,7 +16,7 @@ pub use commands::{
     CAPTURE_ONE, NOT_HERE, NOT_IN_CODE, NOT_IN_SELECTION, Shortcut, TaskEdit, capture,
     created_stamp, task_at, tasks_in,
 };
-pub use dates::{add_days, is_due, is_upcoming, short_date, task_date_label};
+pub use dates::{add_days, date_phrase, is_due, is_upcoming, short_date, task_date_label};
 pub use filter::{TaskFilter, project_membership};
 
 use crate::daily::{DailyCalendar, DailyLayout, DailyParser, format_daily};
@@ -408,15 +408,22 @@ impl<'a> Page<'a> {
 
     /// Every task on the page, in block order.
     pub fn tasks(&self, days: &DailyNames) -> Vec<Task> {
-        let tokens = self.task_tags();
         let page_date = (!self.title.is_empty())
             .then(|| days.date(self.title))
             .flatten();
+        self.undated_tasks()
+            .into_iter()
+            .map(|(task, sources)| sources.resolve(task, days, page_date.as_deref()))
+            .collect()
+    }
+
+    /// Every task with its created and due dates left out, and the stamps and links they come
+    /// from. Dates depend on the daily layout; these do not, so an index can keep them across
+    /// layout changes.
+    pub fn undated_tasks(&self) -> Vec<(Task, DateSources)> {
+        let tokens = self.task_tags();
         let by_key: HashMap<&str, &PageBlock> =
             self.blocks.iter().map(|block| (block.key, block)).collect();
-        let earliest = |targets: &[&str]| -> Option<String> {
-            targets.iter().filter_map(|target| days.date(target)).min()
-        };
         self.blocks
             .iter()
             .filter(|block| block.is_list())
@@ -477,8 +484,13 @@ impl<'a> Page<'a> {
                     }
                 }
                 let body = body.trim_matches(js_space);
-                let stamp_date = |field| stamp_target(field, raw).and_then(|t| days.date(t));
-                Some(Task {
+                let sources = DateSources {
+                    created: stamp_target(DateField::Created, raw).map(str::to_owned),
+                    due: stamp_target(DateField::Due, raw).map(str::to_owned),
+                    links: owned(self.date_links(block)),
+                    inherited: owned(inherited),
+                };
+                let task = Task {
                     block_key: block.key.to_owned(),
                     block_from: block.from,
                     id: block.id.map(str::to_owned),
@@ -489,19 +501,59 @@ impl<'a> Page<'a> {
                     checked: marker.checked,
                     state,
                     tags: names,
-                    links: links.into_iter().map(str::to_owned).collect(),
-                    created: stamp_date(DateField::Created).or_else(|| page_date.clone()),
-                    due: stamp_date(DateField::Due)
-                        .or_else(|| earliest(&self.date_links(block)))
-                        .or_else(|| earliest(&inherited))
-                        .or_else(|| page_date.clone()),
+                    links: owned(links),
+                    created: None,
+                    due: None,
                     completed: COMPLETED
                         .captures(raw)
                         .map(|captures| captures[1].to_owned()),
                     tag_tokens: own_tags,
-                })
+                };
+                Some((task, sources))
             })
             .collect()
+    }
+}
+
+fn owned(items: Vec<&str>) -> Vec<String> {
+    items.into_iter().map(str::to_owned).collect()
+}
+
+/// Where a task's created and due dates come from: its stamps' targets, its own page links
+/// other than the created stamp, and its ancestors' links. The daily layout turns them into
+/// dates; a task on a daily page falls back to that page's date.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DateSources {
+    pub created: Option<String>,
+    pub due: Option<String>,
+    pub links: Vec<String>,
+    pub inherited: Vec<String>,
+}
+
+impl DateSources {
+    /// The created date: the created stamp's date.
+    pub fn created(&self, days: &DailyNames) -> Option<String> {
+        self.created.as_deref().and_then(|target| days.date(target))
+    }
+
+    /// The due date: the due stamp's date, else the earliest dated link of the task, else the
+    /// earliest dated link of its ancestors.
+    pub fn due(&self, days: &DailyNames) -> Option<String> {
+        let earliest = |targets: &[String]| -> Option<String> {
+            targets.iter().filter_map(|target| days.date(target)).min()
+        };
+        self.due
+            .as_deref()
+            .and_then(|target| days.date(target))
+            .or_else(|| earliest(&self.links))
+            .or_else(|| earliest(&self.inherited))
+    }
+
+    /// The task with its dates filled in, falling back to the page's daily date.
+    pub fn resolve(&self, mut task: Task, days: &DailyNames, page_date: Option<&str>) -> Task {
+        task.created = self.created(days).or_else(|| page_date.map(str::to_owned));
+        task.due = self.due(days).or_else(|| page_date.map(str::to_owned));
+        task
     }
 }
 
@@ -590,22 +642,33 @@ impl Task {
     /// The same task in a fresh reading of its page, refusing when its text changed or when
     /// several tasks share its block ID.
     pub fn current<'t>(&self, tasks: &'t [Task]) -> Result<&'t Task, &'static str> {
-        if let Some(id) = &self.id
-            && tasks
-                .iter()
-                .filter(|task| task.id.as_ref() == Some(id))
-                .count()
-                != 1
-        {
-            return Err(DUPLICATE_ID);
-        }
-        tasks
-            .iter()
-            .find(|task| match &self.id {
-                Some(id) => task.id.as_ref() == Some(id),
-                None => task.block_key == self.block_key,
-            })
-            .filter(|task| task.raw == self.raw)
-            .ok_or(CHANGED)
+        find_current(tasks, self.id.as_deref(), &self.block_key, &self.raw)
     }
+}
+
+/// The task a caller read earlier, identified by its block ID or else its block key, in a fresh
+/// reading of its page. Refuses when its text is no longer `raw` or several tasks share the ID.
+pub fn find_current<'t>(
+    tasks: &'t [Task],
+    id: Option<&str>,
+    block_key: &str,
+    raw: &str,
+) -> Result<&'t Task, &'static str> {
+    if let Some(id) = id
+        && tasks
+            .iter()
+            .filter(|task| task.id.as_deref() == Some(id))
+            .count()
+            != 1
+    {
+        return Err(DUPLICATE_ID);
+    }
+    tasks
+        .iter()
+        .find(|task| match id {
+            Some(id) => task.id.as_deref() == Some(id),
+            None => task.block_key == block_key,
+        })
+        .filter(|task| task.raw == raw)
+        .ok_or(CHANGED)
 }
