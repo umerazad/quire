@@ -185,7 +185,9 @@ pub fn apply(
         let saved = match cx.update(|cx| edits(&writes, cx)) {
             Some(edits) => match ask(storage.save_many_if_heads(edits)).await {
                 Ok(CheckedSaves::Saved(acks)) => Ok(acks),
-                Ok(CheckedSaves::HeadsChanged { .. }) => Err(stale.to_owned()),
+                Ok(CheckedSaves::HeadsChanged { .. } | CheckedSaves::Appeared { .. }) => {
+                    Err(stale.to_owned())
+                }
                 Err(error) => Err(error),
             },
             None => Err(stale.to_owned()),

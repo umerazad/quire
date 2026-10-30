@@ -328,6 +328,16 @@ impl Client<NotebookStore> {
             store.save_many_if_heads(&edits)
         })
     }
+    pub fn delete_if_heads(
+        &self,
+        edits: Vec<Edit>,
+        folder: Option<String>,
+    ) -> std::result::Result<Reply<CheckedSaves>, QueueError> {
+        self.request(
+            edits_size(&edits).saturating_add(folder.as_ref().map_or(0, String::capacity)),
+            move |store| store.delete_if_heads(&edits, folder.as_deref()),
+        )
+    }
     pub fn put_draft(
         &self,
         draft: Draft,

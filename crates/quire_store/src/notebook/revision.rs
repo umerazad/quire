@@ -60,6 +60,11 @@ pub enum CheckedSaves {
         page: String,
         heads: Vec<String>,
     },
+    /// Nothing was written: a live page at `path` is inside the folder being deleted but was not
+    /// chosen with it.
+    Appeared {
+        path: String,
+    },
 }
 impl SaveAck {
     pub fn revision_id(&self) -> &str {
@@ -187,8 +192,62 @@ impl NotebookStore {
     /// Saves every edit or none: each page's heads must still equal its edit's base, checked in
     /// the same write transaction as the saves.
     pub fn save_many_if_heads(&self, edits: &[Edit]) -> Result<CheckedSaves> {
+        self.save_many_checked(edits, None)
+    }
+
+    /// Deletes every page in `edits` or none, as `save_many_if_heads` saves them. With `folder`,
+    /// every edit must lie inside it, and the deletion also refuses when a live page inside it
+    /// is not among the edits: someone added it after the pages were chosen. The tombstones keep
+    /// each page's last text, so history stays.
+    pub fn delete_if_heads(&self, edits: &[Edit], folder: Option<&str>) -> Result<CheckedSaves> {
+        ensure!(
+            edits.iter().all(|edit| edit.deleted),
+            "A deletion contains a page edit that is not a deletion. Choose the pages again and retry."
+        );
+        if let Some(folder) = folder {
+            ensure!(
+                edits.iter().all(|edit| inside(&edit.path, folder)),
+                "A page to delete is not in {folder}. Nothing was deleted; choose the folder again and retry."
+            );
+        }
+        self.save_many_checked(edits, folder)
+    }
+
+    /// Live pages whose current path lies inside `folder`, as page identities and paths.
+    pub fn pages_in_folder(&self, folder: &str) -> Result<Vec<(String, String)>> {
+        let prefix: String = format!("{folder}/")
+            .nfc()
+            .collect::<String>()
+            .to_lowercase();
+        let rows = self.connection.select_bound::<_, (String, String)>(
+            "SELECT DISTINCT r.page,r.path FROM heads h JOIN revisions r ON r.id=h.revision WHERE r.deleted=0 AND substr(r.path_key,1,?)=?",
+        )?((prefix.chars().count() as i64, prefix.as_str()))?;
+        let mut pages = Vec::new();
+        for (page, path) in rows {
+            let page: String = serde_json::from_str(&page)?;
+            let path: String = serde_json::from_str(&path)?;
+            if inside(&path, folder) {
+                pages.push((page, path));
+            }
+        }
+        pages.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+        pages.dedup_by(|a, b| a.0 == b.0);
+        Ok(pages)
+    }
+
+    fn save_many_checked(&self, edits: &[Edit], folder: Option<&str>) -> Result<CheckedSaves> {
         distinct_pages(edits)?;
         self.transaction(|| {
+            if let Some(folder) = folder {
+                let chosen: HashSet<&str> = edits.iter().map(|edit| edit.page.as_str()).collect();
+                if let Some((_, path)) = self
+                    .pages_in_folder(folder)?
+                    .into_iter()
+                    .find(|(page, _)| !chosen.contains(page.as_str()))
+                {
+                    return Ok(CheckedSaves::Appeared { path });
+                }
+            }
             for edit in edits {
                 let heads = self.heads(&edit.page)?;
                 if heads != edit.base {
@@ -478,6 +537,11 @@ impl NotebookStore {
         }
         Ok(())
     }
+}
+
+fn inside(path: &str, folder: &str) -> bool {
+    path.strip_prefix(folder)
+        .is_some_and(|rest| rest.starts_with('/'))
 }
 
 fn distinct_pages(edits: &[Edit]) -> Result<()> {
