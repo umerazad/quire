@@ -1,7 +1,11 @@
 //! The Tags browser: every tag with its block count, filtered and sorted, with several tags
 //! selectable for bulk rename and delete.
 
-use super::{ToggleTagSelected, list_keys, live::Live};
+use super::{
+    ToggleTagSelected, list_keys,
+    live::Live,
+    tag_edits::{TagEdits, TagEditsEvent, Writers},
+};
 use editor::{Editor, EditorEvent};
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy,
@@ -49,6 +53,8 @@ pub struct TagsView {
     sort: TagSort,
     highlighted: usize,
     selected: Vec<String>,
+    pub(crate) edits: Entity<TagEdits>,
+    client: Option<IndexClient>,
     focus: FocusHandle,
     scroll: UniformListScrollHandle,
     _subscriptions: Vec<Subscription>,
@@ -87,24 +93,37 @@ pub fn visible(tags: &[TagCount], filter: &str, sort: TagSort) -> Vec<TagCount> 
 }
 
 impl TagsView {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(writers: Writers, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let edits = cx.new(|cx| TagEdits::new(writers, window, cx));
         let filter = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Filter tags…", window, cx);
             editor
         });
-        let subscriptions = vec![cx.subscribe(&filter, |this, _, event: &EditorEvent, cx| {
+        let filtered = cx.subscribe(&filter, |this, _, event: &EditorEvent, cx| {
             if matches!(event, EditorEvent::BufferEdited) {
                 this.highlighted = 0;
                 cx.notify();
             }
-        })];
+        });
+        let applied = cx.subscribe(&edits, |this, _, event: &TagEditsEvent, cx| {
+            this.selected.clear();
+            this.sync_selection(cx);
+            if matches!(event, TagEditsEvent::Applied)
+                && let Some(client) = this.client.clone()
+            {
+                this.refresh(&client, cx);
+            }
+        });
+        let subscriptions = vec![filtered, applied];
         Self {
             tags: Live::default(),
             filter,
             sort: TagSort::default(),
             highlighted: 0,
             selected: Vec::new(),
+            edits,
+            client: None,
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
             _subscriptions: subscriptions,
@@ -112,6 +131,9 @@ impl TagsView {
     }
 
     pub fn refresh(&mut self, client: &IndexClient, cx: &mut Context<Self>) {
+        self.client = Some(client.clone());
+        self.edits
+            .update(cx, |edits, _| edits.set_client(client.clone()));
         let answer = client.with_generation(|index| index.tag_names());
         self.tags.request(
             answer,
@@ -154,6 +176,18 @@ impl TagsView {
             }
             None => self.selected.push(label.to_owned()),
         }
+        self.sync_selection(cx);
+    }
+
+    #[cfg(test)]
+    pub fn selected(&self) -> &[String] {
+        &self.selected
+    }
+
+    fn sync_selection(&mut self, cx: &mut Context<Self>) {
+        let selected = self.selected.clone();
+        self.edits
+            .update(cx, |edits, cx| edits.set_selected(selected, cx));
         cx.notify();
     }
 
@@ -281,6 +315,7 @@ impl Render for TagsView {
                     .color(Color::Muted),
                 ),
         )
+        .child(self.edits.clone())
         .when_some(self.tags.error.clone(), |div, error: SharedString| {
             div.child(Label::new(error).color(Color::Error))
         })

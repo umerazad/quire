@@ -27,7 +27,12 @@ impl StoredWindow {
             match self.nav.tags.list.clone() {
                 Some(list) => list,
                 None => {
-                    let list = cx.new(|cx| TagsView::new(window, cx));
+                    let session = self.session.clone();
+                    let writers: crate::navigation::tag_edits::Writers = Rc::new(move |_| {
+                        let session = session.borrow();
+                        (session.open_pages(), session.storage())
+                    });
+                    let list = cx.new(|cx| TagsView::new(writers, window, cx));
                     cx.subscribe_in(&list, window, |this, _, event: &TagsEvent, window, cx| {
                         match event {
                             TagsEvent::Open(tag) => {

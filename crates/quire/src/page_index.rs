@@ -191,7 +191,6 @@ mod tests {
 
 /// Plans a bulk tag edit for one page using the editor's own tag recognition, so tags in code
 /// and links stay. Parsing happens in the returned future.
-#[cfg(test)]
 pub fn edit_tags(
     text: String,
     retag: quire_core::tag_edits::Retag,

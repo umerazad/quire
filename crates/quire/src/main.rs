@@ -32,7 +32,7 @@ mod navigation;
 #[cfg(feature = "full-editor")]
 mod stored_source;
 
-#[cfg(all(feature = "full-editor", test))]
+#[cfg(feature = "full-editor")]
 mod tag_edit;
 
 #[cfg(feature = "full-editor")]

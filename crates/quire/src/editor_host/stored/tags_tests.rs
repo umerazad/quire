@@ -200,3 +200,222 @@ fn tag_sorts_order_by_count_with_ties_by_name() {
     assert_eq!(labels(TagSort::Most), ["#b", "#a", "#c"]);
     assert_eq!(labels(TagSort::Fewest), ["#a", "#c", "#b"]);
 }
+
+fn edits(
+    notebook: &Notebook,
+    cx: &mut TestAppContext,
+) -> Entity<crate::navigation::tag_edits::TagEdits> {
+    read(notebook, cx, |view, cx| {
+        view.nav.tags.list.as_ref().unwrap().read(cx).edits.clone()
+    })
+}
+
+fn focus_name(notebook: &Notebook, cx: &mut TestAppContext) {
+    let edits = edits(notebook, cx);
+    notebook
+        .window
+        .update(cx, |_, window, cx| {
+            let focus = edits.read(cx).name.focus_handle(cx);
+            window.focus(&focus, cx);
+        })
+        .unwrap();
+}
+
+fn settled_edits(notebook: &Notebook, cx: &mut TestAppContext) {
+    let edits = edits(notebook, cx);
+    wait_until(cx, "the tag edit", |cx| {
+        cx.read(|cx| !edits.read(cx).is_busy())
+    });
+}
+
+fn open_buffer(notebook: &Notebook, cx: &mut TestAppContext) -> Entity<language::Buffer> {
+    wait_until(cx, "the first page", |cx| {
+        read(notebook, cx, |view, cx| {
+            view.page.read(cx).persistence().is_some()
+        })
+    });
+    read(notebook, cx, |view, cx| {
+        view.page
+            .read(cx)
+            .persistence()
+            .unwrap()
+            .read(cx)
+            .buffer()
+            .clone()
+    })
+}
+
+fn stored(notebook: &Notebook, page: &str) -> String {
+    NotebookStore::open(&notebook.path, "nb", "local")
+        .unwrap()
+        .checkout(page, None)
+        .unwrap()
+        .selected
+        .unwrap()
+        .root()
+        .field("text")
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[gpui::test]
+fn renaming_selected_tags_previews_every_change_then_rewrites_open_and_closed_pages(
+    cx: &mut TestAppContext,
+) {
+    let notebook = open_notebook(&TAGGED, "a", cx);
+    let buffer = open_buffer(&notebook, cx);
+    buffer.update(cx, |buffer, cx| {
+        let end = buffer.len();
+        buffer.edit([(end..end, "- typed #plan\n")], None, cx)
+    });
+    show_tags(&notebook, cx);
+    cx.simulate_keystrokes(
+        notebook.window.into(),
+        &format!("down {}", super::tests::key("enter")),
+    );
+    let list = read(&notebook, cx, |view, _| view.nav.tags.list.clone().unwrap());
+    list.update(cx, |list, cx| list.toggle("#other", cx));
+    assert_eq!(
+        cx.read(|cx| list.read(cx).selected().to_vec()),
+        ["#Plan", "#other"],
+        "Command-Enter and the checkbox both choose tags"
+    );
+    focus_name(&notebook, cx);
+    cx.simulate_input(notebook.window.into(), "#job");
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    settled_edits(&notebook, cx);
+    let edits = edits(&notebook, cx);
+    cx.read(|cx| {
+        let edits = edits.read(cx);
+        assert_eq!(edits.error, None);
+        let preview = edits.preview.as_ref().unwrap();
+        assert_eq!(
+            preview.summary(),
+            "Rename #Plan, #other to #job on 2 pages?"
+        );
+        let changes: Vec<_> = preview
+            .changes()
+            .into_iter()
+            .map(|change| format!("{}: {} -> {}", change.page, change.before, change.after))
+            .collect();
+        assert_eq!(
+            changes,
+            [
+                "Alpha: #Plan -> #job",
+                "Alpha: #plan/sub -> #job/sub",
+                "Alpha: #plan -> #job",
+                "Beta: #plan -> #job",
+                "Beta: #other -> #job",
+            ],
+            "the preview reads unsaved typing and moves nested tags"
+        );
+    });
+    notebook
+        .window
+        .update(cx, |_, window, cx| {
+            edits.update(cx, |edits, cx| edits.apply(window, cx))
+        })
+        .unwrap();
+    settled_edits(&notebook, cx);
+    cx.read(|cx| {
+        let edits = edits.read(cx);
+        assert_eq!(edits.error, None);
+        assert_eq!(edits.done.as_deref(), Some("Changed tags on 2 pages."));
+        assert!(edits.preview.is_none() && edits.name.read(cx).text(cx).is_empty());
+    });
+    assert_eq!(stored(&notebook, "b"), "- third #job\n- #job note\n");
+    assert_eq!(
+        cx.read(|cx| buffer.read(cx).text()),
+        "- first #job\n- nested #job/sub\n- typed #job\n"
+    );
+    assert_eq!(stored(&notebook, "c"), "- `#plan` in code\n");
+    assert!(cx.read(|cx| list.read(cx).selected().is_empty()));
+    wait_until(cx, "the renamed tags in the list", |cx| {
+        tag_rows(&notebook, cx) == [("#job".to_owned(), 4), ("#job/sub".to_owned(), 1)]
+    });
+}
+
+#[gpui::test]
+fn invalid_names_empty_selections_and_stale_previews_show_inline_errors(cx: &mut TestAppContext) {
+    use quire_core::tag_edits::{INVALID_NAME, NOTHING_CHOSEN};
+    let notebook = open_notebook(&TAGGED, "a", cx);
+    let buffer = open_buffer(&notebook, cx);
+    show_tags(&notebook, cx);
+    let list = read(&notebook, cx, |view, _| view.nav.tags.list.clone().unwrap());
+    list.update(cx, |list, cx| list.toggle("#Plan", cx));
+    focus_name(&notebook, cx);
+    cx.simulate_input(notebook.window.into(), "two words");
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    settled_edits(&notebook, cx);
+    let edits = edits(&notebook, cx);
+    assert_eq!(
+        cx.read(|cx| edits.read(cx).error.clone()).as_deref(),
+        Some(INVALID_NAME)
+    );
+    cx.simulate_input(notebook.window.into(), "s");
+    assert_eq!(
+        cx.read(|cx| edits.read(cx).error.clone()),
+        None,
+        "typing clears the error"
+    );
+
+    edits.update(cx, |edits, cx| edits.preview(false, cx));
+    settled_edits(&notebook, cx);
+    assert_eq!(
+        cx.read(|cx| edits
+            .read(cx)
+            .preview
+            .as_ref()
+            .map(|preview| preview.summary())),
+        Some("Delete #Plan on 2 pages?".into())
+    );
+    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "x")], None, cx));
+    notebook
+        .window
+        .update(cx, |_, window, cx| {
+            edits.update(cx, |edits, cx| edits.apply(window, cx))
+        })
+        .unwrap();
+    settled_edits(&notebook, cx);
+    assert_eq!(
+        cx.read(|cx| edits.read(cx).error.clone()).as_deref(),
+        Some(crate::tag_edit::STALE_PREVIEW)
+    );
+    assert_eq!(stored(&notebook, "b"), "- third #plan\n- #other note\n");
+    assert_eq!(
+        cx.read(|cx| buffer.read(cx).text()),
+        "x- first #Plan\n- nested #plan/sub\n"
+    );
+
+    list.update(cx, |list, cx| list.toggle("#Plan", cx));
+    edits.update(cx, |edits, cx| edits.preview(false, cx));
+    assert_eq!(
+        cx.read(|cx| edits.read(cx).error.clone()).as_deref(),
+        Some(NOTHING_CHOSEN)
+    );
+}
+
+#[gpui::test]
+fn long_previews_list_twenty_changes_until_asked_for_more(cx: &mut TestAppContext) {
+    let many: String = (0..25)
+        .map(|index| format!("- item {index} #many\n"))
+        .collect();
+    let notebook = open_notebook(&[("m", "Many.md", many.as_str())], "m", cx);
+    show_tags(&notebook, cx);
+    let list = read(&notebook, cx, |view, _| view.nav.tags.list.clone().unwrap());
+    list.update(cx, |list, cx| list.toggle("#many", cx));
+    let edits = edits(&notebook, cx);
+    edits.update(cx, |edits, cx| edits.preview(false, cx));
+    settled_edits(&notebook, cx);
+    let shown = |cx: &mut TestAppContext| {
+        cx.read(|cx| {
+            let edits = edits.read(cx);
+            let (rows, more) = edits.preview.as_ref().unwrap().shown(edits.limit);
+            (rows.len(), more)
+        })
+    };
+    assert_eq!(shown(cx), (20, 5));
+    edits.update(cx, |edits, cx| edits.show_more(cx));
+    assert_eq!(shown(cx), (25, 0));
+}

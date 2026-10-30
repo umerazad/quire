@@ -3,6 +3,7 @@
 
 pub mod live;
 pub mod palette;
+pub mod tag_edits;
 pub mod tag_page;
 pub mod tags;
 
@@ -128,6 +129,7 @@ pub fn bind_keys(cx: &mut App) {
             menu::SecondaryConfirm,
             Some("QuireList > Editor"),
         ),
+        KeyBinding::new("enter", menu::Confirm, Some("QuireTagEdit > Editor")),
         KeyBinding::new(primary!("enter"), ToggleTagSelected, Some("QuireTags")),
         KeyBinding::new(
             primary!("enter"),
