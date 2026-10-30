@@ -21,6 +21,10 @@ pub(super) const TABLES: &[&str] = &[
     "CREATE TEMP TABLE overlay_tagged (revision TEXT NOT NULL, ordinal INTEGER NOT NULL, tag TEXT NOT NULL, tag_key TEXT NOT NULL, start INTEGER NOT NULL, block_id TEXT, snippet TEXT NOT NULL, UNIQUE(revision, ordinal))",
     "CREATE INDEX temp.overlay_tagged_by_key ON overlay_tagged(tag_key)",
     "CREATE TEMP TABLE overlay_front_tags (revision TEXT NOT NULL, ordinal INTEGER NOT NULL, tag TEXT NOT NULL, UNIQUE(revision, ordinal))",
+    "CREATE TEMP TABLE overlay_tasks (revision TEXT NOT NULL, ordinal INTEGER NOT NULL, key TEXT NOT NULL, id TEXT, start INTEGER NOT NULL, raw TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL, tags TEXT NOT NULL, links TEXT NOT NULL, dates TEXT NOT NULL, completed TEXT, created TEXT, due TEXT, UNIQUE(revision, ordinal))",
+    "CREATE TEMP VIEW live_tasks AS
+       SELECT revision,ordinal,key,id,start,raw,text,state,tags,links,dates,completed,created,due FROM main.tasks
+       UNION ALL SELECT revision,ordinal,key,id,start,raw,text,state,tags,links,dates,completed,created,due FROM temp.overlay_tasks",
     "CREATE TEMP VIEW live_pages AS
        SELECT revision,page,path,name_key,title,title_key,date,deleted,analyzed FROM main.pages
          WHERE page NOT IN (SELECT page FROM temp.overlay_pages)
@@ -109,6 +113,8 @@ impl QueryIndex {
             "overlay_blocks",
             "overlay_links",
             "overlay_tagged",
+            "overlay_front_tags",
+            "overlay_tasks",
         ] {
             self.connection
                 .exec_bound(&format!("DELETE FROM temp.{table} WHERE revision=?"))?(

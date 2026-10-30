@@ -17,7 +17,7 @@ fn dispatch(notebook: &Notebook, action: impl gpui::Action, cx: &mut TestAppCont
     cx.run_until_parked();
 }
 
-fn saved(notebook: &Notebook, cx: &mut TestAppContext) {
+pub(super) fn saved(notebook: &Notebook, cx: &mut TestAppContext) {
     wait_until(cx, "the saved workspace", |cx| {
         read(notebook, cx, |view, _| view.nav.saving_idle())
     });

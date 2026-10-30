@@ -194,3 +194,29 @@ fn history_skips_repeats_and_cuts_forward_entries() {
     assert_eq!(history.current(), Some(&page("b")));
     assert_eq!(history.forward(), Some(page("d")));
 }
+
+#[test]
+fn task_choices_survive_save_and_load_and_forget_deleted_projects() {
+    use quire_core::workspace::{ProjectStatus, TaskChoices, TaskView};
+    let mut workspace = Workspace::default();
+    workspace.visit(Destination::Browser {
+        view: BrowserView::Tasks,
+    });
+    workspace.tasks = TaskChoices {
+        view: TaskView::Projects,
+        project: Some("atlas".into()),
+        project_status: ProjectStatus::Inactive,
+    };
+    let loaded = Workspace::load(&workspace.save());
+    assert_eq!(loaded, workspace);
+    let older = Workspace::load(r#"{"tabs":[],"tasks":{"view":"later","project_status":"all"}}"#);
+    assert_eq!(
+        older.tasks,
+        TaskChoices::default(),
+        "unreadable choices fall back to Inbox and Active"
+    );
+    let mut pruned = loaded;
+    pruned.retain_pages(|id| id != "atlas");
+    assert_eq!(pruned.tasks.project, None);
+    assert_eq!(pruned.tasks.project_status, ProjectStatus::Inactive);
+}

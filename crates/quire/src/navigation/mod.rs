@@ -8,6 +8,7 @@ pub mod references;
 pub mod tag_edits;
 pub mod tag_page;
 pub mod tags;
+pub mod tasks;
 
 use gpui::{App, Context, InteractiveElement, KeyBinding, Window};
 use quire_core::{markdown::safe_page_path, workspace::Workspace};
@@ -45,6 +46,10 @@ gpui::actions!(
         FocusFiles,
         /// Moves focus to the linked references under the page.
         FocusReferences,
+        /// Lists tasks by state, due date, and project.
+        ShowTasks,
+        /// Opens Tasks with the capture field focused.
+        CaptureTask,
         /// Adds the highlighted tag to the selection for bulk rename or delete, or takes it out.
         ToggleTagSelected,
     ]
@@ -136,6 +141,35 @@ pub fn bind_keys(cx: &mut App) {
         ),
         KeyBinding::new("enter", menu::Confirm, Some("QuireTagEdit > Editor")),
         KeyBinding::new("escape", menu::Cancel, Some("QuireReferences > Editor")),
+        KeyBinding::new(primary!("shift-t"), CaptureTask, context),
+        KeyBinding::new("enter", menu::Confirm, Some("QuireTaskField > Editor")),
+        KeyBinding::new("escape", menu::Cancel, Some("QuireTaskField > Editor")),
+        KeyBinding::new("escape", menu::Cancel, Some("QuireTaskFilter > Editor")),
+        KeyBinding::new("space", tasks::ToggleTaskSelected, Some("QuireTaskList")),
+        KeyBinding::new("shift-space", tasks::SelectTaskRange, Some("QuireTaskList")),
+        KeyBinding::new("escape", tasks::ClearTaskSelection, Some("QuireTaskList")),
+        KeyBinding::new("1", tasks::MoveToInbox, Some("QuireTaskList")),
+        KeyBinding::new("2", tasks::MoveToNext, Some("QuireTaskList")),
+        KeyBinding::new("3", tasks::MoveToWaiting, Some("QuireTaskList")),
+        KeyBinding::new("4", tasks::MoveToSomeday, Some("QuireTaskList")),
+        KeyBinding::new("5", tasks::MoveToDone, Some("QuireTaskList")),
+        KeyBinding::new("d", tasks::EditDueDate, Some("QuireTaskList")),
+        KeyBinding::new("c", tasks::EditCreatedDate, Some("QuireTaskList")),
+        KeyBinding::new("shift-d", tasks::EditCompletedDate, Some("QuireTaskList")),
+        KeyBinding::new("]", tasks::NextTaskView, Some("QuireTaskList")),
+        KeyBinding::new("[", tasks::PreviousTaskView, Some("QuireTaskList")),
+        KeyBinding::new("/", tasks::FocusTaskFilter, Some("QuireTaskList")),
+        KeyBinding::new("r", tasks::ReviewProject, Some("QuireTaskList")),
+        KeyBinding::new(
+            primary!("enter"),
+            crate::tasks::ToggleTask,
+            Some("QuireTaskList"),
+        ),
+        KeyBinding::new(
+            primary!("shift-enter"),
+            crate::tasks::CycleTask,
+            Some("QuireTaskList"),
+        ),
         KeyBinding::new(primary!("enter"), ToggleTagSelected, Some("QuireTags")),
         KeyBinding::new(
             primary!("enter"),
@@ -219,6 +253,17 @@ pub async fn create_page(
     title: String,
     folder: String,
 ) -> Result<String, String> {
+    create_page_with(storage, index, title, folder, NEW_PAGE_TEXT.into()).await
+}
+
+/// [`create_page`] starting with `text`.
+pub async fn create_page_with(
+    storage: StorageClient,
+    index: IndexClient,
+    title: String,
+    folder: String,
+    text: String,
+) -> Result<String, String> {
     let name = safe_page_path(&title).map_err(|error| error.to_string())?;
     let folder = folder.trim_matches('/');
     let path = if folder.is_empty() {
@@ -252,7 +297,7 @@ pub async fn create_page(
             page: page.clone(),
             base: Vec::new(),
             path,
-            text: NEW_PAGE_TEXT.into(),
+            text,
             deleted: false,
             created: now_millis() as u64,
             recovery: None,

@@ -9,11 +9,13 @@ mod overlay;
 mod query;
 mod references;
 mod schema;
+mod tasks;
 
 pub use catalog::{ListedPage, SETTINGS_PAGE};
 pub use overlay::Overlay;
 pub use query::{Backlink, PageRef, SearchHit, TagCount, TaggedBlock};
 pub use references::{Facet, FacetKind, Outline, ReferenceBlock, SHOWN_CHILDREN};
+pub use tasks::{ProjectSummary, TaskBoard, TaskCounts, TaskItem, TaskQuery, UPCOMING_DAYS};
 
 use crate::notebook::{PageMetadata, read_revision, revision_metadata};
 use crate::sync::json::JsString;
@@ -22,6 +24,7 @@ use anyhow::{Context as _, Result, bail, ensure};
 use quire_core::daily::{DailyCalendar, DailyLayout, DailyParser, write_settings};
 use quire_core::reference_filter::{FilterNames, ReferenceContext, ReferenceFilter};
 use quire_core::tag_edits::Retag;
+use quire_core::tasks::{DailyNames, DateSources};
 use serde::{Deserialize, Serialize};
 use sqlez::connection::Connection;
 use std::{
@@ -79,6 +82,24 @@ pub struct IndexedTag {
     pub snippet: String,
 }
 
+/// A task as the page's analysis reads it, with the sources of its dates rather than the dates,
+/// so a daily-layout change re-derives them without reparsing.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexedTask {
+    pub key: String,
+    pub id: Option<String>,
+    /// The block's start, for ordering tasks within a page.
+    pub from: u32,
+    /// The block's text, marker included; a task changed when this did.
+    pub raw: String,
+    pub text: String,
+    pub state: String,
+    pub tags: Vec<String>,
+    pub links: Vec<String>,
+    pub dates: DateSources,
+    pub completed: Option<String>,
+}
+
 /// Everything the query index derives from one revision. Offsets are UTF-16 code units in the
 /// editor's line-break-normalized text, matching the reference analysis.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,6 +108,8 @@ pub struct PageIndex {
     pub links: Vec<IndexedLink>,
     pub tagged: Vec<IndexedTag>,
     pub front_tags: Vec<String>,
+    #[serde(default)]
+    pub tasks: Vec<IndexedTask>,
 }
 
 /// A selected head that still needs analysis. Text is the stored source, not yet normalized.
@@ -110,6 +133,7 @@ pub struct QueryIndex {
     layout: DailyLayout,
     calendar: DailyCalendar,
     parser: DailyParser,
+    days: DailyNames,
     seen_version: Cell<Option<i64>>,
     generation: Cell<u64>,
     releasing: RefCell<BTreeSet<String>>,
@@ -161,6 +185,7 @@ impl QueryIndex {
                     "Cannot load page sort order data. Rebuild Quire with its locked ICU data.",
                 )?,
             parser: DailyParser::new(&config.layout, config.calendar.clone()),
+            days: DailyNames::new(config.layout.clone(), config.calendar.clone()),
             layout: config.layout,
             calendar: config.calendar,
             seen_version: Cell::new(None),
@@ -194,6 +219,13 @@ impl QueryIndex {
         self.parser.date(title)
     }
 
+    /// A task's created and due dates under the notebook layout, from its stored date sources.
+    /// Neither falls back to the page's date here; queries add that from the live page.
+    fn task_dates(&self, dates: &str) -> Result<(Option<String>, Option<String>)> {
+        let sources: DateSources = serde_json::from_str(dates).context(REBUILD)?;
+        Ok((sources.created(&self.days), sources.due(&self.days)))
+    }
+
     /// Date keys depend on the daily layout. A changed layout re-derives them from stored titles
     /// and targets; pages are not reparsed.
     fn apply_layout(&self) -> Result<()> {
@@ -222,6 +254,17 @@ impl QueryIndex {
                     self.date(&target),
                     row,
                 ))?;
+            }
+            let tasks: Vec<(i64, String)> =
+                self.connection.select("SELECT rowid,dates FROM tasks")?()?;
+            for (row, dates) in tasks {
+                let (created, due) = self.task_dates(&dates)?;
+                self.connection
+                    .exec_bound("UPDATE tasks SET created=?,due=? WHERE rowid=?")?(
+                    (
+                    created, due, row,
+                )
+                )?;
             }
             self.connection.exec_bound("UPDATE meta SET layout=?")?(key.as_str())?;
             Ok(())
@@ -379,6 +422,18 @@ impl QueryIndex {
                         (!page).then(|| block_key(&link.target)),
                         page.then(|| self.date(&link.target)).flatten(),
                     ),
+                ))?;
+        }
+        for (ordinal, task) in analysis.tasks.iter().enumerate() {
+            let dates = serde_json::to_string(&task.dates)?;
+            let (created, due) = self.task_dates(&dates)?;
+            self.connection.exec_bound(
+                    &format!("INSERT INTO {tables}tasks(revision,ordinal,key,id,start,raw,text,state,tags,links,dates,completed,created,due) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"),
+                )?((
+                    (revision, ordinal as u32, task.key.as_str(), task.id.as_deref(), task.from),
+                    (task.raw.as_str(), task.text.as_str(), task.state.as_str()),
+                    (serde_json::to_string(&task.tags)?, serde_json::to_string(&task.links)?, dates.as_str()),
+                    (task.completed.as_deref(), created, due),
                 ))?;
         }
         for (ordinal, tag) in analysis.tagged.iter().enumerate() {

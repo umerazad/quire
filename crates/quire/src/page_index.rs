@@ -8,11 +8,11 @@ use crate::{
 use gpui::App;
 use language::BufferSnapshot;
 use quire_core::{json::JsString, markdown::frontmatter_tags};
-use quire_store::index::{IndexedBlock, IndexedLink, IndexedTag, PageIndex, tag_key};
+use quire_store::index::{IndexedBlock, IndexedLink, IndexedTag, IndexedTask, PageIndex, tag_key};
 use std::{collections::HashSet, future::Future};
 
 /// Bump whenever analysis output changes; the index then rebuilds itself.
-pub const ANALYZER_VERSION: i64 = 4;
+pub const ANALYZER_VERSION: i64 = 5;
 
 /// The editor's view of stored text: every line break becomes `\n`. Unpaired surrogates become
 /// U+FFFD, which keeps UTF-16 offsets unchanged.
@@ -99,11 +99,28 @@ pub fn index_snapshot(snapshot: &BufferSnapshot, text: &str) -> Option<PageIndex
                 })
         })
         .collect();
+    let tasks = crate::tasks::Analysis::read(snapshot)?
+        .with_page("", |page| page.undated_tasks())
+        .into_iter()
+        .map(|(task, dates)| IndexedTask {
+            key: task.block_key,
+            id: task.id,
+            from: utf16(task.block_from),
+            raw: task.raw,
+            text: task.text,
+            state: task.state.as_str().into(),
+            tags: task.tags,
+            links: task.links,
+            dates,
+            completed: task.completed,
+        })
+        .collect();
     Some(PageIndex {
         blocks,
         links,
         tagged,
         front_tags: frontmatter_tags(text),
+        tasks,
     })
 }
 

@@ -5,7 +5,7 @@ use crate::{
 };
 use gpui::TestAppContext;
 use quire_core::daily::DailyCalendar;
-use quire_store::notebook::NotebookStore;
+use quire_store::notebook::{Edit, NotebookStore};
 
 struct Notebook {
     _root: tempfile::TempDir,
@@ -149,7 +149,7 @@ async fn renames_closed_and_open_pages_keeping_unsaved_typing(cx: &mut TestAppCo
     });
 
     let plan = preview(&notebook, Some("job"), cx).await.unwrap();
-    let pages: Vec<_> = plan.pages.iter().map(|page| page.path.as_str()).collect();
+    let pages: Vec<_> = plan.pages.iter().map(|page| page.path()).collect();
     assert_eq!(pages, ["Closed.md", "Open.md"]);
     let changes: Vec<_> = plan.pages.iter().flat_map(|page| &page.changes).collect();
     assert_eq!(

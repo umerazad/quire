@@ -64,7 +64,18 @@ pub fn project_membership<'p>(
     page: &str,
     task: &Task,
     projects: &'p [(String, Vec<String>)],
-    find_page: impl Fn(&str) -> Option<String>,
+    find_page: impl FnMut(&str) -> Option<String>,
+) -> Vec<&'p str> {
+    memberships(page, &task.links, &task.tags, projects, find_page)
+}
+
+/// [`project_membership`] over a task's page links and lowercased tags.
+pub fn memberships<'p>(
+    page: &str,
+    links: &[String],
+    tags: &[String],
+    projects: &'p [(String, Vec<String>)],
+    mut find_page: impl FnMut(&str) -> Option<String>,
 ) -> Vec<&'p str> {
     let mut members: Vec<&str> = Vec::new();
     let mut add = |path: &'p str| {
@@ -76,12 +87,12 @@ pub fn project_membership<'p>(
     if let Some((path, _)) = project(page) {
         add(path);
     }
-    for link in &task.links {
+    for link in links {
         if let Some((path, _)) = find_page(link).and_then(|path| project(&path)) {
             add(path);
         }
     }
-    for tag in &task.tags {
+    for tag in tags {
         let name = tag.strip_prefix('#').unwrap_or(tag).to_lowercase();
         let owner = projects.iter().rev().find(|(_, tags)| {
             tags.iter().any(|front| {

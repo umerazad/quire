@@ -714,3 +714,6 @@ mod tag_edit_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod task_tests;
