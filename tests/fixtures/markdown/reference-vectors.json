@@ -27890,5 +27890,449 @@
         }
       ]
     }
+  },
+  {
+    "name": "compat-0",
+    "raw": {
+      "text": "https://example.test/`[[Page]]` [[Outside]]",
+      "codeRanges": [],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Page",
+          "from": 22,
+          "to": 30
+        },
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Outside",
+          "from": 32,
+          "to": 43
+        }
+      ]
+    },
+    "editor": {
+      "text": "https://example.test/`[[Page]]` [[Outside]]",
+      "codeRanges": [],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Page",
+          "from": 22,
+          "to": 30
+        },
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Outside",
+          "from": 32,
+          "to": 43
+        }
+      ]
+    }
+  },
+  {
+    "name": "compat-1",
+    "raw": {
+      "text": "https://example.test/`code [[One]]` now `[[Two]]`",
+      "codeRanges": [
+        [
+          34,
+          41
+        ]
+      ],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "One",
+          "from": 27,
+          "to": 34
+        },
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Two",
+          "from": 41,
+          "to": 48
+        }
+      ]
+    },
+    "editor": {
+      "text": "https://example.test/`code [[One]]` now `[[Two]]`",
+      "codeRanges": [
+        [
+          34,
+          41
+        ]
+      ],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "One",
+          "from": 27,
+          "to": 34
+        },
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Two",
+          "from": 41,
+          "to": 48
+        }
+      ]
+    }
+  },
+  {
+    "name": "compat-2",
+    "raw": {
+      "text": "`https://example.test/path`[[Outside]]",
+      "codeRanges": [
+        [
+          0,
+          27
+        ]
+      ],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Outside",
+          "from": 27,
+          "to": 38
+        }
+      ]
+    },
+    "editor": {
+      "text": "`https://example.test/path`[[Outside]]",
+      "codeRanges": [
+        [
+          0,
+          27
+        ]
+      ],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Outside",
+          "from": 27,
+          "to": 38
+        }
+      ]
+    }
+  },
+  {
+    "name": "compat-3",
+    "raw": {
+      "text": "<a_b:`[[Page]]`> [[Outside]]",
+      "codeRanges": [],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Page",
+          "from": 6,
+          "to": 14
+        },
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Outside",
+          "from": 17,
+          "to": 28
+        }
+      ]
+    },
+    "editor": {
+      "text": "<a_b:`[[Page]]`> [[Outside]]",
+      "codeRanges": [],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Page",
+          "from": 6,
+          "to": 14
+        },
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Outside",
+          "from": 17,
+          "to": 28
+        }
+      ]
+    }
+  },
+  {
+    "name": "compat-4",
+    "raw": {
+      "text": "text <!-- `[[Page]]` --> [[Outside]]",
+      "codeRanges": [],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Page",
+          "from": 11,
+          "to": 19
+        },
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Outside",
+          "from": 25,
+          "to": 36
+        }
+      ]
+    },
+    "editor": {
+      "text": "text <!-- `[[Page]]` --> [[Outside]]",
+      "codeRanges": [],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Page",
+          "from": 11,
+          "to": 19
+        },
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Outside",
+          "from": 25,
+          "to": 36
+        }
+      ]
+    }
+  },
+  {
+    "name": "doctype-code",
+    "raw": {
+      "text": "<!DOCTYPE html>\n\n`[[Hidden]]` [[Visible]]\n",
+      "codeRanges": [
+        [
+          17,
+          29
+        ]
+      ],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Visible",
+          "from": 30,
+          "to": 41
+        }
+      ]
+    },
+    "editor": {
+      "text": "<!DOCTYPE html>\n\n`[[Hidden]]` [[Visible]]\n",
+      "codeRanges": [
+        [
+          17,
+          29
+        ]
+      ],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Visible",
+          "from": 30,
+          "to": 41
+        }
+      ]
+    }
+  },
+  {
+    "name": "doctype-quote",
+    "raw": {
+      "text": "> <!DOCTYPE html>\n>\n> `[[Hidden]]` [[Visible]]\n",
+      "codeRanges": [
+        [
+          22,
+          34
+        ]
+      ],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Visible",
+          "from": 35,
+          "to": 46
+        }
+      ]
+    },
+    "editor": {
+      "text": "> <!DOCTYPE html>\n>\n> `[[Hidden]]` [[Visible]]\n",
+      "codeRanges": [
+        [
+          22,
+          34
+        ]
+      ],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Visible",
+          "from": 35,
+          "to": 46
+        }
+      ]
+    }
+  },
+  {
+    "name": "url-quote",
+    "raw": {
+      "text": "> مرحبا🙂\n> https://example.test/`code [[One]]` now `[[Two]]`\n",
+      "codeRanges": [
+        [
+          46,
+          53
+        ]
+      ],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "One",
+          "from": 39,
+          "to": 46
+        },
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Two",
+          "from": 53,
+          "to": 60
+        }
+      ]
+    },
+    "editor": {
+      "text": "> مرحبا🙂\n> https://example.test/`code [[One]]` now `[[Two]]`\n",
+      "codeRanges": [
+        [
+          46,
+          53
+        ]
+      ],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "One",
+          "from": 39,
+          "to": 46
+        },
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Two",
+          "from": 53,
+          "to": 60
+        }
+      ]
+    }
+  },
+  {
+    "name": "url-list",
+    "raw": {
+      "text": "- مرحبا🙂\n  https://example.test/`code [[One]]` now `[[Two]]`\n",
+      "codeRanges": [
+        [
+          46,
+          53
+        ]
+      ],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "One",
+          "from": 39,
+          "to": 46
+        },
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Two",
+          "from": 53,
+          "to": 60
+        }
+      ]
+    },
+    "editor": {
+      "text": "- مرحبا🙂\n  https://example.test/`code [[One]]` now `[[Two]]`\n",
+      "codeRanges": [
+        [
+          46,
+          53
+        ]
+      ],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "One",
+          "from": 39,
+          "to": 46
+        },
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Two",
+          "from": 53,
+          "to": 60
+        }
+      ]
+    }
+  },
+  {
+    "name": "invalid-angle-code",
+    "raw": {
+      "text": "<ab:body `[[Hidden]]`> [[Visible]]",
+      "codeRanges": [
+        [
+          9,
+          21
+        ]
+      ],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Visible",
+          "from": 23,
+          "to": 34
+        }
+      ]
+    },
+    "editor": {
+      "text": "<ab:body `[[Hidden]]`> [[Visible]]",
+      "codeRanges": [
+        [
+          9,
+          21
+        ]
+      ],
+      "references": [
+        {
+          "kind": "page",
+          "syntax": "wiki",
+          "target": "Visible",
+          "from": 23,
+          "to": 34
+        }
+      ]
+    }
   }
 ]

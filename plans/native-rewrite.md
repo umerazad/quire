@@ -62,7 +62,7 @@ One contract needs correction in this rewrite: the local database is not always 
 
 Vendor selected sources under `vendor/zed/`, with their notices, tests, resources, shaders, build scripts, grammar inputs, and required supporting crates. Maintain an upstream revision and a per-component modification record. Use real copied files, not a submodule, symlinks into siblings, or a Cargo Git dependency on `zed-industries/zed`. Rewrite workspace paths so they remain within `quire`. Keep ordinary third-party dependencies pinned in Cargo; the requirement is independence from a Zed checkout, not a new requirement to vendor every registry package.
 
-Quire uses a separate namespaced copy of the pinned Markdown grammar under `vendor/quire-markdown`. Its scanner disables setext headings and tables that interrupt paragraphs, matching the frozen Quire dialect. Copied Zed components retain the upstream grammar. Both use the existing pinned tree-sitter runtime; the copy needs no sibling checkout at build time. Source provenance and modifications are recorded in its `UPSTREAM.json`.
+Quire uses a separate namespaced copy of the pinned Markdown grammar under `vendor/quire-markdown`. Its scanner disables setext headings and tables that interrupt paragraphs, matching the frozen Quire dialect. Its generated declaration rule closes HTML declarations before following paragraphs. Copied Zed components retain the upstream grammar. Both use the existing pinned tree-sitter runtime; the copy needs no sibling checkout at build time. Source provenance and modifications are recorded in its `UPSTREAM.json`.
 
 | Zed component | Use in Quire | Boundary or qualification |
 | --- | --- | --- |

@@ -1,8 +1,10 @@
 # Quire Markdown grammar
 
-This standalone MIT-licensed copy is pinned in UPSTREAM.json. Quire uses distinct package, C symbol, and static archive names so the stock grammar can coexist. The block scanner disables setext headings and tables that interrupt paragraphs to match the frozen app. Generated parse tables are retained; the policy changes are in the external scanner. Only the Rust grammar bindings are exposed, and the unused upstream convenience parser and benchmark are omitted. Tests use the workspace's pinned tree-sitter runtime.
+This standalone MIT-licensed copy is pinned in UPSTREAM.json. Quire uses distinct package, C symbol, and static archive names so the stock grammar can coexist. The block scanner disables setext headings and tables that interrupt paragraphs to match the frozen app. The block grammar also prevents an HTML declaration body from consuming its closing >, which previously absorbed following paragraphs. Only the Rust grammar bindings are exposed, and the unused upstream convenience parser and benchmark are omitted. Tests use the workspace's pinned tree-sitter runtime.
 
 Build inputs and queries are copied into this directory. No sibling checkout is needed to build. To audit unchanged files, run `bun tools/verify-upstream.ts <checkout-at-pinned-revision> vendor/quire-markdown`. Run `bun tools/verify-vendor.ts vendor/quire-markdown` to check build inputs and reject symlinks. The app's native reference corpus checks fresh and incremental syntax against the frozen Quire oracle; the coexistence test checks the original grammar's setext behavior too.
+
+The block grammar generation inputs are copied here. Regenerate with `bun tools/generate-markdown.ts` using tree-sitter CLI 0.26.11. The tool clears extension environment overrides and writes ABI 14 C tables, JSON metadata, and the matching parser header. Cargo uses these checked-in outputs and needs neither the CLI nor Node to build. `LICENSE-tree-sitter` retains the generated header notice.
 
 The upstream README follows.
 

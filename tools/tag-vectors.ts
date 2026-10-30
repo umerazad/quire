@@ -27,6 +27,13 @@ for (let index = 0; index < 512; index++) {
   if (random(3) === 0) source = source.replaceAll("\n", "\r\n");
   inputs.push({ name: `seeded-${index}`, source });
 }
+for (const [index, source] of ["text <!-- #comment --> #outside","<?pi #processing ?> #outside","text <?pi #processing ?> #outside","<![CDATA[ #hidden ]]>\n\n#outside","<!DOCTYPE #hidden>\n\n#outside","https://example.test/[#tag] #outside","www.example.test/[#tag] #outside","https://example.test/`code #one` now `#two`","`https://example.test/path`[#tag]","[https://example.test/path] [#outside]","<a_b:[#tag]> #outside","<aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:[#tag]> #outside","<https://example.test/<[#tag]> #outside","https://example.test/`[[Page]]` [[Outside]]"].entries()) inputs.push({ name: `compat-${index}`, source });
+inputs.push({ name: "doctype-code", source: "<!DOCTYPE html>\n\n`#hidden` #visible\n" });
+inputs.push({ name: "doctype-multiline", source: "<!DOCTYPE html\n #hidden>\n\n #visible" });
+inputs.push({ name: "doctype-quote", source: "> <!DOCTYPE html>\n>\n> #visible\n" });
+inputs.push({ name: "url-quote", source: "> مرحبا🙂\n> https://example.test/`code #one` now `#two`\n" });
+inputs.push({ name: "url-list", source: "- مرحبا🙂\n  https://example.test/`code #one` now `#two`\n" });
+inputs.push({ name: "invalid-angle-code", source: "<ab:body `prefix #hidden`> #outside" });
 function vector(text: string, exhaustive: boolean) {
   const tree = parseMarkdown(text);
   const codeRanges: [number, number][] = [];

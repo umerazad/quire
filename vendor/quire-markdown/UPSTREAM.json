@@ -15,7 +15,7 @@
     },
     {
       "path": "tree-sitter-markdown/src/parser.c",
-      "reason": "Namespace exported C symbols so the original Zed grammar can coexist."
+      "reason": "Regenerate the namespaced block grammar with CLI 0.26.11 and ABI 14 after excluding > from HTML declaration body lines."
     },
     {
       "path": "tree-sitter-markdown/src/scanner.c",
@@ -40,6 +40,44 @@
     {
       "path": "README.md",
       "reason": "Document the standalone Quire dialect, namespacing, omitted convenience wrapper, and verification commands; retain upstream README below."
+    },
+    {
+      "path": "tree-sitter-markdown/grammar.js",
+      "reason": "Namespace the block grammar and prevent HTML declaration body lines from consuming their closing >. Retain the upstream helper for other HTML block forms."
+    },
+    {
+      "path": "tree-sitter-markdown/src/grammar.json",
+      "reason": "Generated from the documented Quire block grammar with CLI 0.26.11 and ABI 14."
+    },
+    {
+      "path": "tree-sitter-markdown/src/tree_sitter/parser.h",
+      "reason": "Matching generated header from CLI 0.26.11, needed for TSMapSlice while preserving ABI 14."
+    },
+    {
+      "path": "package.json",
+      "reason": "Scope copied grammar/common scripts as CommonJS for the generation tool, independent of the application ESM package. No npm runtime dependencies."
+    },
+    {
+      "path": "LICENSE-tree-sitter",
+      "reason": "Retain the MIT notice for the generated tree-sitter header; copied from the existing pinned runtime source."
+    },
+    {
+      "path": "common/html_entities.json",
+      "reason": "Remove the upstream extra blank line at EOF for the staged whitespace gate. Parsed JSON data and generated parser outputs are unchanged."
     }
-  ]
+  ],
+  "generation": {
+    "tool": "tree-sitter CLI",
+    "version": "0.26.11",
+    "abi": 14,
+    "command": "bun tools/generate-markdown.ts",
+    "inputs": [
+      "tree-sitter-markdown/grammar.js",
+      "common/common.js",
+      "common/html_entities.json",
+      "package.json"
+    ],
+    "header_license": "LICENSE-tree-sitter",
+    "license_source_revision": "803c6ebaac27d69e1808b45058482e868d073ceb"
+  }
 }

@@ -26,6 +26,12 @@ for (let index = 0; index < 512; index++) {
   if (random(3) === 0) source = source.replaceAll("\n", "\r\n");
   inputs.push({ name: `seeded-${index}`, source });
 }
+for (const [index, source] of ["https://example.test/`[[Page]]` [[Outside]]","https://example.test/`code [[One]]` now `[[Two]]`","`https://example.test/path`[[Outside]]","<a_b:`[[Page]]`> [[Outside]]","text <!-- `[[Page]]` --> [[Outside]]"].entries()) inputs.push({ name: `compat-${index}`, source });
+inputs.push({ name: "doctype-code", source: "<!DOCTYPE html>\n\n`[[Hidden]]` [[Visible]]\n" });
+inputs.push({ name: "doctype-quote", source: "> <!DOCTYPE html>\n>\n> `[[Hidden]]` [[Visible]]\n" });
+inputs.push({ name: "url-quote", source: "> مرحبا🙂\n> https://example.test/`code [[One]]` now `[[Two]]`\n" });
+inputs.push({ name: "url-list", source: "- مرحبا🙂\n  https://example.test/`code [[One]]` now `[[Two]]`\n" });
+inputs.push({ name: "invalid-angle-code", source: "<ab:body `[[Hidden]]`> [[Visible]]" });
 function vector(text: string) {
   const codeRanges: [number, number][] = [];
   const tree = parseMarkdown(text);

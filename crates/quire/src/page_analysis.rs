@@ -1,3 +1,5 @@
+mod syntax;
+
 use gpui::{App, AppContext, Context, Entity, Subscription, Task};
 use language::{Buffer, BufferEvent, BufferSnapshot};
 use quire_core::markdown::Reference;
@@ -142,33 +144,9 @@ fn same_syntax(a: &BufferSnapshot, b: &BufferSnapshot) -> bool {
 }
 
 fn analyze_references(snapshot: &BufferSnapshot) -> Option<Arc<[Reference]>> {
-    let mut code = Vec::new();
-    let mut primary = false;
-    for layer in snapshot.syntax_layers().filter(|layer| {
-        matches!(
-            layer.language.name().as_ref(),
-            "Markdown" | "Markdown-Inline"
-        )
-    }) {
-        primary |= layer.language.name().as_ref() == "Markdown";
-        let root = layer.node();
-        if root.has_changes() {
-            return None;
-        }
-        let mut stack = vec![root];
-        while let Some(node) = stack.pop() {
-            if matches!(
-                node.kind(),
-                "fenced_code_block" | "indented_code_block" | "code_span"
-            ) {
-                code.push(node.byte_range());
-                continue;
-            }
-            let mut cursor = node.walk();
-            stack.extend(node.named_children(&mut cursor));
-        }
-    }
-    primary.then(|| quire_core::markdown::references(&snapshot.text(), &code).into())
+    let text = snapshot.text();
+    let excluded = syntax::exclusions(snapshot, &text)?;
+    Some(quire_core::markdown::references(&text, &excluded.code).into())
 }
 
 #[cfg(test)]
@@ -176,6 +154,149 @@ mod tests {
     use super::*;
     use gpui::{AppContext, TestAppContext};
     use serde_json::{Value, json};
+
+    fn edit_to(source: &Entity<Buffer>, before: &str, after: &str, cx: &mut TestAppContext) {
+        let mut start = before
+            .bytes()
+            .zip(after.bytes())
+            .take_while(|(a, b)| a == b)
+            .count();
+        while !before.is_char_boundary(start) || !after.is_char_boundary(start) {
+            start -= 1;
+        }
+        let mut suffix = before[start..]
+            .bytes()
+            .rev()
+            .zip(after[start..].bytes().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        while !before.is_char_boundary(before.len() - suffix)
+            || !after.is_char_boundary(after.len() - suffix)
+        {
+            suffix -= 1;
+        }
+        source.update(cx, |buffer, cx| {
+            buffer.set_sync_parse_timeout(None);
+            buffer.edit(
+                [(
+                    start..before.len() - suffix,
+                    &after[start..after.len() - suffix],
+                )],
+                None,
+                cx,
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn native_tag_exclusions_match_the_frozen_oracle(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let cases: Vec<Value> = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/markdown/tag-vectors.json"
+        ))
+        .unwrap();
+        let mut failures = Vec::new();
+        let incremental = cx.update(|cx| crate::markdown::buffer("", cx));
+        let incremental_page = cx.new(|cx| PageAnalysis::new(incremental.clone(), cx));
+        let mut previous = String::new();
+        for case in cases {
+            let vector = &case["editor"];
+            let text = vector["text"].as_str().unwrap();
+            edit_to(&incremental, &previous, text, cx);
+            previous = text.to_owned();
+            let fresh = cx.update(|cx| crate::markdown::buffer(text, cx));
+            let fresh_page = cx.new(|cx| PageAnalysis::new(fresh.clone(), cx));
+            for (mode, source, page) in [
+                ("fresh", &fresh, &fresh_page),
+                ("incremental", &incremental, &incremental_page),
+            ] {
+                cx.executor().run_until_parked();
+                let (snapshot, references) = cx.update(|cx| {
+                    assert_eq!(
+                        *source.read(cx).parse_status().borrow(),
+                        language::ParseStatus::Idle
+                    );
+                    (
+                        source.read(cx).snapshot(),
+                        page.read(cx).current_references(cx).unwrap().clone(),
+                    )
+                });
+                assert_eq!(snapshot.text(), text);
+                let excluded = syntax::exclusions(&snapshot, text).unwrap().tags;
+                let actual: Vec<_> = quire_core::markdown::tags(text, &excluded, &references)
+                    .iter()
+                    .map(|tag| {
+                        json!({
+                            "from": text[..tag.range.start].encode_utf16().count(),
+                            "to": text[..tag.range.end].encode_utf16().count(),
+                            "text": tag.text,
+                        })
+                    })
+                    .collect();
+                let mut issue = (json!(actual) != vector["tags"])
+                    .then(|| format!("tags expected={} actual={}", vector["tags"], json!(actual)));
+                let mut bytes = vec![None; text.encode_utf16().count() + 1];
+                let mut units = 0;
+                for (byte, character) in text.char_indices() {
+                    bytes[units] = Some(byte);
+                    units += character.len_utf16();
+                }
+                bytes[units] = Some(text.len());
+                for completion in vector["completions"].as_array().unwrap() {
+                    let position = completion[0].as_u64().unwrap() as usize;
+                    let actual = quire_core::markdown::tag_completion_range(
+                        text,
+                        bytes[position].unwrap(),
+                        &excluded,
+                        &references,
+                    )
+                    .map(|range| {
+                        json!([
+                            text[..range.start].encode_utf16().count(),
+                            text[..range.end].encode_utf16().count(),
+                        ])
+                    })
+                    .unwrap_or(Value::Null);
+                    if actual != completion[1] {
+                        issue.get_or_insert_with(String::new).push_str(&format!(
+                            " completion cursor={position} expected={} actual={actual}",
+                            completion[1]
+                        ));
+                        break;
+                    }
+                }
+                if let Some(issue) = issue {
+                    let trees: Vec<_> = snapshot
+                        .syntax_layers()
+                        .filter(|layer| {
+                            matches!(
+                                layer.language.name().as_ref(),
+                                "Markdown" | "Markdown-Inline"
+                            )
+                        })
+                        .map(|layer| {
+                            format!("{} {}", layer.language.name(), layer.node().to_sexp())
+                        })
+                        .collect();
+                    failures.push(format!(
+                        "{mode} {} {issue} excluded={excluded:?} trees={trees:?}",
+                        case["name"]
+                    ));
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "{} native tag mismatches:\n{}",
+            failures.len(),
+            failures
+                .iter()
+                .take(8)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
 
     #[gpui::test]
     fn pending_reference_work_follows_rapid_edits_and_releases_closed_pages(
@@ -328,36 +449,7 @@ mod tests {
         for case in cases {
             let vector = &case["editor"];
             let text = vector["text"].as_str().unwrap();
-            let mut start = previous
-                .bytes()
-                .zip(text.bytes())
-                .take_while(|(a, b)| a == b)
-                .count();
-            while !previous.is_char_boundary(start) || !text.is_char_boundary(start) {
-                start -= 1;
-            }
-            let mut suffix = previous[start..]
-                .bytes()
-                .rev()
-                .zip(text[start..].bytes().rev())
-                .take_while(|(a, b)| a == b)
-                .count();
-            while !previous.is_char_boundary(previous.len() - suffix)
-                || !text.is_char_boundary(text.len() - suffix)
-            {
-                suffix -= 1;
-            }
-            incremental.update(cx, |buffer, cx| {
-                buffer.set_sync_parse_timeout(None);
-                buffer.edit(
-                    [(
-                        start..previous.len() - suffix,
-                        &text[start..text.len() - suffix],
-                    )],
-                    None,
-                    cx,
-                );
-            });
+            edit_to(&incremental, &previous, text, cx);
             previous = text.to_owned();
             let fresh = cx.update(|cx| crate::markdown::buffer(text, cx));
             let fresh_page = cx.new(|cx| PageAnalysis::new(fresh.clone(), cx));
