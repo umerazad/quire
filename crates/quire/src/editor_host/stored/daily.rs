@@ -98,6 +98,11 @@ impl StoredWindow {
                 cx.notify();
             })
             .detach();
+            cx.subscribe(
+                index,
+                |this, _, _: &crate::query_index::IndexChanged, cx| this.refresh_queries(cx),
+            )
+            .detach();
             let pages = self.session.borrow().open_pages();
             index.update(cx, |index, cx| {
                 for page in pages {
@@ -106,6 +111,7 @@ impl StoredWindow {
             });
         }
         self.refresh_catalogue(cx);
+        self.refresh_queries(cx);
         cx.notify();
     }
 

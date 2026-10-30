@@ -133,6 +133,57 @@ impl ReferenceFilter {
     }
 }
 
+/// How a filter uses a suggested term: shown only, hidden, or not at all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TermState {
+    Include,
+    Exclude,
+}
+
+/// Whether the filter text already includes or excludes `term`, ignoring case.
+pub fn term_state(text: &str, term: &str) -> Option<TermState> {
+    let lower = term.to_lowercase();
+    query_tokens(text).find_map(|token| {
+        let token = token.to_lowercase();
+        if token == lower {
+            Some(TermState::Include)
+        } else if token.strip_prefix('-') == Some(lower.as_str()) {
+            Some(TermState::Exclude)
+        } else {
+            None
+        }
+    })
+}
+
+/// The reference `toggleTerm`: adds the term, or `-term` when excluding, or takes it out when
+/// already there. Excluding a term replaces including it, and the other way round.
+pub fn toggle_term(text: &str, term: &str, exclude: bool) -> String {
+    let lower = term.to_lowercase();
+    let wanted = if exclude {
+        format!("-{lower}")
+    } else {
+        lower.clone()
+    };
+    let tokens: Vec<&str> = query_tokens(text).collect();
+    let present = tokens.iter().any(|token| token.to_lowercase() == wanted);
+    let mut kept: Vec<String> = tokens
+        .into_iter()
+        .filter(|token| {
+            let token = token.to_lowercase();
+            token.strip_prefix('-').unwrap_or(&token) != lower
+        })
+        .map(str::to_owned)
+        .collect();
+    if !present {
+        kept.push(if exclude {
+            format!("-{term}")
+        } else {
+            term.to_owned()
+        });
+    }
+    kept.join(" ")
+}
+
 enum Term {
     Tag,
     Page,

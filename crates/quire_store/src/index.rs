@@ -13,7 +13,7 @@ mod schema;
 pub use catalog::{ListedPage, SETTINGS_PAGE};
 pub use overlay::Overlay;
 pub use query::{Backlink, PageRef, SearchHit, TagCount, TaggedBlock};
-pub use references::{Facet, FacetKind, ReferenceBlock};
+pub use references::{Facet, FacetKind, Outline, ReferenceBlock, SHOWN_CHILDREN};
 
 use crate::notebook::{PageMetadata, read_revision, revision_metadata};
 use crate::sync::json::JsString;
@@ -189,7 +189,8 @@ impl QueryIndex {
         }
     }
 
-    fn date(&self, title: &str) -> Option<String> {
+    /// The daily date a page title names under the notebook layout, as `YYYY-MM-DD`.
+    pub fn date(&self, title: &str) -> Option<String> {
         self.parser.date(title)
     }
 

@@ -3,8 +3,9 @@
 
 use super::*;
 use crate::navigation::{
-    CloseTab, FindPage, FocusFiles, GoBack, GoForward, NewPage, NextTab, OpenToday, PreviousTab,
-    ShowDaily, ShowPages, ToggleFavorite, ToggleSidePane, WorkspaceFile, create_page,
+    CloseTab, FindPage, FocusFiles, FocusReferences, GoBack, GoForward, NewPage, NextTab,
+    OpenToday, PreviousTab, ShowDaily, ShowPages, ShowTags, ToggleFavorite, ToggleSidePane,
+    WorkspaceFile, create_page,
     palette::{PagePalette, PaletteChoice, PaletteMode},
 };
 use gpui::{DismissEvent, EntityId, SharedString, Task};
@@ -17,6 +18,10 @@ use std::collections::HashSet;
 mod chrome;
 #[path = "daily.rs"]
 mod daily;
+#[path = "reference_views.rs"]
+mod reference_views;
+#[path = "tag_views.rs"]
+mod tag_views;
 
 pub(super) struct Navigation {
     file: WorkspaceFile,
@@ -36,6 +41,9 @@ pub(super) struct Navigation {
     pub(super) browsers: chrome::Browsers,
     pub(super) daily: daily::DailyState,
     pub(super) database: std::path::PathBuf,
+    pub(super) tags: tag_views::TagViews,
+    /// Linked reference panels by page, kept for the session so each keeps its filter.
+    pub(super) references: HashMap<String, Entity<crate::navigation::references::ReferencesView>>,
 }
 
 impl Navigation {
@@ -63,6 +71,8 @@ impl Navigation {
             browsers: chrome::Browsers::default(),
             daily: daily::DailyState::new(calendar),
             database: database.to_owned(),
+            tags: tag_views::TagViews::default(),
+            references: HashMap::new(),
         }
     }
 
@@ -218,10 +228,17 @@ impl StoredWindow {
     ) {
         self.nav.view = match destination {
             Destination::Browser { view } => Some(*view),
-            Destination::Page { .. } => None,
+            Destination::Page { .. } | Destination::Tag { .. } => None,
         };
-        if let Some(view) = self.nav.view {
-            self.open_browser(view, window, cx);
+        self.nav.tags.shown = match destination {
+            Destination::Tag { tag } => Some(tag.clone()),
+            _ => None,
+        };
+        match (self.nav.view, self.nav.tags.shown.clone()) {
+            (Some(BrowserView::Tags), _) => self.show_tags(window, cx),
+            (Some(view), _) => self.open_browser(view, window, cx),
+            (None, Some(tag)) => self.show_tag(tag, window, cx),
+            (None, None) => {}
         }
         if let Some(id) = destination.page_id() {
             let page = self.session.borrow_mut().open_page(id.to_owned(), cx);
@@ -234,6 +251,7 @@ impl StoredWindow {
                 window.focus(&focus, cx);
             }
             self.update_title(window, cx);
+            self.show_references(window, cx);
         }
         cx.notify();
     }
@@ -400,6 +418,18 @@ impl StoredWindow {
                     cx,
                 )
             }))
+            .on_action(cx.listener(|this, _: &ShowTags, window, cx| {
+                this.visit(
+                    Destination::Browser {
+                        view: BrowserView::Tags,
+                    },
+                    window,
+                    cx,
+                )
+            }))
+            .on_action(cx.listener(|this, _: &FocusReferences, window, cx| {
+                this.focus_references(window, cx)
+            }))
             .on_action(cx.listener(|this, _: &FocusFiles, window, cx| this.focus_files(window, cx)))
             .on_action(cx.listener(|this, _: &OpenToday, window, cx| this.open_today(window, cx)))
     }
@@ -455,7 +485,7 @@ impl StoredWindow {
     fn toggle_side(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
         if self.nav.side.is_some() {
             self.close_side(window, cx);
-        } else if self.nav.view.is_none() {
+        } else if self.nav.view.is_none() && self.nav.tags.shown.is_none() {
             let id = self.page.read(cx).id().to_owned();
             self.open_beside(id, window, cx);
         }
@@ -581,9 +611,10 @@ impl StoredWindow {
         _window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> gpui::Div {
-        let content = match self.nav.view {
-            Some(view) => self.render_browser(view, cx).into_any_element(),
-            None => match self.editor.clone() {
+        let content = match (self.nav.view, self.tag_content()) {
+            (Some(BrowserView::Tags), Some(tags)) | (None, Some(tags)) => tags,
+            (Some(view), _) => self.render_browser(view, cx).into_any_element(),
+            (None, None) => match self.editor.clone() {
                 Some(editor) => gpui::div()
                     .flex_1()
                     .min_h_0()
@@ -599,7 +630,10 @@ impl StoredWindow {
             .min_w_0()
             .min_h_0()
             .child(self.render_tabs(cx))
-            .child(content);
+            .child(content)
+            .when_some(self.shown_references(cx), |main, references| {
+                main.child(references)
+            });
         let side = self.nav.side.as_ref().and_then(|side| side.editor.clone());
         gpui::div()
             .flex()
@@ -632,3 +666,11 @@ mod workspace_tests;
 #[cfg(test)]
 #[path = "daily_tests.rs"]
 mod daily_tests;
+
+#[cfg(test)]
+#[path = "tags_tests.rs"]
+mod tags_tests;
+
+#[cfg(test)]
+#[path = "references_tests.rs"]
+mod references_tests;

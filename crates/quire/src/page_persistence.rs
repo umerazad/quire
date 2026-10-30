@@ -574,9 +574,7 @@ impl PagePersistence {
     }
 }
 
-/// Coordination with other writers of an open page, used by bulk tag edits. The Tags view
-/// (NR17) brings the first production caller; until then only tests call these.
-#[cfg(test)]
+/// Coordination with other writers of an open page, used by bulk tag edits.
 impl PagePersistence {
     pub fn buffer(&self) -> &Entity<Buffer> {
         &self.buffer

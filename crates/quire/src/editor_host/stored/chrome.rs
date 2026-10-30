@@ -50,6 +50,10 @@ impl StoredWindow {
             Destination::Browser {
                 view: BrowserView::Daily,
             } => "Daily notes".into(),
+            Destination::Browser {
+                view: BrowserView::Tags,
+            } => "Tags".into(),
+            Destination::Tag { tag } => tag.clone().into(),
             Destination::Page { page } => self
                 .nav
                 .title(page)
@@ -171,7 +175,7 @@ impl StoredWindow {
                     })
                     .collect()
             }
-            None => Vec::new(),
+            Some(BrowserView::Tags) | None => Vec::new(),
         }
     }
 
@@ -500,6 +504,17 @@ impl StoredWindow {
                                 cx,
                             )
                         },
+                    )))
+                    .child(Button::new("tags", "Tags").on_click(cx.listener(
+                        |this, _, window, cx| {
+                            this.visit(
+                                Destination::Browser {
+                                    view: BrowserView::Tags,
+                                },
+                                window,
+                                cx,
+                            )
+                        },
                     ))),
             )
             .when(!favorites.is_empty(), |div| {
@@ -647,6 +662,7 @@ impl StoredWindow {
         let heading = match view {
             BrowserView::Pages => "Pages",
             BrowserView::Daily => "Daily notes",
+            BrowserView::Tags => "Tags",
         };
         let chips: Vec<_> = match view {
             BrowserView::Pages => namespaces(
@@ -671,6 +687,7 @@ impl StoredWindow {
             })
             .collect(),
             BrowserView::Daily => vec![self.render_daily_settings(cx).into_any_element()],
+            BrowserView::Tags => Vec::new(),
         };
         let rows =
             v_flex()
