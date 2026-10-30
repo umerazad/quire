@@ -7,6 +7,7 @@ use std::{
 };
 
 mod attachment;
+mod checkout;
 mod delivery;
 mod folder;
 mod import;
@@ -15,12 +16,13 @@ mod publication;
 mod publisher;
 mod recovery;
 mod revision;
+pub use checkout::PageCheckout;
 pub use folder::{RescanCursor, RescanLimits, RescanProblem, RescanReport, RescanWait};
 pub use import::{BatchImport, ImportedBatch, ImportedPage};
 pub use publication::PendingPublication;
 pub use publisher::PublicationAck;
 pub use recovery::{Draft, DraftStamp};
-pub use revision::{Cursor, Edit, SaveAck};
+pub use revision::{CheckedSave, Cursor, Edit, SaveAck};
 
 pub use crate::schema::{APPLICATION_ID, SCHEMA_VERSION};
 
@@ -144,9 +146,13 @@ impl NotebookStore {
     }
 
     fn transaction<T>(&self, run: impl FnOnce() -> Result<T>) -> Result<T> {
+        self.transaction_with("BEGIN IMMEDIATE", run)
+    }
+
+    fn transaction_with<T>(&self, begin: &str, run: impl FnOnce() -> Result<T>) -> Result<T> {
         self.require_usable()?;
-        self.connection.exec("BEGIN IMMEDIATE").and_then(|mut begin| begin())
-            .context("Cannot begin a notebook save. Keep the editor contents, check available space and write permissions, and retry after other writers finish.")?;
+        self.connection.exec(begin).and_then(|mut begin| begin())
+            .context("Cannot begin a notebook transaction. Keep the editor contents, check available space and write permissions, and retry after other writers finish.")?;
         match run() {
             Ok(value) => {
                 if let Err(error) = self
@@ -171,7 +177,7 @@ impl NotebookStore {
                 {
                     self.poisoned.set(true);
                     bail!(
-                        "Notebook write failed ({error}) and rollback failed ({rollback}). Keep the editor contents and reopen the notebook."
+                        "Notebook transaction failed ({error}) and rollback failed ({rollback}). Keep the editor contents and reopen the notebook."
                     );
                 }
                 Err(error)

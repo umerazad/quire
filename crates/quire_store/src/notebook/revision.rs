@@ -41,6 +41,12 @@ pub struct SaveAck {
     pub replaced: Option<String>,
     pub stamp: Option<DraftStamp>,
 }
+
+#[derive(Debug)]
+pub enum CheckedSave {
+    Saved(SaveAck),
+    HeadsChanged { heads: Vec<String> },
+}
 impl SaveAck {
     pub fn revision_id(&self) -> &str {
         self.revision
@@ -155,6 +161,22 @@ impl NotebookStore {
             "A save contains several edits for one page. Combine them before saving."
         );
         self.transaction(|| edits.iter().map(|edit| self.save_one(edit)).collect())
+    }
+
+    /// Native editor save; resolving conflicts requires a separate explicit command.
+    /// Head comparison and the save share the same write transaction.
+    pub fn save_if_heads(&self, edit: &Edit, expected: &[String]) -> Result<CheckedSave> {
+        ensure!(
+            expected.len() <= 1 && edit.base == expected,
+            "This save does not match one opened page version. Keep the buffer and review the page's current versions before saving."
+        );
+        self.transaction(|| {
+            let heads = self.heads(&edit.page)?;
+            if heads != expected {
+                return Ok(CheckedSave::HeadsChanged { heads });
+            }
+            self.save_one(edit).map(CheckedSave::Saved)
+        })
     }
 
     fn save_one(&self, edit: &Edit) -> Result<SaveAck> {

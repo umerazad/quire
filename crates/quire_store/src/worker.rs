@@ -1,6 +1,6 @@
 use crate::notebook::{
-    BatchImport, Cursor, Draft, DraftStamp, Edit, NotebookStore, PendingPublication,
-    PublicationAck, RescanCursor, RescanLimits, RescanReport, SaveAck,
+    BatchImport, CheckedSave, Cursor, Draft, DraftStamp, Edit, NotebookStore, PageCheckout,
+    PendingPublication, PublicationAck, RescanCursor, RescanLimits, RescanReport, SaveAck,
 };
 use crate::sync::json::Json;
 use anyhow::{Context as _, Result, anyhow, ensure};
@@ -238,6 +238,28 @@ impl StorageClient {
     }
     pub fn save(&self, edit: Edit) -> std::result::Result<Reply<SaveAck>, QueueError> {
         self.request(edit_size(&edit), move |store| store.save(&edit))
+    }
+    pub fn save_if_heads(
+        &self,
+        edit: Edit,
+        expected: Vec<String>,
+    ) -> std::result::Result<Reply<CheckedSave>, QueueError> {
+        self.request(
+            edit_size(&edit).saturating_add(strings_size(&expected)),
+            move |store| store.save_if_heads(&edit, &expected),
+        )
+    }
+    pub fn checkout(
+        &self,
+        page: String,
+        selected: Option<String>,
+    ) -> std::result::Result<Reply<PageCheckout>, QueueError> {
+        self.request(
+            128usize
+                .saturating_add(page.capacity())
+                .saturating_add(selected.as_ref().map_or(0, String::capacity)),
+            move |store| store.checkout(&page, selected.as_deref()),
+        )
     }
     pub fn save_many(
         &self,

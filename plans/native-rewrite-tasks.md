@@ -691,8 +691,25 @@ Constraints: Shared buffers keyed by notebook/page identity; expected-version ch
 Write set: notebook session/buffer registry, service command types, native vertical-slice tests.
 Dependencies: NR04, NR05, NR08, NR09, NR10.
 Verify: An end-to-end native test covers editing through an embed, undo, crash recovery, local save, publication, remote update, and a refused stale write. Measure first-editable latency and loaded body count.
-Proof notes: pending.
-Status: pending
+Proof notes: Implementation starts with the transactional page boundary below. The native window still opens an in-memory example; parent acceptance remains open.
+Status: in_progress
+
+#### NR11.1: Check out one page and refuse a stale native save
+
+What to do: Add a single worker request that reads ordered head identities, one selected revision, and recovery in one SQLite snapshot. Add a checked native save that compares observed heads inside the save transaction. Preserve the existing conflict-producing protocol save API.
+Constraints: Load at most one revision body, with a separate recovery body when present. Keep revision JSON lossless, including unrepresentable UTF-16 strings and unknown fields. A changed-head response must not create a revision, alter recovery, or acknowledge a save. Conflict resolution remains explicit.
+Write set: notebook checkout and checked-save APIs, storage worker commands, focused storage tests.
+Verify: Missing/new/deleted/conflicting pages; explicit head selection; recovery survives reopen; unrelated damaged bodies are not read; changed-head and invalid-parent saves preserve heads/outbox/drafts; worker command ordering and startup errors. Run storage tests and all-target Clippy.
+Proof notes: `notebook/checkout.rs` reads ordered head IDs, at most one lossless revision body, and optional recovery under one deferred SQLite transaction. The selected revision must still be a head of the requested page. The shared transaction wrapper retains rollback/poison behavior; write transactions still use BEGIN IMMEDIATE. Both commands use the existing bounded worker and asynchronous Reply, with request byte accounting for identities and expected heads.
+
+`save_if_heads` compares heads inside the write transaction and delegates to the existing atomic save only when they match. Its parents must equal the one opened version (or both lists must be empty for creation). It cannot implicitly resolve multiple heads. Changed heads return a typed HeadsChanged result without writing a revision or consuming recovery. Existing protocol save/merge behavior remains available. An acknowledgment lost after commit may produce HeadsChanged on retry; callers must reconcile the opened version before retrying rather than assume the old request was unsaved.
+
+Eight focused tests cover empty pages, conflicts, explicit selection, tombstones, Unicode recovery across restart, unrepresentable UTF-16 and unknown revision fields, stale-head and stale-editor-version rejection, unchanged outbox/recovery on refusal, explicit merge preservation, ordered worker requests, and closed-worker rejection. Corrupting unselected/conflicting and unrelated compressed bodies proves checkout does not load them. A second connection holds an uncommitted writer transaction while checkout succeeds with the committed state, proving the read path does not acquire the writer lock. Failed body validation rolls back and leaves later checkouts usable.
+
+The initial focused test build failed for the missing API, then the six initial cases passed. `CARGO_HOME=/private/tmp/quire-cargo cargo test -p quire_store --locked` passes all 111 tests after the concurrency/version cases were added (`/private/tmp/quire-checkout-storage-tests.log`). All-target storage Clippy with -D warnings passes (`/private/tmp/quire-checkout-clippy.log`). Formatting, prose lint, and staged whitespace pass. Sequential review checked transaction isolation, read-lock behavior, rollback reuse, lossless representation, parent matching, one-body loading, queue closure/admission, and unchanged conflict-producing protocol saves. The simplification pass reuses the existing transaction and save implementations, adding no dependency, schema, or storage representation.
+
+This completes only the storage boundary. Canonical native buffer registration, recovery/save acknowledgments tied to buffer versions, daily-page routing, rescan refresh after both success and error, and end-to-end UI/performance acceptance remain NR11 work.
+Status: done
 
 ### NR12: Serve indexed queries with a live overlay
 
