@@ -194,5 +194,10 @@ mod tests {
         let allowed = format!("{}{}", "[".repeat(MAX_DEPTH), "]".repeat(MAX_DEPTH));
         assert!(parse(&allowed).is_ok());
         assert!(parse(r#"["[[[[", "\"[["]"#).is_ok());
+        assert!(
+            parse(r#"["\ud800"]"#).is_err(),
+            "a lone surrogate is refused"
+        );
+        assert!(parse(r#"["\ud83d\ude00"]"#).is_ok());
     }
 }

@@ -105,6 +105,8 @@ impl FolderOptions {
                 self.root.display()
             )
         })?;
+        // Without a chosen page, an imported Roam graph opens on its pages, as the reference does.
+        let roam = self.page.is_none() && crate::exchange::roam::is_roam_notebook(&root);
         let page = match self.page {
             Some(page) => page,
             None => list(&root).files.into_iter().next().map(|file| file.path).ok_or_else(|| {
@@ -116,7 +118,6 @@ impl FolderOptions {
         };
         let state = self.state.unwrap_or_else(|| state_folder(&root));
         let notices = self.notices;
-        let roam = crate::exchange::roam::is_roam_notebook(&root);
         let mut session =
             NotebookSession::open_folder(root.clone(), state.clone(), Some(system_trash(cx)))?;
         let page = session.open_page(page_id_for_path(&page), cx);
