@@ -95,6 +95,17 @@ impl StoredWindow {
         self.nav.templates_guide = Some((id, guide.clone()));
         Some(guide)
     }
+
+    /// Moves focus to the guide's first Add button, while the Templates page is shown.
+    pub(in crate::editor_host::stored) fn focus_templates_guide(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if let Some(guide) = self.shown_templates_guide(cx) {
+            guide.update(cx, |guide, cx| guide.focus_first(window, cx));
+        }
+    }
 }
 
 impl StoredWindow {

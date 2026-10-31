@@ -54,6 +54,7 @@ pub struct PagePalette {
     error: Option<SharedString>,
     choose: Choose,
     folder: String,
+    rich: crate::rich_text::RichCache,
 }
 
 /// What one index step returned for a query.
@@ -158,6 +159,7 @@ impl PagePalette {
             error: None,
             choose,
             folder: String::new(),
+            rich: Default::default(),
         }
     }
 
@@ -333,11 +335,34 @@ impl PickerDelegate for PagePalette {
         ix: usize,
         selected: bool,
         _: &mut Window,
-        _: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let (title, detail): (String, Option<String>) = match self.items.get(ix)? {
-            PaletteItem::Page { title, path, .. } => (title.clone(), Some(path.clone())),
-            PaletteItem::Hit { title, snippet, .. } => (title.clone(), Some(snippet.clone())),
+        let (title, detail) = match self.items.get(ix)? {
+            PaletteItem::Page { title, path, .. } => (
+                title.clone(),
+                Some(
+                    Label::new(path.clone())
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .truncate()
+                        .into_any_element(),
+                ),
+            ),
+            PaletteItem::Hit { title, snippet, .. } => (
+                title.clone(),
+                Some(
+                    div()
+                        .text_sm()
+                        .child(crate::rich_text::line(
+                            ("palette-hit", ix),
+                            &self.rich.get(snippet),
+                            true,
+                            None,
+                            cx,
+                        ))
+                        .into_any_element(),
+                ),
+            ),
             PaletteItem::Create { title } => (format!("Create page “{title}”"), None),
         };
         Some(
@@ -345,17 +370,12 @@ impl PickerDelegate for PagePalette {
                 .spacing(ListItemSpacing::Sparse)
                 .inset(true)
                 .toggle_state(selected)
-                .child(v_flex().child(Label::new(title).truncate()).when_some(
-                    detail,
-                    |this, detail| {
-                        this.child(
-                            Label::new(detail)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                                .truncate(),
-                        )
-                    },
-                )),
+                .child(
+                    v_flex()
+                        .min_w_0()
+                        .child(Label::new(title).truncate())
+                        .children(detail),
+                ),
         )
     }
 }

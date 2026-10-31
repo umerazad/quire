@@ -575,6 +575,11 @@ impl StoredWindow {
                 this.focus_references(window, cx)
             }))
             .on_action(cx.listener(|this, _: &FocusFiles, window, cx| this.focus_files(window, cx)))
+            .on_action(cx.listener(
+                |this, _: &crate::navigation::FocusTemplatesGuide, window, cx| {
+                    this.focus_templates_guide(window, cx)
+                },
+            ))
             .on_action(cx.listener(|this, _: &OpenToday, window, cx| this.open_today(window, cx)))
             .on_action(
                 cx.listener(|this, _: &DeletePage, window, cx| this.delete_shown_page(window, cx)),
@@ -777,6 +782,7 @@ impl StoredWindow {
         if let Some(side) = &mut self.nav.side {
             side.editor = Some(editor);
         }
+        self.show_side_references(window, cx);
         self.apply_jump(window, cx);
     }
 }
@@ -871,12 +877,15 @@ impl StoredWindow {
             .when_some(side, |div, editor| {
                 div.child(
                     gpui::div()
+                        .flex()
+                        .flex_col()
                         .flex_1()
                         .min_w_0()
                         .min_h_0()
                         .border_l_1()
                         .border_color(cx.theme().colors().border)
-                        .child(editor),
+                        .child(gpui::div().flex_1().min_h_0().child(editor))
+                        .children(self.render_side_references(cx)),
                 )
             })
             .when_some(help, |div, pane| div.child(pane))

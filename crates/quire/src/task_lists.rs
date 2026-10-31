@@ -13,7 +13,8 @@ use editor::{
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock},
 };
 use gpui::{
-    App, ClickEvent, Context, Entity, SharedString, Subscription, WeakEntity, Window, prelude::*,
+    App, ClickEvent, Context, Entity, FocusHandle, Focusable as _, KeyBinding, SharedString,
+    Subscription, WeakEntity, Window, prelude::*,
 };
 use multi_buffer::{Anchor, ToOffset};
 use quire_core::task_query::{DEFAULT_LIMIT, TaskQuery};
@@ -93,7 +94,7 @@ pub(crate) fn sync(
         }
         let host = cx.entity().downgrade();
         let query = spot.query.clone();
-        let view = cx.new(|_| TaskListView::new(host, &query));
+        let view = cx.new(|cx| TaskListView::new(host, &query, cx));
         let rows = view.read(cx).rows().len() as u32;
         let label = view.read(cx).header();
         let block = editor.insert_blocks(
@@ -293,15 +294,98 @@ pub(crate) struct TaskListView {
     list: Live<Option<TaskList>>,
     notice: Option<SharedString>,
     work: Option<gpui::Task<()>>,
+    rich: crate::rich_text::RichCache,
+    focus: FocusHandle,
+    /// The row the keys act on while the list has focus.
+    highlighted: usize,
+    /// The due date being typed for one task.
+    date: Option<(TaskRef, Entity<Editor>)>,
 }
 
 const NO_INDEX: &str =
     "Task lists need the notebook index, which has not started. Wait for indexing to finish.";
 
+/// The key context of a focused task list, inside its page editor.
+const LIST_CONTEXT: &str = "QuireTaskQueryList";
+/// The contexts a focused list sets: it is a list, and a control the page editor and Vim leave alone.
+const LIST_KEYS: &str = "QuireControl QuireList QuireTaskQueryList";
+/// The key context around a list's date field.
+const DATE_CONTEXT: &str = "QuireTaskQueryDate";
+
+/// Keys for task lists in page editors. Cmd/Ctrl-Enter on a query line moves focus into its
+/// list, which answers the list keys, Cmd/Ctrl-Enter to tick, Cmd/Ctrl-Shift-Enter to move to
+/// the next state, D for the due date, and Escape to return to the page. The list carries
+/// `QuireControl`, so page editor and Vim keys stay with the page; its date field binds the
+/// few editing keys a date needs.
+pub(crate) fn init(cx: &mut App) {
+    cx.observe_new(|editor: &mut Editor, _, cx| {
+        let handle = cx.entity().downgrade();
+        editor
+            .register_action(move |_: &crate::tasks::ToggleTask, window, cx| {
+                let list = handle
+                    .upgrade()
+                    .and_then(|editor| list_at_caret(editor.read(cx), cx));
+                match list {
+                    Some(view) => view.update(cx, |view, cx| view.enter(window, cx)),
+                    None => cx.propagate(),
+                }
+            })
+            .detach();
+    })
+    .detach();
+    let [tick, cycle, all] = if cfg!(target_os = "macos") {
+        ["cmd-enter", "cmd-shift-enter", "cmd-a"]
+    } else {
+        ["ctrl-enter", "ctrl-shift-enter", "ctrl-a"]
+    };
+    let date = format!("{DATE_CONTEXT} > Editor");
+    let date = Some(date.as_str());
+    cx.bind_keys([
+        KeyBinding::new(tick, crate::tasks::ToggleTask, Some(LIST_CONTEXT)),
+        KeyBinding::new(cycle, crate::tasks::CycleTask, Some(LIST_CONTEXT)),
+        KeyBinding::new(
+            "d",
+            crate::navigation::tasks::EditDueDate,
+            Some(LIST_CONTEXT),
+        ),
+        KeyBinding::new("escape", menu::Cancel, Some(LIST_CONTEXT)),
+        KeyBinding::new("enter", menu::Confirm, date),
+        KeyBinding::new("escape", menu::Cancel, date),
+        KeyBinding::new("backspace", editor::actions::Backspace, date),
+        KeyBinding::new("delete", editor::actions::Delete, date),
+        KeyBinding::new("left", editor::actions::MoveLeft, date),
+        KeyBinding::new("right", editor::actions::MoveRight, date),
+        KeyBinding::new(all, editor::actions::SelectAll, date),
+    ]);
+}
+
+/// The list whose query block holds the newest caret.
+fn list_at_caret(editor: &Editor, cx: &App) -> Option<Entity<TaskListView>> {
+    let lists = editor.addon::<TaskLists>()?;
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let head = editor
+        .selections
+        .newest_anchor()
+        .head()
+        .to_offset(&snapshot);
+    lists
+        .shown
+        .iter()
+        .find(|shown| {
+            let block = shown.spot.block.start.to_offset(&snapshot)
+                ..shown.spot.block.end.to_offset(&snapshot);
+            block.start <= head && head <= block.end
+        })
+        .map(|shown| shown.view.clone())
+}
+
 impl TaskListView {
-    fn new(editor: WeakEntity<Editor>, source: &str) -> Self {
+    fn new(editor: WeakEntity<Editor>, source: &str, cx: &mut Context<Self>) -> Self {
         let trimmed = source.trim();
         Self {
+            focus: cx.focus_handle(),
+            highlighted: 0,
+            date: None,
             editor,
             query: TaskQuery::parse(source),
             shown_query: if trimmed.is_empty() { "here" } else { trimmed }
@@ -314,6 +398,7 @@ impl TaskListView {
             list: Live::default(),
             notice: None,
             work: None,
+            rich: Default::default(),
         }
     }
 
@@ -427,6 +512,20 @@ impl TaskListView {
         }
     }
 
+    /// Opens what a link in a task's text names through the page editor's notebook.
+    fn on_link(&self, cx: &App) -> crate::rich_text::OnLink {
+        let notebook = self
+            .editor
+            .upgrade()
+            .and_then(|editor| crate::references::host(editor.read(cx)))
+            .map(|host| host.read(cx).notebook().clone());
+        std::rc::Rc::new(move |link, beside, window, cx| {
+            if let Some(notebook) = &notebook {
+                link.open(beside, notebook.as_ref(), window, cx)
+            }
+        })
+    }
+
     /// Ticks or moves a listed task: through this page's editor when the task is here, as one
     /// undo step, otherwise by writing its page.
     fn change(
@@ -458,15 +557,23 @@ impl TaskListView {
                 }
             }
         }
-        let writers = crate::references::host(editor.read(cx))
+        self.write(task_ref, TaskChange::State(action), cx);
+    }
+
+    /// Writes a change to a listed task's page through the multi-page writes the Tasks browser
+    /// uses, then lists the tasks again.
+    fn write(&mut self, task: TaskRef, change: TaskChange, cx: &mut Context<Self>) {
+        let writers = self
+            .editor
+            .upgrade()
+            .and_then(|editor| crate::references::host(editor.read(cx)))
             .and_then(|host| host.read(cx).notebook().writers(cx));
         let Some((open, storage)) = writers else {
             self.notice = Some(NO_INDEX.into());
             cx.notify();
             return;
         };
-        let work =
-            crate::task_edit::update(vec![task_ref], TaskChange::State(action), open, storage, cx);
+        let work = crate::task_edit::update(vec![task], change, open, storage, cx);
         self.work = Some(cx.spawn(async move |this, cx| {
             let result = work.await;
             this.update(cx, |this, cx| {
@@ -482,16 +589,120 @@ impl TaskListView {
         cx.notify();
     }
 
+    /// The rows the keys move between: tasks, page group labels, and Show more.
+    fn stops(rows: &[Row]) -> Vec<usize> {
+        rows.iter()
+            .enumerate()
+            .filter(|(_, row)| matches!(row, Row::Task(_) | Row::Group(_, Some(_)) | Row::More))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// Moves focus into the list with the first task highlighted.
+    fn enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.highlighted = Self::stops(&self.rows()).first().copied().unwrap_or(0);
+        window.focus(&self.focus, cx);
+        cx.notify();
+    }
+
+    fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let stops = Self::stops(&self.rows());
+        let Some(last) = stops.len().checked_sub(1) else {
+            return;
+        };
+        let at = stops
+            .iter()
+            .position(|stop| *stop >= self.highlighted)
+            .unwrap_or(last);
+        let next = (at as isize).saturating_add(delta).clamp(0, last as isize) as usize;
+        self.highlighted = stops[next];
+        cx.notify();
+    }
+
+    fn highlighted_task(&self) -> Option<TaskItem> {
+        match self.rows().get(self.highlighted) {
+            Some(Row::Task(task)) => Some(*task.clone()),
+            _ => None,
+        }
+    }
+
+    /// Opens the highlighted task or page group, or shows more tasks.
+    fn confirm(&mut self, beside: bool, window: &mut Window, cx: &mut Context<Self>) {
+        match self.rows().get(self.highlighted).cloned() {
+            Some(Row::Task(task)) => self.open(
+                &task.source.page.to_lossy_string(),
+                Some(crate::navigation::Jump::at(task.id.clone(), task.from)),
+                beside,
+                window,
+                cx,
+            ),
+            Some(Row::Group(_, Some(page))) => self.open(&page, None, beside, window, cx),
+            Some(Row::More) => self.show_more(cx),
+            _ => {}
+        }
+    }
+
+    fn show_more(&mut self, cx: &mut Context<Self>) {
+        self.extra += DEFAULT_LIMIT;
+        self.query(cx);
+    }
+
+    /// Returns focus to the page, with the caret where it was on the query line.
+    fn leave(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(editor) = self.editor.upgrade() {
+            window.focus(&editor.focus_handle(cx), cx);
+        }
+    }
+
+    /// Opens the due date field of the task at row `index`.
+    fn edit_due(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(Row::Task(task)) = self.rows().get(index).cloned() else {
+            return;
+        };
+        let field = crate::navigation::tasks::field_editor(task.due.as_deref(), window, cx);
+        window.focus(&field.focus_handle(cx), cx);
+        self.highlighted = index;
+        self.date = Some((TaskRef::from(task.as_ref()), field));
+        cx.notify();
+    }
+
+    /// Sets, changes, or with an empty field clears the typed due date.
+    fn apply_due(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((task, field)) = self.date.take() else {
+            return;
+        };
+        let typed = field.read(cx).text(cx);
+        match quire_core::tasks::date_phrase(&typed, self.today.as_deref().unwrap_or_default()) {
+            Ok(date) => {
+                self.notice = None;
+                self.write(task, TaskChange::Date(DateField::Due, date), cx);
+                window.focus(&self.focus, cx);
+            }
+            Err(error) => {
+                self.notice = Some(error.into());
+                self.date = Some((task, field));
+            }
+        }
+        cx.notify();
+    }
+
+    fn cancel_due(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.date = None;
+        window.focus(&self.focus, cx);
+        cx.notify();
+    }
+
     fn render_task(&self, index: usize, task: &TaskItem, cx: &mut Context<Self>) -> gpui::Div {
         let done = task.state == TaskState::Done;
         let today = self.today.clone().unwrap_or_default();
-        let next = match task.state {
-            TaskState::Inbox => TaskState::Next,
-            TaskState::Next => TaskState::Waiting,
-            TaskState::Waiting => TaskState::Someday,
-            TaskState::Someday | TaskState::Done => TaskState::Inbox,
-        };
+        let next = next_state(task.state);
         let due = crate::navigation::tasks::date_chip(task, DateField::Due, &today);
+        let overdue = due.as_deref().is_some_and(|due| due.starts_with("Overdue"));
+        let field = self
+            .date
+            .as_ref()
+            .filter(|(editing, _)| *editing == TaskRef::from(task))
+            .map(|(_, field)| field.clone());
         let ticked = task.clone();
         let cycled = task.clone();
         let page = task.source.page.to_lossy_string();
@@ -522,11 +733,13 @@ impl TaskListView {
                     .id(("task-list-text", index))
                     .cursor_pointer()
                     .overflow_hidden()
-                    .child(Label::new(task.text.clone()).truncate().color(if done {
-                        Color::Muted
-                    } else {
-                        Color::Default
-                    }))
+                    .child(crate::rich_text::line(
+                        ("task-list-line", index),
+                        &self.rich.get(&task.text),
+                        done,
+                        Some(self.on_link(cx)),
+                        cx,
+                    ))
                     .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                         this.open(
                             &page,
@@ -554,66 +767,148 @@ impl TaskListView {
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )
-            .children(due.map(|due| Label::new(due).size(LabelSize::Small).color(Color::Muted)))
+            .child(match field {
+                Some(field) => {
+                    div()
+                        .key_context(DATE_CONTEXT)
+                        .debug_selector(|| "quire-task-list-date".into())
+                        .w(gpui::px(220.))
+                        .px_1()
+                        .border_1()
+                        .border_color(cx.theme().colors().border_focused)
+                        .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                            this.apply_due(window, cx)
+                        }))
+                        .on_action(cx.listener(|this, _: &menu::Cancel, window, cx| {
+                            this.cancel_due(window, cx)
+                        }))
+                        .child(field)
+                        .into_any_element()
+                }
+                None => {
+                    div()
+                        .debug_selector(move || format!("quire-task-list-due-{index}"))
+                        .child(
+                            Button::new(
+                                ("task-list-due", index),
+                                due.unwrap_or_else(|| "Set due".to_owned()),
+                            )
+                            .label_size(LabelSize::Small)
+                            .color(if overdue { Color::Error } else { Color::Muted })
+                            .tooltip(ui::Tooltip::text(
+                                "Type a due date · D when the list has focus",
+                            ))
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| this.edit_due(index, window, cx),
+                            )),
+                        )
+                        .into_any_element()
+                }
+            })
+    }
+}
+
+/// The state Cmd/Ctrl-Shift-Enter and the state button move a task to.
+fn next_state(state: TaskState) -> TaskState {
+    match state {
+        TaskState::Inbox => TaskState::Next,
+        TaskState::Next => TaskState::Waiting,
+        TaskState::Waiting => TaskState::Someday,
+        TaskState::Someday | TaskState::Done => TaskState::Inbox,
     }
 }
 
 impl Render for TaskListView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = self.rows();
         let label = format!("Tasks matching {}", self.shown_query);
-        v_flex()
+        let focused = self.focus.contains_focused(window, cx);
+        let highlight = cx.theme().colors().element_selected;
+        let root = v_flex()
             .id("quire-task-list-rows")
+            .key_context(LIST_KEYS)
+            .track_focus(&self.focus)
             .role(gpui::Role::List)
             .aria_label(label)
             .size_full()
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .children(rows.into_iter().enumerate().map(|(index, row)| {
-                let line = h_flex().flex_1().min_h_0().overflow_hidden();
-                match row {
-                    Row::Error(error) | Row::Notice(error) => line.child(
-                        Label::new(format!("⚠ {error}"))
-                            .size(LabelSize::Small)
-                            .color(Color::Error),
-                    ),
-                    Row::Loading => line.child(
-                        Label::new("Loading tasks…")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
-                    Row::Empty => line.child(
-                        Label::new("No tasks match.")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
-                    Row::Group(label, page) => line.child(match page {
-                        Some(page) => Button::new(("task-list-group", index), label)
-                            .label_size(LabelSize::Small)
-                            .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall))
-                            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                                this.open(&page, None, event.modifiers().shift, window, cx)
-                            }))
-                            .into_any_element(),
-                        None => Label::new(label)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                            .into_any_element(),
-                    }),
-                    Row::Task(task) => line.child(self.render_task(index, &task, cx)),
-                    Row::More => line.child(
-                        div()
-                            .debug_selector(|| "quire-task-list-more".into())
-                            .child(
-                                Button::new("task-list-more", "Show more tasks")
-                                    .label_size(LabelSize::Small)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.extra += DEFAULT_LIMIT;
-                                        this.query(cx);
-                                    })),
-                            ),
-                    ),
-                }
-            }))
+            .on_action(
+                cx.listener(|this, _: &crate::tasks::ToggleTask, window, cx| {
+                    if let Some(task) = this.highlighted_task() {
+                        this.change(&task, Action::Toggle, window, cx)
+                    }
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &crate::tasks::CycleTask, window, cx| {
+                    if let Some(task) = this.highlighted_task() {
+                        let next = next_state(task.state);
+                        this.change(&task, Action::Set(next), window, cx)
+                    }
+                }),
+            )
+            .on_action(cx.listener(
+                |this, _: &crate::navigation::tasks::EditDueDate, window, cx| {
+                    let index = this.highlighted;
+                    this.edit_due(index, window, cx)
+                },
+            ))
+            .on_action(cx.listener(|this, _: &menu::Cancel, window, cx| this.leave(window, cx)));
+        crate::navigation::list_keys(
+            root,
+            cx,
+            |this, delta, cx| this.step(delta, cx),
+            |this, beside, window, cx| this.confirm(beside, window, cx),
+        )
+        .children(rows.into_iter().enumerate().map(|(index, row)| {
+            let line = h_flex()
+                .flex_1()
+                .min_h_0()
+                .overflow_hidden()
+                .when(focused && index == self.highlighted, |line| {
+                    line.bg(highlight)
+                });
+            match row {
+                Row::Error(error) | Row::Notice(error) => line.child(
+                    Label::new(format!("⚠ {error}"))
+                        .size(LabelSize::Small)
+                        .color(Color::Error),
+                ),
+                Row::Loading => line.child(
+                    Label::new("Loading tasks…")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
+                Row::Empty => line.child(
+                    Label::new("No tasks match.")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
+                Row::Group(label, page) => line.child(match page {
+                    Some(page) => Button::new(("task-list-group", index), label)
+                        .label_size(LabelSize::Small)
+                        .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall))
+                        .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                            this.open(&page, None, event.modifiers().shift, window, cx)
+                        }))
+                        .into_any_element(),
+                    None => Label::new(label)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .into_any_element(),
+                }),
+                Row::Task(task) => line.child(self.render_task(index, &task, cx)),
+                Row::More => line.child(
+                    div()
+                        .debug_selector(|| "quire-task-list-more".into())
+                        .child(
+                            Button::new("task-list-more", "Show more tasks")
+                                .label_size(LabelSize::Small)
+                                .on_click(cx.listener(|this, _, _, cx| this.show_more(cx))),
+                        ),
+                ),
+            }
+        }))
     }
 }
 

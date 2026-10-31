@@ -279,3 +279,96 @@ fn linked_tasks_filter_above_references_tick_and_open(cx: &mut TestAppContext) {
         "- [x] Sent [[Ana]] the deck"
     );
 }
+
+fn side_page(notebook: &Notebook, cx: &mut TestAppContext) -> Option<String> {
+    read(notebook, cx, |view, cx| {
+        view.nav
+            .side
+            .as_ref()
+            .filter(|side| side.editor.is_some())
+            .map(|side| side.page.read(cx).id().to_owned())
+    })
+}
+
+#[gpui::test]
+fn the_side_pane_shows_its_own_pages_linked_references(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&PEOPLE, "launch", cx);
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.open_beside("ana".into(), window, cx)
+        })
+        .unwrap();
+    wait_until(cx, "the side panel", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.side_references(cx)
+                .is_some_and(|(_, panel)| panel.read(cx).results.settled())
+        })
+    });
+    let panel = read(&notebook, cx, |view, cx| {
+        view.side_references(cx).unwrap().1
+    });
+    let rows = cx.read(|cx| panel.read(cx).rows());
+    assert_eq!(
+        cx.read(|cx| panel.read(cx).results.value.total),
+        3,
+        "the side pane lists the references to Ana, not to Launch"
+    );
+    draw(&notebook, cx);
+    let mut visual = gpui::VisualTestContext::from_window(notebook.window.into(), cx);
+    assert!(visual.debug_bounds("quire-side-references").is_some());
+    let index = rows
+        .iter()
+        .position(
+            |row| matches!(row, ContextRow::Block { text, .. } if text == "[[Ana]] sent the deck"),
+        )
+        .unwrap();
+    notebook
+        .window
+        .update(cx, |_, window, cx| {
+            window.focus(&panel.focus_handle(cx), cx)
+        })
+        .unwrap();
+    let window = notebook.window.into();
+    cx.simulate_keystrokes(window, "escape");
+    cx.simulate_keystrokes(window, &vec!["down"; index].join(" "));
+    cx.simulate_keystrokes(window, "enter");
+    wait_until(cx, "the source in the side pane", |cx| {
+        side_page(&notebook, cx).as_deref() == Some("notes")
+    });
+    assert_eq!(active(&notebook, cx), "launch", "the main pane stays");
+    assert_eq!(caret_text(&notebook, true, cx), "[[Ana]] sent the deck");
+    assert!(
+        read(&notebook, cx, |view, cx| view.side_references(cx)).is_some(),
+        "the side pane now lists the references to Notes"
+    );
+
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.open_beside("ana".into(), window, cx)
+        })
+        .unwrap();
+    wait_until(cx, "Ana beside again", |cx| {
+        side_page(&notebook, cx).as_deref() == Some("ana")
+            && read(&notebook, cx, |view, cx| {
+                view.side_references(cx)
+                    .is_some_and(|(_, panel)| panel.read(cx).results.settled())
+            })
+    });
+    notebook
+        .window
+        .update(cx, |_, window, cx| {
+            window.focus(&panel.focus_handle(cx), cx)
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window, "escape");
+    cx.simulate_keystrokes(window, &vec!["down"; index].join(" "));
+    cx.simulate_keystrokes(window, "shift-enter");
+    wait_until(cx, "the source in the main pane", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.page.read(cx).id() == "notes" && view.editor.is_some()
+        })
+    });
+    assert_eq!(side_page(&notebook, cx).as_deref(), Some("ana"));
+}

@@ -12,6 +12,7 @@ use ui::{Button, Color, Label, LabelCommon, LabelSize, prelude::*};
 pub struct TemplatesGuide {
     path: String,
     buffer: Entity<Buffer>,
+    focus: gpui::FocusHandle,
     _observe: Subscription,
 }
 
@@ -19,8 +20,22 @@ impl TemplatesGuide {
     pub fn new(path: String, buffer: Entity<Buffer>, cx: &mut Context<Self>) -> Self {
         Self {
             _observe: cx.observe(&buffer, |_, _, cx| cx.notify()),
+            focus: cx.focus_handle(),
             path,
             buffer,
+        }
+    }
+
+    /// Moves focus to the first Add button whose example the page does not define yet.
+    pub fn focus_first(&self, window: &mut Window, cx: &mut App) {
+        let defined = self.defined(cx);
+        let skipped = EXAMPLES
+            .iter()
+            .take_while(|example| defined.contains(&example.name.to_lowercase()))
+            .count();
+        window.focus(&self.focus, cx);
+        for _ in 0..=skipped.min(EXAMPLES.len() - 1) {
+            window.focus_next(cx);
         }
     }
 
@@ -68,13 +83,20 @@ impl TemplatesGuide {
                                     ("add-template", index),
                                     if added { "Added" } else { "Add" },
                                 )
-                                .disabled(added)
+                                .color(if added { Color::Muted } else { Color::Default })
+                                .tab_index(index as isize)
                                 .tooltip(ui::Tooltip::text(if added {
                                     format!("{} is in your templates", example.name)
                                 } else {
                                     format!("Add {} to your templates", example.name)
                                 }))
-                                .on_click(cx.listener(move |this, _, _, cx| this.add(example, cx))),
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        if !added {
+                                            this.add(example, cx)
+                                        }
+                                    },
+                                )),
                             ),
                     ),
             )
@@ -112,6 +134,20 @@ impl Render for TemplatesGuide {
             .collect();
         v_flex()
             .id("templates-guide")
+            .key_context("QuireTemplatesGuide")
+            .track_focus(&self.focus)
+            .tab_group()
+            .tab_index(1)
+            .on_action(
+                cx.listener(|_, _: &crate::navigation::NextControl, window, cx| {
+                    window.focus_next(cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|_, _: &crate::navigation::PreviousControl, window, cx| {
+                    window.focus_prev(cx)
+                }),
+            )
             .w(px(360.))
             .h_full()
             .flex_none()

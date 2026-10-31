@@ -80,6 +80,9 @@ impl StoredWindow {
                             this.open_page_at(page.clone(), jump.clone(), *beside, window, cx)
                         }
                         TagPageEvent::Remember => this.remember_tag_page(cx),
+                        TagPageEvent::Link { link, beside } => {
+                            this.open_row_link(link, *beside, window, cx)
+                        }
                     },
                 )
                 .detach();

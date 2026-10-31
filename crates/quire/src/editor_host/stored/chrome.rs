@@ -331,13 +331,15 @@ impl StoredWindow {
         cx.notify();
     }
 
-    fn render_files(&mut self, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    fn render_files(&mut self, tab_index: isize, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let focus = self
             .nav
             .browsers
             .files_focus
             .get_or_insert_with(|| cx.focus_handle())
-            .clone();
+            .clone()
+            .tab_index(tab_index)
+            .tab_stop(true);
         let count = self.file_rows().len();
         let list = uniform_list(
             "files",
@@ -453,7 +455,6 @@ impl StoredWindow {
         cx: &mut gpui::Context<Self>,
     ) -> ListItem {
         let label = self.destination_label(destination, cx);
-        let target = destination.clone();
         let page = destination.page_id().map(str::to_owned);
         ListItem::new(id)
             .when_some(page, |item, page| {
@@ -467,18 +468,73 @@ impl StoredWindow {
             .spacing(ListItemSpacing::Dense)
             .toggle_state(self.nav.workspace.active.as_ref() == Some(destination))
             .child(Label::new(label).truncate())
+    }
+
+    /// A sidebar entry as a tab stop at `index`: Tab reaches it, and Enter or Space opens it
+    /// as a click does (Shift-Enter beside, for a page).
+    fn entry_stop(
+        &self,
+        id: impl Into<gpui::ElementId>,
+        index: isize,
+        item: ListItem,
+        open: impl Fn(&mut Self, bool, &mut Window, &mut gpui::Context<Self>) + 'static,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let ring = cx.theme().colors().border_focused;
+        gpui::div()
+            .id(id)
+            .tab_index(index)
+            .tab_stop(true)
+            .rounded_sm()
+            .focus_visible(move |style| style.border_1().border_color(ring))
+            .child(item)
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                match (target.page_id(), shift(event)) {
-                    (Some(page), true) => this.open_beside(page.to_owned(), window, cx),
-                    _ => this.visit(target.clone(), window, cx),
-                }
+                open(this, shift(event), window, cx)
             }))
+    }
+
+    fn destination_stop(
+        &self,
+        id: impl Into<gpui::ElementId>,
+        index: isize,
+        item: ListItem,
+        destination: &Destination,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let target = destination.clone();
+        self.entry_stop(
+            id,
+            index,
+            item,
+            move |this, beside, window, cx| match (target.page_id(), beside) {
+                (Some(page), true) => this.open_beside(page.to_owned(), window, cx),
+                _ => this.visit(target.clone(), window, cx),
+            },
+            cx,
+        )
     }
 
     pub(in crate::editor_host::stored) fn render_sidebar(
         &mut self,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
+        let mut order = crate::tab_order::TabOrder::default();
+        let buttons: Vec<_> = self
+            .sidebar_buttons(cx)
+            .into_iter()
+            .map(|button| button.tab_index(order.next()))
+            .collect();
+        let templates = self.entry_stop(
+            "templates-entry",
+            order.next(),
+            ListItem::new("templates")
+                .spacing(ListItemSpacing::Dense)
+                .toggle_state(self.showing_templates(cx))
+                .start_slot(ui::Icon::new(IconName::FileDoc).color(Color::Muted))
+                .child(Label::new(quire_core::templates::TEMPLATES_TITLE)),
+            |this, _, window, cx| this.open_templates(window, cx),
+            cx,
+        );
         let favorites: Vec<_> = self
             .nav
             .workspace
@@ -486,13 +542,15 @@ impl StoredWindow {
             .iter()
             .enumerate()
             .map(|(index, favorite)| {
-                self.destination_item(
-                    ("favorite", index),
-                    favorite,
-                    menu_views::Sidebar::Favorite,
-                    cx,
-                )
-                .start_slot(ui::Icon::new(IconName::Star).color(Color::Accent))
+                let item = self
+                    .destination_item(
+                        ("favorite", index),
+                        favorite,
+                        menu_views::Sidebar::Favorite,
+                        cx,
+                    )
+                    .start_slot(ui::Icon::new(IconName::Star).color(Color::Accent));
+                self.destination_stop(("favorite-entry", index), order.next(), item, favorite, cx)
             })
             .collect();
         let recent: Vec<_> = self
@@ -504,118 +562,51 @@ impl StoredWindow {
             .enumerate()
             .map(|(index, item)| {
                 let removing = item.clone();
-                self.destination_item(("recent", index), item, menu_views::Sidebar::Recent, cx)
+                let entry = order.next();
+                let remove = order.next();
+                let row = self
+                    .destination_item(("recent", index), item, menu_views::Sidebar::Recent, cx)
                     .end_slot(
                         IconButton::new(("remove-recent", index), IconName::Close)
                             .icon_size(ui::IconSize::XSmall)
+                            .tab_index(remove)
                             .tooltip(ui::Tooltip::text("Remove from recent"))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.nav.workspace.remove_recent(&removing);
                                 this.persist(cx);
                                 cx.notify();
                             })),
-                    )
+                    );
+                self.destination_stop(("recent-entry", index), entry, row, item, cx)
             })
             .collect();
+        let files = order.next();
         v_flex()
+            .id("sidebar")
+            .key_context("QuireSidebar")
+            .tab_group()
+            .tab_index(0)
+            .on_action(
+                cx.listener(|_, _: &crate::navigation::NextControl, window, cx| {
+                    window.focus_next(cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|_, _: &crate::navigation::PreviousControl, window, cx| {
+                    window.focus_prev(cx)
+                }),
+            )
             .w(gpui::px(240.))
             .h_full()
             .p_1()
             .gap_1()
             .border_r_1()
             .border_color(cx.theme().colors().border)
-            .child(
-                h_flex()
-                    .gap_1()
-                    .flex_wrap()
-                    .child(Button::new("find", "Find").on_click(cx.listener(
-                        |this, _, window, cx| {
-                            this.open_palette(
-                                crate::navigation::palette::PaletteMode::Find,
-                                window,
-                                cx,
-                            )
-                        },
-                    )))
-                    .child(
-                        Button::new("today", "Today").on_click(
-                            cx.listener(|this, _, window, cx| this.open_today(window, cx)),
-                        ),
-                    )
-                    .child(Button::new("pages", "Pages").on_click(cx.listener(
-                        |this, _, window, cx| {
-                            this.visit(
-                                Destination::Browser {
-                                    view: BrowserView::Pages,
-                                },
-                                window,
-                                cx,
-                            )
-                        },
-                    )))
-                    .child(Button::new("daily", "Daily").on_click(cx.listener(
-                        |this, _, window, cx| {
-                            this.visit(
-                                Destination::Browser {
-                                    view: BrowserView::Daily,
-                                },
-                                window,
-                                cx,
-                            )
-                        },
-                    )))
-                    .child(Button::new("tags", "Tags").on_click(cx.listener(
-                        |this, _, window, cx| {
-                            this.visit(
-                                Destination::Browser {
-                                    view: BrowserView::Tags,
-                                },
-                                window,
-                                cx,
-                            )
-                        },
-                    )))
-                    .child(Button::new("tasks", "Tasks").on_click(cx.listener(
-                        |this, _, window, cx| {
-                            this.visit(
-                                Destination::Browser {
-                                    view: BrowserView::Tasks,
-                                },
-                                window,
-                                cx,
-                            )
-                        },
-                    )))
-                    .child(
-                        Button::new("help", "Help & shortcuts")
-                            .on_click(|_, _, cx| crate::help::view::open(cx)),
-                    )
-                    .child(
-                        Button::new("readme", "README.md")
-                            .on_click(|_, _, cx| crate::showcase::open(cx)),
-                    )
-                    .child(
-                        Button::new("settings", "Settings")
-                            .on_click(|_, _, cx| crate::preferences::view::open(cx)),
-                    )
-                    .child(
-                        Button::new("appearance", "Light / Dark")
-                            .on_click(|_, _, cx| crate::preferences::toggle_appearance(cx)),
-                    ),
-            )
+            .child(h_flex().gap_1().flex_wrap().children(buttons))
             .child(
                 gpui::div()
                     .debug_selector(|| "quire-templates-entry".into())
-                    .child(
-                        ListItem::new("templates")
-                            .spacing(ListItemSpacing::Dense)
-                            .toggle_state(self.showing_templates(cx))
-                            .start_slot(ui::Icon::new(IconName::FileDoc).color(Color::Muted))
-                            .child(Label::new(quire_core::templates::TEMPLATES_TITLE))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.open_templates(window, cx)),
-                            ),
-                    ),
+                    .child(templates),
             )
             .when(!favorites.is_empty(), |div| {
                 div.child(
@@ -633,9 +624,42 @@ impl StoredWindow {
                 )
                 .children(recent)
             })
-            .child(self.render_files(cx))
+            .child(self.render_files(files, cx))
     }
 
+    /// The sidebar's buttons in reading order.
+    fn sidebar_buttons(&self, cx: &mut gpui::Context<Self>) -> Vec<Button> {
+        let visit = |view| {
+            cx.listener(move |this: &mut Self, _: &ClickEvent, window, cx| {
+                this.visit(Destination::Browser { view }, window, cx)
+            })
+        };
+        let browsers = [
+            Button::new("pages", "Pages").on_click(visit(BrowserView::Pages)),
+            Button::new("daily", "Daily").on_click(visit(BrowserView::Daily)),
+            Button::new("tags", "Tags").on_click(visit(BrowserView::Tags)),
+            Button::new("tasks", "Tasks").on_click(visit(BrowserView::Tasks)),
+        ];
+        [
+            Button::new("find", "Find").on_click(cx.listener(|this, _, window, cx| {
+                this.open_palette(crate::navigation::palette::PaletteMode::Find, window, cx)
+            })),
+            Button::new("today", "Today")
+                .on_click(cx.listener(|this, _, window, cx| this.open_today(window, cx))),
+        ]
+        .into_iter()
+        .chain(browsers)
+        .chain([
+            Button::new("help", "Help & shortcuts")
+                .on_click(|_, _, cx| crate::help::view::open(cx)),
+            Button::new("readme", "README.md").on_click(|_, _, cx| crate::showcase::open(cx)),
+            Button::new("settings", "Settings")
+                .on_click(|_, _, cx| crate::preferences::view::open(cx)),
+            Button::new("appearance", "Light / Dark")
+                .on_click(|_, _, cx| crate::preferences::toggle_appearance(cx)),
+        ])
+        .collect()
+    }
     pub(in crate::editor_host::stored) fn render_tabs(
         &mut self,
         cx: &mut gpui::Context<Self>,

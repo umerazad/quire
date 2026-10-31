@@ -160,3 +160,68 @@ fn the_sidebar_entry_reuses_a_templates_page_whatever_its_case(cx: &mut TestAppC
     );
     assert_eq!(defined(&notebook, cx), ["mine"]);
 }
+
+/// Presses `key` once the window is quiet, so no reply moves focus between the press and the
+/// release that clicks a focused control.
+fn press(notebook: &Notebook, key: &str, cx: &mut TestAppContext) {
+    wait_until(cx, "a quiet window", |cx| quiet(notebook, cx));
+    crate::tab_order::press(notebook.window.into(), key, cx);
+}
+
+#[gpui::test]
+fn the_keyboard_reaches_the_templates_entry_and_the_guides_add_buttons(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&[("w", "Alpha.md", "- \n")], "w", cx);
+    let entries_after_templates = |cx: &mut TestAppContext| {
+        read(&notebook, cx, |view, _| {
+            let workspace = &view.nav.workspace;
+            workspace.favorites.len()
+                + 2 * workspace
+                    .recent
+                    .len()
+                    .min(quire_core::workspace::SHOWN_RECENT)
+        })
+    };
+    cx.dispatch_action(notebook.window.into(), crate::navigation::FocusFiles);
+    for _ in 0..=entries_after_templates(cx) {
+        press(&notebook, "shift-tab", cx);
+    }
+    press(&notebook, "enter", cx);
+    wait_until(cx, "the Templates page from the keyboard", |cx| {
+        shown_path(&notebook, cx).as_deref() == Some("Templates.md")
+            && shown_text(&notebook, cx).is_some()
+    });
+    assert_eq!(shown_text(&notebook, cx), Some(starter_templates()));
+
+    cx.dispatch_action(
+        notebook.window.into(),
+        crate::navigation::FocusTemplatesGuide,
+    );
+    press(&notebook, "enter", cx);
+    let one_on_one = format!("{}{}", starter_templates(), definition(&EXAMPLES[1]));
+    assert_eq!(
+        shown_text(&notebook, cx),
+        Some(one_on_one.clone()),
+        "the guide's first Add button skips the added Meeting"
+    );
+    press(&notebook, "tab enter", cx);
+    assert_eq!(
+        shown_text(&notebook, cx),
+        Some(one_on_one.clone()),
+        "Tab reaches the added Project, whose button adds nothing"
+    );
+    let defined_now = defined(&notebook, cx);
+    let next = EXAMPLES
+        .iter()
+        .position(|example| !defined_now.contains(&example.name.to_lowercase()))
+        .unwrap();
+    for _ in 2..next {
+        press(&notebook, "tab", cx);
+    }
+    press(&notebook, "enter", cx);
+    let next = &EXAMPLES[next];
+    assert_eq!(
+        shown_text(&notebook, cx),
+        Some(format!("{one_on_one}{}", definition(next))),
+        "Tab moves to the next Add button"
+    );
+}

@@ -77,6 +77,7 @@ impl StoredWindow {
                     let choices = choices.clone();
                     this.remember(|workspace| workspace.tasks = choices, cx);
                 }
+                TasksEvent::Link { link, beside } => this.open_row_link(link, *beside, window, cx),
             },
         )
         .detach();

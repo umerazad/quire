@@ -865,3 +865,54 @@ fn tagged_tasks_pair_each_tagged_task_block_with_its_task() -> Result<()> {
     assert_eq!((from, task.text.as_str()), (2, "Tagged task"));
     Ok(())
 }
+
+#[test]
+fn outlines_list_as_many_nested_blocks_as_asked_and_count_the_rest() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    let revision = save(&store, "a", "Alpha.md", "outline")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    let nested = |n: u32| IndexedBlock {
+        key: format!("k{n}"),
+        from: 10 * n,
+        to: 10 * n + 5,
+        content_from: 10 * n + 2,
+        content_to: 10 * n + 5,
+        subtree_to: 10 * n + 5,
+        depth: 1,
+        kind: "list".into(),
+        parent: Some("k0".into()),
+        text: format!("child {n}"),
+        content: format!("child {n}"),
+        ..Default::default()
+    };
+    let parent = IndexedBlock {
+        subtree_to: 10 * 12 + 5,
+        depth: 0,
+        parent: None,
+        text: "parent".into(),
+        content: "parent".into(),
+        ..nested(0)
+    };
+    let blocks = std::iter::once(parent)
+        .chain((1..=12).map(nested))
+        .collect();
+    analyze_all(
+        &index,
+        &[(
+            "Alpha.md",
+            PageIndex {
+                blocks,
+                ..Default::default()
+            },
+        )],
+    )?;
+    let outlines = index.outlines_with(&[(revision.clone(), 3, 8), (revision.clone(), 3, 50)])?;
+    assert_eq!(outlines[0], index.outlines(&[(revision, 3)])?[0]);
+    assert_eq!(outlines[0].children.len(), 8);
+    assert_eq!(outlines[0].more_children, 4);
+    assert_eq!(outlines[1].children.len(), 12);
+    assert_eq!(outlines[1].children[11], (1, "child 12".into()));
+    assert_eq!(outlines[1].more_children, 0);
+    Ok(())
+}
