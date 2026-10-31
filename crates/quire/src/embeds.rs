@@ -11,9 +11,13 @@ use editor::{
     Addon, Editor, EditorEvent, EditorMode, FoldPlaceholder, SizingBehavior,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
-use gpui::{App, Context, Entity, SharedString, Subscription, WeakEntity, Window, prelude::*};
-use multi_buffer::{Anchor, MultiBuffer, ToOffset};
+use gpui::{
+    App, Context, Entity, Focusable as _, KeyBinding, SharedString, Subscription, WeakEntity,
+    Window, prelude::*,
+};
+use multi_buffer::{Anchor, MultiBuffer, MultiBufferRow, ToOffset, ToPoint as _};
 use std::{any::TypeId, collections::HashMap, ops::Range, rc::Rc, sync::Arc};
+use text::{Bias, Point};
 
 /// How deep embeds may nest, as in the reference.
 const MAX_DEPTH: usize = 8;
@@ -94,9 +98,23 @@ pub(crate) struct Embeds {
     sequence: u64,
     /// Waits for embedded pages still loading, by page.
     loads: HashMap<String, Subscription>,
+    /// The view this nested editor is embedded in.
+    outer: Option<WeakEntity<Editor>>,
+    /// Where Down and Up leave this editor from the caret's row.
+    crossing: Crossing,
+    _caret: Option<Subscription>,
 }
 
 impl Addon for Embeds {
+    fn extend_key_context(&self, context: &mut gpui::KeyContext, _: &App) {
+        if self.crossing.down.is_some() {
+            context.add("QuireEmbedDown");
+        }
+        if self.crossing.up.is_some() {
+            context.add("QuireEmbedUp");
+        }
+    }
+
     fn to_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -115,6 +133,9 @@ fn state(editor: &mut Editor) -> &mut Embeds {
             requests: HashMap::new(),
             sequence: 0,
             loads: HashMap::new(),
+            outer: None,
+            crossing: Crossing::default(),
+            _caret: None,
         });
     }
     editor.addon_mut::<Embeds>().expect("registered embeds")
@@ -128,6 +149,18 @@ pub(crate) fn sync(
     cx: &mut Context<Editor>,
 ) {
     state(editor).spots = spots;
+    if state(editor)._caret.is_none() {
+        let this = cx.entity();
+        let caret = cx.subscribe(&this, |editor, _, event: &EditorEvent, cx| {
+            if matches!(
+                event,
+                EditorEvent::SelectionsChanged { .. } | EditorEvent::BufferEdited
+            ) {
+                track(editor, cx);
+            }
+        });
+        state(editor)._caret = Some(caret);
+    }
     request(editor, false, window, cx);
     place(editor, window, cx);
 }
@@ -151,6 +184,7 @@ pub(crate) fn clear(editor: &mut Editor, cx: &mut Context<Editor>) {
         .filter_map(|shown| shown.block.map(|(block, _)| block))
         .collect();
     editor.remove_blocks(blocks, None, cx);
+    track(editor, cx);
 }
 
 /// Embed state changed outside a parse: show it, and fold the headers again.
@@ -307,12 +341,21 @@ fn place(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
     kept.sort_by_key(|shown| shown.spot.range.start.to_offset(&snapshot));
     state(editor).shown = kept;
     resize(editor, cx);
+    track(editor, cx);
     cx.notify();
 }
 
-/// The rows a nested editor needs, including any embeds nested in it.
+/// The rows a nested editor needs, including any embeds nested in it, leaving out the empty
+/// row after a page's final newline.
 fn content_rows(nested: &Entity<Editor>, cx: &mut App) -> u32 {
-    nested.update(cx, |nested, cx| nested.max_point(cx).row().0 + 1)
+    nested.update(cx, |nested, cx| {
+        let rows = nested.max_point(cx).row().0 + 1;
+        if rows > 1 && ends_with_newline(&nested.buffer().read(cx).snapshot(cx)) {
+            rows - 1
+        } else {
+            rows
+        }
+    })
 }
 
 fn resize(editor: &mut Editor, cx: &mut Context<Editor>) {
@@ -373,6 +416,7 @@ fn nested(
             (cx.new(|cx| MultiBuffer::singleton(source, cx)), None)
         }
     };
+    let outer = cx.entity().downgrade();
     let nested = cx.new(|cx| {
         let mut nested = Editor::new(
             EditorMode::Full {
@@ -385,7 +429,9 @@ fn nested(
             window,
             cx,
         );
-        state(&mut nested).chain = chain;
+        let embeds = state(&mut nested);
+        embeds.chain = chain;
+        embeds.outer = Some(outer);
         nested
     });
     if let Some(model) = &model {
@@ -402,12 +448,15 @@ fn nested(
 fn render(nested: Entity<Editor>) -> editor::display_map::RenderBlock {
     Arc::new(move |block| {
         use theme::ActiveTheme;
+        let rows = content_rows(&nested, block.app);
         let colors = block.app.theme().colors();
         gpui::div()
             .debug_selector(|| "quire-embed".into())
             .ml(block.anchor_x)
             .pl_2()
             .w_full()
+            .h(block.line_height * rows as f32)
+            .overflow_hidden()
             .border_l_2()
             .border_color(colors.border)
             .child(nested.clone())
@@ -485,6 +534,205 @@ pub(crate) fn headers(
             (shown.spot.clone(), placeholder)
         })
         .collect()
+}
+
+gpui::actions!(
+    quire,
+    [
+        /// Moves the caret down into the embed below its line, or out of an embed's last line.
+        CaretDownAcrossEmbed,
+        /// Moves the caret up into the embed above its line, or out of an embed's first line.
+        CaretUpAcrossEmbed
+    ]
+);
+
+/// Where Down or Up takes the caret when it leaves its editor.
+#[derive(Clone, PartialEq)]
+enum Cross {
+    /// Into the nested editor of the embed beside the caret's line.
+    Into(Entity<Editor>),
+    /// Out of this nested editor, to the view around it.
+    Out,
+}
+
+#[derive(Clone, Default, PartialEq)]
+struct Crossing {
+    down: Option<Cross>,
+    up: Option<Cross>,
+}
+
+fn ends_with_newline(buffer: &multi_buffer::MultiBufferSnapshot) -> bool {
+    buffer.reversed_chars_at(buffer.len()).next() == Some('\n')
+}
+
+/// The last row a nested editor shows, leaving out the empty row after a final newline.
+fn last_row(buffer: &multi_buffer::MultiBufferSnapshot) -> u32 {
+    let max = buffer.max_point().row;
+    if max > 0 && ends_with_newline(buffer) {
+        max - 1
+    } else {
+        max
+    }
+}
+
+/// Where Down and Up would leave this editor, for a single caret on a line next to an embed or
+/// on the first or last line of a nested editor. Wrapped lines cross only from their edge rows.
+fn crossing(editor: &mut Editor, cx: &mut App) -> Crossing {
+    let Some(embeds) = editor.addon::<Embeds>() else {
+        return Crossing::default();
+    };
+    if editor.selections.count() != 1 {
+        return Crossing::default();
+    }
+    let display = editor.display_snapshot(cx);
+    let selection = editor.selections.newest::<Point>(&display);
+    if !selection.is_empty() {
+        return Crossing::default();
+    }
+    let buffer = display.buffer_snapshot();
+    let caret = selection.head();
+    let row_of = |point: Point| display.point_to_display_point(point, Bias::Left).row();
+    let line_end = |row: u32| Point::new(row, buffer.line_len(MultiBufferRow(row)));
+    let caret_row = row_of(caret);
+    let nested_at = |row: u32| {
+        embeds.shown.iter().find_map(|shown| match &shown.content {
+            Content::Editor { editor, .. }
+                if shown.spot.range.start.to_point(buffer).row == row =>
+            {
+                Some(Cross::Into(editor.clone()))
+            }
+            _ => None,
+        })
+    };
+    let nested = embeds.outer.is_some();
+    let down = (caret_row == row_of(line_end(caret.row)))
+        .then(|| nested_at(caret.row))
+        .flatten()
+        .or_else(|| {
+            (nested && caret_row >= row_of(line_end(last_row(buffer)))).then_some(Cross::Out)
+        });
+    let up = (caret.row > 0 && caret_row == row_of(Point::new(caret.row, 0)))
+        .then(|| nested_at(caret.row - 1))
+        .flatten()
+        .or_else(|| (nested && caret_row == row_of(Point::zero())).then_some(Cross::Out));
+    Crossing { down, up }
+}
+
+/// Keeps the key context that binds Down and Up across embeds current with the caret.
+fn track(editor: &mut Editor, cx: &mut Context<Editor>) {
+    let crossing = crossing(editor, cx);
+    let embeds = state(editor);
+    if embeds.crossing != crossing {
+        embeds.crossing = crossing;
+        cx.notify();
+    }
+}
+
+/// Moves the caret across an embed's edge, keeping its column where the line allows.
+fn cross(editor: &Entity<Editor>, down: bool, window: &mut Window, cx: &mut App) -> bool {
+    let Some((cross, outer, column)) = editor.update(cx, |editor, cx| {
+        let display = editor.display_snapshot(cx);
+        let column = editor.selections.newest::<Point>(&display).head().column;
+        let embeds = editor.addon::<Embeds>()?;
+        let cross = if down {
+            embeds.crossing.down.clone()
+        } else {
+            embeds.crossing.up.clone()
+        };
+        Some((cross?, embeds.outer.clone(), column))
+    }) else {
+        return false;
+    };
+    let (target, row) = match cross {
+        Cross::Into(nested) => {
+            let row = if down {
+                0
+            } else {
+                last_row(&nested.read(cx).buffer().read(cx).snapshot(cx))
+            };
+            (nested, row)
+        }
+        Cross::Out => {
+            let Some(outer) = outer.and_then(|outer| outer.upgrade()) else {
+                return false;
+            };
+            let buffer = outer.read(cx).buffer().read(cx).snapshot(cx);
+            let Some(spot) = outer.read(cx).addon::<Embeds>().and_then(|embeds| {
+                embeds.shown.iter().find_map(|shown| match &shown.content {
+                    Content::Editor { editor: nested, .. } if nested == editor => {
+                        Some(shown.spot.range.start.to_point(&buffer).row)
+                    }
+                    _ => None,
+                })
+            }) else {
+                return false;
+            };
+            let row = if down { spot + 1 } else { spot };
+            if row > buffer.max_point().row {
+                return false;
+            }
+            (outer, row)
+        }
+    };
+    window.focus(&target.focus_handle(cx), cx);
+    target.update(cx, |target, cx| {
+        let buffer = target.buffer().read(cx).snapshot(cx);
+        let point = buffer.clip_point(Point::new(row, column), Bias::Left);
+        target.change_selections(editor::SelectionEffects::default(), window, cx, |s| {
+            s.select_ranges([point..point])
+        });
+    });
+    true
+}
+
+pub fn init(cx: &mut App) {
+    cx.observe_new(|editor: &mut Editor, _, cx| {
+        let handle = cx.entity().downgrade();
+        let register = |down: bool| {
+            let handle = handle.clone();
+            move |window: &mut Window, cx: &mut App| {
+                if !handle
+                    .upgrade()
+                    .is_some_and(|editor| cross(&editor, down, window, cx))
+                {
+                    cx.propagate();
+                }
+            }
+        };
+        let down = register(true);
+        editor
+            .register_action(move |_: &CaretDownAcrossEmbed, window, cx| down(window, cx))
+            .detach();
+        let up = register(false);
+        editor
+            .register_action(move |_: &CaretUpAcrossEmbed, window, cx| up(window, cx))
+            .detach();
+    })
+    .detach();
+    const ARROWS: &str = "Editor && !QuireControl && !showing_completions && !showing_code_actions && vim_mode != operator && vim_mode != waiting";
+    const VIM: &str = "Editor && !QuireControl && vim_mode == normal && !VimCount";
+    cx.bind_keys([
+        KeyBinding::new(
+            "down",
+            CaretDownAcrossEmbed,
+            Some(&format!("{ARROWS} && QuireEmbedDown")),
+        ),
+        KeyBinding::new(
+            "up",
+            CaretUpAcrossEmbed,
+            Some(&format!("{ARROWS} && QuireEmbedUp")),
+        ),
+        KeyBinding::new(
+            "j",
+            CaretDownAcrossEmbed,
+            Some(&format!("{VIM} && QuireEmbedDown")),
+        ),
+        KeyBinding::new(
+            "k",
+            CaretUpAcrossEmbed,
+            Some(&format!("{VIM} && QuireEmbedUp")),
+        ),
+    ]);
 }
 
 /// The nested editors this view shows, in page order.
