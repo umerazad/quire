@@ -2,6 +2,22 @@ use anyhow::{Context as _, Result, ensure};
 use sqlez::connection::Connection;
 use std::path::Path;
 
+/// Runs `run` in an immediate write transaction on `connection`, committing on success and
+/// rolling back on failure.
+pub(crate) fn immediate<T>(connection: &Connection, run: impl FnOnce() -> Result<T>) -> Result<T> {
+    connection.exec("BEGIN IMMEDIATE")?()?;
+    match run() {
+        Ok(value) => {
+            connection.exec("COMMIT")?()?;
+            Ok(value)
+        }
+        Err(error) => {
+            connection.exec("ROLLBACK")?()?;
+            Err(error)
+        }
+    }
+}
+
 /// Opens a local writing connection for the storage worker, with no memory fallback.
 /// The caller owns schema migration and must not weaken the durability pragmas.
 pub fn open_writable(path: &Path) -> Result<Connection> {

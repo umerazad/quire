@@ -66,48 +66,63 @@ impl FolderOptions {
                 self.root.display()
             )
         })?;
-        let page = match self.page {
-            Some(page) => page,
-            None => list(&root).files.into_iter().next().map(|file| file.path).ok_or_else(|| {
-                format!(
-                    "{} has no Markdown notes. Add a .md file or pass --page with the note to create.",
-                    root.display()
-                )
-            })?,
-        };
         let state = state_folder(&root);
-        let mut session =
-            NotebookSession::open_folder(root.clone(), state.clone(), Some(system_trash(cx)))?;
-        let page = session.open_page(page_id_for_path(&page), cx);
-        let options = gpui::WindowOptions {
-            window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
-                None,
-                gpui::size(gpui::px(1100.), gpui::px(760.)),
-                cx,
-            ))),
-            ..Default::default()
-        };
-        let notebook = format!("folder:{}", root.display());
-        cx.open_window(options, move |window, cx| {
-            window.set_window_title("Quire Native");
-            cx.new(|cx| {
-                let mut this = StoredWindow::new(
-                    session,
-                    page,
-                    state.join("folder.sqlite"),
-                    notebook,
-                    window,
-                    cx,
-                );
-                this.watch_folder(cx);
-                this.load_folder_notices(cx);
-                this
-            })
-        })
-        .map_err(|error| format!("Cannot open Quire's window: {error}. Check desktop and graphics access, then retry."))?;
-        cx.activate(true);
-        Ok(())
+        open_folder_window(root, state, self.page, cx)
     }
+}
+
+/// Opens a window on the folder notebook at `root`, keeping Quire's state in `state`, showing
+/// `page` or else its first note.
+pub(super) fn open_folder_window(
+    root: PathBuf,
+    state: PathBuf,
+    page: Option<String>,
+    cx: &mut App,
+) -> Result<(), String> {
+    let page = match page {
+        Some(page) => page,
+        None => list(&root).files.into_iter().next().map(|file| file.path).ok_or_else(|| {
+            format!(
+                "{} has no Markdown notes. Add a .md file or pass --page with the note to create.",
+                root.display()
+            )
+        })?,
+    };
+    let mut session =
+        NotebookSession::open_folder(root.clone(), state.clone(), Some(system_trash(cx)))?;
+    let page = session.open_page(page_id_for_path(&page), cx);
+    let options = gpui::WindowOptions {
+        window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
+            None,
+            gpui::size(gpui::px(1100.), gpui::px(760.)),
+            cx,
+        ))),
+        ..Default::default()
+    };
+    let notebook = format!("folder:{}", root.display());
+    cx.open_window(options, move |window, cx| {
+        window.set_window_title("Quire Native");
+        cx.new(|cx| {
+            let mut this = StoredWindow::new(
+                session,
+                page,
+                state.join("folder.sqlite"),
+                notebook,
+                window,
+                cx,
+            );
+            this.watch_folder(cx);
+            this.load_folder_notices(cx);
+            this
+        })
+    })
+    .map_err(|error| {
+        format!(
+            "Cannot open Quire's window: {error}. Check desktop and graphics access, then retry."
+        )
+    })?;
+    cx.activate(true);
+    Ok(())
 }
 
 /// Quire's recovery, history, index, and workspace for the folder at `root`, kept in application

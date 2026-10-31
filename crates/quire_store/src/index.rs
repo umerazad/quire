@@ -11,6 +11,7 @@ mod overlay;
 mod query;
 mod references;
 mod schema;
+pub(crate) use schema::uri_path;
 mod tasks;
 
 pub use blocks::{BlockChoice, BlockPreview};

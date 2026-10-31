@@ -875,3 +875,7 @@ mod menu_tests;
 #[cfg(test)]
 #[path = "page_menu_tests.rs"]
 mod page_menu_tests;
+
+#[cfg(test)]
+#[path = "backups_tests.rs"]
+mod backups_tests;
