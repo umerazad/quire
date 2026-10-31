@@ -10,7 +10,7 @@ use futures::{
 };
 use gpui::{App, AppContext, Context, Entity, SharedString, Task};
 use quire_store::{
-    folder_notebook::{DiskDocument, FolderChange, FolderWorker},
+    folder_notebook::{DiskDocument, FolderChange, FolderWorker, Trash},
     notebook::PageCheckout,
     sync::json::Json,
     worker::{QueueError, QueueLimits, StorageWorker},
@@ -49,9 +49,14 @@ impl NotebookSession {
     }
 
     /// Opens the folder notebook at `root`, keeping its recovery, history, and index in `state`.
-    pub fn open_folder(root: PathBuf, state: PathBuf) -> Result<Self, String> {
+    /// Deleted notes go to `trash`; without one, deleting is refused.
+    pub fn open_folder(
+        root: PathBuf,
+        state: PathBuf,
+        trash: Option<Trash>,
+    ) -> Result<Self, String> {
         let worker =
-            FolderWorker::spawn_folder(root.clone(), state.clone(), QueueLimits::default())
+            FolderWorker::spawn_folder(root.clone(), state.clone(), trash, QueueLimits::default())
                 .map_err(|error| format!("{error:#}"))?;
         let ready = worker
             .ready

@@ -1,32 +1,72 @@
 use super::super::*;
+use super::file_tests::{dialog_error, rename_to, summary, visit};
 use super::tests::{Notebook, active, draw, read, settle, wait_until};
 use crate::page_persistence::PagePersistence;
 use gpui::TestAppContext;
+use quire_core::workspace::Destination;
 use quire_store::sync::format::page_id_for_path;
 use std::{fs, time::Duration};
 
 struct FolderNotebook {
     notebook: Notebook,
     folder: tempfile::TempDir,
+    /// Stands in for the system Trash: deleted items move here, numbered in order.
+    bin: tempfile::TempDir,
 }
 
 impl FolderNotebook {
     fn file(&self, path: &str) -> std::path::PathBuf {
         self.folder.path().join(path)
     }
+
+    fn trashed(&self, item: usize) -> std::path::PathBuf {
+        self.bin.path().join(item.to_string())
+    }
 }
 
 fn open_folder(files: &[(&str, &str)], first: &str, cx: &mut TestAppContext) -> FolderNotebook {
-    cx.update(|cx| init(cx).unwrap());
-    let folder = tempfile::tempdir().unwrap();
+    open_folder_with(files, &[], first, cx)
+}
+
+/// Opens a folder whose Quire state folder already holds `state_files`, as a crash leaves it.
+fn open_folder_with(
+    files: &[(&str, &str)],
+    state_files: &[(&str, &str)],
+    first: &str,
+    cx: &mut TestAppContext,
+) -> FolderNotebook {
+    open_prepared(files, first, |_, state| write_files(state, state_files), cx)
+}
+
+fn write_files(root: &std::path::Path, files: &[(&str, &str)]) {
     for (path, text) in files {
-        let target = folder.path().join(path);
+        let target = root.join(path);
         fs::create_dir_all(target.parent().unwrap()).unwrap();
         fs::write(target, text).unwrap();
     }
+}
+
+/// Opens a folder after `prepare` sets up the notebook folder and Quire's state folder.
+fn open_prepared(
+    files: &[(&str, &str)],
+    first: &str,
+    prepare: impl FnOnce(&std::path::Path, &std::path::Path),
+    cx: &mut TestAppContext,
+) -> FolderNotebook {
+    cx.update(|cx| init(cx).unwrap());
+    let folder = tempfile::tempdir().unwrap();
+    write_files(folder.path(), files);
     let state = tempfile::tempdir().unwrap();
+    prepare(folder.path(), state.path());
+    let bin = tempfile::tempdir().unwrap();
+    let into = bin.path().to_owned();
+    let trash: quire_store::folder_notebook::Trash = std::sync::Arc::new(move |path| {
+        let next = fs::read_dir(&into)?.count();
+        Ok(fs::rename(path, into.join(next.to_string()))?)
+    });
     let mut session =
-        NotebookSession::open_folder(folder.path().into(), state.path().into()).unwrap();
+        NotebookSession::open_folder(folder.path().into(), state.path().into(), Some(trash))
+            .unwrap();
     let page = cx.update(|cx| session.open_page(page_id_for_path(first), cx));
     let database = state.path().join("folder.sqlite");
     let window = cx.add_window(|window, cx| {
@@ -45,7 +85,11 @@ fn open_folder(files: &[(&str, &str)], first: &str, cx: &mut TestAppContext) -> 
         window,
     };
     settle(&notebook, cx);
-    FolderNotebook { notebook, folder }
+    FolderNotebook {
+        notebook,
+        folder,
+        bin,
+    }
 }
 
 fn persistence(notebook: &Notebook, cx: &mut TestAppContext) -> Entity<PagePersistence> {
@@ -177,37 +221,484 @@ fn the_folder_watcher_reloads_an_open_page_edited_elsewhere(cx: &mut TestAppCont
 }
 
 #[gpui::test]
-fn folder_notebooks_refuse_delete_and_rename_before_touching_files(cx: &mut TestAppContext) {
-    let folder = open_folder(&[("Note.md", "- keep\n")], "Note.md", cx);
-    let (open, index, storage) = read(&folder.notebook, cx, |view, cx| {
-        let session = view.session.borrow();
-        let index = view.index.as_ref().unwrap().read(cx).client().clone();
-        (session.open_pages(), index, session.storage())
+fn deleting_a_folder_page_moves_it_to_the_trash_and_forgets_it(cx: &mut TestAppContext) {
+    let opened = open_folder(
+        &[
+            ("Keep.md", "- keep\n"),
+            ("Old.md", "- Original\n"),
+            ("Links.md", "- [[Old]]\n"),
+        ],
+        "Keep.md",
+        cx,
+    );
+    let notebook = &opened.notebook;
+    let old = page_id_for_path("Old.md");
+    visit(notebook, Destination::page(&old), cx);
+    notebook
+        .window
+        .update(cx, |view, _, cx| view.toggle_favorite(cx))
+        .unwrap();
+    wait_until(cx, "Old's editor", |cx| {
+        read(notebook, cx, |view, cx| {
+            view.editor.is_some() && view.page.read(cx).id() == old
+        })
     });
-    let page = page_id_for_path("Note.md");
-    let deletion = cx.update(|cx| {
-        crate::file_actions::plan_deletion(
-            crate::file_actions::Target::Page(page.clone()),
-            open.clone(),
-            index.clone(),
-            storage.clone(),
-            cx,
-        )
-    });
-    let rename = cx.update(|cx| {
-        crate::file_actions::plan_rename(page, "Renamed".into(), open, index, storage, cx)
-    });
+    draw(notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "i x escape");
+    cx.dispatch_action(notebook.window.into(), crate::navigation::DeletePage);
+    let (heading, detail, _) = summary(notebook, cx);
+    assert_eq!(heading, "Delete Old?");
     assert_eq!(
-        futures::executor::block_on(deletion).err().as_deref(),
-        Some(crate::page_writes::FOLDER_DELETION)
+        detail,
+        "1 link from other pages will point to a missing page. The files go to the system Trash, where you can restore them."
+    );
+    draw(notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the deletion", |cx| {
+        read(notebook, cx, |view, _| view.nav.dialog.is_none())
+    });
+    assert!(!opened.file("Old.md").exists());
+    assert_eq!(
+        fs::read_to_string(opened.trashed(0)).unwrap(),
+        "x- Original\n",
+        "unsaved typing is saved before the note goes to the Trash"
+    );
+    read(notebook, cx, |view, cx| {
+        let gone = Destination::page(&old);
+        assert!(!view.nav.workspace.tabs.contains(&gone));
+        assert!(!view.nav.workspace.favorites.contains(&gone));
+        assert!(!view.nav.workspace.recent.contains(&gone));
+        assert!(
+            view.session
+                .borrow()
+                .open_pages()
+                .iter()
+                .all(|page| page.read(cx).id() != old)
+        );
+    });
+    assert_eq!(active(notebook, cx), page_id_for_path("Keep.md"));
+    wait_until(cx, "the page list without Old", |cx| {
+        read(notebook, cx, |view, _| {
+            view.nav.catalogue.is_none() && view.nav.title(&old).is_none()
+        })
+    });
+    cx.executor().advance_clock(Duration::from_secs(3));
+    cx.run_until_parked();
+    assert!(!opened.file("Old.md").exists(), "nothing revives the note");
+}
+
+#[gpui::test]
+fn deleting_a_folder_moves_it_whole_unless_a_page_appeared_or_changed(cx: &mut TestAppContext) {
+    let opened = open_folder(
+        &[
+            ("Keep.md", "- keep\n"),
+            ("Projects/A.md", "- a\n"),
+            ("Projects/Deep/B.md", "- b\n"),
+            ("Projects/photo.png", "png"),
+        ],
+        "Keep.md",
+        cx,
+    );
+    let notebook = &opened.notebook;
+    let ask = |cx: &mut TestAppContext| {
+        notebook
+            .window
+            .update(cx, |view, window, cx| {
+                view.ask_delete(
+                    crate::file_actions::Target::Folder("Projects".into()),
+                    window,
+                    cx,
+                )
+            })
+            .unwrap();
+        summary(notebook, cx)
+    };
+    let (heading, detail, listed) = ask(cx);
+    assert_eq!(
+        heading,
+        "Delete Projects with its 2 pages and 1 other file?"
     );
     assert_eq!(
-        futures::executor::block_on(rename).err().as_deref(),
-        Some(crate::file_actions::FOLDER_RENAME)
+        detail,
+        "No other page links here. The files go to the system Trash, where you can restore them."
+    );
+    assert_eq!(listed, ["Projects/A.md", "Projects/Deep/B.md"]);
+    fs::write(opened.file("Projects/Late.md"), "- late\n").unwrap();
+    draw(notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the refusal", |cx| dialog_error(notebook, cx).is_some());
+    assert_eq!(
+        dialog_error(notebook, cx).unwrap(),
+        "Projects/Late.md appeared in Projects after you chose to delete it. Nothing was deleted; try again."
+    );
+    cx.simulate_keystrokes(notebook.window.into(), "escape");
+    fs::remove_file(opened.file("Projects/Late.md")).unwrap();
+
+    ask(cx);
+    fs::write(opened.file("Projects/A.md"), "- edited elsewhere\n").unwrap();
+    draw(notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the stale refusal", |cx| {
+        dialog_error(notebook, cx).is_some()
+    });
+    assert_eq!(
+        dialog_error(notebook, cx).unwrap(),
+        crate::file_actions::STALE_DELETION
+    );
+    assert!(!opened.trashed(0).exists());
+    cx.simulate_keystrokes(notebook.window.into(), "escape");
+
+    ask(cx);
+    draw(notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the folder deletion", |cx| {
+        read(notebook, cx, |view, _| view.nav.dialog.is_none())
+    });
+    assert!(!opened.file("Projects").exists());
+    assert_eq!(
+        fs::read_to_string(opened.trashed(0).join("photo.png")).unwrap(),
+        "png"
     );
     assert_eq!(
-        fs::read_to_string(folder.file("Note.md")).unwrap(),
-        "- keep\n"
+        fs::read_to_string(opened.trashed(0).join("A.md")).unwrap(),
+        "- edited elsewhere\n"
     );
-    assert!(!folder.file("Renamed.md").exists());
+    assert!(opened.file("Keep.md").exists());
+}
+
+/// The Quire-notebook rename fixture (`file_tests::RENAMED`) as files.
+const RENAMED: [(&str, &str); 4] = [
+    (
+        "Old name.md",
+        "---\ntags: [x]\ntitle: \"Old name\"\n---\n- Body ^stable [[Old name]]\n",
+    ),
+    (
+        "Links.md",
+        "- [[Old name]] and [[Old name#Part|alias]] and ![[Old name#^stable]]\r\n- `[[Old name]]` [x](Old%20name.md) [[Keep]]\r\n",
+    ),
+    ("Notes/Plan.md", "- see [[Old name]]\n"),
+    ("Keep.md", "- keep\n"),
+];
+
+#[gpui::test]
+fn renaming_a_folder_page_moves_its_file_rewrites_links_and_keeps_its_tabs(
+    cx: &mut TestAppContext,
+) {
+    let opened = open_folder(&RENAMED, "Notes/Plan.md", cx);
+    let notebook = &opened.notebook;
+    let (old, new) = (
+        page_id_for_path("Old name.md"),
+        page_id_for_path("New name.md"),
+    );
+    wait_until(cx, "Plan's editor", |cx| {
+        read(notebook, cx, |view, _| view.editor.is_some())
+    });
+    draw(notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "i y escape");
+    visit(notebook, Destination::page(&old), cx);
+    notebook
+        .window
+        .update(cx, |view, _, cx| view.toggle_favorite(cx))
+        .unwrap();
+    wait_until(cx, "Old name's editor", |cx| {
+        read(notebook, cx, |view, cx| {
+            view.editor.is_some() && view.page.read(cx).id() == old
+        })
+    });
+    cx.dispatch_action(notebook.window.into(), crate::navigation::RenamePage);
+    rename_to(notebook, "New name", cx);
+    wait_until(cx, "the rename", |cx| {
+        read(notebook, cx, |view, _| view.nav.dialog.is_none())
+    });
+    // The same text the Quire-notebook rename writes, through `quire_core::relocate`.
+    assert_eq!(
+        fs::read_to_string(opened.file("New name.md")).unwrap(),
+        "---\ntags: [x]\ntitle: \"New name\"\n---\n- Body ^stable [[New name]]\n"
+    );
+    assert_eq!(
+        fs::read_to_string(opened.file("Links.md")).unwrap(),
+        "- [[New name]] and [[New name#Part|alias]] and ![[New name#^stable]]\r\n- `[[Old name]]` [x](New%20name.md) [[Keep]]\r\n"
+    );
+    assert_eq!(
+        fs::read_to_string(opened.file("Notes/Plan.md")).unwrap(),
+        "y- see [[New name]]\n"
+    );
+    assert!(!opened.file("Old name.md").exists());
+    let state = notebook.path.parent().unwrap().to_owned();
+    let archived: Vec<String> = fs::read_dir(state.join("retired"))
+        .unwrap()
+        .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+        .collect();
+    assert_eq!(archived, [RENAMED[0].1], "the old file is archived");
+    assert_eq!(fs::read_dir(state.join("transactions")).unwrap().count(), 0);
+
+    wait_until(cx, "the new page to open", |cx| active(notebook, cx) == new);
+    read(notebook, cx, |view, _| {
+        let renamed = Destination::page(&new);
+        assert!(view.nav.workspace.favorites.contains(&renamed));
+        assert!(view.nav.workspace.tabs.contains(&renamed));
+        assert!(!view.nav.workspace.tabs.contains(&Destination::page(&old)));
+    });
+    wait_until(cx, "the page list with the new name", |cx| {
+        read(notebook, cx, |view, _| {
+            view.nav.renamed.is_none()
+                && view.nav.title(&new) == Some("New name")
+                && view.nav.title(&old).is_none()
+        })
+    });
+    wait_until(cx, "the renamed page's editor", |cx| {
+        read(notebook, cx, |view, cx| {
+            view.editor.is_some() && view.page.read(cx).id() == new
+        })
+    });
+    draw(notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "i z escape");
+    cx.simulate_keystrokes(notebook.window.into(), &super::tests::key("s"));
+    wait_until(cx, "the save after renaming", |_| {
+        fs::read_to_string(opened.file("New name.md"))
+            .unwrap()
+            .starts_with('z')
+    });
+    cx.executor().advance_clock(Duration::from_secs(3));
+    cx.run_until_parked();
+    assert!(
+        !opened.file("Old name.md").exists(),
+        "no later save revives the old file"
+    );
+}
+
+#[gpui::test]
+fn renaming_a_folder_page_refuses_taken_names_and_files_created_meanwhile(cx: &mut TestAppContext) {
+    let opened = open_folder(&RENAMED, "Old name.md", cx);
+    let notebook = &opened.notebook;
+    wait_until(cx, "Old name's editor", |cx| {
+        read(notebook, cx, |view, _| view.editor.is_some())
+    });
+    cx.dispatch_action(notebook.window.into(), crate::navigation::RenamePage);
+    rename_to(notebook, "keep", cx);
+    wait_until(cx, "the refusal", |cx| dialog_error(notebook, cx).is_some());
+    assert_eq!(
+        dialog_error(notebook, cx).unwrap(),
+        quire_core::relocate::TAKEN
+    );
+    // A file the index has not seen yet is still never replaced.
+    fs::write(opened.file("fresh.md"), "- someone else's\n").unwrap();
+    rename_to(notebook, "Fresh", cx);
+    wait_until(cx, "the second refusal", |cx| {
+        dialog_error(notebook, cx).is_some_and(|error| error.contains("already exists"))
+    });
+    assert_eq!(
+        fs::read_to_string(opened.file("fresh.md")).unwrap(),
+        "- someone else's\n"
+    );
+    for (path, text) in RENAMED {
+        assert_eq!(fs::read_to_string(opened.file(path)).unwrap(), text);
+    }
+}
+
+#[gpui::test]
+fn a_rename_interrupted_by_a_crash_finishes_on_open_and_says_so(cx: &mut TestAppContext) {
+    let old = "- old [[Old]]\n";
+    let journal = serde_json::json!({
+        "edits": [
+            {
+                "path": "New.md",
+                "text": "- old [[New]]\n",
+                "expectedRevision": null,
+                "historyFrom": "Old.md",
+            },
+            {
+                "path": "Old.md",
+                "text": "",
+                "expectedRevision": quire_store::folder_notebook::revision(old),
+                "remove": true,
+                "retirement": "0123456789abcdef0123456789abcdef",
+            },
+        ],
+        "createdAt": 1,
+    })
+    .to_string();
+    let opened = open_folder_with(
+        &[("Old.md", old), ("Keep.md", "- keep\n")],
+        &[("transactions/interrupted.json", &journal)],
+        "Keep.md",
+        cx,
+    );
+    let notebook = &opened.notebook;
+    notebook
+        .window
+        .update(cx, |view, _, cx| view.load_folder_notices(cx))
+        .unwrap();
+    wait_until(cx, "the notice", |cx| {
+        read(notebook, cx, |view, _| !view.folder.notices.is_empty())
+    });
+    let notices = read(notebook, cx, |view, _| view.folder.notices.clone());
+    assert_eq!(notices.len(), 1);
+    assert!(notices[0].starts_with("Finished an interrupted change"));
+    draw(notebook, cx);
+    assert_eq!(
+        fs::read_to_string(opened.file("New.md")).unwrap(),
+        "- old [[New]]\n"
+    );
+    assert!(!opened.file("Old.md").exists());
+}
+
+#[gpui::test]
+fn reference_drafts_are_offered_for_review_and_settle_only_on_their_base(cx: &mut TestAppContext) {
+    use quire_store::folder_notebook::revision;
+    let opened = open_prepared(
+        &[("A.md", "- a\n"), ("B.md", "- b changed\n")],
+        "A.md",
+        |folder, _| {
+            // The reference app's device database, as `VaultFiles` creates it.
+            let device = folder.join(".quire/devices/6f1c2b3a-0d4e-4f5a-8b9c-0123456789ab");
+            fs::create_dir_all(&device).unwrap();
+            let database =
+                quire_store::database::open_writable(&device.join("durability.sqlite")).unwrap();
+            database
+                .exec("CREATE TABLE pending (path TEXT PRIMARY KEY, text TEXT NOT NULL, expected_revision TEXT, saved_at INTEGER NOT NULL)")
+                .unwrap()()
+            .unwrap();
+            for (path, text, base) in [
+                ("A.md", "- a from rt\n", "- a\n"),
+                ("B.md", "- b from rt\n", "- b\n"),
+            ] {
+                database
+                    .exec_bound("INSERT INTO pending VALUES (?,?,?,?)")
+                    .unwrap()((path, text, revision(base), 5_i64))
+                .unwrap();
+            }
+        },
+        cx,
+    );
+    let notebook = &opened.notebook;
+    notebook
+        .window
+        .update(cx, |view, _, cx| view.load_folder_notices(cx))
+        .unwrap();
+    wait_until(cx, "the recovered drafts", |cx| {
+        read(notebook, cx, |view, _| view.folder.recovered.len() == 2)
+    });
+    let notices = read(notebook, cx, |view, _| view.folder.notices.clone());
+    assert!(
+        notices[0].starts_with("Recovered 2 unsaved drafts from the reference app: A.md, B.md")
+    );
+    draw(notebook, cx);
+
+    // The page shown at open settles its draft: its base is the file's current version.
+    wait_until(cx, "A's draft to be saved", |_| {
+        fs::read_to_string(opened.file("A.md")).unwrap() == "- a from rt\n"
+    });
+    let b = page_id_for_path("B.md");
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.open_page(b.clone(), false, window, cx)
+        })
+        .unwrap();
+    wait_until(cx, "B's conflict", |cx| {
+        read(notebook, cx, |view, cx| {
+            view.page.read(cx).id() == b && view.conflicted(cx).is_some()
+        })
+    });
+    assert_eq!(text(notebook, cx), "- b from rt\n");
+    cx.executor().advance_clock(Duration::from_secs(5));
+    cx.run_until_parked();
+    assert_eq!(
+        fs::read_to_string(opened.file("B.md")).unwrap(),
+        "- b changed\n",
+        "a draft made from another version never overwrites the file"
+    );
+}
+
+/// `.quire/notebook.json` as the reference `writeNotebookSettings` writes it.
+const RT_SETTINGS: &str = "{\n  \"version\": 1,\n  \"daily\": {\n    \"folder\": \"Journal\",\n    \"title\": \"{DD}.{MM}.{YYYY}\"\n  }\n}\n";
+
+fn save_layout(notebook: &Notebook, folder: &str, title: &str, cx: &mut TestAppContext) {
+    let (folder, title) = (folder.to_owned(), title.to_owned());
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.edit_layout(window, cx);
+            let [folder_field, title_field] = view.nav.daily.editing.clone().unwrap();
+            folder_field.update(cx, |editor, cx| editor.set_text(folder, window, cx));
+            title_field.update(cx, |editor, cx| editor.set_text(title, window, cx));
+            view.save_layout(cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn folder_notebooks_use_and_save_the_reference_daily_layout(cx: &mut TestAppContext) {
+    let opened = open_folder(
+        &[("Note.md", "- a\n"), (".quire/notebook.json", RT_SETTINGS)],
+        "Note.md",
+        cx,
+    );
+    let notebook = &opened.notebook;
+    let layout = read(notebook, cx, |view, _| {
+        assert!(view.nav.daily.read_only.is_none());
+        view.nav.daily.layout.clone()
+    });
+    assert_eq!(
+        layout,
+        quire_core::daily::DailyLayout {
+            folder: "Journal".into(),
+            title: "{DD}.{MM}.{YYYY}".into(),
+        }
+    );
+
+    save_layout(notebook, "Daily/{YYYY}", "{YYYY}-{MM}-{DD}", cx);
+    wait_until(cx, "the saved layout", |cx| {
+        read(notebook, cx, |view, _| view.nav.daily.editing.is_none())
+    });
+    let saved = RT_SETTINGS
+        .replace("Journal", "Daily/{YYYY}")
+        .replace("{DD}.{MM}.{YYYY}", "{YYYY}-{MM}-{DD}");
+    assert_eq!(
+        fs::read_to_string(opened.file(".quire/notebook.json")).unwrap(),
+        saved
+    );
+
+    fs::write(opened.file(".quire/notebook.json"), RT_SETTINGS).unwrap();
+    save_layout(notebook, "Elsewhere", "{YYYY}-{MM}-{DD}", cx);
+    wait_until(cx, "the refusal", |cx| {
+        read(notebook, cx, |view, _| view.nav.error.clone())
+            .is_some_and(|error| error.contains("changed in another application"))
+    });
+    assert_eq!(
+        fs::read_to_string(opened.file(".quire/notebook.json")).unwrap(),
+        RT_SETTINGS,
+        "a layout saved elsewhere is never overwritten"
+    );
+}
+
+#[gpui::test]
+fn newer_reference_settings_stay_read_only_and_unchanged(cx: &mut TestAppContext) {
+    let newer = "{\"version\":2,\"daily\":{\"folder\":\"X\"}}";
+    let opened = open_folder(
+        &[("Note.md", "- a\n"), (".quire/notebook.json", newer)],
+        "Note.md",
+        cx,
+    );
+    read(&opened.notebook, cx, |view, _| {
+        assert_eq!(
+            view.nav.daily.layout,
+            quire_core::daily::DailyLayout::default()
+        );
+        assert!(
+            view.nav
+                .daily
+                .read_only
+                .as_ref()
+                .unwrap()
+                .contains("newer Quire")
+        );
+    });
+    save_layout(&opened.notebook, "Daily", "{YYYY}-{MM}-{DD}", cx);
+    assert_eq!(
+        fs::read_to_string(opened.file(".quire/notebook.json")).unwrap(),
+        newer
+    );
 }

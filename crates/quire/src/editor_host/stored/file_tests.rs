@@ -12,7 +12,7 @@ const PAGES: [(&str, &str, &str); 5] = [
     ("pb", "Projects/Deep/B.md", "- deep\n"),
 ];
 
-fn visit(notebook: &Notebook, destination: Destination, cx: &mut TestAppContext) {
+pub(super) fn visit(notebook: &Notebook, destination: Destination, cx: &mut TestAppContext) {
     notebook
         .window
         .update(cx, |view, window, cx| view.visit(destination, window, cx))
@@ -21,7 +21,10 @@ fn visit(notebook: &Notebook, destination: Destination, cx: &mut TestAppContext)
 }
 
 /// The dialog's heading and detail once planning finished.
-fn summary(notebook: &Notebook, cx: &mut TestAppContext) -> (String, String, Vec<String>) {
+pub(super) fn summary(
+    notebook: &Notebook,
+    cx: &mut TestAppContext,
+) -> (String, String, Vec<String>) {
     wait_until(cx, "the deletion summary", |cx| {
         read(notebook, cx, |view, cx| {
             view.nav
@@ -37,7 +40,7 @@ fn summary(notebook: &Notebook, cx: &mut TestAppContext) -> (String, String, Vec
     })
 }
 
-fn dialog_error(notebook: &Notebook, cx: &mut TestAppContext) -> Option<String> {
+pub(super) fn dialog_error(notebook: &Notebook, cx: &mut TestAppContext) -> Option<String> {
     read(notebook, cx, |view, cx| {
         view.nav
             .dialog
@@ -232,7 +235,7 @@ fn stored_text(store: &NotebookStore, page: &str) -> (String, String) {
     (path, text)
 }
 
-fn buffer_text(notebook: &Notebook, page: &str, cx: &mut TestAppContext) -> String {
+pub(super) fn buffer_text(notebook: &Notebook, page: &str, cx: &mut TestAppContext) -> String {
     read(notebook, cx, |view, cx| {
         let open = view.session.borrow().open_pages();
         let open = open.iter().find(|open| open.read(cx).id() == page).unwrap();
@@ -241,7 +244,7 @@ fn buffer_text(notebook: &Notebook, page: &str, cx: &mut TestAppContext) -> Stri
     })
 }
 
-fn rename_to(notebook: &Notebook, name: &str, cx: &mut TestAppContext) {
+pub(super) fn rename_to(notebook: &Notebook, name: &str, cx: &mut TestAppContext) {
     wait_until(cx, "the rename dialog", |cx| {
         read(notebook, cx, |view, _| view.nav.dialog.is_some())
     });
@@ -427,6 +430,7 @@ fn a_rename_is_followed_until_the_page_list_shows_its_new_title(cx: &mut TestApp
         date: None,
     };
     let renamed = crate::file_actions::Renamed {
+        previous: "o".into(),
         page: "o".into(),
         path: "New.md".into(),
         title: "New".into(),

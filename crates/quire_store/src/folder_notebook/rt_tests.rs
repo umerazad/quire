@@ -1,0 +1,736 @@
+//! Compatibility with folders the reference app already uses: its `.quire` settings, drafts,
+//! history, Trash deletion, and journaled renames.
+
+use super::tests::{edit, entries, fixture};
+use super::*;
+use std::{
+    fs,
+    sync::{Arc, Mutex},
+};
+
+/// A stand-in for the system Trash: moves each item into `bin` and records its path relative to
+/// the notebook.
+fn test_trash(root: &Path, bin: &Path) -> (Trash, Arc<Mutex<Vec<String>>>) {
+    let moved = Arc::new(Mutex::new(Vec::new()));
+    let (root, bin, record) = (
+        fs::canonicalize(root).unwrap(),
+        bin.to_owned(),
+        moved.clone(),
+    );
+    let trash: Trash = Arc::new(move |path: &Path| {
+        let relative = fs::canonicalize(path)?
+            .strip_prefix(&root)?
+            .to_string_lossy()
+            .into_owned();
+        let mut moved = record.lock().unwrap();
+        fs::rename(path, bin.join(moved.len().to_string()))?;
+        moved.push(relative);
+        Ok(())
+    });
+    (trash, moved)
+}
+
+fn deletion(path: &str, text: &str) -> Edit {
+    Edit {
+        deleted: true,
+        recovery: None,
+        ..edit(path, text, &[revision(text)])
+    }
+}
+
+/// `.quire/notebook.json` exactly as the reference `writeNotebookSettings` writes it:
+/// `JSON.stringify({ version: 1, daily: layout }, null, 2) + "\n"`.
+const RT_SETTINGS: &str = "{\n  \"version\": 1,\n  \"daily\": {\n    \"folder\": \"Journal\",\n    \"title\": \"{DD}.{MM}.{YYYY}\"\n  }\n}\n";
+
+#[test]
+fn reference_settings_are_read_and_replaced_only_from_the_version_read() {
+    let opened = fixture(&[("Note.md", "- a\n"), (".quire/notebook.json", RT_SETTINGS)]);
+    let settings = opened.notebook.settings().unwrap().unwrap();
+    assert_eq!(settings.text, RT_SETTINGS);
+
+    let newer = RT_SETTINGS.replace("Journal", "Daily");
+    let stale = opened
+        .notebook
+        .save_settings(&newer, Some("not-the-revision"))
+        .unwrap_err();
+    assert!(format!("{stale:#}").contains("changed in another application"));
+    assert_eq!(
+        fs::read_to_string(opened.folder.join(".quire/notebook.json")).unwrap(),
+        RT_SETTINGS
+    );
+
+    let revision = opened
+        .notebook
+        .save_settings(&newer, Some(&settings.revision))
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(opened.folder.join(".quire/notebook.json")).unwrap(),
+        newer
+    );
+    assert_eq!(
+        opened.notebook.settings().unwrap().unwrap().revision,
+        revision
+    );
+    assert_eq!(
+        entries(&opened.folder.join(".quire")),
+        ["notebook.json"],
+        "the temporary file is renamed into place"
+    );
+    assert!(
+        opened
+            .notebook
+            .save_settings("not json", Some(&revision))
+            .is_err()
+    );
+}
+
+#[test]
+fn settings_create_the_metadata_folder_only_when_saved_and_refuse_links() {
+    let opened = fixture(&[("Note.md", "- a\n")]);
+    assert_eq!(opened.notebook.settings().unwrap(), None);
+    assert!(!opened.folder.join(".quire").exists());
+    assert!(
+        opened
+            .notebook
+            .save_settings(RT_SETTINGS, Some("anything"))
+            .is_err(),
+        "a base for a missing file is stale"
+    );
+    opened.notebook.save_settings(RT_SETTINGS, None).unwrap();
+    assert_eq!(
+        fs::read_to_string(opened.folder.join(".quire/notebook.json")).unwrap(),
+        RT_SETTINGS
+    );
+
+    #[cfg(unix)]
+    {
+        let linked = fixture(&[("Note.md", "- a\n")]);
+        let elsewhere = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(elsewhere.path(), linked.folder.join(".quire")).unwrap();
+        assert!(linked.notebook.settings().is_err());
+        assert!(linked.notebook.save_settings(RT_SETTINGS, None).is_err());
+        assert!(entries(elsewhere.path()).is_empty());
+    }
+}
+
+#[test]
+fn deletion_without_a_trash_is_refused_before_touching_files() {
+    let opened = fixture(&[("Old.md", "- old\n")]);
+    let error = opened
+        .notebook
+        .delete_if_heads(&[deletion("Old.md", "- old\n")], None)
+        .unwrap_err();
+    assert_eq!(error.to_string(), NO_TRASH);
+    assert!(opened.folder.join("Old.md").exists());
+}
+
+/// The reference "moves a page to the Trash unless it changed since it was chosen".
+#[test]
+fn a_page_goes_to_the_trash_unless_it_changed_since_it_was_chosen() {
+    let mut opened = fixture(&[("Old.md", "- old\n"), ("Keep.md", "- keep\n")]);
+    let bin = tempfile::tempdir().unwrap();
+    let (trash, moved) = test_trash(&opened.folder, bin.path());
+    opened.notebook.set_trash(trash);
+
+    let stale = Edit {
+        base: vec![revision("- stale\n")],
+        ..deletion("Old.md", "- old\n")
+    };
+    assert!(matches!(
+        opened.notebook.delete_if_heads(&[stale], None).unwrap(),
+        CheckedSaves::HeadsChanged { page, heads }
+            if page == page_id_for_path("Old.md") && heads == [revision("- old\n")]
+    ));
+    assert!(opened.folder.join("Old.md").exists());
+
+    let saved = opened
+        .notebook
+        .delete_if_heads(&[deletion("Old.md", "- old\n")], None)
+        .unwrap();
+    assert!(matches!(saved, CheckedSaves::Saved(acks) if acks.len() == 1));
+    assert_eq!(*moved.lock().unwrap(), ["Old.md"]);
+    assert!(!opened.folder.join("Old.md").exists());
+    assert_eq!(fs::read_to_string(bin.path().join("0")).unwrap(), "- old\n");
+    assert_eq!(
+        opened.notebook.heads(&page_id_for_path("Old.md")).unwrap(),
+        Vec::<String>::new()
+    );
+    assert_eq!(opened.notebook.revisions("Old.md").unwrap().len(), 1);
+    assert!(opened.folder.join("Keep.md").exists());
+}
+
+/// The reference "moves a folder with its files to the Trash, refusing one with an unlisted page".
+#[test]
+fn a_folder_goes_to_the_trash_whole_unless_a_page_appeared_in_it() {
+    let mut opened = fixture(&[("Projects/Plan.md", "- plan\n"), ("Other.md", "- other\n")]);
+    let bin = tempfile::tempdir().unwrap();
+    let (trash, moved) = test_trash(&opened.folder, bin.path());
+    opened.notebook.set_trash(trash);
+    fs::write(opened.folder.join("Projects/photo.png"), "png").unwrap();
+    fs::write(opened.folder.join("Projects/Late.md"), "- late\n").unwrap();
+    assert_eq!(
+        opened.notebook.other_files("Projects"),
+        ["Projects/photo.png"]
+    );
+    let request = [deletion("Projects/Plan.md", "- plan\n")];
+    assert!(matches!(
+        opened
+            .notebook
+            .delete_if_heads(&request, Some("Projects"))
+            .unwrap(),
+        CheckedSaves::Appeared { path } if path == "Projects/Late.md"
+    ));
+    assert!(moved.lock().unwrap().is_empty());
+
+    fs::remove_file(opened.folder.join("Projects/Late.md")).unwrap();
+    let outside = [deletion("Other.md", "- other\n")];
+    assert!(
+        opened
+            .notebook
+            .delete_if_heads(&outside, Some("Projects"))
+            .is_err(),
+        "a page outside the folder is refused"
+    );
+    opened
+        .notebook
+        .delete_if_heads(&request, Some("Projects"))
+        .unwrap();
+    assert_eq!(*moved.lock().unwrap(), ["Projects"]);
+    assert!(!opened.folder.join("Projects").exists());
+    assert_eq!(entries(&bin.path().join("0")), ["Plan.md", "photo.png"]);
+    assert!(opened.folder.join("Other.md").exists());
+}
+
+#[test]
+fn deletion_refuses_unsaved_work_from_another_session_and_never_revives_a_note() {
+    let mut opened = fixture(&[("Note.md", "- disk\n")]);
+    let bin = tempfile::tempdir().unwrap();
+    let (trash, moved) = test_trash(&opened.folder, bin.path());
+    opened.notebook.set_trash(trash);
+    let page = page_id_for_path("Note.md");
+    let draft = Draft {
+        page: page.clone(),
+        path: "Note.md".into(),
+        text: "- crash draft\n".into(),
+        base: vec![revision("- disk\n")],
+        stamp: DraftStamp {
+            session: "crashed".into(),
+            version: 1,
+        },
+        created: 1,
+    };
+    opened.notebook.put_draft(&draft, None).unwrap();
+    let error = opened
+        .notebook
+        .delete_if_heads(&[deletion("Note.md", "- disk\n")], None)
+        .unwrap_err();
+    assert!(error.to_string().contains("unsaved work"));
+    assert!(moved.lock().unwrap().is_empty());
+
+    opened.notebook.discard_draft(&page).unwrap();
+    opened
+        .notebook
+        .put_draft(
+            &Draft {
+                text: "- disk\n".into(),
+                ..draft
+            },
+            None,
+        )
+        .unwrap();
+    opened
+        .notebook
+        .delete_if_heads(&[deletion("Note.md", "- disk\n")], None)
+        .unwrap();
+    assert_eq!(opened.notebook.draft(&page).unwrap(), None);
+    assert!(
+        opened
+            .notebook
+            .checkout(&page, None)
+            .unwrap()
+            .draft
+            .is_none()
+    );
+}
+
+/// Regression: an open page's typing that had not reached its file was refused as another
+/// session's work, or would have been left behind; it now goes to the Trash with the note.
+#[test]
+fn typing_not_yet_saved_goes_to_the_trash_with_the_note() {
+    let mut opened = fixture(&[("Note.md", "- disk\n")]);
+    let bin = tempfile::tempdir().unwrap();
+    let (trash, _) = test_trash(&opened.folder, bin.path());
+    opened.notebook.set_trash(trash);
+    let page = page_id_for_path("Note.md");
+    opened
+        .notebook
+        .put_draft(
+            &Draft {
+                page: page.clone(),
+                path: "Note.md".into(),
+                text: "- typed\n".into(),
+                base: vec![revision("- disk\n")],
+                stamp: DraftStamp {
+                    session: "editor".into(),
+                    version: 3,
+                },
+                created: 1,
+            },
+            None,
+        )
+        .unwrap();
+    let typed = Edit {
+        text: "- typed\n".into(),
+        ..deletion("Note.md", "- disk\n")
+    };
+    opened.notebook.delete_if_heads(&[typed], None).unwrap();
+    assert_eq!(
+        fs::read_to_string(bin.path().join("0")).unwrap(),
+        "- typed\n"
+    );
+    let kept: Vec<String> = opened
+        .notebook
+        .revisions("Note.md")
+        .unwrap()
+        .iter()
+        .map(|revision| {
+            opened
+                .notebook
+                .revision_text("Note.md", revision.id)
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(kept, ["- typed\n", "- disk\n"]);
+    assert_eq!(opened.notebook.draft(&page).unwrap(), None);
+}
+
+const OLD: &str = "---\ntitle: \"Old\"\n---\n- body\n";
+const LINKS: &str = "- see [[Old]]\n";
+const RENAMED: &str = "---\ntitle: \"New\"\n---\n- body\n";
+const RELINKED: &str = "- see [[New]]\n";
+
+/// The writes a rename of `Old.md` to `New.md` plans: the moved page under its old identity at
+/// its new path, then each page whose links follow it.
+fn rename_edits() -> Vec<Edit> {
+    let plain = |path: &str, text: &str, base: &str| Edit {
+        recovery: None,
+        ..edit(path, text, &[revision(base)])
+    };
+    vec![
+        Edit {
+            page: page_id_for_path("Old.md"),
+            ..plain("New.md", RENAMED, OLD)
+        },
+        plain("Links.md", RELINKED, LINKS),
+    ]
+}
+
+fn retired(state: &Path) -> Vec<String> {
+    let folder = state.join("retired");
+    if !folder.exists() {
+        return Vec::new();
+    }
+    entries(&folder)
+        .into_iter()
+        .map(|name| fs::read_to_string(folder.join(name)).unwrap())
+        .collect()
+}
+
+fn journals(state: &Path) -> Vec<String> {
+    let folder = state.join("transactions");
+    if folder.exists() {
+        entries(&folder)
+    } else {
+        Vec::new()
+    }
+}
+
+fn assert_renamed(folder: &Path, state: &Path, notebook: &FolderNotebook) {
+    assert_eq!(fs::read_to_string(folder.join("New.md")).unwrap(), RENAMED);
+    assert_eq!(
+        fs::read_to_string(folder.join("Links.md")).unwrap(),
+        RELINKED
+    );
+    assert!(!folder.join("Old.md").exists());
+    assert_eq!(
+        retired(state),
+        [OLD],
+        "the old file is archived, never lost"
+    );
+    assert!(journals(state).is_empty());
+    let history: Vec<String> = notebook
+        .revisions("New.md")
+        .unwrap()
+        .iter()
+        .map(|revision| notebook.revision_text("New.md", revision.id).unwrap())
+        .collect();
+    assert!(
+        history.contains(&OLD.to_owned()),
+        "the new path keeps the old history"
+    );
+    assert_eq!(
+        notebook.heads(&page_id_for_path("Old.md")).unwrap(),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn a_rename_moves_the_file_and_rewrites_links_through_the_journal() {
+    let opened = fixture(&[
+        ("Old.md", OLD),
+        ("Links.md", LINKS),
+        ("Keep.md", "- keep\n"),
+    ]);
+    let saved = opened.notebook.save_many_if_heads(&rename_edits()).unwrap();
+    let CheckedSaves::Saved(acks) = saved else {
+        panic!("the rename must be saved");
+    };
+    assert_eq!(acks.len(), 2);
+    assert_eq!(acks[0].heads, [revision(RENAMED)]);
+    assert_renamed(&opened.folder, &opened.state, &opened.notebook);
+    assert_eq!(
+        fs::read_to_string(opened.folder.join("Keep.md")).unwrap(),
+        "- keep\n"
+    );
+}
+
+#[test]
+fn a_rename_never_replaces_a_file_whose_name_differs_only_in_case() {
+    for taken in ["new.md", "NEW.MD"] {
+        let opened = fixture(&[("Old.md", OLD), ("Links.md", LINKS), (taken, "- mine\n")]);
+        let error = opened
+            .notebook
+            .save_many_if_heads(&rename_edits())
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("already exists"), "{error:#}");
+        assert_eq!(
+            fs::read_to_string(opened.folder.join(taken)).unwrap(),
+            "- mine\n"
+        );
+        assert_eq!(
+            fs::read_to_string(opened.folder.join("Old.md")).unwrap(),
+            OLD
+        );
+        assert_eq!(
+            fs::read_to_string(opened.folder.join("Links.md")).unwrap(),
+            LINKS
+        );
+        assert!(journals(&opened.state).is_empty());
+    }
+}
+
+#[test]
+fn an_interrupted_rename_finishes_on_the_next_open_from_every_step() {
+    // Steps: 0 create New.md, 1 rewrite Links.md, 2 archive Old.md.
+    for step in 0..3 {
+        let opened = fixture(&[("Old.md", OLD), ("Links.md", LINKS)]);
+        opened.notebook.interrupt_at.set(Some(step));
+        let error = opened
+            .notebook
+            .save_many_if_heads(&rename_edits())
+            .unwrap_err();
+        assert!(error.to_string().contains("Injected interruption"));
+        assert_eq!(journals(&opened.state).len(), 1, "step {step}");
+        assert!(opened.folder.join("Old.md").exists(), "step {step}");
+
+        let reopened = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+        assert_eq!(reopened.notices().len(), 1);
+        assert!(
+            reopened.notices()[0].starts_with("Finished an interrupted change"),
+            "step {step}: {:?}",
+            reopened.notices()
+        );
+        assert_renamed(&opened.folder, &opened.state, &reopened);
+        let again = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+        assert!(
+            again.notices().is_empty(),
+            "a finished journal is not replayed"
+        );
+    }
+}
+
+#[test]
+fn an_interrupted_rename_never_overwrites_a_note_changed_before_recovery() {
+    let opened = fixture(&[("Old.md", OLD), ("Links.md", LINKS)]);
+    opened.notebook.interrupt_at.set(Some(1));
+    opened
+        .notebook
+        .save_many_if_heads(&rename_edits())
+        .unwrap_err();
+    fs::write(opened.folder.join("Links.md"), "- edited elsewhere\n").unwrap();
+
+    let reopened = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    let notices = reopened.notices();
+    assert_eq!(notices.len(), 1);
+    assert!(notices[0].contains("needs review"), "{notices:?}");
+    assert!(notices[0].contains("Links.md"), "{notices:?}");
+    assert_eq!(
+        fs::read_to_string(opened.folder.join("Links.md")).unwrap(),
+        "- edited elsewhere\n"
+    );
+    assert_eq!(
+        fs::read_to_string(opened.folder.join("Old.md")).unwrap(),
+        OLD
+    );
+    assert_eq!(
+        fs::read_to_string(opened.folder.join("New.md")).unwrap(),
+        RENAMED
+    );
+    assert_eq!(
+        journals(&opened.state).len(),
+        1,
+        "the journal stays for review"
+    );
+}
+
+const DEVICE: &str = "6f1c2b3a-0d4e-4f5a-8b9c-0123456789ab";
+
+/// A reference device database as `VaultFiles` creates it (vault.ts and history-store.ts), kept
+/// open in WAL mode like a running reference app, so recent rows sit in its write-ahead log.
+struct ReferenceDevice {
+    connection: Connection,
+}
+
+impl ReferenceDevice {
+    fn create(root: &Path) -> Self {
+        let folder = root.join(".quire/devices").join(DEVICE);
+        fs::create_dir_all(&folder).unwrap();
+        let connection = crate::database::open_writable(&folder.join("durability.sqlite")).unwrap();
+        for sql in [
+            "CREATE TABLE IF NOT EXISTS pending (path TEXT PRIMARY KEY, text TEXT NOT NULL, expected_revision TEXT, saved_at INTEGER NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS imported_records (fingerprint TEXT PRIMARY KEY)",
+            "CREATE TABLE IF NOT EXISTS foreign_drafts (fingerprint TEXT PRIMARY KEY, device TEXT NOT NULL, path TEXT NOT NULL, text TEXT NOT NULL, expected_revision TEXT, saved_at INTEGER NOT NULL, recovered_path TEXT NOT NULL, recovered_text TEXT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS contents (hash TEXT PRIMARY KEY, codec TEXT NOT NULL, data BLOB NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS history (id INTEGER PRIMARY KEY, path TEXT NOT NULL, content TEXT NOT NULL, revision TEXT NOT NULL, saved_at INTEGER NOT NULL)",
+        ] {
+            connection.exec(sql).unwrap()().unwrap();
+        }
+        Self { connection }
+    }
+
+    fn pending(&self, path: &str, text: &str, expected: Option<&str>, saved_at: i64) {
+        self.connection
+            .exec_bound("INSERT OR REPLACE INTO pending(path,text,expected_revision,saved_at) VALUES (?,?,?,?)")
+            .unwrap()((path, text, expected.map(revision), saved_at))
+        .unwrap();
+    }
+
+    fn history(&self, path: &str, text: &str, codec: &str, saved_at: i64) {
+        let data = match codec {
+            "zstd" => zstd::stream::encode_all(text.as_bytes(), 0).unwrap(),
+            _ => text.as_bytes().to_vec(),
+        };
+        let hash = crate::sync::format::sha256(text);
+        self.connection
+            .exec_bound("INSERT OR IGNORE INTO contents(hash,codec,data) VALUES (?,?,?)")
+            .unwrap()((hash.as_str(), codec, data))
+        .unwrap();
+        self.connection
+            .exec_bound("INSERT INTO history(path,content,revision,saved_at) VALUES (?,?,?,?)")
+            .unwrap()((path, hash.as_str(), revision(text).as_str(), saved_at))
+        .unwrap();
+    }
+}
+
+/// Every file below `folder` with its bytes, to show nothing there changed.
+fn snapshot(folder: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut found = Vec::new();
+    let mut pending = vec![folder.to_owned()];
+    while let Some(next) = pending.pop() {
+        for entry in fs::read_dir(&next).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                found.push((path.clone(), fs::read(&path).unwrap()));
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+fn draft_text(notebook: &FolderNotebook, path: &str) -> Option<(String, Vec<String>)> {
+    notebook
+        .draft(&page_id_for_path(path))
+        .unwrap()
+        .map(|draft| (draft.text, draft.base))
+}
+
+#[test]
+fn reference_drafts_and_history_become_recoverable_without_touching_the_notebook() {
+    let opened = fixture(&[
+        ("A.md", "- a\n"),
+        ("B.md", "- b changed elsewhere\n"),
+        ("D.md", "- d saved\n"),
+        ("E.md", "---\ntitle: \"Eve\"\n---\n- e ^keep\n"),
+        ("G.md", "- g now\n"),
+    ]);
+    let quire_draft = Draft {
+        page: page_id_for_path("E.md"),
+        path: "E.md".into(),
+        text: "- typed in Quire\n".into(),
+        base: vec![revision("---\ntitle: \"Eve\"\n---\n- e ^keep\n")],
+        stamp: DraftStamp {
+            session: "editor".into(),
+            version: 1,
+        },
+        created: 1,
+    };
+    opened.notebook.put_draft(&quire_draft, None).unwrap();
+
+    let device = ReferenceDevice::create(&opened.folder);
+    device.pending("A.md", "- a typed in rt\n", Some("- a\n"), 10);
+    device.pending("B.md", "- b typed in rt\n", Some("- b\n"), 11);
+    device.pending("C.md", "- c never saved\n", None, 12);
+    device.pending("D.md", "- d saved\n", Some("- d\n"), 13);
+    device.pending(
+        "E.md",
+        "---\ntitle: \"Eve\"\n---\n- e typed in rt ^keep\n",
+        Some("---\ntitle: \"Eve\"\n---\n- e ^keep\n"),
+        14,
+    );
+    device.history("G.md", "- g first\n", "raw", 1_000);
+    device.history(
+        "G.md",
+        &"- g second, long enough to compress\n".repeat(20),
+        "zstd",
+        90_000_000,
+    );
+    let recovery = opened
+        .folder
+        .join(".quire/devices")
+        .join(DEVICE)
+        .join("recovery");
+    fs::create_dir_all(&recovery).unwrap();
+    fs::write(
+        recovery.join("legacy.json"),
+        serde_json::json!({
+            "path": "F.md",
+            "text": "- f from an older reference app\n",
+            "expectedRevision": null,
+            "savedAt": 9,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let before = snapshot(&opened.folder);
+
+    let reopened = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    assert_eq!(
+        snapshot(&opened.folder),
+        before,
+        "the notebook folder is unchanged"
+    );
+
+    let recovered: Vec<String> = reopened
+        .recovered_drafts()
+        .into_iter()
+        .map(|draft| draft.path)
+        .collect();
+    let copy = recovered
+        .iter()
+        .find(|path| path.starts_with("Recovered drafts/Draft 6f1c2b3a "))
+        .cloned()
+        .expect("a page with other unsaved work gets a separate recovered note");
+    assert_eq!(recovered, ["A.md", "B.md", "C.md", &copy, "F.md"]);
+    let notices = reopened.notices();
+    assert!(
+        notices[0]
+            .starts_with("Recovered 5 unsaved drafts from the reference app: A.md, B.md, C.md"),
+        "{notices:?}"
+    );
+
+    // The current file is the draft's base, so it settles when the page opens.
+    assert_eq!(
+        draft_text(&reopened, "A.md"),
+        Some(("- a typed in rt\n".into(), vec![revision("- a\n")]))
+    );
+    // The file moved on since the draft's base, so the page opens in conflict.
+    let b = reopened.checkout(&page_id_for_path("B.md"), None).unwrap();
+    assert_eq!(b.draft.unwrap().base, [revision("- b\n")]);
+    assert_eq!(b.heads, [revision("- b changed elsewhere\n")]);
+    assert_eq!(
+        draft_text(&reopened, "C.md"),
+        Some(("- c never saved\n".into(), vec![]))
+    );
+    assert_eq!(draft_text(&reopened, "D.md"), None, "already saved");
+    assert_eq!(
+        draft_text(&reopened, "E.md").unwrap().0,
+        "- typed in Quire\n",
+        "Quire's own unsaved work is never replaced"
+    );
+    let (copied, base) = draft_text(&reopened, &copy).unwrap();
+    assert!(base.is_empty());
+    assert!(
+        copied.starts_with("---\nrecovered-source-title-"),
+        "{copied}"
+    );
+    assert!(copied.contains("title: \"Recovered draft: Eve\"\n---\n\n- e typed in rt ^b-"));
+    assert!(!copied.contains("^keep"), "block IDs are fresh");
+    assert_eq!(
+        draft_text(&reopened, "F.md").unwrap().0,
+        "- f from an older reference app\n"
+    );
+    let history: Vec<(String, i64)> = reopened
+        .revisions("G.md")
+        .unwrap()
+        .into_iter()
+        .map(|kept| {
+            (
+                reopened.revision_text("G.md", kept.id).unwrap(),
+                kept.saved_at,
+            )
+        })
+        .collect();
+    assert_eq!(
+        history,
+        [
+            (
+                "- g second, long enough to compress\n".repeat(20),
+                90_000_000
+            ),
+            ("- g first\n".into(), 1_000),
+        ]
+    );
+
+    let again = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    assert!(
+        again.recovered_drafts().is_empty(),
+        "each record is imported once"
+    );
+    assert!(again.notices().is_empty());
+    assert_eq!(snapshot(&opened.folder), before);
+
+    // A newer draft from the same computer replaces the unedited import instead of piling up.
+    device.pending("A.md", "- a typed more in rt\n", Some("- a\n"), 20);
+    let later = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    assert_eq!(
+        later
+            .recovered_drafts()
+            .into_iter()
+            .map(|draft| draft.path)
+            .collect::<Vec<_>>(),
+        ["A.md"]
+    );
+    assert_eq!(
+        draft_text(&later, "A.md").unwrap().0,
+        "- a typed more in rt\n"
+    );
+}
+
+#[test]
+fn unreadable_reference_data_is_reported_and_left_alone() {
+    let opened = fixture(&[("A.md", "- a\n")]);
+    let folder = opened.folder.join(".quire/devices").join(DEVICE);
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join("durability.sqlite"), "not a database").unwrap();
+    let before = snapshot(&opened.folder);
+    let reopened = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    let notices = reopened.notices();
+    assert_eq!(notices.len(), 1);
+    assert!(notices[0].contains("could not be read"), "{notices:?}");
+    assert!(notices[0].contains("reopen the notebook to retry"));
+    assert_eq!(snapshot(&opened.folder), before);
+    assert!(reopened.recovered_drafts().is_empty());
+}

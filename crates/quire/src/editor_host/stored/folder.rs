@@ -5,11 +5,12 @@
 use super::*;
 use crate::navigation::create_page_with;
 use ::fs::Fs as _;
+use anyhow::Context as _;
 use futures::StreamExt as _;
 use gpui::{SharedString, Task};
 use quire_core::markdown::{copy_with_new_ids, page_name, page_title, safe_page_path};
 use quire_store::{
-    folder_notebook::{is_markdown, list, validate},
+    folder_notebook::{RecoveredDraft, Trash, is_markdown, list, validate},
     sync::format::{page_id_for_path, sha256},
 };
 use std::{
@@ -19,6 +20,8 @@ use std::{
 
 /// Coalesces bursts of file events, such as an editor's save, into one reread.
 const WATCH_LATENCY: Duration = Duration::from_millis(100);
+/// Recovered pages the notice offers to open.
+const LISTED_RECOVERED: usize = 10;
 /// Lines of the disk version the comparison shows.
 const COMPARED_LINES: usize = 400;
 
@@ -73,7 +76,8 @@ impl FolderOptions {
             })?,
         };
         let state = state_folder(&root);
-        let mut session = NotebookSession::open_folder(root.clone(), state.clone())?;
+        let mut session =
+            NotebookSession::open_folder(root.clone(), state.clone(), Some(system_trash(cx)))?;
         let page = session.open_page(page_id_for_path(&page), cx);
         let options = gpui::WindowOptions {
             window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
@@ -96,6 +100,7 @@ impl FolderOptions {
                     cx,
                 );
                 this.watch_folder(cx);
+                this.load_folder_notices(cx);
                 this
             })
         })
@@ -111,6 +116,26 @@ pub(super) fn state_folder(root: &Path) -> PathBuf {
     paths::data_dir()
         .join("folder-notebooks")
         .join(&sha256(root.to_string_lossy().as_bytes())[..16])
+}
+
+/// Moves deleted notes and folders to the system Trash through Zed's file system, where the user
+/// can restore them.
+fn system_trash(cx: &App) -> Trash {
+    let fs = ::fs::RealFs::new(None, cx.background_executor().clone());
+    std::sync::Arc::new(move |path: &Path| {
+        let options = ::fs::RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: false,
+        };
+        futures::executor::block_on(fs.trash(path, options))
+            .map(drop)
+            .with_context(|| {
+                format!(
+                    "Cannot move {} to the Trash. Nothing else was deleted; delete it in Finder or Explorer.",
+                    path.display()
+                )
+            })
+    })
 }
 
 /// Notebook-relative note paths for a batch of watcher events, or None when the batch needs a
@@ -153,6 +178,10 @@ pub(super) struct FolderView {
     comparing: bool,
     copying: Option<Task<()>>,
     error: Option<SharedString>,
+    /// What opening the folder found and did, such as finishing an interrupted rename.
+    pub(super) notices: Vec<SharedString>,
+    /// Pages that gained a recovery draft from the reference app's records, to open for review.
+    pub(super) recovered: Vec<RecoveredDraft>,
 }
 
 impl StoredWindow {
@@ -330,6 +359,76 @@ impl StoredWindow {
         cx.notify();
     }
 
+    /// Shows what opening the folder found and did, such as an interrupted rename finished.
+    pub(super) fn load_folder_notices(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(folder) = self.session.borrow().storage().folder().cloned() else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let notices = crate::query_index::ask(folder.notices()).await;
+            let recovered = crate::query_index::ask(folder.recovered_drafts()).await;
+            this.update(cx, |this, cx| {
+                match notices.and_then(|notices| Ok((notices, recovered?))) {
+                    Ok((notices, recovered)) => {
+                        this.folder
+                            .notices
+                            .extend(notices.into_iter().map(SharedString::from));
+                        this.folder.recovered = recovered;
+                    }
+                    Err(error) => this.folder.error = Some(error.into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn render_folder_notices(
+        &self,
+        error: Option<SharedString>,
+        cx: &mut gpui::Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        if error.is_none() && self.folder.notices.is_empty() {
+            return None;
+        }
+        let open = self
+            .folder
+            .recovered
+            .iter()
+            .take(LISTED_RECOVERED)
+            .enumerate()
+            .map(|(index, draft)| {
+                let page = draft.page.clone();
+                Button::new(("open-recovered", index), format!("Open {}", draft.path)).on_click(
+                    cx.listener(move |this, _, window, cx| {
+                        this.open_page(page.clone(), false, window, cx)
+                    }),
+                )
+            })
+            .collect::<Vec<_>>();
+        Some(
+            gpui::div()
+                .p_2()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .when_some(error, |div, error| div.child(Label::new(error)))
+                .children(self.folder.notices.iter().cloned().map(Label::new))
+                .child(gpui::div().flex().flex_wrap().gap_2().children(open))
+                .when(!self.folder.notices.is_empty(), |div| {
+                    div.child(Button::new("dismiss-folder-notices", "Dismiss").on_click(
+                        cx.listener(|this, _, _, cx| {
+                            this.folder.notices.clear();
+                            this.folder.recovered.clear();
+                            cx.notify();
+                        }),
+                    ))
+                })
+                .into_any_element(),
+        )
+    }
+
     /// The banner shown while the active page's edits conflict with its file.
     pub(super) fn render_folder_conflict(
         &mut self,
@@ -338,7 +437,7 @@ impl StoredWindow {
         let persistence = self.conflicted(cx);
         let error = self.folder.error.clone();
         if persistence.is_none() {
-            return error.map(|error| gpui::div().p_2().child(error).into_any_element());
+            return self.render_folder_notices(error, cx);
         }
         let persistence = persistence?;
         let conflict = persistence.read(cx).conflict()?.clone();

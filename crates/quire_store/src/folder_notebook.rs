@@ -9,13 +9,19 @@
 //! replaced text in history, and rename. Recovery and history live in a state folder outside the
 //! notebook, so opening a folder never changes it.
 
+mod deletion;
 mod files;
 mod history;
+mod journal;
+mod reference;
+mod settings;
 
+pub use deletion::{NO_TRASH, Trash};
 pub use files::{
     DiskDocument, ListedFile, Listing, MAX_NOTE_BYTES, is_markdown, list, read, revision, validate,
 };
 pub use history::FolderRevision;
+pub use reference::RecoveredDraft;
 
 use crate::{
     database,
@@ -88,7 +94,17 @@ pub struct FolderNotebook {
     /// purposes never update it, so a change they see is still reported.
     reported: RefCell<HashMap<String, String>>,
     warnings: RefCell<Vec<String>>,
+    /// What opening found and did, such as finishing an interrupted rename, for the user to read.
+    notices: RefCell<Vec<String>>,
+    /// Pages that gained a recovery draft from the reference app's records on opening.
+    recovered: RefCell<Vec<RecoveredDraft>>,
+    /// Quire's state folder for this notebook.
+    state: PathBuf,
     clock: Box<dyn Fn() -> i64>,
+    /// Where deletions go; None refuses them.
+    trash: Option<Trash>,
+    #[cfg(test)]
+    interrupt_at: std::cell::Cell<Option<usize>>,
 }
 
 fn system_clock() -> i64 {
@@ -145,6 +161,7 @@ impl FolderNotebook {
             ]
             .iter()
             .chain(history::TABLES)
+            .chain(reference::TABLES)
             {
                 connection.exec(table)?()?;
             }
@@ -176,8 +193,20 @@ impl FolderNotebook {
             known: RefCell::default(),
             reported: RefCell::default(),
             warnings: RefCell::default(),
+            notices: RefCell::default(),
+            recovered: RefCell::default(),
+            state: state.to_owned(),
             clock,
+            trash: None,
+            #[cfg(test)]
+            interrupt_at: std::cell::Cell::default(),
         };
+        notebook.listing();
+        let mut notices = notebook.resume();
+        let (recovered, imported) = notebook.import_reference();
+        notices.extend(imported);
+        *notebook.notices.borrow_mut() = notices;
+        *notebook.recovered.borrow_mut() = recovered;
         notebook.listing();
         Ok(notebook)
     }
@@ -210,6 +239,16 @@ impl FolderNotebook {
 
     pub fn warnings(&self) -> Vec<String> {
         self.warnings.borrow().clone()
+    }
+
+    /// What opening found and did, such as finishing an interrupted rename.
+    pub fn notices(&self) -> Vec<String> {
+        self.notices.borrow().clone()
+    }
+
+    /// Pages that gained a recovery draft from the reference app's records on opening.
+    pub fn recovered_drafts(&self) -> Vec<RecoveredDraft> {
+        self.recovered.borrow().clone()
     }
 
     /// The path a page lives at, when the notebook has one.
@@ -398,7 +437,7 @@ impl FolderNotebook {
     fn save_with(&self, edit: &Edit, before_publish: &dyn Fn() -> Result<()>) -> Result<SaveAck> {
         ensure!(
             !edit.deleted,
-            "Deleting notes is not available in folder notebooks yet. Delete the file in Finder or Explorer; Quire follows the change."
+            "A save cannot delete a note. Use Delete, which moves the note to the system Trash."
         );
         ensure!(
             edit.base.len() <= 1,
@@ -521,33 +560,6 @@ impl FolderNotebook {
         }
     }
 
-    /// Saves every edit when each page's file still holds its edit's base, or reports the first
-    /// page that changed and writes nothing. Each file is replaced atomically; a crash part way
-    /// leaves some notes saved and the rest unchanged, never a partial note.
-    pub fn save_many_if_heads(&self, edits: &[Edit]) -> Result<CheckedSaves> {
-        let mut pages: Vec<&str> = edits.iter().map(|edit| edit.page.as_str()).collect();
-        pages.sort_unstable();
-        ensure!(
-            pages.windows(2).all(|pair| pair[0] != pair[1]),
-            "A change across pages must name each page once. Retry the change."
-        );
-        for edit in edits {
-            let heads = self.heads(&edit.page)?;
-            if heads != edit.base {
-                return Ok(CheckedSaves::HeadsChanged {
-                    page: edit.page.clone(),
-                    heads,
-                });
-            }
-            self.preflight(edit)?;
-        }
-        edits
-            .iter()
-            .map(|edit| self.save(edit))
-            .collect::<Result<_>>()
-            .map(CheckedSaves::Saved)
-    }
-
     /// Rereads `paths` and reports each note whose contents differ from what was last read or
     /// written here, including notes that disappeared. Paths outside the notebook's Markdown
     /// files are ignored.
@@ -600,6 +612,16 @@ impl FolderNotebook {
         self.refresh(&tracked)
     }
 
+    /// The reference app's notebook settings, `.quire/notebook.json`, with its revision.
+    pub fn settings(&self) -> Result<Option<DiskDocument>> {
+        settings::read(&self.root)
+    }
+
+    /// Replaces `.quire/notebook.json` when it still has revision `base`. Returns the new revision.
+    pub fn save_settings(&self, text: &str, base: Option<&str>) -> Result<String> {
+        settings::write(&self.root, text, base)
+    }
+
     /// Saved versions of `path`, newest first.
     pub fn revisions(&self, path: &str) -> Result<Vec<FolderRevision>> {
         history::list(&self.connection, path)
@@ -617,9 +639,17 @@ pub type FolderWorker = Worker<FolderNotebook>;
 
 impl Worker<FolderNotebook> {
     /// Starts the folder adapter on its own thread, without touching the disk on the caller's.
-    pub fn spawn_folder(root: PathBuf, state: PathBuf, limits: QueueLimits) -> Result<Self> {
+    /// Deletions go to `trash`, or are refused without one.
+    pub fn spawn_folder(
+        root: PathBuf,
+        state: PathBuf,
+        trash: Option<Trash>,
+        limits: QueueLimits,
+    ) -> Result<Self> {
         Self::spawn_with("quire-folder", limits, move || {
-            FolderNotebook::open(&root, &state)
+            let mut notebook = FolderNotebook::open(&root, &state)?;
+            notebook.trash = trash;
+            Ok(notebook)
         })
         .context("Cannot start the folder notebook worker. Keep the buffer and retry after freeing process resources.")
     }
@@ -668,6 +698,21 @@ impl Client<FolderNotebook> {
         let bytes = edits.iter().map(edit_bytes).sum();
         self.request(bytes, move |notebook| notebook.save_many_if_heads(&edits))
     }
+    pub fn delete_if_heads(
+        &self,
+        edits: Vec<Edit>,
+        folder: Option<String>,
+    ) -> Answer<CheckedSaves> {
+        let bytes = edits.iter().map(edit_bytes).sum();
+        self.request(bytes, move |notebook| {
+            notebook.delete_if_heads(&edits, folder.as_deref())
+        })
+    }
+    pub fn other_files(&self, folder: String) -> Answer<Vec<String>> {
+        self.request(128 + folder.len(), move |notebook| {
+            Ok(notebook.other_files(&folder))
+        })
+    }
     pub fn refresh(&self, paths: Vec<String>) -> Answer<Vec<FolderChange>> {
         let bytes = paths.iter().map(String::len).sum::<usize>() + 128;
         self.request(bytes, move |notebook| notebook.refresh(&paths))
@@ -675,8 +720,22 @@ impl Client<FolderNotebook> {
     pub fn rescan(&self) -> Answer<Vec<FolderChange>> {
         self.request(128, FolderNotebook::rescan)
     }
+    pub fn recovered_drafts(&self) -> Answer<Vec<RecoveredDraft>> {
+        self.request(128, |notebook| Ok(notebook.recovered_drafts()))
+    }
+    pub fn notices(&self) -> Answer<Vec<String>> {
+        self.request(128, |notebook| Ok(notebook.notices()))
+    }
     pub fn listing(&self) -> Answer<Listing> {
         self.request(128, |notebook| Ok(notebook.listing()))
+    }
+    pub fn settings(&self) -> Answer<Option<DiskDocument>> {
+        self.request(128, FolderNotebook::settings)
+    }
+    pub fn save_settings(&self, text: String, base: Option<String>) -> Answer<String> {
+        self.request(128 + text.len(), move |notebook| {
+            notebook.save_settings(&text, base.as_deref())
+        })
     }
     pub fn revisions(&self, path: String) -> Answer<Vec<FolderRevision>> {
         self.request(128 + path.len(), move |notebook| notebook.revisions(&path))
@@ -688,5 +747,7 @@ impl Client<FolderNotebook> {
     }
 }
 
+#[cfg(test)]
+mod rt_tests;
 #[cfg(test)]
 mod tests;
