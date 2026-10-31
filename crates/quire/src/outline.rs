@@ -5,7 +5,9 @@
 
 use crate::markdown_blocks::Block;
 use editor::{Editor, FoldPlaceholder, SelectionEffects, display_map::Crease};
-use gpui::{Action, App, Context, Entity, Global, KeyBinding, SharedString, Window, actions};
+use gpui::{
+    Action, App, Context, Entity, Focusable as _, Global, KeyBinding, SharedString, Window, actions,
+};
 use multi_buffer::{MultiBuffer, MultiBufferOffset, ToOffset, ViewEditIntent};
 use std::{any::TypeId, ops::Range};
 
@@ -234,7 +236,8 @@ fn bind_keys(cx: &mut App) {
 }
 
 /// Registers a Write view command on an editor. A command returning `None` propagates, so the
-/// next binding for its key runs.
+/// next binding for its key runs. Commands an embedded editor declines bubble to its host, which
+/// leaves them alone so they never edit the page around the embed.
 fn register<A: Action>(
     editor: &mut Editor,
     cx: &mut Context<Editor>,
@@ -246,6 +249,9 @@ fn register<A: Action>(
             let Some(editor) = handle.upgrade() else {
                 return cx.propagate();
             };
+            if !editor.focus_handle(cx).is_focused(window) {
+                return cx.propagate();
+            }
             let handled = editor.update(cx, |editor, cx| run(editor, action, window, cx));
             match handled {
                 None => cx.propagate(),

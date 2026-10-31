@@ -15,6 +15,7 @@ use ui::{
 
 /// How many past names one pick shows.
 const SHOWN: usize = 50;
+const PICK_HINT: &str = "↑↓ choose · Enter insert · Esc cancel";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Prompt {
@@ -80,6 +81,11 @@ impl TemplatePrompt {
             }
             (Row::Name { .. }, Prompt::Ask { .. }) => String::new(),
         }
+    }
+
+    /// The keys a pick takes, shown below its list as rt's pick dialog does.
+    pub fn hint(&self) -> Option<&'static str> {
+        matches!(self.prompt, Prompt::Pick { .. }).then_some(PICK_HINT)
     }
 
     fn label(&self) -> &str {
@@ -188,6 +194,18 @@ impl PickerDelegate for TemplatePrompt {
 
     fn dismissed(&mut self, _: &mut Window, _: &mut Context<Picker<Self>>) {
         self.finish(None);
+    }
+
+    fn render_footer(&self, _: &mut Window, _: &mut Context<Picker<Self>>) -> Option<AnyElement> {
+        let hint = self.hint()?;
+        Some(
+            h_flex()
+                .debug_selector(|| "quire-template-prompt-hint".into())
+                .px_3()
+                .py_1()
+                .child(Label::new(hint).size(LabelSize::Small).color(Color::Muted))
+                .into_any_element(),
+        )
     }
 
     fn render_match(
@@ -302,6 +320,7 @@ mod tests {
         assert_eq!(texts(&prompt), ["Team Sync · 4 times · 2026-10-29"]);
         prompt.filter("Board prep");
         assert_eq!(texts(&prompt), ["Create “Board prep”"]);
+        assert_eq!(prompt.hint(), Some("↑↓ choose · Enter insert · Esc cancel"));
     }
 
     #[test]
@@ -316,5 +335,6 @@ mod tests {
         assert_eq!(texts(&prompt), ["Insert an empty answer"]);
         prompt.filter("Ana");
         assert_eq!(texts(&prompt), ["Insert “Ana”"]);
+        assert_eq!(prompt.hint(), None, "rt shows the key hint on picks only");
     }
 }

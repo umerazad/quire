@@ -9,6 +9,7 @@ use super::links_tests::set_vim;
 use super::tests::{Notebook, draw, key, open_notebook, read, wait_until};
 use gpui::TestAppContext;
 use multi_buffer::ToOffset as _;
+use picker::PickerDelegate as _;
 use quire_core::templates::{CANCELLED, CHANGED};
 
 /// 2026-10-30T12:00:00Z, a Friday.
@@ -108,7 +109,11 @@ fn notice(cx: &mut TestAppContext) -> Option<String> {
 
 /// Opens Alpha on the test clock in UTC, focused, with Vim on or off.
 fn open(alpha: &'static str, vim: bool, cx: &mut TestAppContext) -> Notebook {
-    let notebook = open_notebook(&pages(alpha), "w", cx);
+    open_pages(&pages(alpha), vim, cx)
+}
+
+fn open_pages(pages: &[(&str, &str, &str)], vim: bool, cx: &mut TestAppContext) -> Notebook {
+    let notebook = open_notebook(pages, "w", cx);
     set_vim(vim, cx);
     wait_until(cx, "the page editor", |cx| {
         read(&notebook, cx, |view, _| view.editor.is_some())
@@ -333,5 +338,102 @@ fn jj_offers_nothing_in_code_and_refuses_a_block_with_children(cx: &mut TestAppC
     assert_eq!(
         text_and_caret(&notebook, cx).0,
         "```\njj\n```\n- jjparent\n  - child\n"
+    );
+}
+
+#[gpui::test]
+fn a_pick_for_a_tag_never_used_asks_to_name_it_and_shows_the_key_hint(cx: &mut TestAppContext) {
+    let notebook = open_pages(
+        &[
+            ("w", "Alpha.md", "- \n"),
+            (
+                "t",
+                "Templates.md",
+                "- Fresh\n  - [[{pick: #fresh}]] #fresh\n",
+            ),
+        ],
+        true,
+        cx,
+    );
+    cx.simulate_keystrokes(notebook.window.into(), "A j j f r");
+    wait_for_menu(&notebook, &["Fresh"], cx);
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    assert!(wait_for_prompt(&notebook, cx).is_empty());
+    let placeholder = notebook
+        .window
+        .update(cx, |view, window, cx| {
+            let picker = view.nav.template_prompt.clone().unwrap();
+            picker.update(cx, |picker, cx| {
+                picker.delegate.placeholder_text(window, cx)
+            })
+        })
+        .unwrap();
+    assert_eq!(&*placeholder, "Name this fresh");
+    assert!(
+        gpui::VisualTestContext::from_window(notebook.window.into(), cx)
+            .debug_bounds("quire-template-prompt-hint")
+            .is_some(),
+        "the pick shows its key hint"
+    );
+    cx.simulate_input(notebook.window.into(), "Ann");
+    cx.run_until_parked();
+    assert_eq!(prompt_rows(&notebook, cx).unwrap(), ["Create “Ann”"]);
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_for_text(&notebook, "- [[Ann]] #fresh\n", cx);
+}
+
+#[gpui::test]
+fn jj_inside_an_embedded_block_inserts_into_the_source_page(cx: &mut TestAppContext) {
+    let mut listed = pages("- {{embed: ((spot))}}\n");
+    listed.push(("x", "Spot.md", "- holder ^spot\n  - child\n"));
+    let notebook = open_pages(&listed, true, cx);
+    cx.simulate_window_resize(
+        notebook.window.into(),
+        gpui::size(gpui::px(1600.), gpui::px(1200.)),
+    );
+    cx.simulate_keystrokes(notebook.window.into(), &key("shift-m"));
+    let host = source(&notebook, cx);
+    let mut nested = Vec::new();
+    wait_until(cx, "the embedded block", |cx| {
+        draw(&notebook, cx);
+        nested = cx.update(|cx| crate::embeds::nested_editors(host.read(cx)));
+        nested.len() == 1
+    });
+    let excerpt = nested.remove(0);
+    notebook
+        .window
+        .update(cx, |_, window, cx| {
+            window.focus(&excerpt.focus_handle(cx), cx)
+        })
+        .unwrap();
+    draw(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "j shift-a enter j j m y");
+    wait_until(cx, "the template menu in the embed", |cx| {
+        cx.update(|cx| excerpt.read(cx).has_visible_completions_menu())
+    });
+    draw(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    let spot = read(&notebook, cx, |view, cx| {
+        view.session
+            .borrow()
+            .open_pages()
+            .into_iter()
+            .find(|page| page.read(cx).id() == "x")
+            .and_then(|page| Some(page.read(cx).loaded()?.analysis.read(cx).source.clone()))
+            .unwrap()
+    });
+    let mut text = String::new();
+    wait_until(cx, "the template in the source page", |cx| {
+        text = cx.update(|cx| spot.read(cx).text());
+        text.contains("Plan for [[2026-10-30]] and [[2026-10-31]]\n")
+    });
+    assert!(
+        text.starts_with("- holder ^spot\n  - child\n") && !text.contains("jj"),
+        "the template replaced the trigger line below the child: {text:?}"
+    );
+    assert_eq!(
+        text_and_caret(&notebook, cx).0,
+        "- {{embed: ((spot))}}\n",
+        "the host page is unchanged"
     );
 }

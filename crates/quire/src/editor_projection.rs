@@ -589,7 +589,8 @@ fn link_region(
 }
 
 /// Makes `element` open `link` on click (beside the page with Shift) without moving the caret,
-/// with the address as its tooltip when the link leaves the notebook.
+/// with the address as its tooltip when the link leaves the notebook and a preview of the page
+/// when it names one.
 fn opens_link(
     element: gpui::Stateful<gpui::Div>,
     editor: WeakEntity<Editor>,
@@ -597,10 +598,33 @@ fn opens_link(
 ) -> gpui::Stateful<gpui::Div> {
     let range = link.range.clone();
     let data = link.data.clone();
+    let page = match &link.data.destination {
+        crate::markdown_links::Destination::Reference(crate::references::Target::Page(page)) => {
+            Some(page.clone())
+        }
+        _ => None,
+    };
+    let previewed = editor.clone();
     element
         .cursor_pointer()
         .when_some(link.url(), |div, url| {
             div.tooltip(ui::Tooltip::text(external_tooltip(url)))
+        })
+        .when_some(page, move |div, page| {
+            div.hoverable_tooltip(move |_, cx| {
+                let index = previewed.upgrade().and_then(|editor| {
+                    crate::references::host(editor.read(cx))
+                        .and_then(|host| host.read(cx).index().cloned())
+                });
+                cx.new(|cx| {
+                    crate::references::preview::PagePreviewTooltip::new(
+                        index.as_ref(),
+                        page.clone(),
+                        cx,
+                    )
+                })
+                .into()
+            })
         })
         .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
             window.prevent_default();

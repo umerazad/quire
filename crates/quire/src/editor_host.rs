@@ -114,6 +114,7 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     crate::code_format::init(cx);
     crate::tasks::init(cx);
     crate::references::init(cx);
+    crate::embeds::init(cx);
     crate::page_menu::init(cx);
     crate::ai::init(cx);
     crate::profiles::init(cx);
