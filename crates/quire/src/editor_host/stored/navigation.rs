@@ -78,6 +78,9 @@ pub(super) struct Navigation {
     pub(super) tasks: task_views::TaskViews,
     /// Linked reference panels by page, kept for the session so each keeps its filter.
     pub(super) references: HashMap<String, Entity<crate::navigation::references::ReferencesView>>,
+    /// Linked task lists by page, kept for the session so each keeps its status filter.
+    pub(super) linked_tasks:
+        HashMap<String, Entity<crate::navigation::linked_tasks::LinkedTasksView>>,
     /// The guide beside the Templates page, with the ID of the page it belongs to.
     pub(super) templates_guide: Option<(String, Entity<crate::templates::guide::TemplatesGuide>)>,
     /// A question a template asks while it is inserted.
@@ -123,6 +126,7 @@ impl Navigation {
             tags: tag_views::TagViews::default(),
             tasks: task_views::TaskViews::default(),
             references: HashMap::new(),
+            linked_tasks: HashMap::new(),
             templates_guide: None,
             template_prompt: None,
             loading_focus,
@@ -787,8 +791,10 @@ impl StoredWindow {
                     .into_any_element(),
                 None => content,
             })
-            .when_some(self.shown_references(cx), |main, references| {
-                main.child(references)
+            .when_some(self.shown_linked_tasks(cx), |main, tasks| {
+                let listing = tasks.read(cx).lists_tasks();
+                main.child(tasks)
+                    .when(!listing, |main| main.children(self.shown_references(cx)))
             });
         let side = self.nav.side.as_ref().and_then(|side| side.editor.clone());
         let answer = self.nav.answer.pane.clone();

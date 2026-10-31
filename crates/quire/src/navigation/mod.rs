@@ -3,6 +3,7 @@
 
 pub mod context_rows;
 pub mod file_dialog;
+pub mod linked_tasks;
 pub mod live;
 pub mod page_history;
 pub mod palette;
@@ -224,6 +225,11 @@ pub fn bind_keys(cx: &mut App) {
             Some("QuireTaskList"),
         ),
         KeyBinding::new(primary!("enter"), ToggleTagSelected, Some("QuireTags")),
+        KeyBinding::new(
+            primary!("enter"),
+            crate::tasks::ToggleTask,
+            Some("QuireLinkedTasks"),
+        ),
         KeyBinding::new("delete", DeleteFile, Some(FILES_CONTEXT)),
         KeyBinding::new(primary!("backspace"), DeleteFile, Some(FILES_CONTEXT)),
         KeyBinding::new("enter", menu::Confirm, Some(file_dialog::DIALOG_CONTEXT)),

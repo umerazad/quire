@@ -83,6 +83,31 @@ impl ProjectStatus {
     }
 }
 
+/// The reference `TaskStatus`: which of a tag's or page's tasks show. All keeps the blocks or
+/// references; the others list matching tasks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskStatus {
+    #[default]
+    All,
+    Open,
+    Due,
+    Done,
+}
+
+impl TaskStatus {
+    pub const ALL: [Self; 4] = [Self::All, Self::Open, Self::Due, Self::Done];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Open => "Open",
+            Self::Due => "Due",
+            Self::Done => "Done",
+        }
+    }
+}
+
 /// The Tasks browser's remembered choices: the list, the project filter (a page identity), and
 /// the Projects status filter.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

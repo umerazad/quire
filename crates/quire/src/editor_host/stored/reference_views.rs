@@ -2,7 +2,10 @@
 //! each page keeps its own filter, refreshed whenever the index changes while it is shown.
 
 use super::*;
-use crate::navigation::references::{ReferencesEvent, ReferencesView};
+use crate::navigation::{
+    linked_tasks::{LinkedTasksEvent, LinkedTasksView},
+    references::{ReferencesEvent, ReferencesView},
+};
 
 impl StoredWindow {
     /// The panel for the page in the main pane, while a page (not a browser) is shown.
@@ -14,6 +17,15 @@ impl StoredWindow {
             return None;
         }
         self.nav.references.get(self.page.read(cx).id()).cloned()
+    }
+
+    /// Tasks linking to the page in the main pane, shown above its linked references.
+    pub(in crate::editor_host::stored) fn shown_linked_tasks(
+        &self,
+        cx: &App,
+    ) -> Option<Entity<LinkedTasksView>> {
+        self.shown_references(cx)?;
+        self.nav.linked_tasks.get(self.page.read(cx).id()).cloned()
     }
 
     pub(in crate::editor_host::stored) fn show_references(
@@ -52,7 +64,26 @@ impl StoredWindow {
                 },
             )
             .detach();
-            self.nav.references.insert(id, view);
+            self.nav.references.insert(id.clone(), view);
+        }
+        if !self.nav.linked_tasks.contains_key(&id) {
+            let session = self.session.clone();
+            let writers: crate::navigation::tag_edits::Writers = Rc::new(move |_| {
+                let session = session.borrow();
+                (session.open_pages(), session.storage())
+            });
+            let view = cx.new(|cx| LinkedTasksView::new(id.clone(), writers, cx));
+            cx.subscribe_in(
+                &view,
+                window,
+                |this, _, event: &LinkedTasksEvent, window, cx| match event {
+                    LinkedTasksEvent::Open { page, jump, beside } => {
+                        this.open_page_at(page.clone(), Some(jump.clone()), *beside, window, cx)
+                    }
+                },
+            )
+            .detach();
+            self.nav.linked_tasks.insert(id, view);
         }
         self.refresh_references(cx);
     }
@@ -65,6 +96,10 @@ impl StoredWindow {
             return;
         };
         view.update(cx, |view, cx| view.refresh(&client, cx));
+        if let Some(tasks) = self.shown_linked_tasks(cx) {
+            let today = self.today().unwrap_or_default();
+            tasks.update(cx, |tasks, cx| tasks.refresh(&client, today, cx));
+        }
     }
 
     pub(in crate::editor_host::stored) fn focus_references(
