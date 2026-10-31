@@ -146,6 +146,50 @@ async fn a_question_sends_matching_excerpts_and_citations_open_what_they_name(
 }
 
 #[gpui::test]
+async fn questions_read_unsaved_edits_of_open_pages(cx: &mut TestAppContext) {
+    let (ai, notebook) = notebook(&FRUIT, "work", cx).await;
+    let editor = page_editor(&notebook, cx);
+    cx.update_window(notebook.window.into(), |_, window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
+            editor.insert("- [ ] Water plants 📅 [[2026-10-30]]\n", window, cx);
+        })
+    })
+    .unwrap();
+    let client = read(&notebook, cx, |view, cx| view.index_client(cx).unwrap());
+    // Past the index's 150 ms debounce but short of the 450 ms idle save.
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(200));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !futures::executor::block_on(client.with_generation(|index| index.tasks()).unwrap())
+        .unwrap()
+        .1
+        .iter()
+        .any(|task| task.text.contains("Water plants"))
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for the unsaved task in the index"
+        );
+        cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(
+        stored_text(&notebook, "work").unwrap(),
+        FRUIT[2].2,
+        "the index answers from the unsaved edit"
+    );
+    ai.answer("Water the plants.", &[], cx);
+    run_ai(&notebook, "due", cx);
+    wait_done(&notebook, 0, cx);
+    assert!(
+        ai.sent()[0].ends_with("<excerpt page=\"Work\">\n[ ] Water plants 📅 [[2026-10-30]] (due 2026-10-30)\n</excerpt>"),
+        "{}",
+        ai.sent()[0]
+    );
+}
+
+#[gpui::test]
 async fn a_preset_sends_due_tasks_and_a_follow_up_carries_the_earlier_turn(
     cx: &mut TestAppContext,
 ) {
