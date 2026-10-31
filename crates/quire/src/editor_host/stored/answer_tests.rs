@@ -650,6 +650,29 @@ async fn with_ai_writes_on_apply_a_questions_changes_apply_at_once_and_undo(
     assert_eq!(page_text(&notebook, cx), FRUIT[0].2);
 }
 
+/// Calls a notebook tool as a terminal session would, waiting for its answer.
+fn tool_call(
+    name: &str,
+    input: serde_json::Value,
+    cx: &mut TestAppContext,
+) -> Result<serde_json::Value, String> {
+    let call = crate::notebook_tools::bridge::Call {
+        name: name.into(),
+        input,
+        run: None,
+        writes: Writes::Review,
+    };
+    let answered = cx.update(|cx| crate::notebook_tools::host::answer(call, cx));
+    let result = std::rc::Rc::new(std::cell::RefCell::new(None));
+    cx.spawn({
+        let result = result.clone();
+        async move |_| *result.borrow_mut() = Some(answered.await)
+    })
+    .detach();
+    wait_until(cx, "the tool call", |_| result.borrow().is_some());
+    result.take().unwrap()
+}
+
 #[gpui::test]
 async fn the_pane_lists_changes_from_a_terminal(cx: &mut TestAppContext) {
     let (_ai, notebook) = notebook(&FRUIT, "fruit", cx).await;
@@ -660,20 +683,12 @@ async fn the_pane_lists_changes_from_a_terminal(cx: &mut TestAppContext) {
         .and_then(|view| view.downcast::<ChangeList>().ok())
         .unwrap();
     assert!(listed(&terminal, cx).is_empty());
-    let call = crate::notebook_tools::bridge::Call {
-        name: "append_block".into(),
-        input: serde_json::json!({ "page": "Trees", "text": "From the terminal" }),
-        run: None,
-        writes: Writes::Review,
-    };
-    let staged = cx.update(|cx| crate::notebook_tools::host::answer(call, cx));
-    let result = std::rc::Rc::new(std::cell::RefCell::new(None));
-    cx.spawn({
-        let result = result.clone();
-        async move |_| *result.borrow_mut() = Some(staged.await)
-    })
-    .detach();
-    wait_until(cx, "the terminal call", |_| result.borrow().is_some());
+    tool_call(
+        "append_block",
+        serde_json::json!({ "page": "Trees", "text": "From the terminal" }),
+        cx,
+    )
+    .unwrap();
     assert_eq!(
         listed(&terminal, cx),
         [(
@@ -711,86 +726,116 @@ const DAY: [(&str, &str, &str); 4] = [
     ("other", "Other.md", "- Unrelated\n"),
 ];
 
-const TIDIED: &str = "- Weekly sync with [[Dana Reyes|Dana]]\n  - [ ] Send the budget to Dana by Thursday #next 📅 [[2026-10-29]]\n  - [[Atlas]] review postponed\n  - Invented line";
-
 fn tidy(notebook: &Notebook, cx: &mut TestAppContext) {
     let editor = page_editor(notebook, cx);
     cx.update_window(notebook.window.into(), |_, window, cx| {
         proposal::tidy(&editor, window, cx)
     })
     .unwrap();
+    cx.run_until_parked();
 }
 
-fn tidy_proposal(notebook: &Notebook, cx: &mut TestAppContext) -> Entity<proposal::ProposalView> {
-    let editor = page_editor(notebook, cx);
-    wait_until(cx, "the Tidy proposal", |cx| {
-        editor
-            .read_with(cx, |editor, _| proposal::current(editor))
-            .is_some_and(|view| view.read_with(cx, |view, _| view.is_ready()))
-    });
-    editor
-        .read_with(cx, |editor, _| proposal::current(editor))
+/// The key `read_page` gives each block of `page`, with the line it starts on.
+fn keys(page: &str, cx: &mut TestAppContext) -> Vec<(String, String)> {
+    let read = tool_call("read_page", serde_json::json!({ "page": page }), cx).unwrap();
+    let lines: Vec<&str> = read["text"].as_str().unwrap().lines().collect();
+    read["blocks"]
+        .as_array()
         .unwrap()
+        .iter()
+        .map(|block| {
+            let line = block["line"].as_u64().unwrap() as usize;
+            (
+                lines[line - 1].to_owned(),
+                block["key"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+fn key_of(keys: &[(String, String)], text: &str) -> String {
+    keys.iter()
+        .find(|(block, _)| block.contains(text))
+        .map(|(_, key)| key.clone())
+        .unwrap_or_else(|| panic!("no block contains {text}: {keys:?}"))
 }
 
 #[gpui::test]
-async fn tidy_proposes_only_additions_and_accepts_them_as_one_undo_step(cx: &mut TestAppContext) {
+async fn tidy_stages_only_allowed_additions_to_its_day_and_apply_all_is_one_undo_step(
+    cx: &mut TestAppContext,
+) {
     let (ai, notebook) = notebook(&DAY, "day", cx).await;
-    ai.answer(TIDIED, &[], cx);
-    let editor = page_editor(&notebook, cx);
-    assert!(editor.read_with(cx, proposal::on_daily_page));
-    run_ai(&notebook, "", cx);
-    let pane = pane(&notebook, cx);
-    let presets: Vec<String> = cx.read(|cx| {
-        pane.read(cx)
-            .presets()
-            .into_iter()
-            .map(|(_, label)| label)
-            .collect()
-    });
-    assert!(presets.contains(&"Tidy this day".to_owned()), "{presets:?}");
-    pane.update(cx, |_, cx| cx.emit(crate::ai::answer::AnswerEvent::Tidy));
-    let view = tidy_proposal(&notebook, cx);
-    let sent = ai.sent();
-    assert_eq!(sent.len(), 1);
-    assert_eq!(
-        sent[0],
-        quire_core::ai::tidy::prompt(
-            "2026-10-27",
-            DAY[0].2,
-            &["Atlas".to_owned(), "Dana Reyes".to_owned()],
-            "2026-10-28"
-        )
-    );
-    let refused: Vec<(String, String)> = cx.read(|cx| {
-        view.read(cx)
-            .refused()
-            .iter()
-            .map(|refusal| (refusal.line.clone(), refusal.reason.clone()))
-            .collect()
-    });
-    assert_eq!(
-        refused,
-        [
-            (
-                "  - [[Atlas]] review postponed".to_owned(),
-                quire_core::ai::tidy::REWRITE.to_owned()
-            ),
-            (
-                "  - Invented line".to_owned(),
-                quire_core::ai::tidy::ADDED_LINE.to_owned()
-            ),
-        ]
-    );
-    let editor = page_editor(&notebook, cx);
-    assert_eq!(editor.read_with(cx, |editor, cx| editor.text(cx)), DAY[0].2);
-    cx.update_window(notebook.window.into(), |_, window, cx| {
-        proposal::accept(&editor, window, cx)
-    })
-    .unwrap();
+    cx.update(|cx| crate::ai::settings::set_writes(Writes::Apply, cx));
     cx.run_until_parked();
-    let tidied = "- Weekly sync with [[Dana Reyes|Dana]] ^keep\n  - [ ] Send the budget to Dana by Thursday #next 📅 [[2026-10-29]]\n  - Atlas review moved\n";
-    assert_eq!(editor.read_with(cx, |editor, cx| editor.text(cx)), tidied);
+    let day = keys("2026-10-27", cx);
+    let other = keys("Other", cx);
+    ai.answer_with_tools(
+        "Proposed a link, a state and a date.",
+        serde_json::json!([
+            { "name": "replace_block", "arguments": { "id": "keep", "text": "Weekly sync with [[Dana Reyes|Dana]]" } },
+            { "name": "replace_block", "arguments": { "page": "2026-10-27", "key": key_of(&day, "Send the budget"), "text": "[ ] Send the budget to Dana by Thursday #next 📅 [[2026-10-29]]" } },
+            { "name": "replace_block", "arguments": { "page": "2026-10-27", "key": key_of(&day, "Atlas review"), "text": "[[Atlas]] review postponed" } },
+            { "name": "replace_block", "arguments": { "page": "2026-10-27", "key": key_of(&day, "Atlas review"), "text": "[[Nobody]] Atlas review moved" } },
+            { "name": "replace_block", "arguments": { "page": "Other", "key": key_of(&other, "Unrelated"), "text": "[[Atlas]] Unrelated" } },
+            { "name": "append_block", "arguments": { "page": "2026-10-27", "text": "Invented" } },
+        ]),
+        cx,
+    );
+    tidy(&notebook, cx);
+    wait_done(&notebook, 0, cx);
+    let pane = pane(&notebook, cx);
+    assert_eq!(cx.read(|cx| pane.read(cx).title()), "Tidy 2026-10-27");
+    assert_eq!(
+        ai.sent(),
+        [quire_core::ai::tidy::question("2026-10-27", "2026-10-28")]
+    );
+    let outcomes: Vec<(bool, String)> = ai
+        .tool_calls()
+        .iter()
+        .map(|call| {
+            let text = call["text"].as_str().unwrap().to_owned();
+            let status = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|result| result["status"].as_str().map(str::to_owned));
+            (call["error"] == true, status.unwrap_or(text))
+        })
+        .collect();
+    assert_eq!(
+        outcomes,
+        [
+            (false, "awaiting review".to_owned()),
+            (false, "awaiting review".to_owned()),
+            (true, quire_core::ai::tidy::REWRITE.to_owned()),
+            (
+                true,
+                "[[Nobody]] is not a page in this notebook. Link only to pages that exist."
+                    .to_owned()
+            ),
+            (true, quire_core::ai::tidy::OTHER_PAGE.to_owned()),
+            (true, quire_core::ai::tidy::TIDY_ONLY.to_owned()),
+        ],
+        "Tidy stays in review even with AI writes on Apply"
+    );
+    let run = cx.read(|cx| pane.read(cx).turns[0].run.clone());
+    assert_eq!(
+        cx.read(|cx| crate::notebook_tools::host::tidy_day(Some(&run), cx)),
+        None,
+        "the run's Tidy limits end with it"
+    );
+    assert_eq!(page_text(&notebook, cx), DAY[0].2);
+    let list = turn_changes(&notebook, 0, cx);
+    assert_eq!(listed(&list, cx).len(), 2);
+    list.update(cx, |list, cx| list.apply_all(cx));
+    wait_until(cx, "Apply all", |cx| {
+        listed(&list, cx)
+            .iter()
+            .all(|(_, _, status)| *status == ChangeStatus::Applied)
+    });
+    assert_eq!(
+        page_text(&notebook, cx),
+        "- Weekly sync with [[Dana Reyes|Dana]] ^keep\n  - [ ] Send the budget to Dana by Thursday #next 📅 [[2026-10-29]]\n  - Atlas review moved\n"
+    );
+    let editor = page_editor(&notebook, cx);
     cx.update_window(notebook.window.into(), |_, window, cx| {
         editor.update(cx, |editor, cx| {
             editor.undo(&editor::actions::Undo, window, cx)
@@ -798,38 +843,24 @@ async fn tidy_proposes_only_additions_and_accepts_them_as_one_undo_step(cx: &mut
     })
     .unwrap();
     assert_eq!(
-        editor.read_with(cx, |editor, cx| editor.text(cx)),
+        page_text(&notebook, cx),
         DAY[0].2,
         "one undo restores the page"
     );
 }
 
 #[gpui::test]
-async fn tidy_refuses_a_changed_page_and_runs_only_on_days(cx: &mut TestAppContext) {
+async fn tidy_needs_ai_writes_and_runs_only_on_days(cx: &mut TestAppContext) {
     let (ai, notebook) = notebook(&DAY, "day", cx).await;
-    ai.answer(TIDIED, &[], cx);
+    cx.update(|cx| crate::ai::settings::set_writes(Writes::Off, cx));
+    cx.run_until_parked();
     tidy(&notebook, cx);
-    tidy_proposal(&notebook, cx);
-    let editor = page_editor(&notebook, cx);
-    cx.update_window(notebook.window.into(), |_, window, cx| {
-        editor.update(cx, |editor, cx| {
-            editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
-            editor.insert("- typed meanwhile\n", window, cx);
-        })
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(notebook.window.into(), |_, window, cx| {
-        proposal::accept(&editor, window, cx)
-    })
-    .unwrap();
-    cx.run_until_parked();
-    assert_eq!(notice(cx), proposal::STALE);
+    let pane = pane(&notebook, cx);
     assert_eq!(
-        editor.read_with(cx, |editor, cx| editor.text(cx)),
-        format!("{}- typed meanwhile\n", DAY[0].2)
+        cx.read(|cx| pane.read(cx).notice.clone()).as_deref(),
+        Some(quire_core::ai::tidy::WRITES_OFF)
     );
-
+    assert!(ai.sent().is_empty());
     notebook
         .window
         .update(cx, |view, window, cx| {
@@ -839,9 +870,7 @@ async fn tidy_refuses_a_changed_page_and_runs_only_on_days(cx: &mut TestAppConte
     wait_until(cx, "the other page", |cx| active(&notebook, cx) == "other");
     let other = page_editor(&notebook, cx);
     assert!(!other.read_with(cx, proposal::on_daily_page));
-    let before = ai.sent().len();
     tidy(&notebook, cx);
-    cx.run_until_parked();
     assert_eq!(notice(cx), proposal::NOT_DAILY);
-    assert_eq!(ai.sent().len(), before);
+    assert!(ai.sent().is_empty());
 }

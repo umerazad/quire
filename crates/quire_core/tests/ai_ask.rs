@@ -358,59 +358,15 @@ fn tidy_refuses_rewrites_deletions_missing_pages_and_changed_links() {
 }
 
 #[test]
-fn tidy_keeps_allowed_lines_restores_ids_and_refuses_the_rest() {
-    let original = "- Weekly sync with Dana ^keep\n  - [ ] Send the budget to Dana by Thursday\n  - Atlas review moved\n  - Lunch\n";
-    let proposed = "- Weekly sync with [[Dana Reyes|Dana]]\n  - [ ] Send the budget to Dana by Thursday #next\n  - Atlas review postponed\n  - New idea\n  - Lunch";
-    let tidied = tidy::filter(original, proposed, exists, is_daily);
+fn tidy_asks_for_replace_block_changes_to_one_day() {
+    let question = tidy::question(DAY, "2026-10-28-Wednesday");
+    assert!(question.starts_with(
+        "Tidy the daily page [[2026-10-27-Tuesday]]. Read it with read_page, then propose replace_block changes"
+    ));
+    assert!(question.contains("📅 [[2026-10-28-Wednesday]]"));
+    assert!(question.ends_with("Finish with a short list of what you proposed."));
     assert_eq!(
-        tidied.text,
-        "- Weekly sync with [[Dana Reyes|Dana]] ^keep\n  - [ ] Send the budget to Dana by Thursday #next\n  - Atlas review moved\n  - Lunch\n"
+        tidy::link_targets("[[Dana Reyes|Dana]] and [[ Atlas ]] 📅 [[2026-10-28]]"),
+        ["Dana Reyes", "Atlas", "2026-10-28"]
     );
-    assert_eq!(tidied.changed, 2);
-    assert_eq!(
-        tidied.refused,
-        [
-            tidy::Refusal {
-                line: "  - Atlas review postponed".into(),
-                reason: tidy::REWRITE.into()
-            },
-            tidy::Refusal {
-                line: "  - New idea".into(),
-                reason: tidy::ADDED_LINE.into()
-            },
-        ]
-    );
-    let moved = tidy::filter("- a ^b-1\n- b", "- b\n- a ^b-1", exists, is_daily);
-    assert_eq!(moved.text, "- a ^b-1\n- b");
-    assert_eq!(moved.changed, 0);
-    assert!(!moved.refused.is_empty());
-    let id = tidy::filter("- Atlas ^b-1", "- [[Atlas]] ^b-2", exists, is_daily);
-    assert_eq!(id.refused[0].reason, tidy::CHANGED_ID);
-    let bullet = tidy::filter("- Atlas", "* [[Atlas]]", exists, is_daily);
-    assert_eq!(bullet.text, "- Atlas");
-    let trailing = tidy::filter("- Atlas\n", "- [[Atlas]]\n- extra", exists, is_daily);
-    assert_eq!(trailing.text, "- [[Atlas]]\n");
-    assert_eq!(
-        trailing.refused,
-        [tidy::Refusal {
-            line: "- extra".into(),
-            reason: tidy::ADDED_LINE.into()
-        }],
-        "a page's trailing blank line never pairs with an added line"
-    );
-}
-
-#[test]
-fn tidy_asks_for_the_whole_day_with_the_pages_it_may_link() {
-    let titles = tidy::mentioned_titles(
-        "- Weekly sync with Dana\n- Atlas review",
-        ["Dana Reyes", "Atlas", "Other", "Al"],
-        50,
-    );
-    assert_eq!(titles, ["Atlas", "Dana Reyes"]);
-    let prompt = tidy::prompt(DAY, "- Atlas review", &titles, "2026-10-28-Wednesday");
-    assert!(prompt.starts_with("Tidy the daily page [[2026-10-27-Tuesday]]."));
-    assert!(prompt.contains("Existing pages it may link:\n- Atlas\n- Dana Reyes"));
-    assert!(prompt.contains("📅 [[2026-10-28-Wednesday]]"));
-    assert!(prompt.ends_with("Text:\n<text>\n- Atlas review\n</text>"));
 }

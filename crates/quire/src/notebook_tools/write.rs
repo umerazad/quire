@@ -12,7 +12,10 @@ use super::{
 use crate::task_edit::CaptureTo;
 use gpui::{App, AsyncApp, Task};
 use quire_core::{
-    ai::tools::{AWAITING, Writes, as_block, block_key, line_at, without_marker},
+    ai::{
+        tidy,
+        tools::{AWAITING, Writes, as_block, block_key, line_at, without_marker},
+    },
     markdown::safe_page_path,
     tasks::TaskState,
 };
@@ -267,15 +270,78 @@ async fn propose(
     }
 }
 
+/// Why Tidy may not make `request` on the day's page `day`, or None when it may.
+async fn tidy_refusal(
+    request: &Request,
+    day: &str,
+    notebook: &LiveNotebook,
+    cx: &mut AsyncApp,
+) -> Result<Option<String>, Failure> {
+    let Request::Replace {
+        target,
+        before,
+        after,
+        ..
+    } = request
+    else {
+        return Ok(Some(tidy::TIDY_ONLY.into()));
+    };
+    if target.page != day {
+        return Ok(Some(tidy::OTHER_PAGE.into()));
+    }
+    let named = tidy::link_targets(after);
+    let existing = query(notebook, move |index| {
+        let found: Result<Vec<String>, _> = named
+            .into_iter()
+            .filter_map(|title| match index.find_page(&title) {
+                Ok(Some(_)) => Some(Ok(title)),
+                Ok(None) => None,
+                Err(error) => Some(Err(error)),
+            })
+            .collect();
+        Ok(Ok(found?))
+    })
+    .await?;
+    let daily = cx.update(|cx| {
+        let tasks = cx.global::<crate::tasks::TaskContext>();
+        let (layout, calendar) = (tasks.layout.clone(), tasks.calendar.clone());
+        move |title: &str| {
+            calendar
+                .as_ref()
+                .and_then(|calendar| quire_core::daily::daily_date(title, &layout, calendar))
+                .is_some()
+        }
+    });
+    Ok(tidy::check_change(
+        before,
+        after,
+        |title| existing.iter().any(|found| found == title),
+        daily,
+    ))
+}
+
 /// Proposes the call's change and stages it; with AI writes set to Apply, applies it at once.
+/// A Tidy run only stages `replace_block` changes to its day that pass Tidy's limits, and they
+/// always wait for review.
 pub fn answer(call: Call, notebook: LiveNotebook, cx: &mut App) -> Task<Result<Value, String>> {
     if call.writes == Writes::Off {
         return Task::ready(Err(quire_core::ai::tools::WRITES_OFF.into()));
+    }
+    let day = super::host::tidy_day(call.run.as_deref(), cx);
+    if day.is_some() && call.name != "replace_block" {
+        return Task::ready(Err(tidy::TIDY_ONLY.into()));
     }
     cx.spawn(async move |cx| {
         let (summary, request) = propose(&call, &notebook, cx)
             .await
             .map_err(|failure| message(&call.name, failure))?;
+        if let Some(day) = &day
+            && let Some(refusal) = tidy_refusal(&request, day, &notebook, cx)
+                .await
+                .map_err(|failure| message(&call.name, failure))?
+        {
+            return Err(refusal);
+        }
         let change = request.to_json();
         let run = call.run.as_deref().unwrap_or(TERMINAL_RUN).to_owned();
         let id = cx.update(|cx| {
@@ -284,7 +350,7 @@ pub fn answer(call: Call, notebook: LiveNotebook, cx: &mut App) -> Task<Result<V
             })
         });
         let mut result = json!({ "summary": summary, "change": change, "change_id": id });
-        if call.writes != Writes::Apply {
+        if call.writes != Writes::Apply || day.is_some() {
             result["status"] = "awaiting review".into();
             result["note"] = AWAITING.into();
             if run == TERMINAL_RUN {

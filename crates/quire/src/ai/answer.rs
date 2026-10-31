@@ -24,6 +24,8 @@ use quire_core::ai::{
         build_ask_prompt, cited_blocks, link_citations, parse_citation,
     },
     backend::{AI_OFF, CANCELED, PROMPT_LIMIT, PROMPT_TOO_LONG, ToolServer},
+    tidy,
+    tools::Writes,
 };
 use quire_store::index::IndexClient;
 use std::collections::HashMap;
@@ -51,9 +53,27 @@ pub struct Seed {
     pub range: Option<AiRange>,
     /// The page whose linked references the first question sends, for a synthesis.
     pub references: Option<String>,
+    /// The daily page Tidy this day may change; its run is held to Tidy's limits.
+    pub tidy: Option<String>,
 }
 
 impl Seed {
+    /// Tidy this day for the daily page `page`; `due_example` names the day after it.
+    pub fn tidy(page: &str, due_example: &str) -> Self {
+        Self {
+            title: Some(format!("Tidy {page}")),
+            question: Some(tidy::question(page, due_example)),
+            tidy: Some(page.to_owned()),
+            ..Self::default()
+        }
+    }
+
+    /// Why this seed's first question cannot run now, beyond AI being off: Tidy needs AI writes.
+    fn blocked(&self, cx: &App) -> Option<&'static str> {
+        (self.tidy.is_some() && AiSettings::get_global(cx).writes == Writes::Off)
+            .then_some(tidy::WRITES_OFF)
+    }
+
     /// Linked references with no question make a synthesis, which waits for its instruction.
     fn synthesis(&self) -> bool {
         self.question.as_deref().is_none_or(|q| q.trim().is_empty()) && self.references.is_some()
@@ -72,6 +92,17 @@ impl Seed {
             },
         }
     }
+}
+
+/// Holds run `run` to Tidy's limits on page `page`, or with None releases it.
+fn hold_to_tidy(run: &str, page: Option<&str>, cx: &mut App) {
+    #[cfg(unix)]
+    match page {
+        Some(page) => crate::notebook_tools::host::start_tidy(run, page, cx),
+        None => crate::notebook_tools::host::end_tidy(run, cx),
+    }
+    #[cfg(not(unix))]
+    let _ = (run, page, cx);
 }
 
 /// The tool server a question with run ID `run` attaches, or why there is none.
@@ -123,6 +154,8 @@ pub enum Status {
 }
 
 pub struct TurnView {
+    /// The run ID its tool calls and changes carry.
+    pub run: String,
     /// The changes it proposed, where the notebook tools exist.
     pub changes: Option<AnyView>,
     pub question: String,
@@ -249,6 +282,9 @@ impl AnswerPane {
             }
             editor
         });
+        let notice = blocked(cx)
+            .or_else(|| seed.blocked(cx))
+            .map(SharedString::from);
         let mut pane = Self {
             host,
             seed,
@@ -257,11 +293,17 @@ impl AnswerPane {
             since: 0,
             input,
             editing_synthesis: synthesis,
-            notice: blocked(cx).map(SharedString::from),
+            notice,
             terminal: change_list(None, cx),
             focus: cx.focus_handle(),
             scroll: ScrollHandle::new(),
         };
+        cx.on_release(|pane, cx| {
+            for turn in &pane.turns {
+                hold_to_tidy(&turn.run, None, cx);
+            }
+        })
+        .detach();
         let question = pane
             .seed
             .question
@@ -305,7 +347,8 @@ impl AnswerPane {
         if self.running() {
             return;
         }
-        if let Some(reason) = blocked(cx) {
+        let seed_blocked = first.then(|| self.seed.blocked(cx)).flatten();
+        if let Some(reason) = blocked(cx).or(seed_blocked) {
             self.notice = Some(reason.into());
             cx.notify();
             return;
@@ -313,6 +356,7 @@ impl AnswerPane {
         self.notice = None;
         let range = first.then(|| self.seed.range.clone()).flatten();
         let references = first.then(|| self.seed.references.clone()).flatten();
+        let tidy_day = first.then(|| self.seed.tidy.clone()).flatten();
         let earlier: Vec<Turn> = self.turns[self.since..]
             .iter()
             .filter(|turn| turn.status == Status::Done)
@@ -326,6 +370,7 @@ impl AnswerPane {
         let markdown = cx.new(|cx| Markdown::new(SharedString::default(), None, None, cx));
         self.turns.push(TurnView {
             changes: change_list(Some(&run), cx),
+            run: run.clone(),
             question: question.clone(),
             first,
             context: ask_context_summary(range.as_ref(), None),
@@ -351,7 +396,30 @@ impl AnswerPane {
         let runner = cx.global::<Host>().clone();
         let (cancel, canceled) = oneshot::channel::<()>();
         self.turns[index].cancel = Some(cancel);
+        let tidy_run = run.clone();
         let task = cx.spawn_in(window, async move |this, cx| {
+            if let Some(title) = tidy_day {
+                let found = match index_client.clone() {
+                    Some(client) => crate::query_index::ask(client.find_page(title.clone()))
+                        .await
+                        .ok()
+                        .flatten(),
+                    None => None,
+                };
+                let held = this.update(cx, |this, cx| match &found {
+                    Some(page) => {
+                        hold_to_tidy(&tidy_run, Some(&page.page.to_lossy_string()), cx);
+                        true
+                    }
+                    None => {
+                        this.fail(index, format!("Tidy cannot find [[{title}]] in the notebook index. Wait for indexing to finish, then press Retry."), true, cx);
+                        false
+                    }
+                });
+                if !matches!(held, Ok(true)) {
+                    return;
+                }
+            }
             let gathered = match (references, index_client.clone()) {
                 (Some(title), Some(client)) => match context::references(client, &title).await {
                     Ok(gathered) => Some(gathered),
@@ -504,6 +572,7 @@ impl AnswerPane {
         let turn = &mut self.turns[index];
         turn.status = Status::Failed { message, retry };
         turn.cancel = None;
+        hold_to_tidy(&turn.run, None, cx);
         cx.notify();
     }
 
@@ -524,6 +593,7 @@ impl AnswerPane {
                 turn.answer = text;
                 turn.status = Status::Done;
                 turn.cancel = None;
+                hold_to_tidy(&turn.run, None, cx);
                 self.render_answer(index, cx);
             }
             Outcome::Failed { message, retry } => self.fail(index, message, retry, cx),

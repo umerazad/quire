@@ -1,6 +1,6 @@
 //! The answer pane beside the main page (NR30): opened by `:ai` without a range, the page menu,
-//! presets, and Synthesize under linked references; it keeps answers in today's page and runs
-//! Tidy in the page's editor.
+//! presets, and Synthesize under linked references; it keeps answers in today's page and starts
+//! Tidy for the day shown, which asks in a fresh pane.
 
 use super::*;
 use crate::ai::answer::{AnswerEvent, AnswerPane, Place, Seed};
