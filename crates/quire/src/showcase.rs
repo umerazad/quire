@@ -110,7 +110,8 @@ impl ShowcaseWindow {
 }
 
 impl Render for ShowcaseWindow {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::app_menus::follow_zoom(window, cx);
         let colors = cx.theme().colors();
         v_flex()
             .size_full()

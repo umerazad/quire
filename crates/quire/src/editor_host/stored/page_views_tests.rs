@@ -8,7 +8,7 @@ use crate::app_menus::{
     ActualSize, ShowNotebookFolder, TogglePageDetails, ToggleSidebar, ToggleVim, ZoomIn, ZoomOut,
 };
 use crate::page_details::PageFacts;
-use gpui::TestAppContext;
+use gpui::{AppContext as _, TestAppContext};
 use quire_core::workspace::{BrowserView, Destination};
 use std::{cell::RefCell, rc::Rc};
 
@@ -283,6 +283,57 @@ fn zoom_scales_editor_and_interface_text_until_actual_size(cx: &mut TestAppConte
     assert_eq!(sizes(cx), (buffer + 1., ui + 1., ui + 1.));
     dispatch(&notebook, ActualSize, cx);
     assert_eq!(sizes(cx), (buffer, ui, rem));
+}
+
+#[gpui::test]
+fn zoom_reaches_the_settings_help_migration_and_readme_windows(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&[("plan", "Plan.md", PLAN)], "plan", cx);
+    let data = tempfile::tempdir().unwrap();
+    let windows: [gpui::AnyWindowHandle; 4] = [
+        cx.add_window(|window, cx| crate::preferences::view::PreferencesWindow::new(window, cx))
+            .into(),
+        cx.add_window(|window, cx| crate::help::view::HelpWindow::new(false, window, cx))
+            .into(),
+        cx.add_window(|window, cx| {
+            crate::rt_migration::view::MigrationWindow::new(
+                data.path().to_owned(),
+                None,
+                window,
+                cx,
+            )
+        })
+        .into(),
+        cx.add_window(|window, cx| {
+            let page = crate::showcase::sample(cx);
+            crate::showcase::ShowcaseWindow::new(page, false, window, cx)
+        })
+        .into(),
+    ];
+    let rems = |cx: &mut TestAppContext| {
+        windows.map(|handle| {
+            cx.update_window(handle, |_, window, cx| {
+                window.draw(cx).clear(cx);
+                f32::from(window.rem_size())
+            })
+            .unwrap()
+        })
+    };
+    let ui = read(&notebook, cx, |_, cx| {
+        f32::from(
+            <theme_settings::ThemeSettings as settings::Settings>::get_global(cx).ui_font_size(cx),
+        )
+    });
+    assert_eq!(rems(cx), [ui; 4]);
+    cx.dispatch_action(windows[1], ZoomIn);
+    cx.run_until_parked();
+    assert_eq!(
+        rems(cx),
+        [ui + 1.; 4],
+        "zoom from Help reaches every window"
+    );
+    cx.dispatch_action(windows[0], ActualSize);
+    cx.run_until_parked();
+    assert_eq!(rems(cx), [ui; 4]);
 }
 
 #[gpui::test]
