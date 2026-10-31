@@ -13,7 +13,7 @@ use quire_store::index::{IndexClient, IndexConfig, IndexWorker};
 use std::collections::HashMap;
 use std::{path::PathBuf, time::Duration};
 
-const BATCH: usize = 16;
+const BATCH: usize = 64;
 const IDLE: Duration = Duration::from_secs(1);
 const RETRY: Duration = Duration::from_secs(5);
 /// Coalesces typing into one overlay analysis.
@@ -148,12 +148,21 @@ impl IndexSync {
     /// generation after it.
     async fn step(client: &IndexClient, cx: &mut gpui::AsyncApp) -> Result<(usize, u64), String> {
         let pending = ask(client.pending(BATCH)).await?;
-        for page in pending {
-            let work = cx.update(|cx| analyze(editor_text(&page.text), cx));
-            let Some(analysis) = cx.background_spawn(work).await else {
-                return Err("Cannot analyze pages because the Markdown grammar is unavailable. Rebuild Quire with its bundled grammars.".into());
-            };
-            ask(client.put(page.revision, analysis)).await?;
+        let analyses = pending
+            .into_iter()
+            .map(|page| {
+                let work = cx.update(|cx| analyze(editor_text(&page.text), cx));
+                let analysis = cx.background_spawn(work);
+                async move { analysis.await.map(|analysis| (page.revision, analysis)) }
+            })
+            .collect::<Vec<_>>();
+        let analyses = futures::future::join_all(analyses)
+            .await
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or("Cannot analyze pages because the Markdown grammar is unavailable. Rebuild Quire with its bundled grammars.")?;
+        if !analyses.is_empty() {
+            ask(client.put_many(analyses)).await?;
         }
         let (generation, remaining) =
             ask(client.with_generation(|index| index.unanalyzed())).await?;

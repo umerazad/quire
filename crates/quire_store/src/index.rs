@@ -387,39 +387,53 @@ impl QueryIndex {
     /// Records analysis for one revision. Returns false when the revision is no longer a selected
     /// head, so the caller can drop the work.
     pub fn put(&self, revision: &str, analysis: &PageIndex) -> Result<bool> {
+        Ok(self.put_many(&[(revision, analysis)])?[0])
+    }
+
+    /// Records analysis for several revisions in one transaction, so a rebuild commits and
+    /// flushes the search index once per batch instead of once per page. Each result is what
+    /// [`Self::put`] returns for that revision.
+    pub fn put_many(&self, analyses: &[(&str, &PageIndex)]) -> Result<Vec<bool>> {
         let stored = self.transaction(|| {
-            let row: Option<(bool, String)> = self
-                .connection
-                .select_row_bound("SELECT analyzed,title FROM pages WHERE revision=?")?(
-                revision
-            )?;
-            let title = match row {
-                None => return Ok(false),
-                Some((true, _)) => return Ok(true),
-                Some((false, title)) => title,
-            };
-            let mut search = self.connection.exec_bound(
-                "INSERT INTO search_rows(revision,title,text,block_id) VALUES (?,?,?,?)",
-            )?;
-            search((revision, title.as_str(), "", None::<&str>))?;
-            for block in &analysis.blocks {
-                search((
-                    revision,
-                    title.as_str(),
-                    block.text.as_str(),
-                    block.id.as_deref(),
-                ))?;
-            }
-            self.insert_rows("main.", revision, analysis)?;
-            self.connection
-                .exec_bound("UPDATE pages SET analyzed=1 WHERE revision=?")?(revision)?;
-            Ok(true)
+            analyses
+                .iter()
+                .map(|(revision, analysis)| self.store(revision, analysis))
+                .collect::<Result<Vec<_>>>()
         })?;
-        if stored {
+        if stored.contains(&true) {
             self.bump();
             self.settle_releases()?;
         }
         Ok(stored)
+    }
+
+    fn store(&self, revision: &str, analysis: &PageIndex) -> Result<bool> {
+        let row: Option<(bool, String)> = self
+            .connection
+            .select_row_bound("SELECT analyzed,title FROM pages WHERE revision=?")?(
+            revision
+        )?;
+        let title = match row {
+            None => return Ok(false),
+            Some((true, _)) => return Ok(true),
+            Some((false, title)) => title,
+        };
+        let mut search = self
+            .connection
+            .exec_bound("INSERT INTO search_rows(revision,title,text,block_id) VALUES (?,?,?,?)")?;
+        search((revision, title.as_str(), "", None::<&str>))?;
+        for block in &analysis.blocks {
+            search((
+                revision,
+                title.as_str(),
+                block.text.as_str(),
+                block.id.as_deref(),
+            ))?;
+        }
+        self.insert_rows("main.", revision, analysis)?;
+        self.connection
+            .exec_bound("UPDATE pages SET analyzed=1 WHERE revision=?")?(revision)?;
+        Ok(true)
     }
 
     /// Writes block, link, and tag rows into `main.` tables or the `temp.overlay_` copies.
@@ -511,6 +525,19 @@ impl Client<QueryIndex> {
     pub fn put(&self, revision: String, analysis: PageIndex) -> Answer<bool> {
         let bytes = 256 + serde_json::to_vec(&analysis).map_or(0, |data| data.len());
         self.request(bytes, move |index| index.put(&revision, &analysis))
+    }
+    pub fn put_many(&self, analyses: Vec<(String, PageIndex)>) -> Answer<Vec<bool>> {
+        let bytes = analyses
+            .iter()
+            .map(|(_, analysis)| 256 + serde_json::to_vec(analysis).map_or(0, |data| data.len()))
+            .sum();
+        self.request(bytes, move |index| {
+            let borrowed: Vec<_> = analyses
+                .iter()
+                .map(|(revision, analysis)| (revision.as_str(), analysis))
+                .collect();
+            index.put_many(&borrowed)
+        })
     }
     pub fn find_page(&self, target: String) -> Answer<Option<PageRef>> {
         self.request(128 + target.len(), move |index| index.find_page(&target))
@@ -658,6 +685,57 @@ mod tests {
             .connection
             .select_row("SELECT count(*) FROM search_rows")?()?;
         assert_eq!(rows, Some(2));
+        Ok(())
+    }
+
+    #[test]
+    fn a_batch_of_analyses_stores_each_page_as_put_does() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let database = root.path().join("local.sqlite");
+        let store = crate::notebook::NotebookStore::open(&database, "nb", "local")?;
+        for page in ["a", "b"] {
+            store.save(&crate::notebook::Edit {
+                page: page.into(),
+                path: format!("{page}.md"),
+                text: page.into(),
+                base: Vec::new(),
+                deleted: false,
+                created: 1,
+                recovery: None,
+            })?;
+        }
+        let index = QueryIndex::open(
+            &database,
+            IndexConfig {
+                analyzer: 1,
+                layout: DailyLayout::default(),
+                calendar: DailyCalendar::utc(),
+            },
+        )?;
+        let analysis = |word: &str| PageIndex {
+            blocks: vec![IndexedBlock {
+                text: word.into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let pending = index.pending(8)?;
+        let (alpha, beta, gone) = (analysis("alphaword"), analysis("betaword"), analysis("x"));
+        let stored = index.put_many(&[
+            (pending[0].revision.as_str(), &alpha),
+            (pending[1].revision.as_str(), &beta),
+            ("no-such-revision", &gone),
+        ])?;
+        assert_eq!(stored, [true, true, false]);
+        assert_eq!(index.unanalyzed()?, 0);
+        assert_eq!(index.search("alphaword")?.len(), 1);
+        assert_eq!(index.search("betaword")?.len(), 1);
+        assert_eq!(
+            index.put_many(&[(pending[0].revision.as_str(), &alpha)])?,
+            [true],
+            "an analyzed revision stays stored, as put reports"
+        );
+        assert_eq!(index.search("alphaword")?.len(), 1);
         Ok(())
     }
 
