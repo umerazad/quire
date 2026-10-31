@@ -141,6 +141,7 @@ pub(in crate::editor_host) fn database_notebook(
         database,
         notebook: identity.notebook,
         writer: identity.writer,
+        folder: None,
     })
 }
 
@@ -318,6 +319,7 @@ pub(in crate::editor_host) fn open_location(
             database,
             notebook,
             writer,
+            folder,
         } => {
             let remembered = crate::navigation::WorkspaceFile::beside(database, notebook)
                 .load()
@@ -335,6 +337,7 @@ pub(in crate::editor_host) fn open_location(
                 notebook: notebook.clone(),
                 writer: writer.clone(),
                 page,
+                folder: folder.clone(),
             }
             .open(cx)
         }

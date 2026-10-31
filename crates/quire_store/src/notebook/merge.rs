@@ -185,6 +185,7 @@ impl NotebookStore {
         );
         self.connection
             .exec_bound("INSERT INTO outbox(revision) VALUES (?)")?(id.as_str())?;
+        self.outbox_grew();
         Ok(Some(MergedPage {
             page,
             revision,

@@ -45,7 +45,18 @@ pub struct NotebookSession {
 }
 
 impl NotebookSession {
+    #[cfg(test)]
     pub fn open(path: PathBuf, notebook: String, writer: String) -> Result<Self, String> {
+        Self::open_synced(path, notebook, writer, None)
+    }
+
+    /// Opens a Quire notebook database whose saves publish to the synced `folder`.
+    pub fn open_synced(
+        path: PathBuf,
+        notebook: String,
+        writer: String,
+        folder: Option<PathBuf>,
+    ) -> Result<Self, String> {
         let lock = path
             .parent()
             .filter(|folder| folder.is_dir())
@@ -57,6 +68,7 @@ impl NotebookSession {
             database: path.clone(),
             notebook: notebook.clone(),
             writer: writer.clone(),
+            folder,
         };
         let worker = StorageWorker::spawn(path, notebook, writer, QueueLimits::default())
             .map_err(|error| format!("{error:#}"))?;

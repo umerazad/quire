@@ -66,6 +66,7 @@ fn the_data_section_runs_backups_in_the_notebook_window_and_saves_the_personal_r
             database: notebook.path.clone(),
             notebook: "nb".into(),
             writer: "local".into(),
+            folder: None,
         }),
         "the open notebook is the active profile's"
     );
@@ -192,6 +193,7 @@ fn choosing_a_quire_notebook_database_opens_it_as_the_active_profiles_notebook(
             database: fs::canonicalize(&database).unwrap(),
             notebook: "other-nb".into(),
             writer: "other-writer".into(),
+            folder: None,
         })
     );
 }

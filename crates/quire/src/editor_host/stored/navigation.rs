@@ -925,3 +925,7 @@ mod lifecycle_tests;
 #[cfg(test)]
 #[path = "data_tests.rs"]
 mod data_tests;
+
+#[cfg(test)]
+#[path = "live_tests.rs"]
+mod live_tests;

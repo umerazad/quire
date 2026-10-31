@@ -87,6 +87,7 @@ impl StoredWindow {
                 database,
                 notebook,
                 writer,
+                folder: None,
             },
             Location::Folder { root, .. } => Notebook::Folder { root },
         };
@@ -146,6 +147,7 @@ impl StoredWindow {
                 notebook,
                 writer,
                 page: page.id().to_owned(),
+                folder: None,
             }
             .open(cx),
             Location::Folder { root, state } => {

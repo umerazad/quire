@@ -1,7 +1,7 @@
 //! The window's sync commands, and rereading notes a Git sync changed.
 
 use super::*;
-use crate::sync_status::{CheckSyncFolder, ShowSync, SyncStatus, SyncWithGit, Synced};
+use crate::sync_status::{CheckSyncFolder, Kind, ShowSync, SyncStatus, SyncWithGit, Synced};
 use quire_store::git_sync::Git;
 
 /// Git as the window runs it. Tests run Git without the user's configuration, so they never read
@@ -29,19 +29,48 @@ pub(super) fn new_sync_status(
     calendar: Option<DailyCalendar>,
     cx: &mut gpui::Context<StoredWindow>,
 ) -> Entity<SyncStatus> {
+    let session = session.borrow();
     let folder = session
-        .borrow()
         .folder()
-        .map(|(root, state)| (root.to_owned(), state.to_owned()));
+        .map(|(root, state)| {
+            (
+                root.to_owned(),
+                Kind::Folder {
+                    state: state.to_owned(),
+                },
+            )
+        })
+        .or_else(|| match (&notebook, session.storage()) {
+            (
+                Some(quire_store::profiles::Notebook::Store {
+                    database,
+                    folder: Some(folder),
+                    ..
+                }),
+                crate::notebook_backend::NotebookBackend::Store(client),
+            ) => Some((
+                folder.clone(),
+                Kind::Quire {
+                    database: database.clone(),
+                    client,
+                },
+            )),
+            _ => None,
+        });
     let label = backups::clock_label(calendar.unwrap_or_else(DailyCalendar::utc));
     cx.new(|cx| SyncStatus::new(folder, notebook, git(), label, cx))
 }
 
 impl StoredWindow {
     pub(super) fn watch_sync(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
-        cx.subscribe_in(&self.sync, window, |this, _, _: &Synced, _, cx| {
-            this.folder_changed(None, cx);
-        })
+        cx.subscribe_in(
+            &self.sync,
+            window,
+            |this, _, _: &Synced, _, cx| match this.live.clone() {
+                Some(live) => live.update(cx, |live, cx| live.import(cx)),
+                None => this.folder_changed(None, cx),
+            },
+        )
         .detach();
     }
 

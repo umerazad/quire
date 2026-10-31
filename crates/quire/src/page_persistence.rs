@@ -309,6 +309,13 @@ impl PagePersistence {
         self.reconcile(cx);
     }
 
+    /// Another writer's version of this page arrived in the store, for example by an import:
+    /// merge it as [`Self::absorb`] does, reading the version from the store.
+    pub fn store_moved(&mut self, cx: &mut Context<Self>) {
+        self.stale = true;
+        self.reconcile(cx);
+    }
+
     fn saving(&self) -> bool {
         self.task.is_some() && self.pending.as_ref().is_some_and(|request| request.save)
     }
