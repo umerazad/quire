@@ -261,3 +261,125 @@ fn an_unavailable_folder_lets_close_anyway_quit_with_the_save_kept_for_next_time
     assert_eq!(outbox(&synced, cx), 1, "nothing saved is lost");
     assert_eq!(published(&away, "local"), 1);
 }
+const OTHER_COMPUTER: [(&str, &str); 6] = [
+    ("GIT_CONFIG_GLOBAL", "/dev/null"),
+    ("GIT_CONFIG_NOSYSTEM", "1"),
+    ("GIT_AUTHOR_NAME", "Other Computer"),
+    ("GIT_AUTHOR_EMAIL", "other@example.invalid"),
+    ("GIT_COMMITTER_NAME", "Other Computer"),
+    ("GIT_COMMITTER_EMAIL", "other@example.invalid"),
+];
+
+fn run_git(root: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .current_dir(root)
+        .args(args)
+        .envs(OTHER_COMPUTER)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+fn sync_message(synced: &Synced, cx: &mut TestAppContext) -> String {
+    cx.dispatch_action(
+        synced.notebook.window.into(),
+        crate::sync_status::SyncWithGit,
+    );
+    let status = read(&synced.notebook, cx, |view, _| view.sync.clone());
+    wait_until(cx, "the sync to finish", |cx| {
+        status.read_with(cx, |status, _| !status.is_running())
+    });
+    status.read_with(cx, |status, _| {
+        status
+            .message()
+            .map(|message| message.to_string())
+            .unwrap_or_default()
+    })
+}
+
+#[gpui::test]
+fn personal_sync_publishes_first_then_brings_another_computers_change_into_the_open_page(
+    cx: &mut TestAppContext,
+) {
+    use quire_store::git_sync::{self as sync, Profile, Target};
+    use quire_store::profiles::ProfileId;
+    let synced = open_synced("- one\n", cx);
+    let temp = tempfile::tempdir().unwrap();
+    let elsewhere = fs::canonicalize(temp.path()).unwrap();
+    let remote = elsewhere.join("remote.git");
+    run_git(
+        &elsewhere,
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            remote.to_str().unwrap(),
+        ],
+    );
+    let remote = remote.display().to_string();
+    let location = read(&synced.notebook, cx, |view, _| {
+        view.location.clone().unwrap()
+    });
+    cx.update(|cx| {
+        crate::profiles::update(cx, |profiles| {
+            profiles.set_notebook(ProfileId::Personal, location)?;
+            profiles.activate(ProfileId::Personal)?;
+            profiles
+                .set_git_remote(ProfileId::Personal, &remote)
+                .map(drop)
+        })
+        .unwrap()
+    });
+
+    save_elsewhere(&synced, "- saved just before syncing\n", cx);
+    let message = sync_message(&synced, cx);
+    assert!(message.starts_with("Pushed "), "{message}");
+    let pushed = run_git(
+        Path::new(&remote),
+        &["ls-tree", "-r", "--name-only", "main"],
+    );
+    assert_eq!(
+        pushed
+            .lines()
+            .filter(|path| path.starts_with("devices/local/log/"))
+            .count(),
+        2,
+        "the save went out before the commit: {pushed}"
+    );
+    assert!(pushed.contains("quire-notebook.json"), "{pushed}");
+
+    // Another computer clones the notebook, edits the open page, publishes, and pushes.
+    let other = elsewhere.join("other");
+    run_git(&elsewhere, &["clone", "-q", "-b", "main", &remote, "other"]);
+    let office = NotebookStore::open(&elsewhere.join("office.sqlite"), "nb", "office").unwrap();
+    office.rescan(&other, Default::default(), None).unwrap();
+    save(&office, "p-a", "A.md", "- one\n- from the other computer\n");
+    office.publish_to(&other, 9).unwrap().unwrap();
+    let isolated = OTHER_COMPUTER
+        .into_iter()
+        .fold(sync::Git::default(), |runner, (key, value)| {
+            runner.env(key, value)
+        });
+    let target = Target {
+        profile: Profile::Personal,
+        root: &other,
+        remote: Some(&remote),
+    };
+    sync::sync_quire(&isolated, &target, 10).unwrap();
+
+    let message = sync_message(&synced, cx);
+    assert!(message.starts_with("Pushed "), "{message}");
+    wait_until(
+        cx,
+        "the other computer's line to reach the open page",
+        |cx| page_text(&synced.notebook, cx) == "- one\n- from the other computer\n",
+    );
+    assert_eq!(run_git(&synced.folder, &["status", "--porcelain"]), "");
+}

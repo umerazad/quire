@@ -275,8 +275,11 @@ impl Repository<'_> {
         Ok((output.code == 0).then_some(output.stdout))
     }
 
-    fn commit_all(&self, message: &str) -> Result<()> {
-        self.run(&["add", "-A", "--", "."])?;
+    /// Commits every file except those `excluded` (Git pathspecs).
+    fn commit_all(&self, message: &str, excluded: &[&str]) -> Result<()> {
+        let mut add = vec!["add", "-A", "--", "."];
+        add.extend_from_slice(excluded);
+        self.run(&add)?;
         match self.execute(&["diff", "--cached", "--quiet"])?.code {
             0 => Ok(()),
             1 => self.run(&["commit", "-m", message]).map(drop),
@@ -507,7 +510,12 @@ fn iso(at: u64) -> String {
 /// or two computers share one identity, is aborted and reported, never resolved by Quire.
 pub fn sync_quire(git: &Git, target: &Target, now: u64) -> Result<Pushed> {
     let repository = open(git, target)?;
-    repository.commit_all(&format!("Quire changes {}", iso(now)))?;
+    // A writer may be publishing meanwhile; its temporary files start with a dot and become
+    // whole change files only by a rename, so leaving them out commits only complete files.
+    repository.commit_all(
+        &format!("Quire changes {}", iso(now)),
+        &[":(exclude,glob)devices/**/.*"],
+    )?;
     repository.run(&["fetch", "origin"])?;
     let remote_ref = repository.remote_ref();
     if repository.head(&remote_ref)?.is_some() {
@@ -577,7 +585,7 @@ pub fn sync_folder(git: &Git, target: &Target, now: u64) -> Result<Pushed> {
             "The remote uses a different branch. Open a clone on the correct branch and retry syncing."
         );
     }
-    repository.commit_all(&format!("Save personal notes {}", iso(now)))?;
+    repository.commit_all(&format!("Save personal notes {}", iso(now)), &[])?;
     if repository.head("HEAD")?.is_none() {
         bail!(
             "There are no tracked notes to push. Add a note or review .gitignore, then sync again."
