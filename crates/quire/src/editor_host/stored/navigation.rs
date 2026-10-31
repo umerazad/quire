@@ -712,3 +712,7 @@ mod rendered_links_tests;
 #[cfg(test)]
 #[path = "embeds_tests.rs"]
 mod embeds_tests;
+
+#[cfg(test)]
+#[path = "task_lists_tests.rs"]
+mod task_lists_tests;

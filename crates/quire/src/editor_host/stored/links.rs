@@ -54,6 +54,34 @@ impl Notebook for WindowNotebook {
             (loaded.analysis.read(cx).source == *buffer).then(|| page.id().to_owned())
         })
     }
+
+    fn page_path(&self, buffer: &Entity<language::Buffer>, cx: &App) -> Option<String> {
+        let this = self.0.upgrade()?;
+        let pages = this.read(cx).session.borrow().open_pages();
+        pages.into_iter().find_map(|page| {
+            let loaded = page.read(cx).loaded()?;
+            (loaded.analysis.read(cx).source == *buffer)
+                .then(|| loaded.path.clone())
+                .flatten()
+        })
+    }
+
+    fn show_page(&self, page: &str, beside: bool, window: &mut Window, cx: &mut App) {
+        self.0
+            .update(cx, |this, cx| {
+                this.open_page(page.to_owned(), beside, window, cx)
+            })
+            .ok();
+    }
+
+    fn writers(
+        &self,
+        cx: &App,
+    ) -> Option<(Vec<Entity<OpenPage>>, quire_store::worker::StorageClient)> {
+        let this = self.0.upgrade()?;
+        let session = this.read(cx).session.borrow();
+        Some((session.open_pages(), session.storage()))
+    }
 }
 
 impl StoredWindow {
