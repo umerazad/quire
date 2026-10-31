@@ -155,16 +155,28 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
         })?;
         cx.set_global(db::AppDatabase(connection));
     }
-    cx.bind_keys([KeyBinding::new(
-        if cfg!(target_os = "macos") {
-            "cmd-shift-m"
-        } else {
-            "ctrl-shift-m"
-        },
-        TogglePresentation,
-        Some(EDITOR_CONTEXT),
-    )]);
+    cx.bind_keys(write_and_source_keys());
     Ok(())
+}
+
+/// The reference Mod-E switch between Write and Source, Cmd/Ctrl-Shift-M as its alias, and Mod-Y
+/// for redo. Off macOS Ctrl-E and Ctrl-Y scroll in Vim's Normal mode and insert the character
+/// below or above in Insert mode, so there they apply only with Vim off.
+fn write_and_source_keys() -> [KeyBinding; 3] {
+    if cfg!(target_os = "macos") {
+        [
+            KeyBinding::new("cmd-e", TogglePresentation, Some(EDITOR_CONTEXT)),
+            KeyBinding::new("cmd-shift-m", TogglePresentation, Some(EDITOR_CONTEXT)),
+            KeyBinding::new("cmd-y", editor::actions::Redo, Some(EDITOR_CONTEXT)),
+        ]
+    } else {
+        let without_vim = "Editor && !QuireControl && !vim_mode";
+        [
+            KeyBinding::new("ctrl-e", TogglePresentation, Some(without_vim)),
+            KeyBinding::new("ctrl-shift-m", TogglePresentation, Some(EDITOR_CONTEXT)),
+            KeyBinding::new("ctrl-y", editor::actions::Redo, Some(without_vim)),
+        ]
+    }
 }
 
 fn editor_vim_context(context: &str) -> bool {

@@ -413,7 +413,13 @@ impl StoredWindow {
                     .ok();
             });
         });
-        let palette = PagePalette::new(client, mode, choose).in_folder(folder);
+        let commands = match mode {
+            PaletteMode::Find => crate::navigation::palette::commands(&self.command_context(cx)),
+            PaletteMode::Create => Vec::new(),
+        };
+        let palette = PagePalette::new(client, mode, choose)
+            .in_folder(folder)
+            .with_commands(commands);
         let picker = cx.new(|cx| Picker::uniform_list(palette, window, cx).reopenable(false, cx));
         cx.subscribe_in(&picker, window, |this, _, _: &DismissEvent, window, cx| {
             this.nav.palette = None;
@@ -442,14 +448,9 @@ impl StoredWindow {
         cx: &mut gpui::Context<Self>,
     ) {
         match choice {
-            PaletteChoice::Open { page, block } => self.open_page_at(
-                page,
-                block.map(crate::navigation::Jump::block),
-                beside,
-                window,
-                cx,
-            ),
+            PaletteChoice::Open { page, jump } => self.open_page_at(page, jump, beside, window, cx),
             PaletteChoice::Create { title } => self.create(title, folder, beside, window, cx),
+            PaletteChoice::Command(command) => self.run_palette_command(command, window, cx),
         }
     }
 

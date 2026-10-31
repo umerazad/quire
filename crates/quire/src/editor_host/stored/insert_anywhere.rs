@@ -46,6 +46,21 @@ impl StoredWindow {
             .collect()
     }
 
+    /// The page editor used last while it is on screen, or else the shown page's.
+    pub(in crate::editor_host::stored) fn active_page_editor(
+        &self,
+        cx: &App,
+    ) -> Option<Entity<Editor>> {
+        let shown = self.shown_editors(cx);
+        let last = self
+            .nav
+            .last_editor
+            .as_ref()
+            .and_then(|editor| editor.upgrade())
+            .filter(|editor| shown.contains(editor));
+        last.or_else(|| shown.into_iter().next())
+    }
+
     pub(in crate::editor_host::stored) fn insert_anywhere(
         &mut self,
         event: &gpui::KeyDownEvent,
@@ -70,14 +85,7 @@ impl StoredWindow {
         {
             return;
         }
-        let shown = self.shown_editors(cx);
-        let last = self
-            .nav
-            .last_editor
-            .as_ref()
-            .and_then(|editor| editor.upgrade())
-            .filter(|editor| shown.contains(editor));
-        let Some(target) = last.or_else(|| shown.into_iter().next()) else {
+        let Some(target) = self.active_page_editor(cx) else {
             return;
         };
         cx.stop_propagation();

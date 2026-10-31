@@ -226,6 +226,58 @@ fn write_menu_restyles_lists_makes_tasks_and_toggles_marks_in_one_undo_step(
 }
 
 #[gpui::test]
+fn reference_editor_keys_switch_views_copy_a_block_reference_and_redo(cx: &mut TestAppContext) {
+    let (notebook, editor) = open(false, cx);
+    cx.update(|cx| crate::preferences::change(crate::preferences::Change::Vim(false), cx));
+    cx.run_until_parked();
+    let key = super::tests::key;
+    let presented = |cx: &mut TestAppContext| {
+        draw(&notebook, cx);
+        editor.read_with(cx, |editor, _| crate::editor_projection::enabled(editor))
+    };
+    cx.simulate_keystrokes(notebook.window.into(), &key("e"));
+    wait_until(cx, "Write", |cx| presented(cx));
+    cx.simulate_keystrokes(notebook.window.into(), &key("e"));
+    wait_until(cx, "Source", |cx| !presented(cx));
+
+    select(&notebook, &editor, "first item", 0, 0, cx);
+    cx.simulate_keystrokes(notebook.window.into(), &key("shift-c"));
+    cx.run_until_parked();
+    let copied = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap();
+    let id = copied
+        .strip_prefix("((")
+        .and_then(|rest| rest.strip_suffix("))"))
+        .unwrap_or_else(|| panic!("{copied} is not a block reference"))
+        .to_owned();
+    let marked = format!("A place for thoughts.\n\n- first item ^{id}\n- second item\n");
+    assert_eq!(text(&editor, cx), marked);
+    cx.simulate_keystrokes(notebook.window.into(), &key("z"));
+    assert_eq!(text(&editor, cx), WELCOME[0].2);
+    cx.simulate_keystrokes(notebook.window.into(), &key("y"));
+    assert_eq!(text(&editor, cx), marked, "Mod-Y redoes");
+}
+
+/// Off macOS, Vim keeps Ctrl-E and Ctrl-Y; Ctrl-Shift-M still switches views.
+#[cfg(not(target_os = "macos"))]
+#[gpui::test]
+fn vim_keeps_ctrl_e_and_ctrl_y_off_macos(cx: &mut TestAppContext) {
+    let (notebook, editor) = open(false, cx);
+    cx.update(|cx| crate::preferences::change(crate::preferences::Change::Vim(true), cx));
+    cx.run_until_parked();
+    cx.simulate_keystrokes(notebook.window.into(), "ctrl-e");
+    draw(&notebook, cx);
+    assert!(!editor.read_with(cx, |editor, _| crate::editor_projection::enabled(editor)));
+    cx.simulate_keystrokes(notebook.window.into(), "ctrl-shift-m");
+    wait_until(cx, "Write", |cx| {
+        draw(&notebook, cx);
+        editor.read_with(cx, |editor, _| crate::editor_projection::enabled(editor))
+    });
+}
+
+#[gpui::test]
 fn source_menu_copies_block_references_and_a_right_click_moves_the_caret(cx: &mut TestAppContext) {
     let (notebook, editor) = open(false, cx);
     select(&notebook, &editor, "second item", 1, 0, cx);

@@ -166,7 +166,7 @@ pub(super) fn caret_text(notebook: &Notebook, side: bool, cx: &mut TestAppContex
     })
 }
 
-fn palette_items(notebook: &Notebook, cx: &mut TestAppContext) -> Vec<PaletteItem> {
+pub(super) fn palette_items(notebook: &Notebook, cx: &mut TestAppContext) -> Vec<PaletteItem> {
     read(notebook, cx, |view, cx| {
         view.nav
             .palette
@@ -176,7 +176,7 @@ fn palette_items(notebook: &Notebook, cx: &mut TestAppContext) -> Vec<PaletteIte
     })
 }
 
-fn type_in_palette(notebook: &Notebook, text: &str, cx: &mut TestAppContext) {
+pub(super) fn type_in_palette(notebook: &Notebook, text: &str, cx: &mut TestAppContext) {
     cx.simulate_input(notebook.window.into(), text);
     let expected = text.to_owned();
     wait_until(cx, "palette results", |cx| {
@@ -261,6 +261,72 @@ fn find_palette_filters_titles_and_text_then_opens_the_choice(cx: &mut TestAppCo
 }
 
 #[gpui::test]
+fn find_palette_lists_blocks_holding_the_typed_text_unsaved_text_included(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&PAGES, "a", cx);
+    wait_until(cx, "the first page", |cx| {
+        read(&notebook, cx, |view, _| view.editor.is_some())
+    });
+    let editor = read(&notebook, cx, |view, cx| {
+        view.editor.as_ref().unwrap().read(cx).source.clone()
+    });
+    cx.update_window(notebook.window.into(), |_, window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
+            editor.insert("- a quokka sleeps\n", window, cx);
+        })
+    })
+    .unwrap();
+    let client = read(&notebook, cx, |view, cx| view.index_client(cx).unwrap());
+    cx.executor().advance_clock(Duration::from_millis(200));
+    wait_until(cx, "the unsaved block in the index", |_| {
+        futures::executor::block_on(
+            client
+                .with_generation(|index| index.text_hits("okka sl", 8, 40))
+                .unwrap(),
+        )
+        .unwrap()
+        .1
+        .len()
+            == 1
+    });
+
+    cx.simulate_keystrokes(notebook.window.into(), &key("k"));
+    type_in_palette(&notebook, "nana bre", cx);
+    assert_eq!(
+        palette_items(&notebook, cx),
+        [
+            PaletteItem::Hit {
+                page: "b".into(),
+                title: "Beta".into(),
+                snippet: "banana bread with apple".into(),
+                block: None,
+                from: Some(0),
+            },
+            PaletteItem::Create {
+                title: "nana bre".into()
+            }
+        ],
+        "the middle of a word matches, which full-text prefixes do not"
+    );
+    cx.simulate_keystrokes(notebook.window.into(), "escape");
+    cx.run_until_parked();
+
+    cx.simulate_keystrokes(notebook.window.into(), &key("k"));
+    type_in_palette(&notebook, "okka SL", cx);
+    let items = palette_items(&notebook, cx);
+    assert!(
+        matches!(&items[..], [PaletteItem::Hit { page, snippet, from: Some(_), .. }, PaletteItem::Create { .. }]
+            if page == "a" && snippet == "a quokka sleeps"),
+        "unsaved text is found: {items:?}"
+    );
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the caret at the found block", |cx| {
+        read(&notebook, cx, |view, _| view.nav.palette.is_none())
+            && caret_text(&notebook, false, cx).contains("a quokka sleeps")
+    });
+}
+
+#[gpui::test]
 fn palette_creates_a_missing_page_and_refuses_a_taken_name(cx: &mut TestAppContext) {
     let notebook = open_notebook(&PAGES, "a", cx);
     cx.simulate_keystrokes(notebook.window.into(), &key("n"));
@@ -338,12 +404,14 @@ fn palette_rejects_results_from_superseded_queries(cx: &mut TestAppContext) {
         let stale = crate::navigation::palette::Results {
             pages: Vec::new(),
             found: None,
+            live: Vec::new(),
             hits: Vec::new(),
         };
         assert!(!delegate.apply(current - 1, u64::MAX, "b", Ok(stale)));
         let older = crate::navigation::palette::Results {
             pages: Vec::new(),
             found: None,
+            live: Vec::new(),
             hits: Vec::new(),
         };
         assert!(!delegate.apply(current, 0, "be", Ok(older)));

@@ -916,3 +916,85 @@ fn outlines_list_as_many_nested_blocks_as_asked_and_count_the_rest() -> Result<(
     assert_eq!(outlines[1].more_children, 0);
     Ok(())
 }
+
+#[test]
+fn text_hits_find_substrings_in_unsaved_text_up_to_eight_per_page() -> Result<()> {
+    use quire_store::index::Overlay;
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "a", "Alpha.md", "a")?;
+    save(&store, "b", "Beta.md", "b")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    let lines = |texts: &[&str]| PageIndex {
+        blocks: texts
+            .iter()
+            .enumerate()
+            .map(|(at, text)| IndexedBlock {
+                text: (*text).into(),
+                ..block(None, at as u32 * 10)
+            })
+            .collect(),
+        ..Default::default()
+    };
+    let many: Vec<String> = (0..10).map(|n| format!("pineapple {n}")).collect();
+    let many: Vec<&str> = many.iter().map(String::as_str).collect();
+    analyze_all(
+        &index,
+        &[
+            ("Alpha.md", lines(&many)),
+            (
+                "Beta.md",
+                lines(&["Éclair au Café", "日本語のメモ", "", "Apples"]),
+            ),
+        ],
+    )?;
+    let hits = |query: &str, limit: usize| -> Result<Vec<(String, String, Option<u32>)>> {
+        Ok(index
+            .text_hits(query, 8, limit)?
+            .into_iter()
+            .map(|hit| (hit.source.path, hit.snippet, hit.from))
+            .collect())
+    };
+    let found = hits("APPLE", 40)?;
+    assert_eq!(
+        found.len(),
+        9,
+        "eight from Alpha and one from Beta: {found:?}"
+    );
+    assert_eq!(
+        found[0],
+        ("Alpha.md".into(), "pineapple 0".into(), Some(0)),
+        "page path then block order, with the block's start"
+    );
+    assert_eq!(found[7].1, "pineapple 7");
+    assert_eq!(found[8], ("Beta.md".into(), "Apples".into(), Some(30)));
+    assert_eq!(hits("apple", 3)?.len(), 3, "the limit holds across pages");
+    assert_eq!(
+        hits("café", 40)?,
+        [("Beta.md".into(), "Éclair au Café".into(), Some(0))],
+        "letters outside ASCII match ignoring case"
+    );
+    assert_eq!(hits("éCLAIR", 40)?.len(), 1);
+    assert_eq!(hits("語のメ", 40)?.len(), 1, "caseless scripts match");
+    assert!(hits("  ", 40)?.is_empty(), "blank queries find nothing");
+    assert_eq!(hits("eapple 1", 40)?.len(), 1, "the query is one phrase");
+
+    index.set_overlay(
+        &JsString::from("b"),
+        &Overlay {
+            path: "Beta.md".into(),
+            title: "Beta".into(),
+            index: lines(&["typed but unsaved"]),
+        },
+    )?;
+    assert_eq!(
+        hits("unsaved", 40)?,
+        [("Beta.md".into(), "typed but unsaved".into(), Some(0))],
+        "unsaved text is found"
+    );
+    assert!(
+        hits("café", 40)?.is_empty(),
+        "the open page's saved text no longer matches"
+    );
+    Ok(())
+}

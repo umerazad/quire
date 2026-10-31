@@ -71,17 +71,26 @@ impl StoredWindow {
                     .get(&key)
                     .cloned()
                     .unwrap_or_default();
+                let shown = tag.clone();
                 let page = cx.new(|cx| TagPageView::new(tag, choices, window, cx));
                 cx.subscribe_in(
                     &page,
                     window,
-                    |this, _, event: &TagPageEvent, window, cx| match event {
+                    move |this, _, event: &TagPageEvent, window, cx| match event {
                         TagPageEvent::Open { page, jump, beside } => {
                             this.open_page_at(page.clone(), jump.clone(), *beside, window, cx)
                         }
                         TagPageEvent::Remember => this.remember_tag_page(cx),
                         TagPageEvent::Link { link, beside } => {
                             this.open_row_link(link, *beside, window, cx)
+                        }
+                        TagPageEvent::Synthesize => {
+                            let seed = crate::ai::answer::Seed {
+                                title: Some(format!("Blocks tagged {shown}")),
+                                scope: Some(crate::ai::answer::Scope::Tag(shown.clone())),
+                                ..Default::default()
+                            };
+                            this.open_answer(seed, window, cx)
                         }
                     },
                 )

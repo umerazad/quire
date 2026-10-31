@@ -124,7 +124,7 @@ fn f1_opens_help_once_and_search_filters_topics_and_shortcuts(cx: &mut TestAppCo
 }
 
 #[test]
-fn topics_follow_the_reference_order_without_ai() {
+fn topics_follow_the_reference_order() {
     let ids: Vec<_> = content::SECTIONS.iter().map(|section| section.id).collect();
     assert_eq!(
         ids,
@@ -135,6 +135,7 @@ fn topics_follow_the_reference_order_without_ai() {
             "links",
             "vim",
             "templates",
+            "ai",
             "data"
         ]
     );
@@ -232,4 +233,41 @@ fn help_names_only_menu_items_that_exist(cx: &mut TestAppContext) {
         named.count() >= 5,
         "Help names the File menu where it guides"
     );
+}
+
+#[gpui::test]
+fn the_ai_and_page_keys_help_names_are_bound(cx: &mut TestAppContext) {
+    init_app(cx);
+    cx.update(|cx| {
+        let rows = shortcuts(cx);
+        let bound = |name: &str, keys: &str| {
+            assert!(
+                rows.iter().any(|row| row.name == name && row.keys == keys),
+                "{name} is not bound to {keys}: {:?}",
+                rows.iter()
+                    .filter(|row| row.name == name)
+                    .map(|row| &row.keys)
+                    .collect::<Vec<_>>()
+            )
+        };
+        if cfg!(target_os = "macos") {
+            bound("quire_ai::AskAi", "Command-I");
+            bound("quire_ai::AskNotebook", "Command-Option-I");
+            bound("quire::TogglePresentation", "Command-E");
+            bound("quire_page::CopyBlockReference", "Command-Shift-C");
+        } else {
+            bound("quire_ai::AskAi", "Ctrl-I");
+            bound("quire_ai::AskNotebook", "Ctrl-Alt-I");
+            bound("quire::TogglePresentation", "Ctrl-Shift-M");
+            bound("quire_page::CopyBlockReference", "Ctrl-Shift-C");
+        }
+    });
+    let ai = content::SECTIONS
+        .iter()
+        .find(|section| section.id == "ai")
+        .unwrap();
+    assert!(ai.steps.iter().any(|step| {
+        step.contains("Command/Ctrl-I, or \\a in Vim Normal or Visual mode")
+            && step.contains("lists earlier prompts")
+    }));
 }
