@@ -60,6 +60,9 @@ mod backups;
 mod sync_status;
 
 #[cfg(feature = "full-editor")]
+mod live_sync;
+
+#[cfg(feature = "full-editor")]
 mod lifecycle;
 
 #[cfg(feature = "full-editor")]
@@ -1097,6 +1100,14 @@ fn main() {
             paths::data_dir().join(notebook_tools::bridge::FILE_NAME),
             env!("CARGO_PKG_VERSION"),
         );
+        return;
+    }
+    #[cfg(all(feature = "full-editor", feature = "test-support"))]
+    if std::env::args().nth(1).as_deref() == Some("--measure-sync-latency") {
+        let rounds = std::env::args()
+            .nth(2)
+            .and_then(|rounds| rounds.parse().ok());
+        live_sync::latency::run(rounds.unwrap_or(10));
         return;
     }
     #[cfg(feature = "full-editor")]

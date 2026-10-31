@@ -1,7 +1,7 @@
 use crate::notebook::{
     BatchImport, CheckedSave, CheckedSaves, Cursor, Draft, DraftStamp, Edit, MetadataLimits,
-    NotebookStore, PageCheckout, PageMetadata, PendingPublication, PublicationAck, RescanCursor,
-    RescanLimits, RescanReport, SaveAck,
+    NotebookStore, PageCheckout, PageMetadata, PendingPublication, PublicationAck,
+    PublicationState, RescanCursor, RescanLimits, RescanReport, SaveAck,
 };
 use crate::sync::json::{JsString, Json};
 use anyhow::{Context as _, Result, anyhow, ensure};
@@ -452,6 +452,16 @@ impl Client<NotebookStore> {
         self.request(128 + root.as_os_str().len(), move |store| {
             store.publish_to(&root, created)
         })
+    }
+    /// A message after each save that adds to the outbox; see [`NotebookStore::watch_outbox`].
+    pub fn watch_outbox(
+        &self,
+    ) -> std::result::Result<Reply<futures::channel::mpsc::UnboundedReceiver<u64>>, QueueError>
+    {
+        self.request(128, |store| Ok(store.watch_outbox()))
+    }
+    pub fn publication_state(&self) -> std::result::Result<Reply<PublicationState>, QueueError> {
+        self.request(128, NotebookStore::publication_state)
     }
     pub fn import_batch(
         &self,

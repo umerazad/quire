@@ -420,6 +420,7 @@ fn rt_backups_restore_as_new_notebooks_and_the_backups_stay_unchanged() {
                     database,
                     notebook,
                     writer,
+                    ..
                 } = &restored.notebook
                 else {
                     panic!("{:?}", restored.notebook);

@@ -1,8 +1,9 @@
 use crate::{database, schema};
 use anyhow::{Context as _, Result, bail, ensure};
+use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use sqlez::connection::Connection;
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     path::{Path, PathBuf},
 };
 
@@ -49,6 +50,20 @@ pub struct NotebookStore {
     poisoned: Cell<bool>,
     directory: PathBuf,
     clock: Clock,
+    /// Told whenever a save adds to the outbox, so a scheduler can publish it.
+    outbox_watchers: RefCell<Vec<UnboundedSender<u64>>>,
+    /// How many saves have added to the outbox since this store opened.
+    saves: Cell<u64>,
+}
+
+/// What a writer's status reports about its publication.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PublicationState {
+    pub outbox: u64,
+    pub last_seq: u64,
+    /// The number carried by the last outbox message when this was read: a save with a larger
+    /// number is not counted in `outbox` yet.
+    pub saves: u64,
 }
 
 /// Milliseconds stamped on merge revisions that rescans make.
@@ -87,6 +102,8 @@ impl NotebookStore {
                 .context("Database path has no parent folder.")?
                 .to_owned(),
             clock,
+            outbox_watchers: RefCell::default(),
+            saves: Cell::new(0),
         };
         store.preflight().context("Cannot open this notebook database. Preserve it and use a compatible Quire version or a verified backup.")?;
         database::configure(&store.connection).context("Cannot configure durable notebook storage. Keep the editor contents and check the database folder's write permissions and available space.")?;
@@ -105,6 +122,38 @@ impl NotebookStore {
     }
     pub fn device_id(&self) -> &str {
         &self.device
+    }
+
+    /// A numbered message after each save that adds to the outbox, until the receiver is dropped.
+    /// Messages can arrive before the save commits; act on them with a later request to this
+    /// store, whose [`PublicationState::saves`] says which saves it counted.
+    pub fn watch_outbox(&self) -> UnboundedReceiver<u64> {
+        let (sender, receiver) = unbounded();
+        self.outbox_watchers.borrow_mut().push(sender);
+        receiver
+    }
+
+    fn outbox_grew(&self) {
+        let saves = self.saves.get() + 1;
+        self.saves.set(saves);
+        self.outbox_watchers
+            .borrow_mut()
+            .retain(|watcher| watcher.unbounded_send(saves).is_ok());
+    }
+
+    /// How many saves wait to publish and the last sequence this writer published.
+    pub fn publication_state(&self) -> Result<PublicationState> {
+        let outbox = self
+            .connection
+            .select_row::<i64>("SELECT COUNT(*) FROM outbox")?()?
+        .unwrap_or(0);
+        Ok(PublicationState {
+            outbox: u64::try_from(outbox).unwrap_or(0),
+            last_seq: self
+                .cursor(&self.device)?
+                .map_or(0, |cursor| u64::from(cursor.seq)),
+            saves: self.saves.get(),
+        })
     }
 
     fn preflight(&self) -> Result<i32> {

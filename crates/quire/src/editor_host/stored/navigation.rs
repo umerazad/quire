@@ -929,3 +929,7 @@ mod fresh_ids_tests;
 #[cfg(test)]
 #[path = "zoom_tests.rs"]
 mod zoom_tests;
+
+#[cfg(test)]
+#[path = "live_tests.rs"]
+mod live_tests;
