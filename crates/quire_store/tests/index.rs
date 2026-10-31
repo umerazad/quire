@@ -528,14 +528,24 @@ fn block_choices_and_previews_read_live_blocks_and_refuse_ambiguous_ids() -> Res
     let pair = |path: &str, key: &str| (path.to_owned(), key.to_owned());
     assert_eq!(
         choices("ZEBRA", 10)?,
-        [pair("Alpha.md", "zebra"), pair("Alpha.md", "at-10")],
-        "code blocks are left out"
+        [pair("Alpha.md", "at-10"), pair("Alpha.md", "zebra")],
+        "code blocks are left out, and the shorter of two openings ranks first"
     );
     assert_eq!(
         choices("dawn", 10)?,
-        [pair("Alpha.md", "zebra"), pair("Beta.md", "dup")]
+        [pair("Beta.md", "dup"), pair("Alpha.md", "zebra")],
+        "a block opening with the query ranks above one holding it later"
     );
     assert_eq!(choices("dawn graze", 10)?, [pair("Alpha.md", "zebra")]);
+    assert_eq!(
+        choices("", 10)?,
+        [
+            pair("Alpha.md", "zebra"),
+            pair("Alpha.md", "at-10"),
+            pair("Beta.md", "dup")
+        ],
+        "an empty query keeps page order"
+    );
     assert_eq!(
         choices("", 1)?.len(),
         1,
@@ -576,6 +586,102 @@ fn block_choices_and_previews_read_live_blocks_and_refuse_ambiguous_ids() -> Res
         [pair("Alpha.md", "dup")],
         "unsaved text is offered"
     );
+    Ok(())
+}
+
+#[test]
+fn heading_links_find_the_page_and_its_first_matching_heading() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "a", "Alpha.md", "a")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    let heading = |from: u32, text: &str, kind: &str| IndexedBlock {
+        text: text.into(),
+        kind: kind.into(),
+        ..block(None, from)
+    };
+    let alpha = PageIndex {
+        blocks: vec![
+            heading(0, "# Intro", "heading"),
+            heading(10, "Plan B", "list"),
+            heading(20, "## Plan  B ", "heading"),
+            heading(30, "### plan b", "heading"),
+        ],
+        ..Default::default()
+    };
+    analyze_all(&index, &[("Alpha.md", alpha)])?;
+    type Found = Option<(String, Option<(String, u32)>)>;
+    let found = |target: &str| -> Result<Found> {
+        Ok(index
+            .find_heading(target)?
+            .map(|found| (found.page.path, found.heading)))
+    };
+    let alpha = |heading: Option<(&str, u32)>| {
+        Some((
+            "Alpha.md".to_owned(),
+            heading.map(|(key, at)| (key.to_owned(), at)),
+        ))
+    };
+    assert_eq!(
+        found("Alpha#plan b")?,
+        alpha(Some(("at-30", 30))),
+        "list blocks are not headings; inner spaces count"
+    );
+    assert_eq!(found("alpha#Plan  B")?, alpha(Some(("at-20", 20))));
+    assert_eq!(found("Alpha# Intro ")?, alpha(Some(("at-0", 0))));
+    assert_eq!(
+        found("Alpha#Missing")?,
+        alpha(None),
+        "the page opens without the heading"
+    );
+    assert_eq!(found("Alpha")?, alpha(None));
+    assert_eq!(found("Nowhere#Intro")?, None);
+    assert_eq!(quire_store::index::heading_of("Alpha#^id"), None);
+    Ok(())
+}
+
+#[test]
+fn page_previews_start_at_the_page_or_its_heading_and_skip_code() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "a", "Alpha.md", "a")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    let at = |from: u32, text: &str, kind: &str| IndexedBlock {
+        text: text.into(),
+        kind: kind.into(),
+        ..block(None, from)
+    };
+    let alpha = PageIndex {
+        blocks: vec![
+            at(0, "# Intro", "heading"),
+            at(10, "first", "list"),
+            at(20, "let x = 1;", "code"),
+            at(30, "", "list"),
+            at(40, "## Plan", "heading"),
+            at(50, "step", "list"),
+        ],
+        ..Default::default()
+    };
+    analyze_all(&index, &[("Alpha.md", alpha)])?;
+    let lines = |target: &str, limit: usize| -> Result<Option<Vec<String>>> {
+        Ok(index
+            .page_preview(target, limit)?
+            .map(|preview| preview.lines))
+    };
+    assert_eq!(
+        lines("Alpha", 3)?,
+        Some(vec!["Intro".into(), "first".into(), "Plan".into()])
+    );
+    assert_eq!(
+        lines("Alpha#plan", 5)?,
+        Some(vec!["Plan".into(), "step".into()])
+    );
+    assert_eq!(
+        lines("Alpha#Missing", 1)?,
+        Some(vec!["Intro".into()]),
+        "a missing heading previews the page top"
+    );
+    assert_eq!(lines("Nowhere", 3)?, None);
     Ok(())
 }
 
