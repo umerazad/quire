@@ -2,7 +2,7 @@
 //! changes reaching open pages, and publishing before a close.
 
 use super::*;
-use crate::live_sync::{Imported, LiveSync, LiveSyncView};
+use crate::live_sync::{AttachmentsArrived, Imported, LiveSync, LiveSyncView};
 use crate::notebook_backend::NotebookBackend;
 use quire_store::profiles::Notebook;
 
@@ -52,6 +52,10 @@ impl StoredWindow {
                 persistence.update(cx, |persistence, cx| persistence.store_moved(cx));
             }
             this.refresh_catalogue(cx);
+        })
+        .detach();
+        cx.subscribe(&live, |_, _, _: &AttachmentsArrived, cx| {
+            crate::media::load::files_arrived(cx)
         })
         .detach();
     }

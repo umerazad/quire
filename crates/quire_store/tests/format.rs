@@ -366,6 +366,53 @@ fn revisions_and_status_reject_invalid_fields() {
     }
 }
 
+/// rt's Go terminal app writes this batch (see `tests/reference/UPSTREAM.json`); rt's
+/// `tests/sync-go-batch.test.ts` reads it the same way.
+#[test]
+fn a_batch_written_by_the_go_terminal_app_decodes_byte_for_byte() {
+    let folder = fixtures().join("../sync-vectors/go-written");
+    let expected: Value =
+        serde_json::from_slice(&fs::read(folder.join("expected.json")).unwrap()).unwrap();
+    let name = expected["name"].as_str().unwrap();
+    let data = fs::read(folder.join(name)).unwrap();
+    let decoded = decode(
+        name,
+        &data,
+        Kind::Batch,
+        Expected {
+            notebook: "vectors-notebook",
+            device: "go",
+        },
+    )
+    .unwrap();
+    let revisions: Vec<_> = decoded
+        .value
+        .root()
+        .field("revisions")
+        .elements()
+        .unwrap()
+        .collect();
+    assert_eq!(revisions.len(), 1);
+    let revision = revisions[0];
+    assert_eq!(revision.field("id").as_str(), expected["id"].as_str());
+    let text: Vec<u16> = revision
+        .field("text")
+        .as_js_string()
+        .unwrap()
+        .utf16_units()
+        .collect();
+    let mut wanted: Vec<u16> = "- written by Go \"q\" \\ \u{2028} 😀 "
+        .encode_utf16()
+        .collect();
+    wanted.extend([0xd800, u16::from(b'\n')]);
+    assert_eq!(text, wanted, "the lone surrogate survives");
+    let encoded = encode(&decoded.value, Kind::Batch).unwrap();
+    assert_eq!(
+        encoded.name, name,
+        "the native encoder writes the same bytes"
+    );
+}
+
 #[test]
 fn surrogate_and_deep_json_envelopes_round_trip_losslessly() {
     for label in ["unpaired-surrogate", "surrogate-revision", "deep-json"] {

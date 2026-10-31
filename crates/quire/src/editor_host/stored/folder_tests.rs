@@ -755,6 +755,105 @@ fn reference_drafts_are_offered_for_review_and_settle_only_on_their_base(cx: &mu
     );
 }
 
+#[gpui::test]
+fn a_change_the_watcher_missed_is_reread_periodically_and_on_activating_the_window(
+    cx: &mut TestAppContext,
+) {
+    let opened = open_folder(&[("Note.md", "- one\n")], "Note.md", cx);
+    let notebook = &opened.notebook;
+    wait_until(cx, "Note's editor", |cx| {
+        read(notebook, cx, |view, _| view.editor.is_some())
+    });
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.rescan_folder_backstop(window, cx)
+        })
+        .unwrap();
+    fs::write(opened.file("Note.md"), "- two\n").unwrap();
+    cx.executor().advance_clock(Duration::from_secs(29));
+    cx.run_until_parked();
+    assert_eq!(text(notebook, cx), "- one\n", "nothing told Quire yet");
+    cx.executor().advance_clock(Duration::from_secs(1));
+    wait_until(cx, "the periodic reread", |cx| {
+        text(notebook, cx) == "- two\n"
+    });
+
+    fs::write(opened.file("Note.md"), "- three\n").unwrap();
+    let mut window = gpui::VisualTestContext::from_window(notebook.window.into(), cx);
+    window.deactivate_window();
+    assert_eq!(text(notebook, cx), "- two\n");
+    notebook
+        .window
+        .update(cx, |_, window, _| window.activate_window())
+        .unwrap();
+    // Without advancing the clock, so the periodic reread cannot be what finds the change.
+    let deadline = std::time::Instant::now() + crate::test_patience::PATIENCE;
+    while text(notebook, cx) != "- three\n" {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for the reread on activating the window"
+        );
+        cx.run_until_parked();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[gpui::test]
+fn reference_history_is_taken_in_after_the_first_page_loads(cx: &mut TestAppContext) {
+    use quire_store::folder_notebook::revision;
+    const VERSIONS: i64 = 600;
+    let opened = open_prepared(
+        &[("Note.md", "- now\n")],
+        "Note.md",
+        |folder, _| {
+            let device = folder.join(".quire/devices/6f1c2b3a-0d4e-4f5a-8b9c-0123456789ab");
+            fs::create_dir_all(&device).unwrap();
+            let database =
+                quire_store::database::open_writable(&device.join("durability.sqlite")).unwrap();
+            for sql in [
+                "CREATE TABLE contents (hash TEXT PRIMARY KEY, codec TEXT NOT NULL, data BLOB NOT NULL)",
+                "CREATE TABLE history (id INTEGER PRIMARY KEY, path TEXT NOT NULL, content TEXT NOT NULL, revision TEXT NOT NULL, saved_at INTEGER NOT NULL)",
+                "BEGIN",
+            ] {
+                database.exec(sql).unwrap()().unwrap();
+            }
+            for day in 0..VERSIONS {
+                let text = format!("- version {day}\n");
+                let hash = quire_store::sync::format::sha256(&text);
+                database
+                    .exec_bound("INSERT INTO contents VALUES (?,'raw',?)")
+                    .unwrap()((hash.as_str(), text.as_bytes()))
+                .unwrap();
+                database
+                    .exec_bound("INSERT INTO history(path,content,revision,saved_at) VALUES ('Note.md',?,?,?)")
+                    .unwrap()((hash.as_str(), revision(&text).as_str(), day * 86_400_000))
+                .unwrap();
+            }
+            database.exec("COMMIT").unwrap()().unwrap();
+        },
+        cx,
+    );
+    let notebook = &opened.notebook;
+    wait_until(cx, "Note's editor", |cx| {
+        read(notebook, cx, |view, _| view.editor.is_some())
+    });
+    let folder = read(notebook, cx, |view, _| {
+        view.session.borrow().storage().folder().cloned().unwrap()
+    });
+    let kept = || {
+        futures::executor::block_on(folder.revisions("Note.md".into()).unwrap())
+            .unwrap()
+            .len()
+    };
+    assert_eq!(kept(), 0, "opening leaves the history for later");
+    notebook
+        .window
+        .update(cx, |view, _, cx| view.import_reference_history(cx))
+        .unwrap();
+    wait_until(cx, "every saved version", |_| kept() == VERSIONS as usize);
+}
+
 /// `.quire/notebook.json` as the reference `writeNotebookSettings` writes it.
 const RT_SETTINGS: &str = "{\n  \"version\": 1,\n  \"daily\": {\n    \"folder\": \"Journal\",\n    \"title\": \"{DD}.{MM}.{YYYY}\"\n  }\n}\n";
 

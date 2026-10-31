@@ -57,7 +57,8 @@ pub(super) fn add(
     revision: &str,
     now: i64,
 ) -> Result<()> {
-    add_at(connection, path, text, revision, now, now)
+    insert(connection, path, text, revision, now)?;
+    prune(connection, path, now)
 }
 
 /// Like [`add`], unless `path`'s newest saved version already is `revision`, as when a change
@@ -79,31 +80,34 @@ pub(super) fn add_once(
     add(connection, path, text, revision, now)
 }
 
-/// Records another app's saved version of `path` once, keeping its own time.
-pub(super) fn import(
+/// Records many of another app's saved versions once each, thinning each path once at the end
+/// rather than after every row.
+pub(super) fn import_many<'a>(
     connection: &Connection,
-    path: &str,
-    text: &str,
-    revision: &str,
-    saved_at: i64,
+    rows: impl IntoIterator<Item = (&'a str, &'a str, &'a str, i64)>,
     now: i64,
 ) -> Result<()> {
-    let known: Option<i64> = connection.select_row_bound(
-        "SELECT 1 FROM history WHERE path=? AND revision=? AND saved_at=? LIMIT 1",
-    )?((path, revision, saved_at))?;
-    if known.is_none() {
-        add_at(connection, path, text, revision, saved_at, now)?;
+    let mut paths = std::collections::BTreeSet::new();
+    for (path, text, revision, saved_at) in rows {
+        let known: Option<i64> = connection.select_row_bound(
+            "SELECT 1 FROM history WHERE path=? AND revision=? AND saved_at=? LIMIT 1",
+        )?((path, revision, saved_at))?;
+        if known.is_none() {
+            insert(connection, path, text, revision, saved_at)?;
+            paths.insert(path);
+        }
     }
-    Ok(())
+    paths
+        .into_iter()
+        .try_for_each(|path| prune(connection, path, now))
 }
 
-fn add_at(
+fn insert(
     connection: &Connection,
     path: &str,
     text: &str,
     revision: &str,
     saved_at: i64,
-    now: i64,
 ) -> Result<()> {
     let hash = sha256(text);
     let known: Option<i64> =
@@ -123,7 +127,7 @@ fn add_at(
         revision,
         saved_at,
     ))?;
-    prune(connection, path, now)
+    Ok(())
 }
 
 fn prune(connection: &Connection, path: &str, now: i64) -> Result<()> {

@@ -173,15 +173,22 @@ enum View {
 }
 
 impl View {
-    fn height(&self, width: Pixels, cx: &mut gpui::App) -> Pixels {
+    fn height(&self, cx: &gpui::App) -> Pixels {
+        match self {
+            Self::Image(view) => view.read(cx).height(),
+            Self::Pdf(view) => view.read(cx).height(),
+        }
+    }
+
+    /// Fits the view to `width`; true when that changed it, so its block needs resizing.
+    fn fit(&self, width: Pixels, cx: &mut gpui::App) -> bool {
+        let fit = |current: Pixels| (f32::from(current) - f32::from(width)).abs() >= 1.;
         match self {
             Self::Image(view) => view.update(cx, |view, _| {
-                view.set_width(width);
-                view.height()
+                fit(view.width()).then(|| view.set_width(width)).is_some()
             }),
             Self::Pdf(view) => view.update(cx, |view, _| {
-                view.set_width(width);
-                view.height()
+                fit(view.width()).then(|| view.set_width(width)).is_some()
             }),
         }
     }
@@ -293,14 +300,25 @@ pub(crate) fn sync(
             }
             _ => View::Image(cx.new(|cx| ImageView::new(target, files.clone(), cx))),
         };
-        let rows = rows(view.height(width, cx), line_height);
-        let any = view.any();
+        view.fit(width, cx);
+        let rows = rows(view.height(cx), line_height);
+        let (any, fitted) = (view.any(), view.clone());
+        let host = cx.weak_entity();
         let block = editor.insert_blocks(
             [BlockProperties {
                 placement: BlockPlacement::Below(spot.range.start),
                 height: Some(rows),
                 style: BlockStyle::Flex,
                 render: Arc::new(move |block| {
+                    // The text column changes with the window and panels; refit when it does.
+                    let width = (block.max_width - block.anchor_x - px(16.)).max(px(120.));
+                    if fitted.fit(width, block.app) {
+                        let host = host.clone();
+                        block.window.defer(block.app, move |window, cx| {
+                            host.update(cx, |editor, cx| resize(editor, window, cx))
+                                .ok();
+                        });
+                    }
                     gpui::div()
                         .debug_selector(|| "quire-media".into())
                         .ml(block.anchor_x)
@@ -368,11 +386,10 @@ fn rows(height: Pixels, line_height: Pixels) -> u32 {
 /// Matches each block's height to what its view needs now.
 fn resize(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
     let line_height = line_height(editor, window, cx);
-    let width = column_width(editor);
     let mut shown = std::mem::take(&mut state(editor).shown);
     let mut heights = HashMap::default();
     for shown in &mut shown {
-        let wanted = rows(shown.view.height(width, cx), line_height);
+        let wanted = rows(shown.view.height(cx), line_height);
         if wanted != shown.rows {
             shown.rows = wanted;
             heights.insert(shown.block, wanted);
@@ -482,6 +499,27 @@ pub(crate) fn pdfs(editor: &Editor) -> Vec<Entity<PdfView>> {
                 .filter_map(|shown| match &shown.view {
                     View::Pdf(view) => Some(view.clone()),
                     View::Image(_) => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Each media block's height in rows and the width its view fits, in page order.
+#[cfg(test)]
+pub(crate) fn fitted(editor: &Editor, cx: &gpui::App) -> Vec<(u32, f32)> {
+    editor
+        .addon::<Media>()
+        .map(|media| {
+            media
+                .shown
+                .iter()
+                .map(|shown| {
+                    let width = match &shown.view {
+                        View::Image(view) => view.read(cx).width(),
+                        View::Pdf(view) => view.read(cx).width(),
+                    };
+                    (shown.rows, f32::from(width))
                 })
                 .collect()
         })

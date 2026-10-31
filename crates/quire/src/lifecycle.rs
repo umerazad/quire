@@ -18,6 +18,13 @@ pub const STILL_WORKING: &str = "Quire is still finishing work for this notebook
 pub const FAILED: &str = "Some work for this notebook did not finish.";
 pub const CLOSE_ANYWAY_DETAIL: &str = "Closing now keeps everything already saved locally or recorded for recovery; recovery copies reopen with the notebook. Typing not yet recorded is lost. An interrupted backup leaves only a hidden partial folder, and an interrupted Git sync keeps every note and commit in the folder.";
 
+/// Why a close asks when a page in conflict with its file holds typing not yet recorded.
+pub fn unrecorded_conflict(path: &str) -> String {
+    format!(
+        "{path} changed outside Quire while it had unsaved edits, and the newest of those edits are not yet recorded for recovery. Keep editing to choose a version in the page's banner."
+    )
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Activity {
     Idle,

@@ -58,6 +58,9 @@ impl Identity {
 /// Pages another writer changed, by page identity, for open pages to take in.
 pub struct Imported(pub Vec<String>);
 
+/// An import delivered attachments, some perhaps after the pages that show them.
+pub struct AttachmentsArrived;
+
 const PUBLISHING: &str = "Saved changes are being published to the synced folder.";
 
 pub struct LiveSync {
@@ -97,6 +100,7 @@ pub struct LiveSync {
 }
 
 impl EventEmitter<Imported> for LiveSync {}
+impl EventEmitter<AttachmentsArrived> for LiveSync {}
 
 /// Every page a full rescan changed and every problem it hit, following continuations.
 async fn rescan_all(client: StorageClient, root: PathBuf) -> Result<RescanReport, String> {
@@ -106,6 +110,7 @@ async fn rescan_all(client: StorageClient, root: PathBuf) -> Result<RescanReport
         let report = ask(client.rescan(root.clone(), RescanLimits::default(), resume)).await?;
         resume = report.continuation.clone();
         total.applied += report.applied;
+        total.attachments_completed += report.attachments_completed;
         total.pages.extend(report.pages);
         total.merged.extend(report.merged);
         total.problems.extend(report.problems);
@@ -471,6 +476,9 @@ impl LiveSync {
                     .collect();
                 if !pages.is_empty() {
                     cx.emit(Imported(pages));
+                }
+                if report.attachments_completed > 0 {
+                    cx.emit(AttachmentsArrived);
                 }
             }
         }
