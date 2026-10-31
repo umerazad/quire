@@ -687,9 +687,11 @@ fn folder_backups_fail_rather_than_mix_versions_when_a_note_changes_meanwhile() 
     let writer = thread::spawn({
         let (note, stop) = (note.clone(), stop.clone());
         move || {
+            let staged = note.with_extension("md.tmp");
             let mut round = 0u64;
             while !stop.load(Ordering::Relaxed) {
-                fs::write(&note, format!("- {}", round.to_string().repeat(4096))).unwrap();
+                fs::write(&staged, format!("- {}", round.to_string().repeat(4096))).unwrap();
+                fs::rename(&staged, &note).unwrap();
                 round += 1;
             }
         }

@@ -30,7 +30,7 @@ use crate::{
     notebook::{APPLICATION_ID, Draft, SCHEMA_VERSION, read_revision, unpack},
     sync::format::{attachment_hash, sha256},
 };
-use anyhow::{Context as _, Result, bail, ensure};
+use anyhow::{Context as _, Result, anyhow, bail, ensure};
 use files::{below, copy_hashed, create_dir_durable, discard, hash_file, sync, walk};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -47,6 +47,7 @@ const VERSION: u32 = 1;
 const STORE_DATABASE: &str = "local.sqlite";
 const STATE_DATABASE: &str = "state/folder.sqlite";
 const MAX_MANIFEST_BYTES: u64 = 256 * 1024 * 1024;
+const CHANGED: &str = "The notebook changed while it was being backed up. Wait for saves and other applications to finish, then back up again.";
 
 /// The notebook a backup copies.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -394,9 +395,22 @@ fn inventory(root: &Path, files: &[String]) -> Result<Inventory> {
         .collect()
 }
 
+/// A file that disappeared while it was being read means the notebook changed, so it reports
+/// that instead of a missing file.
+fn vanished_as_change<T>(error: anyhow::Error) -> Result<T> {
+    let vanished = error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+    });
+    Err(if vanished { anyhow!(CHANGED) } else { error })
+}
+
 /// Copies a folder notebook and its state. Databases are snapshots; every other file is copied
 /// and the notebook is listed and hashed again afterwards, so an edit made meanwhile, here or in
-/// another application, fails the backup instead of mixing two versions.
+/// another application, fails the backup instead of mixing two versions. A file another
+/// application rewrites in place, rather than by rename as Quire and rt do, can be caught half
+/// written if it stays unchanged across both reads.
 fn stage_folder(root: &Path, state: &Path, partial: &Path) -> Result<BTreeMap<String, Counts>> {
     let mut databases = BTreeMap::new();
     let mut copy = |from: &Path,
@@ -417,7 +431,9 @@ fn stage_folder(root: &Path, state: &Path, partial: &Path) -> Result<BTreeMap<St
                     database::snapshot(&below(from, path), &target)?,
                 );
             } else {
-                copied.insert(path.clone(), copy_hashed(&below(from, path), &target)?);
+                let hashed =
+                    copy_hashed(&below(from, path), &target).or_else(vanished_as_change)?;
+                copied.insert(path.clone(), hashed);
             }
         }
         Ok((listed, copied))
@@ -438,14 +454,14 @@ fn stage_folder(root: &Path, state: &Path, partial: &Path) -> Result<BTreeMap<St
                      copied: &Inventory,
                      skip: &dyn Fn(&str) -> bool|
      -> Result<bool> {
-        let now = walk(from, skip)?;
-        Ok(now == listed
-            && inventory(from, &copied.keys().cloned().collect::<Vec<_>>())? == *copied)
+        let paths: Vec<_> = copied.keys().cloned().collect();
+        Ok(walk(from, skip).or_else(vanished_as_change)? == listed
+            && inventory(from, &paths).or_else(vanished_as_change)? == *copied)
     };
     ensure!(
         unchanged(root, &notes, &notes_copied, &skip_notebook)?
             && unchanged(state, &states, &states_copied, &skip_state)?,
-        "The notebook changed while it was being backed up. Wait for saves and other applications to finish, then back up again."
+        CHANGED
     );
     Ok(databases)
 }
