@@ -5,7 +5,11 @@
 //! again. Folds are display state: they never change the Markdown, and they follow their block
 //! through outline commands that move it.
 
-use super::{Page, fold_store::FoldStore, source_buffer, to_source, view_range};
+use super::{
+    Page,
+    fold_store::{FoldStore, Mark},
+    source_buffer, to_source, view_range,
+};
 use crate::markdown_blocks::Block;
 use editor::{
     Addon, Editor, EditorEvent, FoldPlaceholder,
@@ -25,6 +29,8 @@ struct Folds {
     seen: Vec<Range<MultiBufferOffset>>,
     /// Whether the page's saved folds were applied to this editor.
     restored: bool,
+    /// The folds this view had when it last saved, to save only what it changed since.
+    saved: Vec<Mark>,
 }
 
 impl Addon for Folds {
@@ -204,8 +210,10 @@ pub(crate) fn blocks_changed(
         && let Some((store, page)) = persisted(editor, cx)
     {
         state(editor).restored = true;
+        let root = view_root(editor, blocks, cx);
         let ranges = super::fold_store::resolve(&text, blocks, &store.marks(&page))
             .into_iter()
+            .filter(|block| Some(block.from) != root)
             .filter_map(children)
             .filter_map(|range| {
                 let start = anchor(range.start)?.to_offset(&view);
@@ -218,17 +226,33 @@ pub(crate) fn blocks_changed(
     remember(editor, &text, blocks, cx);
 }
 
-/// The fold store and page ID of a whole-page view that is not embedded in another page.
+/// The fold store and page ID of the page a view shows: the whole page, a zoom, or an embed.
 fn persisted(editor: &Editor, cx: &App) -> Option<(Rc<FoldStore>, String)> {
-    let buffer = editor.buffer().read(cx).as_singleton()?;
-    if crate::embeds::is_nested(editor) {
-        return None;
-    }
+    let buffer = source_buffer(editor, cx)?;
     let host = crate::references::host(editor)?;
     let notebook = host.read(cx).notebook().clone();
     Some((notebook.fold_store()?, notebook.page_id(&buffer, cx)?))
 }
 
+/// Where the block a zoom or block embed shows starts, in source offsets. A whole-page view
+/// has no root.
+fn view_root(editor: &Editor, blocks: &[Block], cx: &App) -> Option<usize> {
+    let multi = editor.buffer().read(cx);
+    if multi.as_singleton().is_some() {
+        return None;
+    }
+    let start = multi.snapshot(cx).excerpts().next()?.context.start;
+    let buffer = source_buffer(editor, cx)?;
+    let start = text::ToOffset::to_offset(&start, &buffer.read(cx).snapshot());
+    blocks
+        .iter()
+        .find(|block| block.from <= start && start <= block.content_to)
+        .map(|block| block.from)
+}
+
+/// Saves the folds this view collapsed or expanded since it last saved into the page's saved
+/// folds. Several views can show one page, a zoom or an embed only part of it, so a view
+/// changes only the folds it changed and keeps the others' as saved.
 fn remember(editor: &mut Editor, text: &str, blocks: &[Block], cx: &mut Context<Editor>) {
     if !state(editor).restored {
         return;
@@ -236,11 +260,27 @@ fn remember(editor: &mut Editor, text: &str, blocks: &[Block], cx: &mut Context<
     let Some((store, page)) = persisted(editor, cx) else {
         return;
     };
-    let starts: Vec<usize> = collapsed_source(editor, cx)
+    let starts = |marks: &[Mark]| -> Vec<usize> {
+        super::fold_store::resolve(text, blocks, marks)
+            .into_iter()
+            .filter_map(children)
+            .map(|range| range.start)
+            .collect()
+    };
+    let current: Vec<usize> = collapsed_source(editor, cx)
         .into_iter()
         .map(|range| range.start)
         .collect();
-    store.save(&page, super::fold_store::marks(text, blocks, &starts), cx);
+    let previous = starts(&state(editor).saved);
+    let mut folded: Vec<usize> = starts(&store.marks(&page))
+        .into_iter()
+        .filter(|start| current.contains(start) || !previous.contains(start))
+        .chain(current.iter().copied())
+        .collect();
+    folded.sort_unstable();
+    folded.dedup();
+    state(editor).saved = super::fold_store::marks(text, blocks, &current);
+    store.save(&page, super::fold_store::marks(text, blocks, &folded), cx);
 }
 
 /// Follows fold changes from any source, Zed's gutter and fold actions included: Write shows the

@@ -42,7 +42,8 @@ actions!(
         DeleteBackward,
         /// Delete at a block's text end pulls in the next block.
         DeleteForward,
-        /// Cmd-Backspace deletes back to the list item's text start, keeping its marker.
+        /// Cmd-Backspace (Ctrl-Backspace off macOS) deletes back to the list item's text start,
+        /// keeping its marker.
         DeleteToTextStart,
         /// Vim `J`: joins the next block's text to this one.
         JoinBlocks,
@@ -286,15 +287,14 @@ fn bind_keys(cx: &mut App) {
         ),
         KeyBinding::new(">", IndentLine, Some(WRITE_VISUAL)),
         KeyBinding::new("<", OutdentLine, Some(WRITE_VISUAL)),
-    ]);
-    // Zed binds deleting to the line start only on macOS; elsewhere Ctrl-Backspace deletes a word.
-    if mac {
-        cx.bind_keys([KeyBinding::new(
-            "cmd-backspace",
+        // rt binds Mod-Backspace everywhere. Quire binds no word deletion to Ctrl-Backspace, so
+        // off macOS it is free for the same command.
+        KeyBinding::new(
+            platform("cmd-backspace", "ctrl-backspace"),
             DeleteToTextStart,
             Some(WRITE_INPUT),
-        )]);
-    }
+        ),
+    ]);
 }
 
 /// Registers a Write view command on an editor. A command returning `None` propagates, so the
@@ -673,6 +673,16 @@ fn apply_then(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
+    // A plan may rewrite the newline after a zoom's last line with itself, as moving its last
+    // child does; without that unchanged text the edit stays inside the view.
+    let plan = if page.contains(&plan.edits) {
+        plan
+    } else {
+        Plan {
+            edits: model::trim_unchanged(&page.text, plan.edits),
+            ..plan
+        }
+    };
     if !page.contains(&plan.edits) {
         set_notice(Some(OUTSIDE_VIEW), cx);
         return;
@@ -909,7 +919,16 @@ fn merge(
                 .is_some_and(|above| fold.start < above && above <= fold.end)
         }
     });
-    if hidden {
+    // An embed holds a slice of another page that starts at its root's text, so, as in rt,
+    // Backspace and Delete there never join lines.
+    let joins_lines = || match &outcome {
+        model::Outcome::Apply(plan) => plan
+            .edits
+            .iter()
+            .any(|(range, _)| page.text[range.clone()].contains('\n')),
+        model::Outcome::Refuse(_) => false,
+    };
+    if hidden || (crate::embeds::is_nested(editor) && joins_lines()) {
         return Some(Handled::Done);
     }
     finish(editor, &page, Some(outcome), window, cx)

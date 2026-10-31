@@ -91,3 +91,56 @@ fn vim_open_on_an_embeds_last_line_stays_in_the_embed(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+/// rt: "does not merge lines inside an embedded block editor". Backspace at a child's text
+/// start in a block embed leaves the source page alone.
+#[gpui::test]
+fn backspace_does_not_merge_lines_in_a_block_embed(cx: &mut TestAppContext) {
+    let source = "- Root ^r\n  - child\n    - grand\n- other\n";
+    let pages = [
+        ("s", "Source.md", source),
+        ("o", "Other.md", "- {{embed: ((r))}}\n"),
+    ];
+    let notebook = open_notebook(&pages, "o", cx);
+    cx.simulate_window_resize(
+        notebook.window.into(),
+        gpui::size(gpui::px(1600.), gpui::px(1200.)),
+    );
+    wait_until(cx, "the page editor", |cx| {
+        read(&notebook, cx, |view, _| view.editor.is_some())
+    });
+    notebook
+        .window
+        .update(cx, |view, window, cx| view.focus_active(window, cx))
+        .unwrap();
+    cx.simulate_keystrokes(notebook.window.into(), &key("shift-m"));
+    let host = read(&notebook, cx, |view, cx| {
+        view.editor.as_ref().unwrap().read(cx).source.clone()
+    });
+    let nested =
+        |cx: &mut TestAppContext| cx.update(|cx| crate::embeds::nested_editors(host.read(cx)));
+    wait_until(cx, "the embed", |cx| {
+        draw(&notebook, cx);
+        nested(cx).len() == 1
+    });
+    let embed = nested(cx).remove(0);
+    let child = editor::MultiBufferOffset(source.find("child").unwrap());
+    notebook
+        .window
+        .update(cx, |_, window, cx| {
+            window.focus(&embed.focus_handle(cx), cx);
+            embed.update(cx, |editor, cx| {
+                editor.change_selections(Default::default(), window, cx, |selections| {
+                    selections.select_ranges([child..child])
+                })
+            });
+        })
+        .unwrap();
+    draw(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "i backspace");
+    cx.run_until_parked();
+    assert_eq!(
+        embed.read_with(cx, |editor, cx| editor.text(cx)),
+        "- Root ^r\n  - child\n    - grand"
+    );
+}

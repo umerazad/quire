@@ -13,7 +13,18 @@ gpui::actions!(quire, [TogglePresentation]);
 
 pub(super) const EDITOR_CONTEXT: &str = "Editor && !QuireControl";
 
+struct Initialized;
+
+impl gpui::Global for Initialized {}
+
+/// Initializes the editor host once per app. A second call is ignored: Vim and the editor
+/// register global keystroke and entity observers, and registering them again would record
+/// every Vim action twice, so `.` would replay `o` twice.
 pub(super) fn init(cx: &mut App) -> Result<(), String> {
+    if cx.has_global::<Initialized>() {
+        return Ok(());
+    }
+    cx.set_global(Initialized);
     settings::init(cx);
     crate::preferences::init(cx);
     crate::ai::settings::init(cx);

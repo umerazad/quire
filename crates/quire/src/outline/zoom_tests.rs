@@ -221,3 +221,35 @@ fn outline_commands_work_in_an_embedded_block_view(cx: &mut TestAppContext) {
         "before\n\n- Parent ^parent\n  - child ^child\n  - y\n- outside ^outside\n"
     );
 }
+
+/// rt: "keeps the caret and edits inside a zoomed block, and out of collapsed children". Select
+/// all in a zoom covers only the zoomed block, and typing over it keeps the page around it and
+/// the block's hidden ID.
+#[gpui::test]
+fn typing_over_a_zoom_keeps_the_page_around_it(cx: &mut TestAppContext) {
+    let window = written("- Top\n- Par|ent ^p\n  - Kid\n- After\n", false, cx);
+    keys(window, &format!("{MOD}-."), cx);
+    keys(window, &format!("{MOD}-a S"), cx);
+    assert_eq!(shown(window, cx), "- S| ^p");
+    assert_eq!(page_text(window, cx), "- Top\n- S ^p\n- After\n");
+}
+
+/// rt: "keeps the caret and moves inside a zoomed block".
+#[gpui::test]
+fn a_zoom_keeps_the_caret_before_hidden_ids_and_moves_children(cx: &mut TestAppContext) {
+    let window = written(
+        "- Top\n- Par|ent ^p\n  - Kid1\n  - Kid2 ^k\n- After\n",
+        false,
+        cx,
+    );
+    keys(window, &format!("{MOD}-."), cx);
+    keys(window, "down down end", cx);
+    assert_eq!(shown(window, cx), "- Parent ^p\n  - Kid1\n  - Kid2| ^k");
+    keys(window, "right", cx);
+    assert_eq!(shown(window, cx), "- Parent ^p\n  - Kid1\n  - Kid2| ^k");
+    keys(window, "alt-up", cx);
+    assert_eq!(
+        page_text(window, cx),
+        "- Top\n- Parent ^p\n  - Kid2 ^k\n  - Kid1\n- After\n"
+    );
+}
