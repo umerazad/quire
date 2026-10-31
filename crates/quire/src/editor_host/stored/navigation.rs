@@ -865,3 +865,7 @@ mod media_folder_tests;
 #[cfg(test)]
 #[path = "menu_tests.rs"]
 mod menu_tests;
+
+#[cfg(test)]
+#[path = "page_menu_tests.rs"]
+mod page_menu_tests;

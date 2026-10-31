@@ -72,6 +72,12 @@ impl Item {
         self
     }
 
+    /// Marks the item as one choice among alternatives, ticked when `checked`.
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.checked = Some(checked);
+        self
+    }
+
     pub fn done(self) -> Entry {
         Entry::Item(self)
     }
@@ -172,8 +178,12 @@ mod tests {
             Entry::Separator,
             Entry::Separator,
             Item::run("Close", |_, _| {}).disabled(true).done(),
+            Item::run("Bullet list", |_, _| {}).checked(true).done(),
             Entry::Separator,
         ];
-        assert_eq!(summary(&tidy(entries)), ["Open", "-", "Close (disabled)"]);
+        assert_eq!(
+            summary(&tidy(entries)),
+            ["Open", "-", "Close (disabled)", "[x] Bullet list"]
+        );
     }
 }

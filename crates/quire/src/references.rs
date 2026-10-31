@@ -14,6 +14,7 @@ use quire_store::index::IndexClient;
 use std::rc::Rc;
 
 mod completion;
+pub(crate) use completion::new_id as new_block_id;
 
 /// What a reference names.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
