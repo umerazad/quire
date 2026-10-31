@@ -19,6 +19,7 @@ impl StoredWindow {
             window.focus(&search, cx);
             return;
         }
+        self.chrome.showcase = None;
         let returning = window.focused(cx);
         let help = cx.new(|cx| HelpWindow::new(true, window, cx));
         cx.subscribe_in(&help, window, move |this, _, _: &CloseHelp, window, cx| {

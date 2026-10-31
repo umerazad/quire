@@ -168,6 +168,9 @@ fn press(notebook: &Notebook, key: &str, cx: &mut TestAppContext) {
     crate::tab_order::press(notebook.window.into(), key, cx);
 }
 
+/// The FILES heading and Refresh files, the stops between the recents and the tree.
+const FILES_HEADING_STOPS: usize = 2;
+
 #[gpui::test]
 fn the_keyboard_reaches_the_templates_entry_and_the_guides_add_buttons(cx: &mut TestAppContext) {
     let notebook = open_notebook(&[("w", "Alpha.md", "- \n")], "w", cx);
@@ -179,6 +182,7 @@ fn the_keyboard_reaches_the_templates_entry_and_the_guides_add_buttons(cx: &mut 
                     .recent
                     .len()
                     .min(quire_core::workspace::SHOWN_RECENT)
+                + FILES_HEADING_STOPS
         })
     };
     cx.dispatch_action(notebook.window.into(), crate::navigation::FocusFiles);

@@ -450,7 +450,10 @@ impl StoredWindow {
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(format!("[[{title}]]")));
     }
 
-    fn show_in_file_manager(path: &std::path::Path, cx: &mut gpui::Context<Self>) {
+    pub(in crate::editor_host::stored) fn show_in_file_manager(
+        path: &std::path::Path,
+        cx: &mut gpui::Context<Self>,
+    ) {
         #[cfg(test)]
         if let Some(reveal) = cx
             .try_global::<RevealFiles>()

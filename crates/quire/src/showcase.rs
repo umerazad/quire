@@ -7,7 +7,10 @@ use gpui::{
     App, AppContext as _, Context, Entity, Global, Window, WindowOptions, actions, prelude::*, px,
 };
 use theme::ActiveTheme as _;
-use ui::{Button, Clickable as _, Color, Label, LabelCommon as _, LabelSize, h_flex, v_flex};
+use ui::{
+    Button, ButtonCommon as _, Clickable as _, Color, IconButton, IconName, IconSize, Label,
+    LabelCommon as _, LabelSize, Tooltip, h_flex, v_flex,
+};
 
 pub const SAMPLE: &str = include_str!("showcase/README.md");
 
@@ -29,7 +32,7 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &OpenShowcase, cx| open(cx));
 }
 
-fn sample(cx: &mut App) -> Entity<crate::page_analysis::PageAnalysis> {
+pub(crate) fn sample(cx: &mut App) -> Entity<crate::page_analysis::PageAnalysis> {
     if let Some(Sample(page)) = cx.try_global::<Sample>() {
         return page.clone();
     }
@@ -71,7 +74,7 @@ pub fn open(cx: &mut App) {
     };
     let opened = cx.open_window(options, |window, cx| {
         window.set_window_title("README.md");
-        cx.new(|cx| ShowcaseWindow::new(page, window, cx))
+        cx.new(|cx| ShowcaseWindow::new(page, false, window, cx))
     });
     if let Err(error) = opened {
         crate::outline::show_notice(
@@ -81,19 +84,28 @@ pub fn open(cx: &mut App) {
     }
 }
 
+/// Asks the window holding a showcase pane to close it.
+pub struct CloseShowcase;
+
+/// README.md in a window of its own, or, with `pane`, beside a notebook's pages as the reference
+/// shows it.
 pub struct ShowcaseWindow {
     pub notebook: Entity<NotebookWindow>,
+    pane: bool,
 }
+
+impl gpui::EventEmitter<CloseShowcase> for ShowcaseWindow {}
 
 impl ShowcaseWindow {
     pub fn new(
         page: Entity<crate::page_analysis::PageAnalysis>,
+        pane: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let notebook = cx.new(|cx| NotebookWindow::for_page(page, None, window, cx));
         notebook.update(cx, |view, cx| view.show_written(window, cx));
-        Self { notebook }
+        Self { notebook, pane }
     }
 }
 
@@ -120,8 +132,22 @@ impl Render for ShowcaseWindow {
                         .color(Color::Muted),
                     )
                     .child(
-                        Button::new("reset-sample", "Reset sample")
-                            .on_click(|_, _, cx| reset(cx)),
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Button::new("reset-sample", "Reset sample")
+                                    .on_click(|_, _, cx| reset(cx)),
+                            )
+                            .when(self.pane, |tools| {
+                                tools.child(
+                                    IconButton::new("close-showcase", IconName::Close)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(Tooltip::text("Close README.md"))
+                                        .on_click(
+                                            cx.listener(|_, _, _, cx| cx.emit(CloseShowcase)),
+                                        ),
+                                )
+                            }),
                     ),
             )
             .child(gpui::div().flex_1().min_h_0().child(self.notebook.clone()))
