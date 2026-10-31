@@ -10,6 +10,8 @@ use std::{
 mod attachment;
 mod census;
 mod checkout;
+#[cfg(all(test, unix))]
+mod commit_faults;
 mod delivery;
 mod folder;
 mod history;

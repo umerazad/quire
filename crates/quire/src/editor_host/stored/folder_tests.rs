@@ -852,6 +852,23 @@ fn reference_history_is_taken_in_after_the_first_page_loads(cx: &mut TestAppCont
         .update(cx, |view, _, cx| view.import_reference_history(cx))
         .unwrap();
     wait_until(cx, "every saved version", |_| kept() == VERSIONS as usize);
+    wait_until(cx, "the progress line to clear", |cx| {
+        read(notebook, cx, |view, _| {
+            view.folder.history_progress.is_none()
+        })
+    });
+    assert_eq!(
+        read(notebook, cx, |view, _| view
+            .folder
+            .history_progress_shown
+            .clone()),
+        [
+            "Taking in the reference app's saved history: 0 of 600 versions…",
+            "Taking in the reference app's saved history: 250 of 600 versions…",
+            "Taking in the reference app's saved history: 500 of 600 versions…",
+        ],
+        "a progress line for each step of 250 until all is in"
+    );
 }
 
 /// `.quire/notebook.json` as the reference `writeNotebookSettings` writes it.

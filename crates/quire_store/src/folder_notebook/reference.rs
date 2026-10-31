@@ -90,6 +90,8 @@ pub(super) struct Backlog {
     fingerprint: String,
     copied: Copied,
     after: i64,
+    /// Saved versions after `after`, counted when queued, for progress.
+    left: usize,
 }
 
 /// Saved versions taken in per step. A step of short notes took 22 ms in a debug build, so saves
@@ -306,11 +308,14 @@ impl FolderNotebook {
             match self.import_drafts(&records) {
                 Ok(found) => {
                     recovered.extend(found);
+                    // A count that fails leaves the progress short; the import still reads all.
+                    let left = history_count(&copied.connection).unwrap_or(0);
                     self.backlog.borrow_mut().push(Backlog {
                         key: source.key,
                         fingerprint,
                         copied,
                         after: i64::MIN,
+                        left,
                     });
                 }
                 Err(error) => notices.push(unreadable(&source, error)),
@@ -432,9 +437,20 @@ impl FolderNotebook {
         let mut queue = self.backlog.borrow_mut();
         if let Some((last, ..)) = rows.last().filter(|_| !done) {
             backlog.after = *last;
+            backlog.left = backlog.left.saturating_sub(rows.len()).max(1);
             queue.push(backlog);
         }
         Ok(!queue.is_empty())
+    }
+
+    /// Saved versions of the reference app's history still queued for
+    /// `import_reference_history`, for a progress line.
+    pub fn reference_history_left(&self) -> usize {
+        self.backlog
+            .borrow()
+            .iter()
+            .map(|backlog| backlog.left)
+            .sum()
     }
 
     /// Takes in every queued saved version, collecting failures as notices.
@@ -754,6 +770,18 @@ fn reference_history(connection: &Connection, after: i64, limit: usize) -> Resul
         )?((after, limit));
     }
     Ok(Vec::new())
+}
+
+/// How many saved versions `reference_history` reads from the start.
+fn history_count(connection: &Connection) -> Result<usize> {
+    for table in ["history", "revisions"] {
+        if has_table(connection, table)? {
+            let count: Option<i64> =
+                connection.select_row(&format!("SELECT COUNT(*) FROM {table}"))?()?;
+            return Ok(count.unwrap_or(0).try_into().unwrap_or(0));
+        }
+    }
+    Ok(0)
 }
 
 /// The older JSON drafts in a device's `recovery` folder.

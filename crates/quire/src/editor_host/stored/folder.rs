@@ -307,8 +307,18 @@ pub(super) struct FolderView {
     /// Interrupted changes across notes that opening could not finish, to retry or set aside.
     pub(super) stuck: Vec<StuckChange>,
     pub(super) resolving: Option<Task<()>>,
+    /// The progress line while the reference app's saved history is taken in.
+    pub(super) history_progress: Option<SharedString>,
+    /// Every progress line shown, for tests.
+    #[cfg(test)]
+    pub(super) history_progress_shown: Vec<SharedString>,
     /// The periodic reread and the reread on activating the window, kept for its lifetime.
     backstop: Option<(Task<()>, gpui::Subscription)>,
+}
+
+/// The line shown while the reference app's saved history is taken in.
+fn history_progress(taken: usize, total: usize) -> SharedString {
+    format!("Taking in the reference app's saved history: {taken} of {total} versions…").into()
 }
 
 /// How to resolve an interrupted change.
@@ -547,20 +557,37 @@ impl StoredWindow {
             return;
         };
         cx.spawn(async move |this, cx| {
+            let total = crate::query_index::ask(folder.reference_history_left())
+                .await
+                .unwrap_or(0);
+            let show = |progress: Option<SharedString>, cx: &mut gpui::AsyncApp| {
+                this.update(cx, |this, cx| {
+                    #[cfg(test)]
+                    this.folder.history_progress_shown.extend(progress.clone());
+                    this.folder.history_progress = progress;
+                    cx.notify();
+                })
+            };
+            let mut left = total;
             loop {
+                let progress =
+                    (left > 0).then(|| history_progress(total.saturating_sub(left), total));
+                if show(progress, cx).is_err() {
+                    return;
+                }
                 match crate::query_index::ask(folder.import_reference_history()).await {
-                    Ok(true) => {}
-                    Ok(false) => break,
+                    Ok(0) => break,
+                    Ok(remaining) => left = remaining,
                     Err(error) => {
-                        this.update(cx, |this, cx| {
+                        this.update(cx, |this, _| {
                             this.folder.notices.push(error.into());
-                            cx.notify();
                         })
                         .ok();
                         break;
                     }
                 }
             }
+            show(None, cx).ok();
         })
         .detach();
     }
@@ -663,7 +690,11 @@ impl StoredWindow {
         error: Option<SharedString>,
         cx: &mut gpui::Context<Self>,
     ) -> Option<gpui::AnyElement> {
-        if error.is_none() && self.folder.notices.is_empty() && self.folder.stuck.is_empty() {
+        if error.is_none()
+            && self.folder.notices.is_empty()
+            && self.folder.stuck.is_empty()
+            && self.folder.history_progress.is_none()
+        {
             return None;
         }
         let open = self
@@ -688,6 +719,9 @@ impl StoredWindow {
                 .flex_col()
                 .gap_1()
                 .when_some(error, |div, error| div.child(Label::new(error)))
+                .when_some(self.folder.history_progress.clone(), |div, progress| {
+                    div.child(Label::new(progress).color(ui::Color::Muted))
+                })
                 .children(self.folder.notices.iter().cloned().map(Label::new))
                 .child(gpui::div().flex().flex_wrap().gap_2().children(open))
                 .children(self.render_stuck(cx))

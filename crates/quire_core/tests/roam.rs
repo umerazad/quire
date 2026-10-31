@@ -7,8 +7,8 @@ use quire_core::exchange::{
     edn::{import_roam_edn, read_edn, roam_pages_from_edn},
     js_json::{self, parse, stringify},
     roam::{
-        Document, Imported, RoamMarkdown, TextBlock, export_file_text, export_roam_json,
-        import_roam_json, reference_texts,
+        Document, Imported, METADATA_END, METADATA_START, RoamImport, RoamMarkdown, TextBlock,
+        export_file_text, export_roam_json, import_roam_json, metadata_entry, reference_texts,
     },
 };
 use quire_core::markdown::{Reference, ReferenceKind, ReferenceMedia, ReferenceSyntax};
@@ -196,6 +196,49 @@ fn roam_json_imports_as_the_reference_does() {
             assert_eq!(listed, asked, "{name}: texts parsed before importing");
         }
         check_import(name, case, result);
+    }
+}
+
+/// An import streamed from the export text as the app runs it, two passes a page at a time, with
+/// the metadata written entry by entry: the documents, report, and metadata text.
+fn streamed_import(
+    text: &str,
+    markdown: &dyn RoamMarkdown,
+    new_id: &mut dyn FnMut() -> String,
+) -> Result<(Vec<Document>, Vec<String>, String), String> {
+    let stopped = |error| match error {
+        js_json::Streamed::NotArray => quire_core::exchange::roam::NOT_ROAM.to_owned(),
+        js_json::Streamed::Invalid(error) | js_json::Streamed::Stopped(error) => error,
+    };
+    let mut import = RoamImport::new();
+    js_json::each_element(text, |page| import.scan(&page, new_id)).map_err(stopped)?;
+    let (mut documents, mut entries) = (Vec::new(), Vec::new());
+    js_json::each_element(text, |page| {
+        let (document, page) = import.convert(page, markdown)?;
+        entries.push(metadata_entry(&document.path, &page));
+        documents.push(document);
+        Ok(())
+    })
+    .map_err(stopped)?;
+    let metadata = format!("{METADATA_START}{}{METADATA_END}", entries.join(","));
+    Ok((documents, import.finish(), metadata))
+}
+
+#[test]
+fn streamed_roam_json_imports_match_the_whole_graph_import() {
+    for case in VECTORS["imports"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let input = case["input"].as_str().unwrap();
+        let whole = import_roam_json(parse(input).unwrap(), &Recorded::new(case), &mut counter(1))
+            .map(|imported| {
+                (
+                    imported.documents,
+                    imported.report,
+                    stringify(&imported.metadata),
+                )
+            });
+        let streamed = streamed_import(input, &Recorded::new(case), &mut counter(1));
+        assert_eq!(streamed, whole, "{name}");
     }
 }
 

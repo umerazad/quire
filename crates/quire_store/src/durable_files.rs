@@ -43,6 +43,75 @@ pub(crate) fn directory_below(parent: &Path, name: &str) -> Result<PathBuf> {
     Ok(directory)
 }
 
+/// The I/O steps of [`install`], in order, for fault injection in tests.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Step {
+    Create,
+    Write,
+    SyncContents,
+    Rename,
+    SyncInstalled,
+    SyncDirectory,
+}
+
+/// Test-only fault injection for [`install`]: one armed step either fails as its system call
+/// would, leaving `install`'s own cleanup to run, or "crashes" right after it completes, leaving on
+/// disk whatever that step wrote, as a killed process would.
+#[cfg(test)]
+pub(crate) mod faults {
+    use super::Step;
+    use std::cell::Cell;
+
+    thread_local! {
+        static ARMED: Cell<Option<(Step, bool)>> = const { Cell::new(None) };
+    }
+
+    /// Arms one fault on this thread; it fires at the next `install` reaching `step`.
+    pub(crate) fn arm(step: Step, crash: bool) {
+        ARMED.with(|armed| armed.set(Some((step, crash))));
+    }
+
+    /// Whether the armed fault has not fired yet.
+    pub(crate) fn pending() -> bool {
+        ARMED.with(|armed| armed.get().is_some())
+    }
+
+    pub(super) fn fire(step: Step, crash: bool) -> bool {
+        ARMED.with(|armed| {
+            let fires = armed.get() == Some((step, crash));
+            if fires {
+                armed.set(None);
+            }
+            fires
+        })
+    }
+}
+
+#[cfg(test)]
+fn fail(step: Step) -> Result<()> {
+    if faults::fire(step, false) {
+        anyhow::bail!("Injected {step:?} failure");
+    }
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn fail(_: Step) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn crash(step: Step) -> bool {
+    faults::fire(step, true)
+}
+
+#[cfg(not(test))]
+fn crash(_: Step) -> bool {
+    false
+}
+
+const CRASHED: &str = "Injected crash";
+
 pub(crate) fn install<T>(
     path: &Path,
     write: impl FnOnce(&mut File) -> Result<()>,
@@ -57,15 +126,34 @@ pub(crate) fn install<T>(
             verify(path)?;
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            fail(Step::Create)?;
             let mut temporary = tempfile::Builder::new().prefix(".quire-").tempfile_in(directory)
                 .context("Cannot create a temporary storage file. Check write permissions and available space before retrying.")?;
+            if crash(Step::Create) {
+                temporary.keep()?;
+                anyhow::bail!(CRASHED);
+            }
+            fail(Step::Write)?;
             write(temporary.as_file_mut())?;
             verify(temporary.path())?;
+            if crash(Step::Write) {
+                temporary.keep()?;
+                anyhow::bail!(CRASHED);
+            }
+            fail(Step::SyncContents)?;
             temporary.as_file().sync_all().context("Cannot synchronize storage contents. Keep the source and retry on a supported local filesystem.")?;
+            if crash(Step::SyncContents) {
+                temporary.keep()?;
+                anyhow::bail!(CRASHED);
+            }
+            fail(Step::Rename)?;
             match temporary.persist_noclobber(path) {
                 Ok(_) => {},
                 Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => { verify(path)?; },
                 Err(error) => return Err(error.error).context("Cannot install an immutable storage file. Keep the source and check folder permissions before retrying."),
+            }
+            if crash(Step::Rename) {
+                anyhow::bail!(CRASHED);
             }
         }
         Err(error) => {
@@ -75,8 +163,16 @@ pub(crate) fn install<T>(
         }
     }
     // Adopted files need synchronization too, before their database acknowledgment.
+    fail(Step::SyncInstalled)?;
     File::open(path)?.sync_all().context("Cannot synchronize an installed storage file. Keep the pending data and retry before acknowledging it.")?;
+    if crash(Step::SyncInstalled) {
+        anyhow::bail!(CRASHED);
+    }
+    fail(Step::SyncDirectory)?;
     sync_directory(directory).context("Cannot synchronize the storage filename. Keep the pending data and retry before acknowledging it.")?;
+    if crash(Step::SyncDirectory) {
+        anyhow::bail!(CRASHED);
+    }
     verify(path)
 }
 

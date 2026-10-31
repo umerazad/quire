@@ -13,7 +13,7 @@ use crate::markdown::{
 use regex::Regex;
 use serde_json::{Map, Value};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     sync::LazyLock,
 };
 use unicode_normalization::UnicodeNormalization as _;
@@ -333,15 +333,15 @@ fn js_replace_first(haystack: &str, pattern: &str, replacement: &str) -> String 
 /// Roam block references it rewrites. Callers parse these before importing.
 pub fn reference_texts(pages: &Value) -> Vec<String> {
     let mut texts = Vec::new();
-    let mut pending: Vec<&Value> = pages
-        .as_array()
-        .map(|pages| {
-            pages
-                .iter()
-                .filter_map(|page| page.get("children"))
-                .collect()
-        })
-        .unwrap_or_default();
+    for page in pages.as_array().into_iter().flatten() {
+        page_reference_texts(page, &mut texts);
+    }
+    texts
+}
+
+/// [`reference_texts`] for one page, added to `texts`.
+pub fn page_reference_texts(page: &Value, texts: &mut Vec<String>) {
+    let mut pending: Vec<&Value> = page.get("children").into_iter().collect();
     while let Some(children) = pending.pop() {
         for node in children.as_array().into_iter().flatten() {
             if let Some(text) = node.get("string").and_then(Value::as_str)
@@ -354,12 +354,12 @@ pub fn reference_texts(pages: &Value) -> Vec<String> {
             }
         }
     }
-    texts
 }
 
+#[derive(Default)]
 struct Registry {
     ids: HashMap<String, String>,
-    assigned: Vec<String>,
+    assigned: VecDeque<String>,
     report: Vec<String>,
     blocks: usize,
 }
@@ -371,7 +371,7 @@ impl Registry {
         new_id: &mut dyn FnMut() -> String,
     ) -> Result<(), String> {
         match node.get("uid") {
-            None => self.assigned.push(new_id()),
+            None => self.assigned.push_back(new_id()),
             Some(Value::String(uid)) if !uid.is_empty() => {
                 if self.ids.contains_key(uid) {
                     return Err(format!(
@@ -389,7 +389,7 @@ impl Registry {
                     ));
                 }
                 self.ids.insert(uid.clone(), local.clone());
-                self.assigned.push(local);
+                self.assigned.push_back(local);
             }
             Some(_) => return Err(INVALID_UID.to_owned()),
         }
@@ -445,12 +445,7 @@ impl Registry {
     }
 
     /// The reference `normalize`, consuming identifiers in registration order.
-    fn normalize(
-        &mut self,
-        nodes: &mut [Value],
-        next: &mut std::vec::IntoIter<String>,
-        markdown: &dyn RoamMarkdown,
-    ) {
+    fn normalize(&mut self, nodes: &mut [Value], markdown: &dyn RoamMarkdown) {
         for node in nodes {
             let Some(node) = node.as_object_mut() else {
                 continue;
@@ -469,35 +464,39 @@ impl Registry {
                     "Remote image in {named} still requires its original URL."
                 ));
             }
-            let uid = next.next().unwrap_or_default();
+            let uid = self.assigned.pop_front().unwrap_or_default();
             node.insert("uid".into(), Value::String(uid));
             let rewritten = self.rewrite(&string, markdown);
             node.insert("string".into(), Value::String(rewritten));
             if let Some(Value::Array(children)) = node.get_mut("children") {
-                self.normalize(children, next, markdown);
+                self.normalize(children, markdown);
             }
         }
     }
 }
 
-/// The reference `importRoamJSON`: Roam pages as Markdown documents, with a report and the
-/// metadata that lets an export restore what Markdown cannot hold.
-pub fn import_roam_json(
-    value: Value,
-    markdown: &dyn RoamMarkdown,
-    new_id: &mut dyn FnMut() -> String,
-) -> Result<Imported, String> {
-    let Value::Array(mut pages) = value else {
-        return Err(NOT_ROAM.to_owned());
-    };
-    let mut registry = Registry {
-        ids: HashMap::new(),
-        assigned: Vec::new(),
-        report: Vec::new(),
-        blocks: 0,
-    };
-    let mut titles = HashSet::new();
-    for page in &pages {
+/// The reference `importRoamJSON` one page at a time, so a large graph never has to be in memory
+/// whole. Rewriting block references needs every page's UIDs first, so an import makes two passes
+/// in export order: [`RoamImport::scan`] checks each page and registers its UIDs, then
+/// [`RoamImport::convert`] turns each page into its document and metadata, and
+/// [`RoamImport::finish`] gives the report. What it keeps between passes is the UID table, the
+/// titles, and one queued local ID per block.
+#[derive(Default)]
+pub struct RoamImport {
+    registry: Registry,
+    titles: HashSet<String>,
+    filenames: HashSet<String>,
+    documents: usize,
+}
+
+impl RoamImport {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The first pass over one page: refuses a page without a title, a repeated title, and
+    /// malformed blocks, and registers the page's and blocks' UIDs.
+    pub fn scan(&mut self, page: &Value, new_id: &mut dyn FnMut() -> String) -> Result<(), String> {
         let Some(page) = page.as_object().filter(|page| {
             page.get("title")
                 .and_then(Value::as_str)
@@ -506,28 +505,32 @@ pub fn import_roam_json(
             return Err(NO_TITLE.to_owned());
         };
         let title = page["title"].as_str().unwrap_or_default();
-        if !titles.insert(title.to_owned()) {
+        if !self.titles.insert(title.to_owned()) {
             return Err(format!(
                 "Roam export repeats page title {title}. Resolve the duplicate before importing."
             ));
         }
         if page.contains_key("uid") {
-            registry.register(page, new_id)?;
+            self.registry.register(page, new_id)?;
         }
-        registry.walk(page.get("children"), 0, new_id)?;
+        self.registry.walk(page.get("children"), 0, new_id)
     }
-    let mut next = std::mem::take(&mut registry.assigned).into_iter();
-    let mut filenames = HashSet::new();
-    let mut documents = Vec::with_capacity(pages.len());
-    let mut metadata = Map::new();
-    for page in &mut pages {
-        let source = page.as_object_mut().expect("validated Roam page");
+
+    /// The second pass over one page, after every page was scanned and in the same order: the
+    /// page's Markdown document and the Roam page its metadata keeps under the document's path.
+    pub fn convert(
+        &mut self,
+        mut page: Value,
+        markdown: &dyn RoamMarkdown,
+    ) -> Result<(Document, Value), String> {
+        let registry = &mut self.registry;
+        let source = page.as_object_mut().ok_or(NO_TITLE)?;
         if source.contains_key("uid") {
-            let uid = next.next().unwrap_or_default();
+            let uid = registry.assigned.pop_front().unwrap_or_default();
             source.insert("uid".into(), Value::String(uid));
         }
         if let Some(Value::Array(children)) = source.get_mut("children") {
-            registry.normalize(children, &mut next, markdown);
+            registry.normalize(children, markdown);
         }
         let original = source["title"].as_str().unwrap_or_default().to_owned();
         let title = portable_title(&original);
@@ -535,7 +538,7 @@ pub fn import_roam_json(
         let mut index = 2;
         let path = loop {
             let path = safe_page_path(&candidate).map_err(|error| error.to_string())?;
-            if filenames.insert(path.to_lowercase()) {
+            if self.filenames.insert(path.to_lowercase()) {
                 break path;
             }
             candidate = format!("{title} {index}");
@@ -556,31 +559,71 @@ pub fn import_roam_json(
                 "{original} exceeds the 10 MB note limit. Split that page in Roam and export again."
             ));
         }
-        documents.push(Document {
-            path: path.clone(),
-            text,
-        });
-        metadata.insert(path, std::mem::take(page));
+        self.documents += 1;
+        Ok((Document { path, text }, page))
     }
-    let mut report = vec![
-        format!(
-            "Imported {} pages and {} blocks. Original export unchanged.",
-            documents.len(),
-            registry.blocks
-        ),
-        "Original Roam page and block metadata are retained in .quire/roam.json. Executable macros are preserved as text; remote attachments are not downloaded.".to_owned(),
-    ];
-    report.append(&mut registry.report);
-    let mut root = Map::new();
-    root.insert("version".into(), Value::from(1));
-    root.insert("pages".into(), Value::Object(metadata));
+
+    /// The import report, once every page is converted.
+    pub fn finish(self) -> Vec<String> {
+        let mut report = vec![
+            format!(
+                "Imported {} pages and {} blocks. Original export unchanged.",
+                self.documents, self.registry.blocks
+            ),
+            "Original Roam page and block metadata are retained in .quire/roam.json. Executable macros are preserved as text; remote attachments are not downloaded.".to_owned(),
+        ];
+        report.extend(self.registry.report);
+        dedupe(report)
+    }
+}
+
+/// The reference `importRoamJSON`: Roam pages as Markdown documents, with a report and the
+/// metadata that lets an export restore what Markdown cannot hold.
+pub fn import_roam_json(
+    value: Value,
+    markdown: &dyn RoamMarkdown,
+    new_id: &mut dyn FnMut() -> String,
+) -> Result<Imported, String> {
+    let Value::Array(pages) = value else {
+        return Err(NOT_ROAM.to_owned());
+    };
+    let mut import = RoamImport::new();
+    for page in &pages {
+        import.scan(page, new_id)?;
+    }
+    let mut documents = Vec::with_capacity(pages.len());
+    let mut metadata = Map::new();
+    for page in pages {
+        let (document, page) = import.convert(page, markdown)?;
+        metadata.insert(document.path.clone(), page);
+        documents.push(document);
+    }
     Ok(Imported {
         documents,
-        report: dedupe(report),
-        metadata: Value::Object(root),
+        report: import.finish(),
+        metadata: metadata_root(metadata),
     })
 }
 
+/// `{ version: 1, pages }`, the metadata an import keeps.
+fn metadata_root(pages: Map<String, Value>) -> Value {
+    let mut root = Map::new();
+    root.insert("version".into(), Value::from(1));
+    root.insert("pages".into(), Value::Object(pages));
+    Value::Object(root)
+}
+
+/// The metadata text [`js_json::stringify`] writes for an import's metadata, written a page at a
+/// time: [`METADATA_START`], then each page's [`metadata_entry`] separated by commas, then
+/// [`METADATA_END`]. Document paths end in `.md`, so no key is an array index that
+/// `JSON.stringify` would move first.
+pub const METADATA_START: &str = r#"{"version":1,"pages":{"#;
+pub const METADATA_END: &str = "}}";
+
+/// One page's entry in the metadata text.
+pub fn metadata_entry(path: &str, page: &Value) -> String {
+    format!("{}:{}", quote(path), js_json::stringify(page))
+}
 /// A Roam page and the attributes of its blocks, checked as the reference does before export.
 fn valid_page(page: &Value) -> bool {
     page.get("title").is_some_and(Value::is_string)
