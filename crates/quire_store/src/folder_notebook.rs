@@ -833,7 +833,13 @@ impl Client<FolderNotebook> {
         self.request(64, |notebook| {
             notebook
                 .import_reference_history(reference::HISTORY_STEP)
-                .map(|more| more.then(|| notebook.reference_history_left()).unwrap_or(0))
+                .map(|more| {
+                    if more {
+                        notebook.reference_history_left()
+                    } else {
+                        0
+                    }
+                })
         })
     }
     /// How many of the reference app's saved versions are queued to take in.
