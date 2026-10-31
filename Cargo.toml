@@ -490,3 +490,14 @@ debug = "limited"
 codegen-units = 16
 split-debuginfo = "unpacked"
 debug = "limited"
+
+# Zed's release profile (vendor/zed revision in UPSTREAM.json): thin LTO with one codegen unit
+# for dependencies, 16 for the application crate so relinking after app changes stays fast.
+# Bundles strip symbols after extracting them (tools/bundle-mac.ts), so `debug` stays limited.
+[profile.release]
+debug = "limited"
+lto = "thin"
+codegen-units = 1
+
+[profile.release.package]
+quire = { codegen-units = 16 }
