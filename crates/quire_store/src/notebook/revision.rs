@@ -426,6 +426,7 @@ impl NotebookStore {
             if changed {
                 self.connection
                     .exec_bound("INSERT INTO outbox(revision) VALUES (?)")?(id)?;
+                self.outbox_grew();
                 merged = self.merge_page(&page_key(&edit.page), edit.created)?;
             }
             let heads = self.heads(&edit.page)?;
