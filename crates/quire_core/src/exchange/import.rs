@@ -69,7 +69,7 @@ impl std::error::Error for UnusablePath {}
 /// A page planned earlier takes its path for the pages after it.
 pub fn plan_import(
     pages: &[String],
-    taken: impl Fn(&str) -> bool,
+    mut taken: impl FnMut(&str) -> bool,
 ) -> Result<ImportPlan, UnusablePath> {
     let mut planned = HashSet::new();
     let mut plan = ImportPlan::default();

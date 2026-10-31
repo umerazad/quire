@@ -13,6 +13,7 @@ mod deletion;
 mod files;
 mod history;
 mod journal;
+mod markdown_import;
 mod reference;
 mod settings;
 
