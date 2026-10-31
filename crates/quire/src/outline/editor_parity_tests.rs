@@ -152,6 +152,52 @@ fn outline_scenarios_match_rt_editor_tests(cx: &mut TestAppContext) {
     }
 }
 
+/// rt: "never turns the line above a typed - or --- into a heading". Quire's grammar has no
+/// setext headings, so only `# Real` is a heading and `---` after a paragraph is a rule.
+#[gpui::test]
+fn a_typed_dash_never_turns_the_line_above_into_a_heading(cx: &mut TestAppContext) {
+    let text = "Abc\n-\n\nDef\n---\n\n# Real\n";
+    cx.update(|cx| crate::editor_host::init(cx).expect("editor initialization"));
+    let buffer = cx.update(|cx| crate::markdown::buffer(text, cx));
+    cx.executor().run_until_parked();
+    buffer.read_with(cx, |buffer, _| {
+        let snapshot = buffer.snapshot();
+        let blocks = crate::markdown_blocks::current_blocks(&snapshot).expect("parsed blocks");
+        let headings: Vec<_> = blocks
+            .iter()
+            .filter(|block| block.kind == "heading")
+            .map(|block| &text[block.content_from..block.content_to])
+            .collect();
+        assert_eq!(headings, ["# Real"]);
+        let tree = snapshot
+            .syntax_layers()
+            .next()
+            .expect("a block syntax layer")
+            .node()
+            .to_sexp();
+        assert_eq!(tree.matches("thematic_break").count(), 1, "{tree}");
+        assert!(!tree.contains("setext"), "{tree}");
+    });
+}
+
+/// rt: "removes a new block's ID with the block on undo". Copying a reference gives the new
+/// block an ID while it is still being typed; undoing the typing takes the ID with it, so no
+/// orphan ID is left.
+#[gpui::test]
+fn undo_removes_a_new_blocks_id_with_the_block(cx: &mut TestAppContext) {
+    let window = write_view("- A|\n", false, cx);
+    keys(window, "enter x", cx);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.dispatch_action(Box::new(crate::page_menu::CopyBlockReference), cx)
+    })
+    .unwrap();
+    cx.executor().run_until_parked();
+    let with_id = state(window, cx);
+    assert!(with_id.starts_with("- A\n- x| ^"), "{with_id}");
+    keys(window, &format!("{MOD}-z {MOD}-z"), cx);
+    assert_eq!(state(window, cx), "- A|\n");
+}
+
 /// rt: "toggles nested blocks through clear disclosure bullets without writing block IDs".
 #[gpui::test]
 fn bullet_arrows_toggle_nested_blocks_without_writing_ids(cx: &mut TestAppContext) {

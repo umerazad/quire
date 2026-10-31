@@ -1330,6 +1330,17 @@ fn filter_edits(
             if inserted.is_empty() && range.start == content_start && range.end > id_end {
                 range.start = block.marker.start.to_offset(snapshot);
             }
+            // Typing over a block's text and the lines after it, to a line end, keeps the
+            // block's hidden ID after the typed text, as rt does.
+            if !inserted.is_empty()
+                && range.start >= content_start
+                && range.start <= id_start
+                && range.end > id_end
+                && matches!(snapshot.chars_at(range.end).next(), None | Some('\n'))
+            {
+                let id: String = snapshot.text_for_range(id_start..id_end).collect();
+                *inserted = format!("{inserted}{id}").into();
+            }
             if !inserted.is_empty()
                 && id_start == content_start
                 && range.start >= block.marker.start.to_offset(snapshot)

@@ -60,6 +60,31 @@ pub fn normalize(mut edits: Vec<Edit>) -> Vec<Edit> {
         })
 }
 
+/// The edits without the text each one would replace with itself at its start and end.
+pub fn trim_unchanged(text: &str, edits: Vec<Edit>) -> Vec<Edit> {
+    edits
+        .into_iter()
+        .map(|(range, new)| {
+            let old = &text[range.clone()];
+            let prefix: usize = old
+                .chars()
+                .zip(new.chars())
+                .take_while(|(a, b)| a == b)
+                .map(|(c, _)| c.len_utf8())
+                .sum();
+            let suffix: usize = old[prefix..]
+                .chars()
+                .rev()
+                .zip(new[prefix..].chars().rev())
+                .take_while(|(a, b)| a == b)
+                .map(|(c, _)| c.len_utf8())
+                .sum();
+            let kept = new[prefix..new.len() - suffix].to_owned();
+            (range.start + prefix..range.end - suffix, kept)
+        })
+        .collect()
+}
+
 /// Maps a position in the original text through normalized edits, as CodeMirror maps it: a
 /// position at an insertion or inside a replaced range goes after the new text when `after` is
 /// true; the start of a replaced range stays before it and its end follows it.

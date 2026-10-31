@@ -673,6 +673,16 @@ fn apply_then(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
+    // A plan may rewrite the newline after a zoom's last line with itself, as moving its last
+    // child does; without that unchanged text the edit stays inside the view.
+    let plan = if page.contains(&plan.edits) {
+        plan
+    } else {
+        Plan {
+            edits: model::trim_unchanged(&page.text, plan.edits),
+            ..plan
+        }
+    };
     if !page.contains(&plan.edits) {
         set_notice(Some(OUTSIDE_VIEW), cx);
         return;
@@ -909,7 +919,16 @@ fn merge(
                 .is_some_and(|above| fold.start < above && above <= fold.end)
         }
     });
-    if hidden {
+    // An embed holds a slice of another page that starts at its root's text, so, as in rt,
+    // Backspace and Delete there never join lines.
+    let joins_lines = || match &outcome {
+        model::Outcome::Apply(plan) => plan
+            .edits
+            .iter()
+            .any(|(range, _)| page.text[range.clone()].contains('\n')),
+        model::Outcome::Refuse(_) => false,
+    };
+    if hidden || (crate::embeds::is_nested(editor) && joins_lines()) {
         return Some(Handled::Done);
     }
     finish(editor, &page, Some(outcome), window, cx)

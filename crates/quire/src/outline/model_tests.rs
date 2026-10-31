@@ -518,3 +518,20 @@ fn outline_commands_match_rt_parity_vectors(cx: &mut TestAppContext) {
         mismatches.join("\n")
     );
 }
+
+#[test]
+fn trimming_drops_the_text_an_edit_keeps() {
+    let text = "- Top\n  - Kid1\n  - Kid2 ^k\n- After\n";
+    let at = text.find("  - Kid1").unwrap()..text.find("- After").unwrap();
+    let edits = vec![(at.clone(), "  - Kid2 ^k\n  - Kid1\n".to_owned())];
+    let trimmed = trim_unchanged(text, edits.clone());
+    assert_eq!(
+        trimmed,
+        [(at.start + 7..at.end - 1, "2 ^k\n  - Kid1".to_owned())]
+    );
+    assert_eq!(apply_edits(text, &trimmed), apply_edits(text, &edits));
+    assert_eq!(
+        trim_unchanged("é", vec![(0..2, "é".to_owned())]),
+        [(2..2, String::new())]
+    );
+}
