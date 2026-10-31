@@ -11,6 +11,9 @@ pub use frontmatter::{frontmatter_tags, page_title, page_title_for_editor, page_
 
 mod ranges;
 
+mod copies;
+pub use copies::copy_with_new_ids;
+
 mod tags;
 pub use tags::{TagToken, tag_completion_range, tags};
 

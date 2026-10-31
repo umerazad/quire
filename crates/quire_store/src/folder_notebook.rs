@@ -241,11 +241,14 @@ impl FolderNotebook {
         }))
     }
 
+    /// The page's file now. A page not seen yet, such as a note another application just
+    /// created, is looked for by listing the notebook again.
     fn current(&self, page: &str) -> Result<Option<DiskDocument>> {
-        match self.path_of(page) {
-            Some(path) => self.read(&path),
-            None => Ok(None),
-        }
+        let path = self.path_of(page).or_else(|| {
+            self.listing();
+            self.path_of(page)
+        });
+        path.map_or(Ok(None), |path| self.read(&path))
     }
 
     /// The page's file revision, or nothing when it has no file.
@@ -373,6 +376,13 @@ impl FolderNotebook {
     /// Discards a page's draft when it still holds `text`, after the user chose another version.
     pub fn clear_draft(&self, page: &str, text: &str) -> Result<()> {
         self.settle_draft(page, text, None)
+    }
+
+    /// Discards a page's draft whatever it holds, after the user chose the disk version.
+    pub fn discard_draft(&self, page: &str) -> Result<()> {
+        self.connection
+            .exec_bound("DELETE FROM drafts WHERE page=?")?(page)
+            .context("Cannot remove the recovery copy. Check write access to Quire's application data folder and retry.")
     }
 
     /// Writes `edit.text` to the page's file when the file still holds `edit.base`: one revision,
@@ -607,6 +617,11 @@ impl Client<FolderNotebook> {
     pub fn clear_draft(&self, page: String, text: String) -> Answer<()> {
         self.request(128 + text.len(), move |notebook| {
             notebook.clear_draft(&page, &text)
+        })
+    }
+    pub fn discard_draft(&self, page: String) -> Answer<()> {
+        self.request(128 + page.len(), move |notebook| {
+            notebook.discard_draft(&page)
         })
     }
     pub fn save(&self, edit: Edit) -> Answer<SaveAck> {

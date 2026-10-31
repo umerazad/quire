@@ -438,6 +438,15 @@ fn refresh_reports_external_edits_and_deletes_once() {
         fixture.notebook.refresh(&paths).unwrap().is_empty(),
         "the adapter's own save is not an outside change"
     );
+    fs::write(fixture.folder.join("Later.md"), "- created elsewhere").unwrap();
+    assert_eq!(
+        fixture
+            .notebook
+            .heads(&page_id_for_path("Later.md"))
+            .unwrap(),
+        [revision("- created elsewhere")],
+        "a note created after opening is found by listing again"
+    );
     fs::remove_file(fixture.folder.join("Note.md")).unwrap();
     assert_eq!(
         fixture.notebook.rescan().unwrap(),
