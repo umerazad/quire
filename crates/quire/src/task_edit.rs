@@ -181,18 +181,49 @@ pub struct CaptureProject {
     pub path: String,
 }
 
-/// The reference `captureTask` into Inbox: appends `- [ ] text #inbox [[Project]] ➕ [[today]]`
-/// to the Inbox page, replacing a new page's lone empty bullet, or creates the page with it.
+/// Where quick capture appends: the Inbox page, or today's daily page, found by its date and
+/// created at its layout path when missing, as Settings > Tasks says.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CaptureTo {
+    Inbox,
+    Today {
+        date: String,
+        title: String,
+        folder: String,
+    },
+}
+
+/// The reference `captureTask`: appends `- [ ] text #inbox [[Project]] ➕ [[today]]` to the Inbox
+/// page, replacing a new page's lone empty bullet, or creates the page with it. A task captured
+/// to today's page needs no ➕ date.
 pub fn capture(
     value: String,
     project: Option<CaptureProject>,
+    to: CaptureTo,
     open_pages: Vec<Entity<OpenPage>>,
     index: IndexClient,
     storage: NotebookBackend,
     cx: &mut App,
 ) -> Task<Result<Captured, String>> {
     cx.spawn(async move |cx| {
-        let inbox = ask(index.find_page(INBOX.into())).await?;
+        let (inbox, target, folder) = match &to {
+            CaptureTo::Inbox => (
+                ask(index.find_page(INBOX.into())).await?,
+                INBOX.to_owned(),
+                String::new(),
+            ),
+            CaptureTo::Today {
+                date,
+                title,
+                folder,
+            } => {
+                let date = date.clone();
+                let found =
+                    ask(index.with_generation(move |index| index.daily_page(&date))).await?;
+                (found.1, title.clone(), folder.clone())
+            }
+        };
+        let today = matches!(to, CaptureTo::Today { .. });
         let link = match &project {
             Some(project) => {
                 let found = ask(index.find_page(project.title.clone())).await?;
@@ -218,6 +249,9 @@ pub fn capture(
             .next()
             .unwrap_or(TaskState::Inbox);
         let stamp = |title: &str, cx: &mut AsyncApp| -> Result<String, String> {
+            if today {
+                return Ok(String::new());
+            }
             cx.update(|cx| {
                 let (today, days) = clock(cx)?;
                 Ok(created_stamp(title, &today, &days))
@@ -230,19 +264,19 @@ pub fn capture(
             None => None,
         };
         let Some(source) = source else {
-            let text = capture_task("", &value, &value_tags, link.as_deref(), &stamp(INBOX, cx)?)?
-                .replacement;
-            let page = crate::navigation::create_page_with(
-                storage,
-                index,
-                INBOX.into(),
-                String::new(),
-                text,
-            )
-            .await?;
+            let text = capture_task(
+                "",
+                &value,
+                &value_tags,
+                link.as_deref(),
+                &stamp(&target, cx)?,
+            )?
+            .replacement;
+            let page =
+                crate::navigation::create_page_with(storage, index, target, folder, text).await?;
             return Ok(Captured { page, state });
         };
-        let title = inbox.map_or_else(|| INBOX.to_owned(), |found| found.title);
+        let title = inbox.map_or(target, |found| found.title);
         let (original, normalized) = SourceText::prepare(source.stored.clone());
         let edit = capture_task(
             &normalized,
@@ -259,7 +293,7 @@ pub fn capture(
             page_writes::apply(
                 vec![source.write(text)],
                 storage,
-                "The Inbox page changed while capturing. Capture the task again.",
+                "The capture page changed while capturing. Capture the task again.",
                 cx,
             )
         });
