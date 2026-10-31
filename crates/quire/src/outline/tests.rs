@@ -588,3 +588,42 @@ fn vim_linewise_yank_and_put_keep_hidden_syntax(cx: &mut TestAppContext) {
     );
     assert_eq!(ids[2], "t");
 }
+
+#[gpui::test]
+fn link_pairs_delete_together_and_enter_steps_out(cx: &mut TestAppContext) {
+    let window = write_view("- See |\n", false, cx);
+    expect(
+        window,
+        &[
+            ("[ [", "- See [[|]]\n"),
+            ("backspace", "- See |\n"),
+            ("( (", "- See ((|))\n"),
+            ("backspace", "- See |\n"),
+        ],
+        cx,
+    );
+    let window = write_view("- See [[Pa|]] and ((b))\n", false, cx);
+    keys(window, "enter", cx);
+    assert_eq!(state(window, cx), "- See [[Pa]]| and ((b))\n");
+    let window = write_view("- See [[Pa]] and ((b|))\n", false, cx);
+    keys(window, "enter", cx);
+    assert_eq!(state(window, cx), "- See [[Pa]] and ((b))|\n");
+    let window = write_view("- Closed [[Pa]]|]]\n", false, cx);
+    keys(window, "enter", cx);
+    assert_eq!(state(window, cx), "- Closed [[Pa]]\n- |]]\n");
+}
+
+#[cfg(target_os = "macos")]
+#[gpui::test]
+fn cmd_backspace_stops_at_the_text_start(cx: &mut TestAppContext) {
+    let window = write_view("- [ ] Hello wor|ld ^x\n- Next\n", false, cx);
+    expect(
+        window,
+        &[
+            ("cmd-backspace", "- [ ] |ld ^x\n- Next\n"),
+            ("cmd-backspace", "- [ ] |ld ^x\n- Next\n"),
+            ("cmd-z", "- [ ] Hello wor|ld ^x\n- Next\n"),
+        ],
+        cx,
+    );
+}

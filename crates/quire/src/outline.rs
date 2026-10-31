@@ -40,6 +40,8 @@ actions!(
         DeleteBackward,
         /// Delete at a block's text end pulls in the next block.
         DeleteForward,
+        /// Cmd-Backspace deletes back to the list item's text start, keeping its marker.
+        DeleteToTextStart,
         /// Vim `J`: joins the next block's text to this one.
         JoinBlocks,
         /// Vim `o`: opens a sibling block below and starts Insert mode.
@@ -153,6 +155,9 @@ pub fn init(cx: &mut App) {
         register(editor, cx, |editor, _: &DeleteForward, window, cx| {
             merge(editor, true, window, cx)
         });
+        register(editor, cx, |editor, _: &DeleteToTextStart, window, cx| {
+            delete_to_text_start(editor, window, cx)
+        });
         register(editor, cx, |editor, _: &JoinBlocks, window, cx| {
             join(editor, window, cx)
         });
@@ -257,6 +262,14 @@ fn bind_keys(cx: &mut App) {
             Some("Editor && QuireWrite && vim_operator == <"),
         ),
     ]);
+    // Zed binds deleting to the line start only on macOS; elsewhere Ctrl-Backspace deletes a word.
+    if mac {
+        cx.bind_keys([KeyBinding::new(
+            "cmd-backspace",
+            DeleteToTextStart,
+            Some(WRITE_INPUT),
+        )]);
+    }
 }
 
 /// Registers a Write view command on an editor. A command returning `None` propagates, so the
@@ -687,6 +700,15 @@ fn finish(
 fn split(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) -> Option<Handled> {
     let page = page(editor, cx)?;
     let head = page.caret()?;
+    if !editor.context_menu_visible()
+        && let Some(at) = model::step_out_of_link(&page.text, head)
+    {
+        let anchor = view_anchor(editor, &page.buffer, at, cx)?;
+        editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
+            selections.select_anchor_ranges([anchor..anchor])
+        });
+        return Some(Handled::Done);
+    }
     if literal(&page.buffer, head, cx) {
         return None;
     }
@@ -761,6 +783,10 @@ fn merge(
 ) -> Option<Handled> {
     let page = page(editor, cx)?;
     let head = page.caret()?;
+    if !forward && let Some(plan) = model::delete_empty_link(&page.text, head) {
+        apply(editor, &page, plan, window, cx);
+        return Some(Handled::Done);
+    }
     let outcome = if forward {
         model::merge_forward(&page.text, &page.blocks, head)
     } else {
@@ -781,6 +807,17 @@ fn merge(
         return Some(Handled::Done);
     }
     finish(editor, &page, Some(outcome), window, cx)
+}
+
+fn delete_to_text_start(
+    editor: &mut Editor,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> Option<Handled> {
+    let page = page(editor, cx)?;
+    let plan = model::delete_to_text_start(&page.text, &page.blocks, page.caret()?)?;
+    apply(editor, &page, plan, window, cx);
+    Some(Handled::Done)
 }
 
 fn join(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) -> Option<Handled> {
