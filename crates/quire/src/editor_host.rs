@@ -879,6 +879,10 @@ mod projection_tests;
 mod projection_vim_tests;
 
 #[cfg(test)]
+#[path = "editor_link_tests.rs"]
+mod link_tests;
+
+#[cfg(test)]
 #[path = "editor_projection_mapping_tests.rs"]
 mod projection_mapping_tests;
 

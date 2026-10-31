@@ -27,6 +27,20 @@ pub struct Preview {
     pub source: String,
 }
 
+/// Inline nodes whose text is never a rendered web link: code, HTML, images, and the link forms
+/// Write leaves as source.
+const OPAQUE: [&str; 7] = [
+    "image",
+    "code_span",
+    "html_tag",
+    "email_autolink",
+    "full_reference_link",
+    "collapsed_reference_link",
+    "shortcut_link",
+];
+
+/// Plain-label inline links, `<...>` autolinks, and bare URLs to HTTP(S) addresses, outside
+/// code and metadata. `None` while the inline parse is stale.
 pub fn links(
     snapshot: &BufferSnapshot,
     blocks: &[crate::markdown_blocks::Block],
@@ -35,6 +49,38 @@ pub fn links(
         .syntax_layers()
         .find(|layer| layer.language.name().as_ref() == "Markdown")?;
     let primary = primary.node();
+    let block_of = |range: &Range<usize>| {
+        let block = blocks
+            .get(blocks.partition_point(|block| block.content_to <= range.start))
+            .filter(|block| {
+                block.kind != "code"
+                    && block.content_from <= range.start
+                    && range.end <= block.content_to
+            })?;
+        let mut ancestor = primary.descendant_for_byte_range(range.start, range.end);
+        while let Some(node) = ancestor {
+            if matches!(node.kind(), "fenced_code_block" | "indented_code_block") {
+                return None;
+            }
+            ancestor = node.parent();
+        }
+        Some(block.from..block.content_to)
+    };
+    let web_link = |range: Range<usize>, label_range: Range<usize>, url: &str| {
+        let block_range = block_of(&range)?;
+        let parsed = http_client::Url::parse(url).ok()?;
+        if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+            return None;
+        }
+        Some(Link {
+            source: snapshot.text_for_range(range.clone()).collect(),
+            label: snapshot.text_for_range(label_range.clone()).collect(),
+            range,
+            label_range,
+            block_range,
+            destination: Destination::Web(url.to_owned()),
+        })
+    };
     let mut links = Vec::new();
     for layer in snapshot
         .syntax_layers()
@@ -44,9 +90,19 @@ pub fn links(
         if root.has_changes() {
             return None;
         }
+        let mut covered = Vec::new();
         let mut stack = vec![root];
         while let Some(node) = stack.pop() {
-            if matches!(node.kind(), "image" | "code_span" | "html_tag") {
+            let range = node.byte_range();
+            if OPAQUE.contains(&node.kind()) {
+                covered.push(range);
+                continue;
+            }
+            if node.kind() == "uri_autolink" {
+                covered.push(range.clone());
+                let inner = range.start + 1..range.end - 1;
+                let url: String = snapshot.text_for_range(inner.clone()).collect();
+                links.extend(web_link(range, inner, &url));
                 continue;
             }
             let mut cursor = node.walk();
@@ -55,29 +111,7 @@ pub fn links(
                 stack.extend(children.into_iter().rev());
                 continue;
             }
-            let range = node.byte_range();
-            let Some(block) = blocks
-                .get(blocks.partition_point(|block| block.content_to <= range.start))
-                .filter(|block| {
-                    block.kind != "code"
-                        && block.content_from <= range.start
-                        && range.end <= block.content_to
-                })
-            else {
-                continue;
-            };
-            let mut ancestor = primary.descendant_for_byte_range(range.start, range.end);
-            let mut code = false;
-            while let Some(node) = ancestor {
-                if matches!(node.kind(), "fenced_code_block" | "indented_code_block") {
-                    code = true;
-                    break;
-                }
-                ancestor = node.parent();
-            }
-            if code {
-                continue;
-            }
+            covered.push(range.clone());
             let Some(label) = children.iter().find(|node| node.kind() == "link_text") else {
                 continue;
             };
@@ -100,24 +134,71 @@ pub fn links(
                 .strip_prefix('<')
                 .and_then(|url| url.strip_suffix('>'))
                 .unwrap_or(&destination);
-            let Ok(parsed) = http_client::Url::parse(url) else {
-                continue;
-            };
-            if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
-                continue;
+            links.extend(web_link(range, label_range, url));
+        }
+        let start = root.start_byte();
+        let text: String = snapshot.text_for_range(root.byte_range()).collect();
+        for url in bare_urls(&text) {
+            let range = start + url.start..start + url.end;
+            if !covered
+                .iter()
+                .any(|covered| covered.start < range.end && range.start < covered.end)
+            {
+                links.extend(web_link(range.clone(), range, &text[url]));
             }
-            links.push(Link {
-                source: snapshot.text_for_range(range.clone()).collect(),
-                range,
-                label_range,
-                block_range: block.from..block.content_to,
-                label,
-                destination: Destination::Web(url.to_owned()),
-            });
         }
     }
     links.sort_by_key(|link| link.range.start);
+    links.dedup_by_key(|link| link.range.clone());
     Some(links)
+}
+
+/// Bare `http://` and `https://` addresses in prose, as GitHub Flavored Markdown's extended
+/// autolinks find them: at a line start or after a space or one of `*_~(`, up to a space or `<`,
+/// without trailing punctuation, quotes, or an unmatched closing bracket.
+pub fn bare_urls(text: &str) -> Vec<Range<usize>> {
+    let mut found = Vec::new();
+    let mut from = 0;
+    while let Some(at) = text[from..].find("http").map(|at| from + at) {
+        from = at + "http".len();
+        let rest = &text[at..];
+        let Some(scheme) = ["https://", "http://"]
+            .into_iter()
+            .find(|scheme| rest.starts_with(scheme))
+        else {
+            continue;
+        };
+        let after_boundary = text[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| c.is_whitespace() || matches!(c, '*' | '_' | '~' | '('));
+        if !after_boundary {
+            continue;
+        }
+        let mut end = at
+            + rest
+                .find(|c: char| c.is_whitespace() || c == '<')
+                .unwrap_or(rest.len());
+        while let Some(last) = text[at..end].chars().next_back() {
+            let url = &text[at..end];
+            let unmatched = |open, close| {
+                last == close && url.matches(close).count() > url.matches(open).count()
+            };
+            let trailing = matches!(
+                last,
+                '?' | '!' | '.' | ',' | ':' | ';' | '*' | '_' | '~' | '\'' | '"'
+            );
+            if !(trailing || unmatched('(', ')') || unmatched('[', ']')) {
+                break;
+            }
+            end -= last.len_utf8();
+        }
+        if end > at + scheme.len() {
+            found.push(at..end);
+            from = end;
+        }
+    }
+    found
 }
 
 /// Whether a reference stands alone on its line, after at most a list marker and before at
@@ -262,6 +343,81 @@ mod tests {
             .unwrap()[0]
                 .label,
             label
+        );
+    }
+
+    #[test]
+    fn bare_urls_end_before_trailing_punctuation_and_unmatched_brackets() {
+        let found = |text: &'static str| -> Vec<&'static str> {
+            super::bare_urls(text)
+                .into_iter()
+                .map(|range| &text[range])
+                .collect()
+        };
+        assert_eq!(
+            found(
+                "see https://example.org/path, (http://a.example/x_(y)) and \"https://quoted.example\" (https://q.example/?a=1)."
+            ),
+            [
+                "https://example.org/path",
+                "http://a.example/x_(y)",
+                "https://q.example/?a=1"
+            ]
+        );
+        assert_eq!(
+            found(
+                "xhttps://glued.example *https://em.example* https://مثال.example/🙂 https:// ftp://no.example"
+            ),
+            ["https://em.example", "https://مثال.example/🙂"]
+        );
+        assert_eq!(
+            found("[x https://in.example] https://end.example<b>"),
+            ["https://in.example", "https://end.example"]
+        );
+    }
+
+    #[gpui::test]
+    fn bare_urls_and_autolinks_are_web_links_outside_code_and_other_links(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let text = "---\nsource: https://meta.example\n---\n\n- bare https://bare.example/a. and <https://auto.example> <mailto:a@b.example>\n- `https://code.example` [label](https://inline.example) ![i](https://image.example) [ref][https://ref.example]\n\n```\nhttps://fenced.example\n```\n";
+        let buffer = cx.update(|cx| crate::markdown::buffer(text, cx));
+        cx.executor().run_until_parked();
+        let snapshot = cx.update(|cx| buffer.read(cx).snapshot());
+        let links = super::links(
+            &snapshot,
+            &crate::markdown_blocks::blocks(&snapshot).unwrap(),
+        )
+        .unwrap();
+        let actual: Vec<_> = links
+            .iter()
+            .map(|link| {
+                (
+                    &text[link.range.clone()],
+                    link.label.as_str(),
+                    link.destination.clone(),
+                )
+            })
+            .collect();
+        let web = |url: &str| super::Destination::Web(url.into());
+        assert_eq!(
+            actual,
+            [
+                (
+                    "https://bare.example/a",
+                    "https://bare.example/a",
+                    web("https://bare.example/a")
+                ),
+                (
+                    "<https://auto.example>",
+                    "https://auto.example",
+                    web("https://auto.example")
+                ),
+                (
+                    "[label](https://inline.example)",
+                    "label",
+                    web("https://inline.example")
+                ),
+            ]
         );
     }
 

@@ -129,7 +129,7 @@ fn rendered_web_link_opens_its_url_without_editing_source(cx: &mut TestAppContex
                     .snapshot(window, cx)
                     .display_snapshot
                     .text()),
-                "مرحبا🙂\n"
+                "مرحبا🙂↗\n"
             );
         })
         .unwrap();
@@ -286,7 +286,7 @@ fn link_excerpts_track_source_edits_and_leave_cut_links_as_source(cx: &mut TestA
                 .snapshot(window, cx)
                 .display_snapshot
                 .text()),
-            "Inside"
+            "Inside↗"
         );
         assert_eq!(
             view.source.read(cx).text(cx),
@@ -527,7 +527,7 @@ fn focused_link_editing_and_copying_use_the_original_source(cx: &mut TestAppCont
 fn wrapped_link_overlay_preserves_selection_in_fragment_gaps(cx: &mut TestAppContext) {
     cx.update(|cx| init(cx).unwrap());
     let text = format!(
-        "- pre [{}x](https://example.com/gap) ^id\n",
+        "- pre [{}xxxxxx](https://example.com/gap) ^id\n",
         "word ".repeat(11)
     );
     let window = cx.add_window(|window, cx| {

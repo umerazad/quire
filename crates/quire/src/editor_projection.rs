@@ -51,6 +51,86 @@ struct AnchoredLink {
     id: u64,
     data: Arc<crate::markdown_links::Link>,
 }
+
+impl AnchoredLink {
+    fn url(&self) -> Option<&str> {
+        match &self.data.destination {
+            crate::markdown_links::Destination::Web(url) => Some(url),
+            crate::markdown_links::Destination::Reference(_) => None,
+        }
+    }
+
+    fn is_external(&self) -> bool {
+        self.url().is_some()
+    }
+}
+
+/// What hovering a link that leaves the notebook says, as `rt` titles its external links.
+fn external_tooltip(url: &str) -> String {
+    format!("Opens {url} outside the notebook")
+}
+
+struct ExternalLink;
+
+fn link_key<T: 'static>() -> editor::HighlightKey {
+    editor::HighlightKey::NavigationOverlay(editor::NavigationOverlayKey::unique::<T>())
+}
+
+/// Links to notebook pages and blocks: the theme's link colour, underlined.
+fn internal_link_style(cx: &App) -> gpui::HighlightStyle {
+    use theme::ActiveTheme;
+    gpui::HighlightStyle {
+        color: Some(cx.theme().colors().link_text_hover),
+        underline: Some(gpui::UnderlineStyle {
+            thickness: gpui::px(1.),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+/// `rt`'s blues for links that leave the notebook (`42de3c8949e1`): the text, its underline, and
+/// the trailing arrow, in the light or dark theme.
+#[derive(Clone, Copy)]
+struct ExternalPalette {
+    ink: u32,
+    line: u32,
+    arrow: u32,
+}
+
+impl ExternalPalette {
+    fn of(cx: &App) -> Self {
+        use theme::ActiveTheme;
+        if cx.theme().appearance.is_light() {
+            Self {
+                ink: 0x2f6690,
+                line: 0x8fb0cb,
+                arrow: 0x6f93b3,
+            }
+        } else {
+            Self {
+                ink: 0x81b9e8,
+                line: 0x6c8ba5,
+                arrow: 0x7599b9,
+            }
+        }
+    }
+
+    /// GPUI underlines are solid or wavy, so the lighter underline colour stands in for `rt`'s
+    /// dotted one.
+    fn style(self) -> gpui::HighlightStyle {
+        gpui::HighlightStyle {
+            color: Some(gpui::rgb(self.ink).into()),
+            underline: Some(gpui::UnderlineStyle {
+                thickness: gpui::px(1.),
+                color: Some(gpui::rgb(self.line).into()),
+                wavy: false,
+            }),
+            ..Default::default()
+        }
+    }
+}
+
 impl Addon for Projection {
     fn extend_key_context(&self, context: &mut gpui::KeyContext, _: &App) {
         context.add("QuireWrite");
@@ -331,34 +411,46 @@ fn refresh(
             tasks.push(Crease::simple(range, placeholder));
         }
     }
-    let mut labels = Vec::new();
+    let palette = ExternalPalette::of(cx);
+    let (external, internal): (Vec<_>, Vec<_>) = links.iter().partition(|link| link.is_external());
     for link in links.iter() {
-        labels.push(link.label.clone());
-        if rendered_link(editor, link, &snapshot, window, cx) {
-            hidden
-                .push(link.range.start.to_offset(&snapshot)..link.label.start.to_offset(&snapshot));
-            hidden.push(link.label.end.to_offset(&snapshot)..link.range.end.to_offset(&snapshot));
+        if !rendered_link(editor, link, &snapshot, window, cx) {
+            continue;
         }
+        let start = link.range.start.to_offset(&snapshot);
+        let label_start = link.label.start.to_offset(&snapshot);
+        let label_end = link.label.end.to_offset(&snapshot);
+        let end = link.range.end.to_offset(&snapshot);
+        if !link.is_external() {
+            hidden.push(start..label_start);
+            hidden.push(label_end..end);
+            continue;
+        }
+        if start < label_start {
+            hidden.push(start..label_start);
+        }
+        // A bare URL has no syntax after it to carry the arrow, so its last character does.
+        let kept = (label_end == end)
+            .then(|| snapshot.reversed_chars_at(end).next())
+            .flatten();
+        let trailing = match kept {
+            Some(last) => MultiBufferOffset(end.0 - last.len_utf8())..end,
+            None => label_end..end,
+        };
+        tasks.push(Crease::simple(
+            trailing,
+            arrow_placeholder(cx.entity().downgrade(), link.clone(), kept, palette),
+        ));
     }
-    let key = editor::HighlightKey::NavigationOverlay(editor::NavigationOverlayKey::unique::<
-        Projection,
-    >());
-    editor.clear_highlights(key, cx);
-    if !labels.is_empty() {
-        use theme::ActiveTheme;
-        editor.highlight_text(
-            key,
-            labels,
-            gpui::HighlightStyle {
-                color: Some(cx.theme().colors().link_text_hover),
-                underline: Some(gpui::UnderlineStyle {
-                    thickness: gpui::px(1.),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            cx,
-        );
+    for (key, links, style) in [
+        (link_key::<Projection>(), internal, internal_link_style(cx)),
+        (link_key::<ExternalLink>(), external, palette.style()),
+    ] {
+        editor.clear_highlights(key, cx);
+        if !links.is_empty() {
+            let labels = links.into_iter().map(|link| link.label.clone()).collect();
+            editor.highlight_text(key, labels, style, cx);
+        }
     }
     editor.fold_creases(
         hidden
@@ -473,9 +565,6 @@ fn link_region(
         .debug_selector(|| "quire-web-link".into())
         .children(layout.fragments.iter().enumerate().map(|(index, bounds)| {
             let local = bounds.origin - layout.bounds.origin;
-            let editor = editor.clone();
-            let source_range = link.range.clone();
-            let data = link.data.clone();
             let fragment = if index == 0 {
                 focusable_control(index, editor.clone())
                     .role(gpui::Role::Link)
@@ -483,41 +572,116 @@ fn link_region(
             } else {
                 gpui::div().id(index)
             };
-            fragment
+            opens_link(fragment, editor.clone(), link)
                 .absolute()
                 .left(local.x)
                 .top(local.y)
                 .w(bounds.size.width)
                 .h(bounds.size.height)
-                .cursor_pointer()
                 .when(index == 0, |div| {
                     div.debug_selector(|| "quire-web-link-first-fragment".into())
                 })
                 .when(index + 1 == layout.fragments.len(), |div| {
                     div.debug_selector(|| "quire-web-link-last-fragment".into())
                 })
-                .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
-                    window.prevent_default();
-                    cx.stop_propagation();
-                })
-                .on_click(move |event, window, cx| {
-                    cx.stop_propagation();
-                    let beside = event.modifiers().shift;
-                    editor
-                        .update(cx, |editor, cx| {
-                            open_link(
-                                editor,
-                                source_range.clone(),
-                                &data.source,
-                                beside,
-                                window,
-                                cx,
-                            )
-                        })
-                        .ok();
-                })
         }))
         .into_any_element()
+}
+
+/// Makes `element` open `link` on click (beside the page with Shift) without moving the caret,
+/// with the address as its tooltip when the link leaves the notebook.
+fn opens_link(
+    element: gpui::Stateful<gpui::Div>,
+    editor: WeakEntity<Editor>,
+    link: &AnchoredLink,
+) -> gpui::Stateful<gpui::Div> {
+    let range = link.range.clone();
+    let data = link.data.clone();
+    element
+        .cursor_pointer()
+        .when_some(link.url(), |div, url| {
+            div.tooltip(ui::Tooltip::text(external_tooltip(url)))
+        })
+        .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+            window.prevent_default();
+            cx.stop_propagation();
+        })
+        .on_click(move |event, window, cx| {
+            cx.stop_propagation();
+            let beside = event.modifiers().shift;
+            editor
+                .update(cx, |editor, cx| {
+                    open_link(editor, range.clone(), &data.source, beside, window, cx)
+                })
+                .ok();
+        })
+}
+
+#[cfg(test)]
+pub type Highlight = Option<(gpui::HighlightStyle, Vec<Range<usize>>)>;
+
+/// The style and source ranges of the internal and then the external link highlights, and the
+/// style external links should have, for tests.
+#[cfg(test)]
+pub fn link_highlights(editor: &Editor, cx: &App) -> ([Highlight; 2], gpui::HighlightStyle) {
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let read = |key| {
+        editor.text_highlights(key, cx).map(|(style, ranges)| {
+            let ranges = ranges
+                .iter()
+                .map(|range| range.start.to_offset(&snapshot).0..range.end.to_offset(&snapshot).0)
+                .collect();
+            (style, ranges)
+        })
+    };
+    (
+        [
+            read(link_key::<Projection>()),
+            read(link_key::<ExternalLink>()),
+        ],
+        ExternalPalette::of(cx).style(),
+    )
+}
+
+/// The ↗ after a link that leaves the notebook, standing in for its hidden closing syntax, or
+/// for the `kept` last character of a bare URL, which it draws before the arrow. Clicking it
+/// opens the link; the label stays the link's one keyboard stop.
+fn arrow_placeholder(
+    editor: WeakEntity<Editor>,
+    link: AnchoredLink,
+    kept: Option<char>,
+    palette: ExternalPalette,
+) -> FoldPlaceholder {
+    FoldPlaceholder {
+        collapsed_text: Some(kept.map_or_else(|| "↗".into(), |last| last.to_string().into())),
+        constrain_width: false,
+        merge_adjacent: false,
+        type_tag: Some(TypeId::of::<Projection>()),
+        render: Arc::new(move |_, _, cx| {
+            use settings::Settings as _;
+            let arrow = gpui::div()
+                .id(("quire-link-arrow", link.id))
+                .debug_selector(|| "quire-link-arrow".into());
+            opens_link(arrow, editor.clone(), &link)
+                .flex()
+                .font(
+                    theme_settings::ThemeSettings::get_global(cx)
+                        .buffer_font
+                        .clone(),
+                )
+                .when_some(kept, |div, last| {
+                    div.child(
+                        gpui::div()
+                            .text_color(gpui::rgb(palette.ink))
+                            .underline()
+                            .text_decoration_color(gpui::rgb(palette.line))
+                            .child(last.to_string()),
+                    )
+                })
+                .child(gpui::div().text_color(gpui::rgb(palette.arrow)).child("↗"))
+                .into_any_element()
+        }),
+    }
 }
 
 fn toggle_task_marker(
@@ -1044,6 +1208,12 @@ fn apply_blocks(
     let view = editor.buffer().read(cx).snapshot(cx);
     let (reference_links, previews) =
         crate::markdown_links::reference_links(snapshot, blocks, references);
+    links.retain(|link| {
+        link.label_range != link.range
+            || !references.iter().any(|reference| {
+                reference.range.start < link.range.end && link.range.start < reference.range.end
+            })
+    });
     links.extend(reference_links);
     links.sort_by_key(|link| link.range.start);
     let page_text = snapshot.text();
@@ -1157,8 +1327,9 @@ fn apply_blocks(
                 ..view.anchor_in_buffer(snapshot.anchor_before(link.label_range.end))?;
             let block = view.anchor_in_buffer(snapshot.anchor_before(link.block_range.start))?
                 ..view.anchor_in_buffer(snapshot.anchor_before(link.block_range.end))?;
+            let web = matches!(link.destination, crate::markdown_links::Destination::Web(_));
             let mut hasher = std::hash::DefaultHasher::new();
-            std::hash::Hash::hash(&(start, end), &mut hasher);
+            std::hash::Hash::hash(&(web, start, end), &mut hasher);
             Some(AnchoredLink {
                 range: start..end,
                 label,
