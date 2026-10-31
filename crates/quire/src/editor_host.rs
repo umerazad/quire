@@ -14,6 +14,7 @@ pub(super) const EDITOR_CONTEXT: &str = "Editor && !QuireControl";
 pub(super) fn init(cx: &mut App) -> Result<(), String> {
     settings::init(cx);
     crate::preferences::init(cx);
+    crate::ai::settings::init(cx);
     crate::help::init(cx);
     crate::showcase::init(cx);
     theme_settings::init(theme::LoadThemes::All(Box::new(assets::Assets)), cx);
@@ -112,11 +113,13 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     crate::tasks::init(cx);
     crate::references::init(cx);
     crate::page_menu::init(cx);
+    crate::ai::init(cx);
     stored::bind_keys(cx);
     crate::navigation::bind_keys(cx);
     crate::preferences::bind_keys(cx);
     crate::help::bind_keys(cx);
     crate::media::bind_keys(cx);
+    crate::ai::bind_keys(cx);
     if !cx.has_global::<db::AppDatabase>() {
         let name = format!("quire-interface-{}", uuid::Uuid::new_v4());
         let connection = futures::executor::block_on(
@@ -189,6 +192,12 @@ pub(crate) struct NotebookWindow {
 }
 
 impl NotebookWindow {
+    /// The Write editor, for tests outside this module.
+    #[cfg(test)]
+    pub(crate) fn write_editor(&self) -> &Entity<Editor> {
+        &self.source
+    }
+
     fn tag_summary(&self, cx: &App) -> gpui::SharedString {
         self.analysis
             .read(cx)

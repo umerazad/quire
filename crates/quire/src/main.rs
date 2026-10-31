@@ -119,6 +119,9 @@ mod showcase;
 #[cfg(feature = "full-editor")]
 mod tag_labels;
 
+#[cfg(feature = "full-editor")]
+mod ai;
+
 #[path = "example_support/fonts.rs"]
 mod example_support;
 

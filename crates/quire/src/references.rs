@@ -86,6 +86,11 @@ pub trait Notebook {
     fn media_files(&self) -> Option<quire_media::files::Files> {
         None
     }
+
+    /// Where AI runs keep their prompts and responses, outside the notebook's pages.
+    fn transcripts(&self, _: &App) -> Option<std::path::PathBuf> {
+        None
+    }
 }
 
 /// Shares one notebook among a window's page editors and tells them when indexed answers may

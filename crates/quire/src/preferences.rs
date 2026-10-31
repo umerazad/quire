@@ -84,6 +84,13 @@ pub fn apply_defaults(content: &mut SettingsContent) {
     content.quire = Some(QuireSettingsContent {
         format_tags: Some(true),
         capture_target: Some(CaptureTarget::Inbox),
+        ai: Some(settings::QuireAiSettingsContent {
+            enabled: Some(false),
+            backend: Some(settings::AiBackendName::Claude),
+            claude_path: Some(String::new()),
+            codex_path: Some(String::new()),
+            model: Some(String::new()),
+        }),
     });
 }
 

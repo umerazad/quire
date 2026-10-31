@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"t-1"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Apples are good and tasty."}}
+{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}
