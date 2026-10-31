@@ -2,7 +2,8 @@
 // first after QUIRE_PDFIUM_LIBRARY), the icon, and the generated third-party notices.
 // Unverified: no Windows machine has run it, and rquickjs-sys has not been built for Windows.
 // Zed ships an Inno Setup installer (script/bundle-windows.ps1); Quire has no installer yet, no
-// icon embedded in the executable, and no signing. `--mcp-server` is Unix-only, so it is not checked.
+// icon embedded in the executable, and no signing. main.rs also lacks Zed's
+// `windows_subsystem = "windows"` attribute, so the executable opens a console window. `--mcp-server` is Unix-only, so it is not checked.
 // Usage: bun tools/bundle-windows.ts [--skip-build]
 import { copyFileSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -34,7 +35,8 @@ writeFileSync(join(dir, licensesFile), render(linkedPackages(triple), pdfiumDir)
 
 const zip = join(out, `${name}.zip`);
 rmSync(zip, { force: true });
-run("tar", ["-a", "-cf", zip, "-C", out, name]);
+// Windows' own bsdtar writes zip files; a GNU tar earlier on PATH (Git Bash, MSYS) cannot.
+run(join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe"), ["-a", "-cf", zip, "-C", out, name]);
 const record = {
   inputs: inputs({ target: triple, features: [], platform, library }),
   sizes: { releaseBinaryBytes: statSync(binary).size, bundleBytes: treeBytes(dir), zipBytes: statSync(zip).size },

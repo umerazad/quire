@@ -83,13 +83,31 @@ export function megabytes(bytes: number): string {
   return `${(bytes / 1_000_000).toFixed(1)} MB`;
 }
 
+// The paths whose contents reach the binary. A bundle built from one commit still matches a later
+// commit when none of these changed between them.
+export const buildPaths = ["crates", "vendor", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo"];
+
+export function source(): { commit: string; dirty: boolean } {
+  return {
+    commit: run("git", ["rev-parse", "HEAD"]).trim(),
+    dirty: run("git", ["status", "--porcelain", "--", ...buildPaths]).trim() !== "",
+  };
+}
+
+// Whether the build inputs at HEAD and in the working tree still match `commit`.
+export function buildInputsChangedSince(commit: string): string[] {
+  const committed = spawnSync("git", ["diff", "--quiet", commit, "HEAD", "--", ...buildPaths], { cwd: root });
+  return [
+    ...(committed.status === 0 ? [] : [`build inputs changed between ${commit.slice(0, 12)} and HEAD`]),
+    ...(source().dirty ? ["build inputs have uncommitted or untracked changes"] : []),
+  ];
+}
+
 // What went into a package, so a later build or the verifier can tell whether the inputs changed.
 export function inputs(options: { target: string; features: string[]; platform: string; library: string }) {
-  const dirty = run("git", ["status", "--porcelain", "--untracked-files=no"]).trim() !== "";
   return {
     version: quireVersion(),
-    commit: run("git", ["rev-parse", "HEAD"]).trim(),
-    dirty,
+    ...source(),
     rustc: run("rustc", ["-vV"]).trim(),
     target: options.target,
     features: options.features,

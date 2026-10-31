@@ -26,6 +26,7 @@ import {
   root,
   run,
   sha256,
+  source,
   treeBytes,
 } from "./package.ts";
 import { verify } from "./verify-bundle-mac.ts";
@@ -72,10 +73,23 @@ if (!flags.has("--skip-build")) {
   );
 } else if (!existsSync(binary)) fail(`${binary} does not exist. Run without --skip-build.`);
 
+// Where the binary came from. A skipped build keeps the provenance an earlier bundle recorded for
+// the same binary; any other binary is marked unknown, which the verifier rejects.
+const out = join(targetDir, "release/bundle/macos");
+const sidecar = join(out, `${identity.name}.inputs.json`);
+const binarySha256 = sha256(binary);
+const previous = existsSync(sidecar) ? JSON.parse(readFileSync(sidecar, "utf8")).build : undefined;
+const build = !flags.has("--skip-build")
+  ? { ...source(), features, shaders: runtimeShaders ? "runtime" : "precompiled", binarySha256 }
+  : previous?.binarySha256 === binarySha256
+    ? previous
+    : { provenance: "unknown", binarySha256 };
+if (build.provenance === "unknown")
+  console.log(`${binary} was not built by this script, so its source and shader mode are unknown and verification will fail. Run without --skip-build.`);
+
 console.log("Extracting debug symbols to quire.dSYM.");
 run("dsymutil", [binary, "-o", `${binary}.dSYM`]);
 
-const out = join(targetDir, "release/bundle/macos");
 const app = join(out, `${identity.name}.app`);
 const contents = join(app, "Contents");
 rmSync(app, { recursive: true, force: true });
@@ -127,7 +141,7 @@ if (flags.has("--dmg")) {
   const stage = join(out, "dmg");
   rmSync(stage, { recursive: true, force: true });
   mkdirSync(stage);
-  run("cp", ["-R", app, stage]);
+  run("ditto", [app, join(stage, `${identity.name}.app`)]);
   symlinkSync("/Applications", join(stage, "Applications"));
   const file = join(out, `Quire-Native-${version}-${process.arch === "arm64" ? "aarch64" : "x86_64"}.dmg`);
   run("hdiutil", ["create", "-volname", identity.name, "-srcfolder", stage, "-ov", "-format", "UDZO", file]);
@@ -145,14 +159,13 @@ const sizes = {
   dmgBytes: dmg?.bytes,
 };
 const record = {
-  inputs: inputs({ target: triple, features, platform, library }),
-  shaders: runtimeShaders ? "runtime" : "precompiled",
+  build,
+  inputs: inputs({ target: triple, features: build.features ?? features, platform, library }),
   signing: signer ? { identity: signer, hardenedRuntime: true } : { identity: "ad hoc", hardenedRuntime: false },
   sizes,
   outputs: hashTree(app),
   dmg,
 };
-const sidecar = join(out, `${identity.name}.inputs.json`);
 writeFileSync(sidecar, `${JSON.stringify(record, null, 2)}\n`);
 
 console.log(

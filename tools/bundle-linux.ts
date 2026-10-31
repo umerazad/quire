@@ -27,18 +27,17 @@ const name = `quire-native-${quireVersion()}-linux-${arch}`;
 const out = join(targetDir, "release/bundle/linux");
 const dir = join(out, name);
 rmSync(dir, { recursive: true, force: true });
-for (const sub of ["bin", "lib", "share/applications", "share/icons/hicolor/scalable/apps", "share/icons/hicolor/1024x1024/apps", "share/doc/quire-native"])
+for (const sub of ["bin", "lib", "share/applications", "share/icons/hicolor/scalable/apps", "share/doc/quire-native"])
   mkdirSync(join(dir, sub), { recursive: true });
 
 console.log("Keeping debug symbols in quire.dbg and stripping the packaged executable.");
 run("objcopy", ["--only-keep-debug", binary, `${binary}.dbg`]);
 const executable = join(dir, "bin", identity.command);
-run("objcopy", ["--strip-unneeded", binary, executable]);
+run("objcopy", ["--strip-unneeded", `--add-gnu-debuglink=${binary}.dbg`, binary, executable]);
 copyFileSync(library, join(dir, "lib", "libpdfium.so"));
 chmodSync(join(dir, "lib", "libpdfium.so"), 0o755);
 copyFileSync(join(resources, `${identity.bundleId}.desktop`), join(dir, "share/applications", `${identity.bundleId}.desktop`));
 copyFileSync(join(resources, "app-icon.svg"), join(dir, "share/icons/hicolor/scalable/apps", `${identity.bundleId}.svg`));
-copyFileSync(join(resources, "app-icon.png"), join(dir, "share/icons/hicolor/1024x1024/apps", `${identity.bundleId}.png`));
 writeFileSync(join(dir, "share/doc/quire-native", licensesFile), render(linkedPackages(triple), pdfiumDir));
 
 const problems: string[] = [];

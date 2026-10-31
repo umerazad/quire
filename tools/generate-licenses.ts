@@ -6,7 +6,7 @@
 // Usage: bun tools/generate-licenses.ts --target <triple> --pdfium <dir> --out <file>
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fail, root, run } from "./package.ts";
 
 
@@ -25,6 +25,7 @@ const vendoredNotices: [string, string[]][] = [
   ["Lilex font (vendor/zed/assets/fonts/lilex)", ["vendor/zed/assets/fonts/lilex/OFL.txt"]],
   ["Prettier 3.9.10 standalone bundles (vendor/prettier)", ["vendor/prettier/LICENSE", "vendor/prettier/THIRD-PARTY-NOTICES.md"]],
   ["tree-sitter Markdown grammars (vendor/quire-markdown)", ["vendor/quire-markdown/LICENSE", "vendor/quire-markdown/LICENSE-tree-sitter"]],
+  ["@lezer/markdown 1.8.1, ported in crates/quire_core/src/markdown/autolinks.rs (vendor/lezer-markdown)", ["vendor/lezer-markdown/LICENSE"]],
 ];
 
 const mitText = `Permission is hereby granted, free of charge, to any person obtaining a copy of this software
@@ -42,10 +43,11 @@ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FO
 DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.`;
 
-const noticeName = /^(licen[cs]e|copying|notice|copyright|unlicense|ofl|authors)/i;
+// License texts count as covering a crate; notices, copyright, and author lists ship alongside.
+const licenseName = /^(licen[cs]e|copying|unlicense|ofl)/i;
+const noticeName = /^(licen[cs]e|copying|unlicense|ofl|notice|copyright|authors)/i;
 
-type Package = { name: string; version: string; license: string | null; dir: string; files: string[] };
-
+type Package = { name: string; version: string; license: string | null; authors: string[]; dir: string; files: string[]; covered: boolean };
 
 function option(name: string): string {
   const at = process.argv.indexOf(name);
@@ -58,12 +60,11 @@ function read(path: string): string {
   return readFileSync(path, "utf8").replace(/\r\n?/g, "\n").trimEnd();
 }
 
-function noticeFiles(dir: string, licenseFile: string | null): string[] {
-  const found = readdirSync(dir)
+function noticeFiles(dir: string): string[] {
+  return readdirSync(dir)
     .filter((name) => noticeName.test(name) && statSync(join(dir, name)).isFile())
-    .map((name) => join(dir, name));
-  if (licenseFile) found.push(resolve(dir, licenseFile));
-  return [...new Set(found)].sort();
+    .map((name) => join(dir, name))
+    .sort();
 }
 
 // `cargo tree` resolves features and platform conditions for `quire` alone, which `cargo metadata`
@@ -77,7 +78,7 @@ export function linkedPackages(target: string): Package[] {
       .filter(Boolean),
   );
   const metadata = JSON.parse(run("cargo", ["metadata", "--format-version", "1", "--locked"])) as {
-    packages: { name: string; version: string; license: string | null; license_file: string | null; manifest_path: string; source: string | null }[];
+    packages: { name: string; version: string; license: string | null; license_file: string | null; authors: string[]; manifest_path: string }[];
   };
   const packages: Package[] = [];
   for (const id of ids) {
@@ -87,13 +88,13 @@ export function linkedPackages(target: string): Package[] {
     for (const p of matches) {
       const dir = dirname(p.manifest_path);
       if (dir.startsWith(join(root, "crates") + sep)) continue;
-      const files = noticeFiles(dir, p.license_file);
-      for (const nested of nestedNotices[p.name] ?? []) {
-        const path = join(dir, nested);
-        if (!existsSync(path)) fail(`${p.name} ${p.version} no longer ships ${nested}. Update nestedNotices in tools/generate-licenses.ts.`);
-        files.push(path);
-      }
-      packages.push({ name: p.name, version: p.version, license: p.license, dir, files });
+      const found = noticeFiles(dir);
+      const declared = [...(p.license_file ? [resolve(dir, p.license_file)] : []), ...(nestedNotices[p.name] ?? []).map((nested) => join(dir, nested))];
+      for (const path of declared)
+        if (!existsSync(path)) fail(`${p.name} ${p.version} no longer ships ${relative(dir, path)}. Update nestedNotices in tools/generate-licenses.ts.`);
+      const files = [...new Set([...found, ...declared])].sort();
+      const covered = declared.length > 0 || found.some((file) => licenseName.test(basename(file)));
+      packages.push({ name: p.name, version: p.version, license: p.license, authors: p.authors, dir, files, covered });
     }
   }
   return packages.sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version));
@@ -118,6 +119,10 @@ export function render(packages: Package[], pdfiumDir: string): string {
     "",
   ];
 
+  const vendored = readdirSync(join(root, "vendor")).filter((dir) => existsSync(join(root, "vendor", dir, "UPSTREAM.json")));
+  const uncredited = vendored.filter((dir) => !vendoredNotices.some(([, files]) => files.some((file) => file.startsWith(`vendor/${dir}/`))));
+  if (uncredited.length > 0)
+    fail(`vendor/${uncredited.join(", vendor/")} has an UPSTREAM.json but no entry in vendoredNotices. Add its license files to tools/generate-licenses.ts.`);
   for (const [title, files] of vendoredNotices) {
     out.push(`## ${title}`, "");
     for (const file of files) out.push(`### ${file}`, "", "```", read(join(root, file)), "```", "");
@@ -142,17 +147,14 @@ export function render(packages: Package[], pdfiumDir: string): string {
   );
 
   const others = packages.filter((p) => !isVendoredZed(p.dir));
-  const unlicensed = others.filter((p) => !p.license && p.files.length === 0);
+  const unlicensed = others.filter((p) => !p.license && !p.covered);
   if (unlicensed.length > 0)
     fail(`These crates declare no license and ship no license file: ${unlicensed.map((p) => `${p.name} ${p.version}`).join(", ")}. Review them before packaging.`);
 
   const groups = new Map<string, { text: string; packages: Set<string> }>();
   const withoutFiles: Package[] = [];
   for (const p of others) {
-    if (p.files.length === 0) {
-      withoutFiles.push(p);
-      continue;
-    }
+    if (!p.covered) withoutFiles.push(p);
     for (const file of p.files) {
       const text = read(file);
       const key = createHash("sha256").update(text).digest("hex");
@@ -162,25 +164,27 @@ export function render(packages: Package[], pdfiumDir: string): string {
     }
   }
 
-  out.push("## Rust crates", "", `${others.length} crates from crates.io and Git, grouped by identical license text.`, "");
+  out.push("## Rust crates", "", `${others.length} crates from crates.io, Git, and vendor/, grouped by identical license text.`, "");
   const sorted = [...groups.values()].sort((a, b) => [...a.packages].sort()[0].localeCompare([...b.packages].sort()[0]));
   for (const group of sorted) {
     out.push(...[...group.packages].sort().map((line) => `- ${line}`), "", "```", group.text, "```", "");
   }
 
   if (withoutFiles.length > 0) {
-    const shipped = new Map(others.filter((p) => p.files.length > 0).map((p) => [p.license, p] as const));
+    const shipped = new Map<string | null, Package>();
+    for (const p of others) if (p.covered && !shipped.has(p.license)) shipped.set(p.license, p);
+    const holders = (p: Package) => (p.authors.length > 0 ? `copyright ${p.authors.join(", ")}` : "authors not listed in Cargo.toml");
     const permissive = /(^|\W)(MIT|Apache-2\.0)(\W|$)/;
     const lines = withoutFiles.map((p) => {
       const twin = shipped.get(p.license);
-      if (twin) return `- ${p.name} ${p.version}: ${p.license}, text as shipped by ${twin.name} ${twin.version} above`;
-      if (p.license && permissive.test(p.license) && !/WITH| AND /.test(p.license)) return `- ${p.name} ${p.version}: ${p.license}`;
+      if (twin) return `- ${p.name} ${p.version}: ${p.license}, ${holders(p)}; license terms as in the text shipped by ${twin.name} ${twin.version} above`;
+      if (p.license && permissive.test(p.license) && !/WITH| AND /.test(p.license)) return `- ${p.name} ${p.version}: ${p.license}, ${holders(p)}`;
       fail(`${p.name} ${p.version} (${p.license}) ships no license file and no other crate ships that license's text. Add the text to nestedNotices or vendoredNotices in tools/generate-licenses.ts.`);
     });
     out.push(
       "## Rust crates without a license file",
       "",
-      "These crates ship no license text; their declared licenses apply, with the standard texts below or the text named.",
+      "These crates ship no license text. Their declared licenses apply, with the copyright holders from Cargo.toml and the standard texts below or the text named.",
       "",
       ...lines,
       "",

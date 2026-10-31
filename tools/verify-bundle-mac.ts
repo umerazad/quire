@@ -8,7 +8,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs
 import { basename, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { libraryPath } from "./pdfium.ts";
-import { fail, hashTree, identity, isFile, licensesFile, mcpServer, megabytes, quireVersion, root, sha256, treeBytes } from "./package.ts";
+import { buildInputsChangedSince, fail, hashTree, identity, isFile, licensesFile, mcpServer, megabytes, quireVersion, root, sha256, treeBytes } from "./package.ts";
 
 // Text the notices must contain: the components earlier tasks said packages must credit.
 export const requiredNotices = [
@@ -29,8 +29,9 @@ export const requiredNotices = [
   "tree-sitter Markdown grammars",
   "async_zip",
   "quick-xml",
-  "## Vendored Zed crates",
+  "- editor 0.1.0",
   "Lilex font",
+  "@lezer/markdown",
 ];
 
 function capture(command: string, args: string[]) {
@@ -65,8 +66,9 @@ function launchSmoke(executable: string): string | undefined {
   const home = mkdtempSync("/tmp/qn-");
   try {
     const result = spawnSync(executable, [], { encoding: "utf8", timeout: 10_000, env: { ...process.env, HOME: home } });
+    if (result.error && result.signal !== "SIGTERM") return `could not start: ${result.error.message}`;
     if (result.signal === "SIGTERM") return undefined;
-    return `exited after less than 10 s with ${result.status ?? result.signal}: ${result.stderr.trim()}`;
+    return `exited after less than 10 s with ${result.status ?? result.signal}: ${(result.stderr ?? "").trim()}`;
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -147,6 +149,17 @@ export function verify(appPath: string, launch = false): void {
   const authority = /Authority=(.*)/.exec(details)?.[1];
   const hardened = /flags=0x[0-9a-f]+\([^)]*runtime/.test(details);
   note(`signature: ${adhoc ? "ad hoc" : authority ?? "unknown"}; hardened runtime ${hardened ? "on" : "off"}`);
+  // A Developer ID bundle must meet notarization's rules, for the bundle and PDFium alike.
+  if (!adhoc)
+    for (const [what, path] of [["bundle", app], ["PDFium", join(contents, "Frameworks", "libpdfium.dylib")]]) {
+      const info = capture("codesign", ["-dv", "--verbose=2", path]).err;
+      const missing = [
+        !/flags=0x[0-9a-f]+\([^)]*runtime/.test(info) && "hardened runtime",
+        !/^Timestamp=/m.test(info) && "secure timestamp",
+        (/^TeamIdentifier=not set/m.test(info) || !/^TeamIdentifier=/m.test(info)) && "team identifier",
+      ].filter(Boolean);
+      check(missing.length === 0, `${what} signature is ready for notarization`, `missing ${missing.join(", ")}; re-sign with QUIRE_SIGNING_IDENTITY`);
+    }
   const entitlements = capture("codesign", ["-d", "--entitlements", "-", "--xml", app]).out;
   check(entitlements.includes("com.apple.security.cs.allow-jit"), "entitlements are embedded", "codesign shows no entitlements");
   const gatekeeper = capture("spctl", ["--assess", "--type", "execute", app]);
@@ -166,14 +179,20 @@ export function verify(appPath: string, launch = false): void {
     const changed = [...new Set([...Object.keys(now), ...Object.keys(record.outputs)])].filter((file) => now[file] !== record.outputs[file]);
     check(changed.length === 0, "bundle files match the hashes recorded at build time", `changed: ${changed.join(", ")}`);
     const inputs = record.inputs;
+    const library = libraryPath(inputs.pdfium.platform);
     const stale = [
-      sha256(join(root, "Cargo.lock")) !== inputs.cargoLock && "Cargo.lock",
-      sha256(join(root, "Cargo.toml")) !== inputs.cargoToml && "Cargo.toml",
-      JSON.stringify(hashTree(join(root, "crates/quire/resources"))) !== JSON.stringify(inputs.resources) && "crates/quire/resources",
-      existsSync(libraryPath(inputs.pdfium.platform)) && sha256(libraryPath(inputs.pdfium.platform)) !== inputs.pdfium.librarySha256 && "the PDFium library",
+      sha256(join(root, "Cargo.lock")) !== inputs.cargoLock && "Cargo.lock changed",
+      sha256(join(root, "Cargo.toml")) !== inputs.cargoToml && "Cargo.toml changed",
+      JSON.stringify(hashTree(join(root, "crates/quire/resources"))) !== JSON.stringify(inputs.resources) && "crates/quire/resources changed",
+      !existsSync(library) && `the PDFium library is missing at ${library}`,
+      existsSync(library) && sha256(library) !== inputs.pdfium.librarySha256 && "the PDFium library changed",
     ].filter(Boolean);
-    check(stale.length === 0, "packaging inputs unchanged since the build", `${stale.join(", ")} changed; rebuild the bundle`);
-    note(`built from ${inputs.commit.slice(0, 12)}${inputs.dirty ? " with uncommitted changes" : ""}, shaders ${record.shaders}, features [${inputs.features.join(", ")}]`);
+    check(stale.length === 0, "packaging inputs unchanged since the bundle was made", `${stale.join("; ")}; rebuild the bundle`);
+    const build = record.build;
+    const provenance = !build || build.provenance === "unknown" ? ["the binary's source is unknown (packaged with --skip-build)"] : buildInputsChangedSince(build.commit);
+    if (build?.dirty) provenance.push("the binary was built with uncommitted changes");
+    check(provenance.length === 0, "the binary was built from the current sources", `${provenance.join("; ")}; run \`bun tools/bundle-mac.ts\` without --skip-build`);
+    if (build?.commit) note(`binary built from ${build.commit.slice(0, 12)}, shaders ${build.shaders}, features [${build.features.join(", ")}]`);
     const s = record.sizes;
     note(`sizes: release binary ${megabytes(s.releaseBinaryBytes)}, stripped executable ${megabytes(s.strippedExecutableBytes)}, PDFium ${megabytes(s.pdfiumBytes)}, bundle ${megabytes(s.bundleBytes)}`);
   } else {
