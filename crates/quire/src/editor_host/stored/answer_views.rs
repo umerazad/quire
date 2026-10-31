@@ -4,7 +4,12 @@
 
 use super::*;
 use crate::ai::answer::{AnswerEvent, AnswerPane, Place, Seed};
-use quire_core::daily::format_daily;
+use crate::navigation::palette::{CommandContext, PaletteCommand};
+use quire_core::{ai::ask::Needs, daily::format_daily};
+use settings::ThemeAppearanceMode;
+
+const NO_PAGE_FOR_AI: &str =
+    "AI commands work on a page. Open a page, click in it, then choose the AI command again.";
 
 #[derive(Default)]
 pub(in crate::editor_host::stored) struct AnswerState {
@@ -123,6 +128,74 @@ impl StoredWindow {
             })
             .ok();
         }));
+    }
+
+    /// The title of the page the main pane shows, when it shows a page rather than a browser or
+    /// tag page.
+    fn shown_page_title(&self, cx: &App) -> Option<String> {
+        (self.nav.view.is_none() && self.nav.tags.shown.is_none())
+            .then(|| self.nav.title(self.page.read(cx).id()).map(str::to_owned))
+            .flatten()
+    }
+
+    /// What the find palette's commands depend on.
+    pub(in crate::editor_host::stored) fn command_context(&self, cx: &App) -> CommandContext {
+        let preferences = crate::preferences::Preferences::current(cx);
+        let page = self.shown_page_title(cx);
+        CommandContext {
+            appearance: Some(preferences.appearance),
+            vim: preferences.vim,
+            ai: crate::ai::settings::is_on(cx),
+            daily: page
+                .as_deref()
+                .is_some_and(|page| self.daily_date_of(page).is_some()),
+            page,
+        }
+    }
+
+    /// Runs a command chosen in the find palette.
+    pub(in crate::editor_host::stored) fn run_palette_command(
+        &mut self,
+        command: PaletteCommand,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        match command {
+            PaletteCommand::Appearance(mode) => window.dispatch_action(
+                match mode {
+                    ThemeAppearanceMode::Light => Box::new(crate::preferences::UseLightAppearance),
+                    ThemeAppearanceMode::Dark => Box::new(crate::preferences::UseDarkAppearance),
+                    ThemeAppearanceMode::System => {
+                        Box::new(crate::preferences::UseSystemAppearance)
+                    }
+                },
+                cx,
+            ),
+            PaletteCommand::Ai(verb) => {
+                let Some(editor) = self.active_page_editor(cx) else {
+                    self.nav.error = Some(NO_PAGE_FOR_AI.into());
+                    cx.notify();
+                    return;
+                };
+                window.focus(&editor.focus_handle(cx), cx);
+                window.defer(cx, move |window, cx| {
+                    let invocation = crate::ai::proposal::Invocation {
+                        args: String::new(),
+                        rows: None,
+                        verb: Some(verb),
+                    };
+                    crate::ai::proposal::start(&editor, invocation, window, cx)
+                });
+            }
+            PaletteCommand::AskNotebook => self.open_answer(Seed::default(), window, cx),
+            PaletteCommand::Preset(preset) if preset.needs == Needs::Daily => {
+                self.tidy_shown(window, cx)
+            }
+            PaletteCommand::Preset(preset) => {
+                let page = self.shown_page_title(cx).unwrap_or_default();
+                self.open_answer(Seed::preset(preset, &page), window, cx)
+            }
+        }
     }
 
     /// Tidies the page in the main pane, outside this window's update so the editor can ask

@@ -715,6 +715,92 @@ async fn questions_explain_why_they_cannot_run_while_ai_is_off(cx: &mut TestAppC
     assert!(ai.sent().is_empty());
 }
 
+fn palette_commands(notebook: &Notebook, query: &str, cx: &mut TestAppContext) -> Vec<String> {
+    use crate::navigation::palette::PaletteItem;
+    cx.simulate_keystrokes(notebook.window.into(), &super::tests::key("k"));
+    cx.run_until_parked();
+    super::tests::type_in_palette(notebook, query, cx);
+    super::tests::palette_items(notebook, cx)
+        .into_iter()
+        .filter_map(|item| match item {
+            PaletteItem::Command(row) => Some(row.label),
+            _ => None,
+        })
+        .collect()
+}
+
+#[gpui::test]
+async fn the_find_palette_runs_ai_and_appearance_commands(cx: &mut TestAppContext) {
+    let (ai, notebook) = notebook(&FRUIT, "fruit", cx).await;
+    page_editor(&notebook, cx);
+    assert_eq!(
+        palette_commands(&notebook, "ai:", cx),
+        [
+            "AI: Tighten wording",
+            "AI: Rewrite as prose",
+            "AI: Rewrite as an outline",
+            "AI: Continue writing",
+            "AI: Check facts and logic",
+            "AI: Ask about this text",
+            "AI: Ask the notebook",
+            "AI: Due today",
+            "AI: This week",
+            "AI: Summarize the last occurrence of Fruit",
+            "AI: What changed yesterday",
+            "AI: Tagged with…",
+        ]
+    );
+    cx.simulate_keystrokes(notebook.window.into(), "escape");
+    assert_eq!(
+        palette_commands(&notebook, "tighten", cx),
+        ["AI: Tighten wording"]
+    );
+    ai.answer("apples are tasty ^b-apple", &[], cx);
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the verb to run", |_| !ai.sent().is_empty());
+    assert!(
+        ai.sent()[0].starts_with(quire_core::ai::Verb::Tighten.instruction()),
+        "the verb runs on the block at the caret: {:?}",
+        ai.sent()
+    );
+    assert!(ai.sent()[0].contains("apples are good and tasty"));
+
+    palette_commands(&notebook, "ask the notebook", cx);
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the answer pane", |cx| {
+        read(&notebook, cx, |view, _| view.nav.answer.pane.is_some())
+    });
+    let asked = pane(&notebook, cx);
+    assert_eq!(cx.read(|cx| asked.read(cx).title()), "Ask the notebook");
+
+    assert_eq!(
+        palette_commands(&notebook, "appearance: d", cx),
+        ["Appearance: Dark"]
+    );
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the dark appearance", |cx| {
+        cx.read(|cx| crate::preferences::Preferences::current(cx).appearance)
+            == settings::ThemeAppearanceMode::Dark
+    });
+
+    cx.update(|cx| crate::preferences::change(crate::preferences::Change::Vim(true), cx));
+    cx.run_until_parked();
+    let with_vim = palette_commands(&notebook, "ai:", cx);
+    assert_eq!(
+        with_vim.first().map(String::as_str),
+        Some("AI: Ask the notebook"),
+        "with Vim on, :ai runs the verbs and the palette offers only questions"
+    );
+    cx.simulate_keystrokes(notebook.window.into(), "escape");
+    cx.update(|cx| crate::ai::settings::set_enabled(false, cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert!(
+        palette_commands(&notebook, "ai:", cx).is_empty(),
+        "AI commands are offered only while AI is on"
+    );
+}
+
 const DAY: [(&str, &str, &str); 4] = [
     (
         "day",
