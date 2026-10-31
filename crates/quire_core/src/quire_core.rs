@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod daily;
 pub mod exchange;
 pub mod fuzzy;

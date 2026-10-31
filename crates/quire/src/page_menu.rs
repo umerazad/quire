@@ -330,7 +330,15 @@ fn entries(editor: &Editor, cx: &mut App) -> Vec<Entry> {
             ]
         })
         .unwrap_or_default();
-    [clipboard, marks, code, block_items]
+    let ai = if editable {
+        vec![
+            Entry::Separator,
+            Item::action("Ask AI…", crate::ai::AskAi).done(),
+        ]
+    } else {
+        Vec::new()
+    };
+    [clipboard, marks, code, block_items, ai]
         .into_iter()
         .flatten()
         .collect()

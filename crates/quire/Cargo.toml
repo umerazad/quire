@@ -60,6 +60,8 @@ project = { workspace = true, optional = true }
 anyhow = { workspace = true, optional = true }
 fs = { workspace = true, optional = true }
 paths = { workspace = true, optional = true }
+smol = { workspace = true, optional = true }
+jiff = { version = "=0.2.15", optional = true }
 
 [dev-dependencies]
 http_client = { workspace = true, features = ["test-support"] }
@@ -73,4 +75,4 @@ fs = { workspace = true, features = ["test-support"] }
 [features]
 default = ["full-editor"]
 test-support = ["gpui/test-support", "gpui_platform/test-support"]
-full-editor = ["dep:quire_core", "dep:quire_store", "dep:quire_format", "dep:quire_media", "dep:image", "dep:reqwest_client", "dep:futures", "dep:rope", "dep:uuid", "dep:editor", "dep:ui", "dep:http_client", "dep:search", "dep:workspace", "dep:language", "dep:multi_buffer", "dep:grammars", "dep:tree-sitter-quire-markdown", "dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-cpp", "dep:tree-sitter-css", "dep:tree-sitter-html", "dep:tree-sitter-jsdoc", "dep:tree-sitter-json", "dep:tree-sitter-python", "dep:tree-sitter-regex", "dep:tree-sitter-rust", "dep:tree-sitter-typescript", "dep:tree-sitter-yaml", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:vim_mode_setting", "dep:assets", "dep:util", "dep:zed_actions", "dep:picker", "dep:menu", "dep:db", "dep:serde_json", "dep:serde", "dep:project", "dep:anyhow", "dep:fs", "dep:paths", "dep:buffer_diff"]
+full-editor = ["dep:quire_core", "dep:quire_store", "dep:quire_format", "dep:quire_media", "dep:image", "dep:reqwest_client", "dep:futures", "dep:rope", "dep:uuid", "dep:editor", "dep:ui", "dep:http_client", "dep:search", "dep:workspace", "dep:language", "dep:multi_buffer", "dep:grammars", "dep:tree-sitter-quire-markdown", "dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-cpp", "dep:tree-sitter-css", "dep:tree-sitter-html", "dep:tree-sitter-jsdoc", "dep:tree-sitter-json", "dep:tree-sitter-python", "dep:tree-sitter-regex", "dep:tree-sitter-rust", "dep:tree-sitter-typescript", "dep:tree-sitter-yaml", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:vim_mode_setting", "dep:assets", "dep:util", "dep:zed_actions", "dep:picker", "dep:menu", "dep:db", "dep:serde_json", "dep:serde", "dep:project", "dep:anyhow", "dep:fs", "dep:paths", "dep:buffer_diff", "dep:smol", "dep:jiff"]

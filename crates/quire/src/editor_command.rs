@@ -140,6 +140,29 @@ impl CommandPrompt {
     fn submit(&mut self, _: &SubmitCommand, window: &mut Window, cx: &mut Context<Self>) {
         let query = self.input.read(cx).text(cx);
         self.remember(cx);
+        if let Some(editor) = self.target.as_ref().and_then(|target| target.upgrade())
+            && let Some(parsed) = vim::host_command(&query, "ai", &editor, window, cx)
+        {
+            match parsed {
+                Err(error) => self.error = Some(error),
+                Ok((rows, args)) => {
+                    self.target = None;
+                    self.error = None;
+                    self.epoch = self.epoch.wrapping_add(1);
+                    window.focus(&editor.focus_handle(cx), cx);
+                    let invocation = crate::ai::proposal::Invocation {
+                        args,
+                        rows,
+                        verb: None,
+                    };
+                    cx.defer_in(window, move |_, window, cx| {
+                        crate::ai::proposal::start(&editor, invocation, window, cx)
+                    });
+                }
+            }
+            cx.notify();
+            return;
+        }
         let epoch = self.epoch;
         let parsed = vim::page_command(&query, cx);
         cx.spawn_in(window, async move |this, cx| {
