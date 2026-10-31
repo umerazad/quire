@@ -6,6 +6,7 @@
 
 mod blocks;
 mod catalog;
+mod folder;
 mod overlay;
 mod query;
 mod references;
@@ -143,6 +144,7 @@ pub struct QueryIndex {
     generation: Cell<u64>,
     releasing: RefCell<BTreeSet<String>>,
     collator: icu_collator::CollatorBorrowed<'static>,
+    folder: Option<folder::FolderSource>,
 }
 
 /// Matches the reference `pageKey`: drop any `#` suffix and `.md`, then lowercase.
@@ -174,12 +176,25 @@ impl QueryIndex {
         let directory = notebook_database.parent().context(
             "The notebook database path has no parent folder. Choose an absolute database path.",
         )?;
-        let path = directory.join("query-index.sqlite");
-        let connection = match schema::open(&path, notebook_database, config.analyzer) {
+        Self::open_at(
+            &directory.join("query-index.sqlite"),
+            schema::Notebook::Database(notebook_database),
+            None,
+            config,
+        )
+    }
+
+    fn open_at(
+        path: &Path,
+        notebook: schema::Notebook<'_>,
+        folder: Option<folder::FolderSource>,
+        config: IndexConfig,
+    ) -> Result<Self> {
+        let connection = match schema::open(path, notebook, config.analyzer) {
             Ok(connection) => connection,
             Err(_) => {
-                schema::remove(&path)?;
-                schema::open(&path, notebook_database, config.analyzer)
+                schema::remove(path)?;
+                schema::open(path, notebook, config.analyzer)
                     .context("Cannot create the notebook query index. Check free space and write access to the notebook folder, then reopen it.")?
             }
         };
@@ -196,6 +211,7 @@ impl QueryIndex {
             seen_version: Cell::new(None),
             generation: Cell::new(0),
             releasing: RefCell::default(),
+            folder,
         };
         overlay::create(&index.connection)?;
         index.apply_layout()?;
@@ -280,6 +296,9 @@ impl QueryIndex {
     /// reads checksummed metadata only, so names, titles, and dates are complete before analysis.
     /// Returns whether anything changed.
     pub fn refresh(&self) -> Result<bool> {
+        if let Some(folder) = &self.folder {
+            return self.refresh_folder(folder);
+        }
         let version: i64 =
             self.connection.select_row("PRAGMA nb.data_version")?()?.context(REBUILD)?;
         if self.seen_version.get() == Some(version) {
@@ -331,6 +350,9 @@ impl QueryIndex {
     /// Selected live heads that still need analysis, with their stored source.
     pub fn pending(&self, limit: usize) -> Result<Vec<PendingPage>> {
         self.refresh()?;
+        if let Some(folder) = &self.folder {
+            return self.pending_files(folder, limit);
+        }
         let rows: Vec<String> = self.connection.select_bound(
             "SELECT revision FROM pages WHERE analyzed=0 AND deleted=0 ORDER BY revision LIMIT ?",
         )?(limit.clamp(1, 256) as u32)?;

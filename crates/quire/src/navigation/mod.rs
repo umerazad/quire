@@ -11,11 +11,10 @@ pub mod tag_page;
 pub mod tags;
 pub mod tasks;
 
+use crate::notebook_backend::NotebookBackend;
 use gpui::{App, Context, InteractiveElement, KeyBinding, Window};
 use quire_core::{markdown::safe_page_path, workspace::Workspace};
-use quire_store::{
-    index::IndexClient, notebook::Edit, sync::format::page_id_for_path, worker::StorageClient,
-};
+use quire_store::{index::IndexClient, notebook::Edit, sync::format::page_id_for_path};
 use serde_json::{Map, Value};
 use std::{
     path::{Path, PathBuf},
@@ -267,7 +266,7 @@ pub fn now_millis() -> i64 {
 /// The reference `notebook.create`: a validated title in `folder`, refused when any page already
 /// uses that name, saved with the starting text `- `. Returns the new page's identity.
 pub async fn create_page(
-    storage: StorageClient,
+    storage: NotebookBackend,
     index: IndexClient,
     title: String,
     folder: String,
@@ -277,7 +276,7 @@ pub async fn create_page(
 
 /// [`create_page`] starting with `text`.
 pub async fn create_page_with(
-    storage: StorageClient,
+    storage: NotebookBackend,
     index: IndexClient,
     title: String,
     folder: String,

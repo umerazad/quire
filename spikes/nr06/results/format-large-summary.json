@@ -1,0 +1,17 @@
+{
+  "inputs": {
+    "rt-Editor.tsx": "rt 0.9.57 src/editor/Editor.tsx, 2577 lines, already Prettier-formatted in rt",
+    "rt-styles.css": "rt 0.9.57 src/ui/styles.css, 4010 lines, already Prettier-formatted in rt"
+  },
+  "changed_lines_vs_input": {
+    "prettier-in-quickjs": { "rt-Editor.tsx": 0, "rt-styles.css": 0 },
+    "biome-2.6.4": { "rt-Editor.tsx": 0, "rt-styles.css": 4 },
+    "dprint-family": { "rt-Editor.tsx": 684, "rt-styles.css": 30 }
+  },
+  "latency_first_warm_ms": {
+    "prettier-in-quickjs": { "rt-Editor.tsx": [782.93, 771.77], "rt-styles.css": [683.04, 669.4] },
+    "prettier-bun-helper": { "rt-Editor.tsx": [129.53, 69.36], "rt-styles.css": [84.25, 59.8] },
+    "dprint-family": { "rt-Editor.tsx": [19.16, 15.3], "rt-styles.css": [12.76, 11.26] }
+  },
+  "raw": ["format-large-quickjs.json", "format-large-bun-helper.json", "format-large-dprint.json"]
+}

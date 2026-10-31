@@ -1,6 +1,7 @@
 //! Bulk tag rename and delete across the notebook: plan from each page's current text, preview,
 //! then apply as one all-or-nothing save through `page_writes`.
 
+use crate::notebook_backend::NotebookBackend;
 use crate::{
     notebook_session::OpenPage,
     page_writes::{self, PageWrite},
@@ -11,7 +12,7 @@ use quire_core::{
     source_text::SourceText,
     tag_edits::{Retag, TagChange, check_page_count},
 };
-use quire_store::{index::IndexClient, worker::StorageClient};
+use quire_store::index::IndexClient;
 
 pub const STALE_PREVIEW: &str =
     "A page changed after the preview. Preview again before applying it.";
@@ -36,7 +37,7 @@ pub fn plan(
     retag: Retag,
     open_pages: Vec<Entity<OpenPage>>,
     index: IndexClient,
-    storage: StorageClient,
+    storage: NotebookBackend,
     cx: &mut App,
 ) -> Task<Result<TagEditPlan, String>> {
     cx.spawn(async move |cx| {
@@ -71,7 +72,7 @@ pub fn plan(
 /// Writes every planned page or none, refusing when any page changed after the preview.
 pub fn apply(
     plan: TagEditPlan,
-    storage: StorageClient,
+    storage: NotebookBackend,
     cx: &mut App,
 ) -> Task<Result<usize, String>> {
     let writes = plan.pages.into_iter().map(|page| page.write).collect();

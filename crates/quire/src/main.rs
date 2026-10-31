@@ -24,6 +24,9 @@ mod page_index;
 mod query_index;
 
 #[cfg(feature = "full-editor")]
+mod notebook_backend;
+
+#[cfg(feature = "full-editor")]
 mod notebook_session;
 
 #[cfg(feature = "full-editor")]

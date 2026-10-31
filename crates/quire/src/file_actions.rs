@@ -3,6 +3,7 @@
 //! every page or none. Both go through `page_writes`.
 
 use crate::{
+    notebook_backend::NotebookBackend,
     notebook_session::OpenPage,
     page_writes::{self, PageSource, PageWrite},
     query_index::ask,
@@ -13,10 +14,7 @@ use quire_core::{
     relocate::{MISSING_SOURCE, Relocation, relocate_page, rename_target},
     source_text::SourceText,
 };
-use quire_store::{
-    index::{DeletionTarget, IndexClient},
-    worker::StorageClient,
-};
+use quire_store::index::{DeletionTarget, IndexClient};
 use std::collections::{BTreeSet, HashMap};
 
 pub const STALE_DELETION: &str =
@@ -92,14 +90,19 @@ impl DeletionPlan {
     }
 }
 
+pub const FOLDER_RENAME: &str = "Renaming pages is not available in folder notebooks yet. Rename the file in Finder or Explorer; Quire picks up the change.";
+
 /// Reads what a deletion takes from the index and each page's current text, open or stored.
 pub fn plan_deletion(
     target: Target,
     open_pages: Vec<Entity<OpenPage>>,
     index: IndexClient,
-    storage: StorageClient,
+    storage: NotebookBackend,
     cx: &mut App,
 ) -> Task<Result<DeletionPlan, String>> {
+    if storage.folder().is_some() {
+        return Task::ready(Err(page_writes::FOLDER_DELETION.into()));
+    }
     cx.spawn(async move |cx| {
         let query = match &target {
             Target::Page(page) => DeletionTarget::Page(page.as_str().into()),
@@ -143,7 +146,7 @@ pub fn plan_deletion(
 /// Deletes every planned page or none. Returns the deleted page identities.
 pub fn delete(
     plan: DeletionPlan,
-    storage: StorageClient,
+    storage: NotebookBackend,
     cx: &mut App,
 ) -> Task<Result<Vec<String>, String>> {
     let folder = plan.folder().map(str::to_owned);
@@ -185,9 +188,12 @@ pub fn plan_rename(
     name: String,
     open_pages: Vec<Entity<OpenPage>>,
     index: IndexClient,
-    storage: StorageClient,
+    storage: NotebookBackend,
     cx: &mut App,
 ) -> Task<Result<Option<RenamePlan>, String>> {
+    if storage.folder().is_some() {
+        return Task::ready(Err(FOLDER_RENAME.into()));
+    }
     cx.spawn(async move |cx| {
         let Some(source) = page_writes::read(page.clone(), &open_pages, &storage, cx).await? else {
             return Err(MISSING_SOURCE.into());
@@ -276,7 +282,7 @@ pub fn plan_rename(
 /// Writes the rename and every link change or none. Returns how many pages were written.
 pub fn rename(
     plan: RenamePlan,
-    storage: StorageClient,
+    storage: NotebookBackend,
     cx: &mut App,
 ) -> Task<Result<usize, String>> {
     page_writes::apply(plan.writes, storage, STALE_RENAME, cx)

@@ -25,13 +25,27 @@ fn shown_path(notebook: &Notebook, cx: &mut TestAppContext) -> Option<String> {
     read(notebook, cx, |view, cx| view.page.read(cx).path(cx))
 }
 
-/// Clicks once the index has analyzed every save, so no reply redraws the window between the
-/// press and the release.
-pub(super) fn click(notebook: &Notebook, selector: &'static str, cx: &mut TestAppContext) {
+/// Whether nothing can redraw the window soon: every open page is saved with no save in flight,
+/// the index has analyzed every save, and no index status line is shown above the sidebar.
+fn quiet(notebook: &Notebook, cx: &mut TestAppContext) -> bool {
     let client = read(notebook, cx, |view, cx| view.index_client(cx).unwrap());
-    wait_until(cx, "a quiet index", |_| {
-        futures::executor::block_on(client.unanalyzed().unwrap()).unwrap() == 0
-    });
+    futures::executor::block_on(client.unanalyzed().unwrap()).unwrap() == 0
+        && read(notebook, cx, |view, cx| {
+            view.index_status(cx).is_none()
+                && view.session.borrow().open_pages().iter().all(|page| {
+                    page.read(cx).persistence().is_none_or(|persistence| {
+                        let persistence = persistence.read(cx);
+                        persistence.is_idle() && !persistence.is_dirty(cx)
+                    })
+                })
+        })
+}
+
+/// Clicks once the window is quiet. A GPUI test click runs the executor between the press and
+/// the release, so a save reply or an index status line appearing then would move the layout
+/// under the pointer and lose the click.
+pub(super) fn click(notebook: &Notebook, selector: &'static str, cx: &mut TestAppContext) {
+    wait_until(cx, "a quiet window", |cx| quiet(notebook, cx));
     draw(notebook, cx);
     let mut visual = gpui::VisualTestContext::from_window(notebook.window.into(), cx);
     let bounds = visual
@@ -43,11 +57,31 @@ pub(super) fn click(notebook: &Notebook, selector: &'static str, cx: &mut TestAp
 /// Clicks the pinned Templates entry and waits for the page it opens.
 pub(super) fn open_templates(notebook: &Notebook, cx: &mut TestAppContext) {
     click(notebook, "quire-templates-entry", cx);
-    wait_until(cx, "the Templates page", |cx| {
-        shown_path(notebook, cx).is_some_and(|path| quire_core::templates::is_templates_page(&path))
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        wait_until(cx, "a step", |_| true);
+        let state = read(notebook, cx, |view, cx| {
+            (
+                view.page.read(cx).path(cx),
+                view.nav.creating.is_some(),
+                view.nav.error.clone(),
+                view.nav.view,
+            )
+        });
+        if state
+            .0
+            .as_deref()
+            .is_some_and(quire_core::templates::is_templates_page)
             && shown_text(notebook, cx).is_some()
-            && read(notebook, cx, |view, _| view.nav.creating.is_none())
-    });
+            && !state.1
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for the Templates page: (path, creating, error, browser) = {state:?}"
+        );
+    }
     draw(notebook, cx);
 }
 

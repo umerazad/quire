@@ -769,6 +769,10 @@ mod file_tests;
 mod task_lists_tests;
 
 #[cfg(test)]
+#[path = "folder_tests.rs"]
+mod folder_tests;
+
+#[cfg(test)]
 #[path = "template_tests.rs"]
 mod template_tests;
 

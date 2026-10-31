@@ -50,13 +50,18 @@ pub(super) const MISSING_PAGES: &str = concat!(
     "SELECT s.revision FROM selected s WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.revision=s.revision)"
 );
 
-pub(super) fn open(path: &Path, notebook_database: &Path, analyzer: i64) -> Result<Connection> {
+/// Where the indexed pages come from: a notebook database attached read-only, or a folder whose
+/// files the index reads itself, named by `identity`.
+#[derive(Clone, Copy)]
+pub(super) enum Notebook<'a> {
+    Database(&'a Path),
+    Folder { identity: &'a str },
+}
+
+pub(super) fn open(path: &Path, notebook: Notebook<'_>, analyzer: i64) -> Result<Connection> {
     let name = path
         .to_str()
         .context("The notebook folder path is not valid Unicode. Move the notebook and retry.")?;
-    let database = notebook_database
-        .to_str()
-        .context("The notebook database path is not valid Unicode. Move the notebook and retry.")?;
     let connection = Connection::try_open_file(name)?;
     for pragma in [
         "PRAGMA journal_mode = WAL",
@@ -66,13 +71,21 @@ pub(super) fn open(path: &Path, notebook_database: &Path, analyzer: i64) -> Resu
     ] {
         connection.exec(pragma)?()?;
     }
-    connection.exec_bound("ATTACH DATABASE ? AS nb")?(format!(
-        "file:{}?mode=ro",
-        uri_path(database)
-    ))?;
-    let notebook: String = connection.select_row("SELECT notebook FROM nb.meta")?()?.context(
-        "The notebook database has no identity. Reopen the notebook so it can initialize.",
-    )?;
+    let notebook: String = match notebook {
+        Notebook::Database(database) => {
+            let database = database.to_str().context(
+                "The notebook database path is not valid Unicode. Move the notebook and retry.",
+            )?;
+            connection.exec_bound("ATTACH DATABASE ? AS nb")?(format!(
+                "file:{}?mode=ro",
+                uri_path(database)
+            ))?;
+            connection.select_row("SELECT notebook FROM nb.meta")?()?.context(
+                "The notebook database has no identity. Reopen the notebook so it can initialize.",
+            )?
+        }
+        Notebook::Folder { identity } => identity.to_owned(),
+    };
     let application: Option<i32> = connection.select_row("PRAGMA application_id")?()?;
     let format: Option<i32> = connection.select_row("PRAGMA user_version")?()?;
     if application == Some(0) && format == Some(0) {

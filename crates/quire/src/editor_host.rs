@@ -454,6 +454,13 @@ pub fn run() {
             std::process::exit(2);
         }
     };
+    let folder = match stored::FolderOptions::parse(&std::env::args().skip(1).collect::<Vec<_>>()) {
+        Ok(options) => options,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+    };
     if std::env::args().any(|argument| argument == "--input-harness") {
         super::run_example();
         return;
@@ -477,6 +484,13 @@ pub fn run() {
         }
         cx.on_window_closed(|cx, _| { if cx.windows().is_empty() { cx.quit(); } }).detach();
         if let Some(options) = stored {
+            if let Err(error) = options.open(cx) {
+                eprintln!("{error}");
+                cx.quit();
+            }
+            return;
+        }
+        if let Some(options) = folder {
             if let Err(error) = options.open(cx) {
                 eprintln!("{error}");
                 cx.quit();

@@ -92,7 +92,10 @@ impl Notebook for WindowNotebook {
     fn writers(
         &self,
         _: &App,
-    ) -> Option<(Vec<Entity<OpenPage>>, quire_store::worker::StorageClient)> {
+    ) -> Option<(
+        Vec<Entity<OpenPage>>,
+        crate::notebook_backend::NotebookBackend,
+    )> {
         let session = self.session.upgrade()?;
         let session = session.try_borrow().ok()?;
         Some((session.open_pages(), session.storage()))
