@@ -93,6 +93,25 @@ impl StoredWindow {
         self.apply_jump(window, cx);
     }
 
+    /// Puts the caret where `jump` says in the side pane's page.
+    pub(in crate::editor_host::stored) fn reveal_in_side(
+        &mut self,
+        jump: Jump,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(page) = self.nav.side.as_ref().map(|side| side.page.clone()) else {
+            return;
+        };
+        self.nav.jump = Some(PendingJump {
+            page,
+            side: true,
+            jump,
+            _parsed: None,
+        });
+        self.apply_jump(window, cx);
+    }
+
     /// Moves the caret for a waiting jump when its page's editor is showing and can place it.
     pub(in crate::editor_host::stored) fn apply_jump(
         &mut self,

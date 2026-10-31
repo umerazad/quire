@@ -137,6 +137,58 @@ fn details_list_headings_that_jump_and_count_references_and_ids(cx: &mut TestApp
     assert!(!drawn(&notebook, "quire-page-details", cx));
 }
 
+/// rt's second pane is a whole page pane, with its own save icon and details panel.
+#[gpui::test]
+fn the_side_pane_has_its_own_save_icon_and_details(cx: &mut TestAppContext) {
+    let notebook = open_notebook(
+        &[
+            ("other", "Other.md", "- see [[Plan]]\n"),
+            ("plan", "Plan.md", PLAN),
+        ],
+        "other",
+        cx,
+    );
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.open_beside("plan".into(), window, cx)
+        })
+        .unwrap();
+    wait_until(cx, "the side page's figures", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.nav.side.as_ref().is_some_and(|side| {
+                side.editor.is_some() && view.page_facts(&side.page, cx).is_some()
+            })
+        })
+    });
+    assert!(drawn(&notebook, "quire-side-save-indicator", cx));
+    assert!(!drawn(&notebook, "quire-side-page-details", cx));
+    super::template_tests::click(&notebook, "quire-side-details-toggle", cx);
+    assert!(drawn(&notebook, "quire-side-page-details", cx));
+    assert!(
+        !drawn(&notebook, "quire-page-details", cx),
+        "the main page's panel stays closed"
+    );
+    let later = read(&notebook, cx, |view, cx| {
+        let side = view.nav.side.as_ref().unwrap();
+        view.page_facts(&side.page, cx).unwrap().headings[1].clone()
+    });
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.reveal_in_side(
+                crate::navigation::Jump::at(later.block.clone(), later.from),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(caret_text(&notebook, true, cx), "## Later");
+    super::template_tests::click(&notebook, "quire-side-details-toggle", cx);
+    assert!(!drawn(&notebook, "quire-side-page-details", cx));
+}
+
 #[gpui::test]
 fn the_save_icon_and_tab_dot_follow_saving(cx: &mut TestAppContext) {
     let notebook = open_notebook(&[("plan", "Plan.md", PLAN)], "plan", cx);

@@ -25,6 +25,8 @@ pub(super) struct PageChrome {
     infos: HashMap<EntityId, Entity<PageInfo>>,
     /// The details panel is open beside the page.
     pub(super) details: bool,
+    /// The side pane's page has its own details panel open.
+    pub(super) side_details: bool,
     /// README.md beside the pages, while it is open.
     pub(super) showcase: Option<Entity<ShowcaseWindow>>,
 }
@@ -238,7 +240,11 @@ impl StoredWindow {
     /// The save icon with its explanation on hover, and the status in words when it needs
     /// reading: an error, a conflict, a deletion, a warning, or a page that cannot save.
     pub(super) fn render_save_status(&self, cx: &App) -> Vec<AnyElement> {
-        let page = self.page.read(cx);
+        Self::save_status(&self.page, "quire-save-indicator", cx)
+    }
+
+    fn save_status(page: &Entity<OpenPage>, selector: &'static str, cx: &App) -> Vec<AnyElement> {
+        let page = page.read(cx);
         let status = page.status(cx);
         let Some(state) = SaveState::of(page, cx) else {
             return vec![Label::new(status).into_any_element()];
@@ -249,7 +255,7 @@ impl StoredWindow {
         let explained = format!("{} {status}", state.summary());
         let icon = gpui::div()
             .id("save-indicator")
-            .debug_selector(|| "quire-save-indicator".into())
+            .debug_selector(move || selector.into())
             .size_5()
             .flex()
             .items_center()
@@ -311,6 +317,32 @@ impl StoredWindow {
             )
     }
 
+    /// The side pane's own toolbar, as rt's second page pane has one: its page's save icon and
+    /// its details toggle.
+    pub(super) fn render_side_tools(
+        &self,
+        page: &Entity<OpenPage>,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        h_flex()
+            .px_2()
+            .pt_1()
+            .gap_1()
+            .children(Self::save_status(page, "quire-side-save-indicator", cx))
+            .child(gpui::div().flex_1())
+            .child(
+                gpui::div()
+                    .debug_selector(|| "quire-side-details-toggle".into())
+                    .child(
+                        IconButton::new("side-page-details", IconName::Link)
+                            .toggle_state(self.chrome.side_details)
+                            .tooltip(Tooltip::text("Page outline and backlinks"))
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_details(true, cx))),
+                    ),
+            )
+            .into_any_element()
+    }
+
     pub(super) fn render_sidebar_toggle(&self) -> IconButton {
         let hidden = self.nav.workspace.chrome.sidebar_hidden;
         IconButton::new(
@@ -329,23 +361,55 @@ impl StoredWindow {
     fn jump_to_heading(
         &mut self,
         heading: &Heading,
+        side: bool,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        self.reveal_in_shown(Jump::at(heading.block.clone(), heading.from), window, cx);
+        let jump = Jump::at(heading.block.clone(), heading.from);
+        if side {
+            self.reveal_in_side(jump, window, cx)
+        } else {
+            self.reveal_in_shown(jump, window, cx)
+        }
+    }
+
+    fn toggle_details(&mut self, side: bool, cx: &mut gpui::Context<Self>) {
+        if side {
+            self.chrome.side_details = !self.chrome.side_details;
+            cx.notify();
+        } else {
+            self.toggle_page_details(cx);
+        }
     }
 
     /// The details panel beside the shown page: its headings, then its connections.
     pub(super) fn render_details(&self, cx: &mut gpui::Context<Self>) -> Option<AnyElement> {
         let showing_page = self.nav.view.is_none() && self.nav.tags.shown.is_none();
-        if !self.chrome.details || !showing_page {
-            return None;
-        }
-        let facts = self.page_facts(&self.page, cx).unwrap_or_default();
+        (self.chrome.details && showing_page).then(|| self.details_panel(&self.page, false, cx))
+    }
+
+    /// The side pane page's own details panel, while its toggle is on.
+    pub(super) fn render_side_details(
+        &self,
+        page: &Entity<OpenPage>,
+        cx: &mut gpui::Context<Self>,
+    ) -> Option<AnyElement> {
+        self.chrome
+            .side_details
+            .then(|| self.details_panel(page, true, cx))
+    }
+
+    fn details_panel(
+        &self,
+        page: &Entity<OpenPage>,
+        side: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let facts = self.page_facts(page, cx).unwrap_or_default();
         let references = self
             .nav
             .references
-            .get(self.page.read(cx).id())
+            .get(page.read(cx).id())
             .map(|view| view.read(cx).results.value.total);
         let heading =
             |text: &'static str| Label::new(text).size(LabelSize::XSmall).color(Color::Muted);
@@ -370,64 +434,73 @@ impl StoredWindow {
                     )
                     .child(Label::new(entry.text.clone()).truncate())
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.jump_to_heading(&chosen, window, cx)
+                        this.jump_to_heading(&chosen, side, window, cx)
                     }))
             })
             .collect();
-        Some(
-            v_flex()
-                .id("page-details")
-                .debug_selector(|| "quire-page-details".into())
-                .w(gpui::px(260.))
-                .flex_none()
-                .min_h_0()
-                .overflow_y_scroll()
-                .p_2()
-                .gap_1()
-                .border_l_1()
-                .border_color(cx.theme().colors().border)
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .child(heading("ON THIS PAGE"))
-                        .child(
-                            IconButton::new("close-details", IconName::Close)
-                                .icon_size(IconSize::XSmall)
-                                .tooltip(Tooltip::text("Close page details"))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.toggle_page_details(cx)
-                                })),
-                        ),
-                )
-                .when(outline.is_empty(), |panel| {
-                    panel.child(Label::new("No headings yet.").color(Color::Muted))
-                })
-                .children(outline)
-                .child(gpui::div().pt_2().child(heading("CONNECTIONS")))
-                .child(count(
-                    "Linked references",
-                    references.map_or_else(|| "…".into(), |total| total.to_string().into()),
-                ))
-                .child(count("Blocks with an ID", facts.ids.to_string().into()))
-                .child(
-                    h_flex()
-                        .pt_2()
-                        .gap_1()
-                        .child(
-                            Icon::new(IconName::Link)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .child(
-                            Label::new(
-                                "Shift-click a link to keep this page open beside the next thought.",
-                            )
-                            .size(LabelSize::Small)
+        v_flex()
+            .id(if side {
+                "side-page-details"
+            } else {
+                "page-details"
+            })
+            .debug_selector(move || {
+                if side {
+                    "quire-side-page-details"
+                } else {
+                    "quire-page-details"
+                }
+                .into()
+            })
+            .w(gpui::px(260.))
+            .flex_none()
+            .min_h_0()
+            .overflow_y_scroll()
+            .p_2()
+            .gap_1()
+            .border_l_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                h_flex()
+                    .justify_between()
+                    .child(heading("ON THIS PAGE"))
+                    .child(
+                        IconButton::new("close-details", IconName::Close)
+                            .icon_size(IconSize::XSmall)
+                            .tooltip(Tooltip::text("Close page details"))
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.toggle_details(side, cx)),
+                            ),
+                    ),
+            )
+            .when(outline.is_empty(), |panel| {
+                panel.child(Label::new("No headings yet.").color(Color::Muted))
+            })
+            .children(outline)
+            .child(gpui::div().pt_2().child(heading("CONNECTIONS")))
+            .child(count(
+                "Linked references",
+                references.map_or_else(|| "…".into(), |total| total.to_string().into()),
+            ))
+            .child(count("Blocks with an ID", facts.ids.to_string().into()))
+            .child(
+                h_flex()
+                    .pt_2()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::Link)
+                            .size(IconSize::Small)
                             .color(Color::Muted),
-                        ),
-                )
-                .into_any_element(),
-        )
+                    )
+                    .child(
+                        Label::new(
+                            "Shift-click a link to keep this page open beside the next thought.",
+                        )
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                    ),
+            )
+            .into_any_element()
     }
 
     /// Opens README.md beside the pages, as the reference's info pane does, in place of Help.
