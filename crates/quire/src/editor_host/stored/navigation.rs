@@ -883,3 +883,7 @@ mod page_menu_tests;
 #[cfg(test)]
 #[path = "backups_tests.rs"]
 mod backups_tests;
+
+#[cfg(test)]
+#[path = "sync_tests.rs"]
+mod sync_tests;

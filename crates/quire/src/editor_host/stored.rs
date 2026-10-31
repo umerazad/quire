@@ -16,6 +16,7 @@ mod exchange;
 mod folder;
 mod links;
 mod navigation;
+mod sync;
 
 pub(super) use folder::FolderOptions;
 
@@ -139,6 +140,7 @@ struct StoredWindow {
     folder: folder::FolderView,
     exchange: Entity<crate::exchange::Exchange>,
     backups: Entity<crate::backups::Backups>,
+    sync: Entity<crate::sync_status::SyncStatus>,
 }
 
 impl StoredWindow {
@@ -172,6 +174,7 @@ impl StoredWindow {
             Err(error) => Err(error.clone()),
         };
         let backups = backups::new_backups(&session, &database, calendar.clone().ok(), cx);
+        let sync = sync::new_sync_status(&session, calendar.clone().ok(), cx);
         let nav =
             navigation::Navigation::new(&database, &notebook, calendar.ok(), cx.focus_handle());
         let id = page.read(cx).id().to_owned();
@@ -191,6 +194,7 @@ impl StoredWindow {
             folder: folder::FolderView::default(),
             exchange: cx.new(|_| crate::exchange::Exchange::default()),
             backups,
+            sync,
         };
         let pages = this.session.borrow().open_pages();
         for observed in pages {
@@ -201,6 +205,7 @@ impl StoredWindow {
             this.place_beside(side, false, window, cx);
         }
         this.watch_backups(window, cx);
+        this.watch_sync(window, cx);
         this.load_settings(cx);
         this
     }
@@ -425,6 +430,10 @@ impl Render for StoredWindow {
                 .child(
                     Button::new("show-backups", "Backups…")
                         .on_click(cx.listener(|this, _, _, cx| this.toggle_backups(cx))),
+                )
+                .child(
+                    Button::new("show-sync", "Sync…")
+                        .on_click(cx.listener(|this, _, window, cx| this.toggle_sync(window, cx))),
                 );
         let root = gpui::div()
             .track_focus(&self.nav.loading_focus)
@@ -434,8 +443,11 @@ impl Render for StoredWindow {
             .on_action(cx.listener(|this, _: &SaveAndClosePage, window, cx| {
                 this.save_and_close(window, cx)
             }));
-        Self::register_backups(
-            Self::register_exchange(Self::register_navigation(root, cx), cx),
+        Self::register_sync(
+            Self::register_backups(
+                Self::register_exchange(Self::register_navigation(root, cx), cx),
+                cx,
+            ),
             cx,
         )
         .flex()
@@ -444,6 +456,7 @@ impl Render for StoredWindow {
         .child(header)
         .child(self.exchange.clone())
         .child(self.backups.clone())
+        .child(self.sync.clone())
         .when_some(conflict, |div, conflict| div.child(conflict))
         .when_some(self.close_error.clone(), |div, error| {
             div.child(gpui::div().p_2().child(error))

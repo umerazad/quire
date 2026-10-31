@@ -48,6 +48,9 @@ mod exchange;
 mod backups;
 
 #[cfg(feature = "full-editor")]
+mod sync_status;
+
+#[cfg(feature = "full-editor")]
 mod file_actions;
 
 #[cfg(feature = "full-editor")]
