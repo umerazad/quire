@@ -153,7 +153,7 @@ pub struct TasksView {
     client: Option<IndexClient>,
     writers: Writers,
     destination: Destination,
-    focus: FocusHandle,
+    pub(crate) focus: FocusHandle,
     scroll: UniformListScrollHandle,
     rich: crate::rich_text::RichCache,
     _subscriptions: Vec<Subscription>,

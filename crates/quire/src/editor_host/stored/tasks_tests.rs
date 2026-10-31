@@ -656,3 +656,61 @@ fn the_status_line_says_saving_until_a_task_change_is_written(cx: &mut TestAppCo
     wait_stored(&notebook, "w", "- [x] One ✅ 2026-10-30\n", cx);
     wait_until(cx, "the saved status", |cx| status(cx) == "Saved locally");
 }
+
+fn list_focused(notebook: &Notebook, cx: &mut TestAppContext) -> bool {
+    let list = list(notebook, cx);
+    notebook
+        .window
+        .update(cx, |_, window, cx| list.read(cx).focus.is_focused(window))
+        .unwrap()
+}
+
+#[gpui::test]
+fn a_failed_task_save_writes_nothing_says_why_and_keeps_focus_for_a_retry(cx: &mut TestAppContext) {
+    use sqlez::connection::Connection;
+    let notebook = open_notebook(
+        &[
+            ("a", "Alpha.md", "- start\n"),
+            ("w", "Work.md", "- [ ] One #next\n"),
+        ],
+        "a",
+        cx,
+    );
+    show_tasks(&notebook, cx);
+    keys(&notebook, "]", cx);
+    wait_rows(&notebook, &["One"], cx);
+    assert!(
+        list_focused(&notebook, cx),
+        "Tasks opens with its list focused"
+    );
+
+    let lock = Connection::try_open_file(notebook.path.to_str().unwrap()).unwrap();
+    lock.exec("BEGIN IMMEDIATE").unwrap()().unwrap();
+    keys(&notebook, &key("enter"), cx);
+    wait_until(cx, "the refused save", |cx| {
+        settle_tasks(&notebook, cx);
+        message(&notebook, cx).1.is_some()
+    });
+    let (_, error) = message(&notebook, cx);
+    assert!(
+        error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("Cannot begin a notebook transaction")),
+        "the failure says what failed and what to do: {error:?}"
+    );
+    assert_eq!(texts(&notebook, cx), ["One"], "the task stays listed");
+    assert!(list_focused(&notebook, cx), "focus stays on the list");
+
+    lock.exec("ROLLBACK").unwrap()().unwrap();
+    assert_eq!(
+        stored(&notebook, "w"),
+        "- [ ] One #next\n",
+        "nothing is written"
+    );
+    keys(&notebook, &key("enter"), cx);
+    wait_stored(&notebook, "w", "- [x] One #next ✅ 2026-10-30\n", cx);
+    assert!(
+        list_focused(&notebook, cx),
+        "focus stays on the list after the retry"
+    );
+}
