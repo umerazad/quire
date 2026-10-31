@@ -1076,6 +1076,7 @@ fn renaming_a_folder_page_from_the_files_menu_writes_what_f2_writes(cx: &mut Tes
                 "Add to favorites",
                 "-",
                 "New note here",
+                "New folder here",
                 "-",
                 "Rename",
                 "Move to…",
