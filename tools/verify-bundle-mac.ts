@@ -60,8 +60,7 @@ function loadCommand(binary: string, command: string, field: string): string[] {
 }
 
 // Opens a window, so it runs only with --launch. HOME points at an empty folder so the launch
-// neither reads the user's data nor hands over to a running Quire; the folder sits in /tmp
-// because the single-instance socket path inside it must fit in SUN_LEN (104 bytes).
+// neither reads the user's data nor hands over to a running Quire.
 function launchSmoke(executable: string): string | undefined {
   const home = mkdtempSync("/tmp/qn-");
   try {

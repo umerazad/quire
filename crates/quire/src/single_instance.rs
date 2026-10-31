@@ -63,6 +63,19 @@ pub fn reply_for(current: &str, launch: &Launch) -> Reply {
     }
 }
 
+/// The socket `name` in `folder`, or one in the temporary folder when that path is too long to
+/// bind (about 100 bytes). The same folder and name always give the same socket, so a later launch
+/// finds the running Quire.
+pub fn socket_path(folder: &Path, name: &str) -> PathBuf {
+    use sha2::{Digest as _, Sha256};
+    let inside = folder.join(name);
+    if inside.as_os_str().len() < 100 {
+        return inside;
+    }
+    let hash = Sha256::digest(inside.as_os_str().as_encoded_bytes());
+    std::env::temp_dir().join(format!("quire-{}.sock", &hex::encode(hash)[..16]))
+}
+
 pub enum Claim {
     /// This is the only Quire: serve later launches with the listener.
     First(Listener),
@@ -252,5 +265,23 @@ mod tests {
             claim(&socket, &launch("0.1.0", &[]), 1, QUICK).unwrap(),
             Claim::First(_)
         ));
+    }
+
+    #[test]
+    fn long_data_folders_put_the_socket_in_the_temporary_folder() {
+        let folder = tempfile::tempdir().unwrap();
+        let long = folder.path().join("a".repeat(120));
+        let socket = socket_path(&long, "quire.sock");
+        assert!(socket.starts_with(std::env::temp_dir()));
+        assert_eq!(socket, socket_path(&long, "quire.sock"));
+        assert_ne!(socket, socket_path(&long, "bridge.sock"));
+        assert_eq!(
+            socket_path(Path::new("/tmp/q"), "quire.sock"),
+            PathBuf::from("/tmp/q/quire.sock")
+        );
+        let first = claim(&socket, &launch("0.1.0", &[]), 1, QUICK).unwrap();
+        assert!(matches!(first, Claim::First(_)));
+        drop(first);
+        std::fs::remove_file(&socket).ok();
     }
 }

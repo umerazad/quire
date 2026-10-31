@@ -144,22 +144,6 @@ fn writes_a_private_bridge_file_and_socket_and_removes_both_on_stop(cx: &mut Tes
     assert!(!file.exists() && !socket.exists());
 }
 
-#[test]
-fn long_folders_put_the_socket_in_the_temporary_folder() {
-    let long = PathBuf::from(format!("/{}", "a".repeat(120)));
-    let socket = socket_path(&long);
-    assert!(socket.starts_with(std::env::temp_dir()));
-    assert_eq!(
-        socket,
-        socket_path(&long),
-        "the same folder keeps its socket"
-    );
-    assert_eq!(
-        socket_path(Path::new("/tmp/q")),
-        PathBuf::from("/tmp/q/bridge.sock")
-    );
-}
-
 #[gpui::test]
 fn rejects_a_wrong_token_and_a_restarted_bridges_old_token(cx: &mut TestAppContext) {
     let folder = tempfile::tempdir().unwrap();
