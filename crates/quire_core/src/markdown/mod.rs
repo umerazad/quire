@@ -84,7 +84,7 @@ fn hex(byte: u8) -> Option<u8> {
     }
 }
 
-fn decode_uri_component(input: &str) -> Option<String> {
+pub fn decode_uri_component(input: &str) -> Option<String> {
     let mut decoded = Vec::with_capacity(input.len());
     let mut bytes = input.bytes();
     while let Some(byte) = bytes.next() {

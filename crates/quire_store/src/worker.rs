@@ -379,6 +379,16 @@ impl Client<NotebookStore> {
             move |store| store.attach(&data, &original),
         )
     }
+    /// Attaches a file by streaming it from `source`; see `NotebookStore::attach_file`.
+    pub fn attach_file(
+        &self,
+        source: PathBuf,
+        original: String,
+    ) -> std::result::Result<Reply<String>, QueueError> {
+        self.request(256usize.saturating_add(original.capacity()), move |store| {
+            store.attach_file(&source, &original)
+        })
+    }
     pub fn cache_attachment(
         &self,
         name: String,

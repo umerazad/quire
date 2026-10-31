@@ -34,10 +34,13 @@ pub struct NotebookSession {
     editing: Rc<Cell<bool>>,
     /// The notebook folder and Quire's state folder for it, when this is a folder notebook.
     folder: Option<(PathBuf, PathBuf)>,
+    /// Where notebook-relative media paths resolve.
+    media: Option<quire_media::files::Files>,
 }
 
 impl NotebookSession {
     pub fn open(path: PathBuf, notebook: String, writer: String) -> Result<Self, String> {
+        let media = quire_media::files::Files::for_store_database(&path);
         let worker = StorageWorker::spawn(path, notebook, writer, QueueLimits::default())
             .map_err(|error| format!("{error:#}"))?;
         let ready = worker
@@ -45,7 +48,10 @@ impl NotebookSession {
             .map(|result| result.map_err(|error| Arc::from(format!("{error:#}"))))
             .boxed()
             .shared();
-        Ok(Self::from_worker(worker.client, ready))
+        Ok(Self {
+            media: Some(media),
+            ..Self::from_worker(worker.client, ready)
+        })
     }
 
     /// Opens the folder notebook at `root`, keeping its recovery, history, and index in `state`.
@@ -64,6 +70,7 @@ impl NotebookSession {
             .boxed()
             .shared();
         Ok(Self {
+            media: Some(quire_media::files::Files::Folder { root: root.clone() }),
             folder: Some((root, state)),
             ..Self::from_worker(worker.client, ready)
         })
@@ -76,7 +83,13 @@ impl NotebookSession {
             pages: HashMap::new(),
             editing: Rc::new(Cell::new(false)),
             folder: None,
+            media: None,
         }
+    }
+
+    /// Where this notebook keeps attachments that pages reference by relative path.
+    pub fn media_files(&self) -> Option<quire_media::files::Files> {
+        self.media.clone()
     }
 
     /// The notebook folder and its state folder, for a folder notebook.

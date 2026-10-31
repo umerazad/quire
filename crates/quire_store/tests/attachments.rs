@@ -36,6 +36,78 @@ fn streamed_cache_verifies_source_and_destination_and_preserves_bad_files() -> a
 }
 
 #[test]
+fn attaching_a_file_streams_it_under_its_content_name() -> anyhow::Result<()> {
+    use futures::executor::block_on;
+    use quire_store::worker::{QueueLimits, StorageWorker};
+    use std::os::unix::fs::symlink;
+    let root = tempfile::tempdir()?;
+    let data: Vec<_> = (0..3 * 1024 * 1024)
+        .map(|index| (index % 241) as u8)
+        .collect();
+    let source = root.path().join("Scan.PDF");
+    fs::write(&source, &data)?;
+    let linked = root.path().join("linked.pdf");
+    symlink(&source, &linked)?;
+    let worker = StorageWorker::spawn(
+        root.path().join("local.sqlite"),
+        "nb".into(),
+        "office".into(),
+        QueueLimits {
+            requests: 4,
+            bytes: 64 * 1024,
+        },
+    )?;
+    block_on(worker.ready)?;
+    let reference = block_on(
+        worker
+            .client
+            .attach_file(source.clone(), "Scan.PDF".into())
+            .unwrap(),
+    )?;
+    assert_eq!(
+        reference,
+        format!(
+            "attachments/{}",
+            format::attachment_file_name(&data, "scan.pdf")
+        )
+    );
+    assert_eq!(fs::read(root.path().join(&reference))?, data);
+    assert_eq!(
+        block_on(
+            worker
+                .client
+                .attach_file(linked, "linked.pdf".into())
+                .unwrap()
+        )?,
+        reference,
+        "a link attaches the file it names"
+    );
+    let missing = block_on(
+        worker
+            .client
+            .attach_file(root.path().join("gone.png"), "gone.png".into())
+            .unwrap(),
+    )
+    .unwrap_err();
+    assert!(
+        missing.to_string().contains("attach it again"),
+        "{missing:#}"
+    );
+    let folder = block_on(
+        worker
+            .client
+            .attach_file(root.path().to_owned(), "folder".into())
+            .unwrap(),
+    )
+    .unwrap_err();
+    assert!(
+        folder.to_string().contains("not an ordinary file"),
+        "{folder:#}"
+    );
+    Ok(())
+}
+
+#[test]
 fn attachment_is_content_named_and_survives_reopen_before_a_save_uses_it() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("local.sqlite");
