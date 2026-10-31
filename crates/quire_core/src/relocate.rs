@@ -8,6 +8,10 @@
 //! `SourceText::apply`, which keeps each page's own line breaks where the reference rewrites a
 //! CRLF page entirely in CRLF.
 //!
+//! A folder rename or move relocates every page inside it at once (`folder_relocations`), which
+//! the reference has no command for. `relocate_pages` gives the result of the reference moving
+//! each page in turn, except that pages keep their file names and so get no recorded title.
+//!
 //! Two deliberate deviations. A replacement is literal, where JavaScript's `String.replace`
 //! expands `$&` and similar patterns in a new name. A URL that is only a `#fragment` stays as it
 //! is, where the reference rewrites it to the page's folder name when a page inside a folder
@@ -28,6 +32,11 @@ pub const CASE_ONLY: &str = "Choose a different path. Case-only renames need an 
 pub const TAKEN: &str = "A file already uses that destination. Choose another path.";
 pub const NAME_HAS_SLASH: &str =
     "A page name cannot contain / or \\. Use Move to… to change its folder.";
+pub const FOLDER_UNCHANGED: &str =
+    "Choose a different folder. Case-only renames need an intermediate name on macOS and Windows.";
+pub const FOLDER_INSIDE_ITSELF: &str =
+    "A folder cannot move inside itself. Choose a path outside it.";
+pub const FOLDER_EMPTY: &str = "This folder has no pages to move. Choose another folder.";
 
 static SCHEME: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-zA-Z][a-zA-Z0-9+.-]*:|^//").unwrap());
@@ -115,6 +124,9 @@ pub struct Relocation {
     pub rename: bool,
     source_title: String,
     unique_title: bool,
+    /// Whether a move records the old title in front matter. A page moving with its folder keeps
+    /// its file name, and so its title, without one.
+    record_title: bool,
 }
 
 impl Relocation {
@@ -145,8 +157,68 @@ impl Relocation {
             rename,
             source_title: title.to_owned(),
             unique_title,
+            record_title: true,
         })
     }
+}
+
+/// The reference `notebookPath` for a folder, without a `.md` ending.
+pub fn folder_path(value: &str) -> Result<String, &'static str> {
+    notebook_path(value, false)
+}
+
+/// Plans moving `folder` to `target`: one move for every page inside it, at the same place under
+/// `target`. `pages` lists every page's path and title; `taken` says whether a page already uses
+/// a path, ignoring case. Pages inside the folder do not count, since they move too.
+pub fn folder_relocations(
+    folder: &str,
+    target: &str,
+    pages: &[(String, String)],
+    taken: impl Fn(&str) -> bool,
+) -> Result<Vec<Relocation>, &'static str> {
+    let target = folder_path(target)?;
+    let inside = |path: &str, folder: &str| {
+        path.to_lowercase()
+            .starts_with(&format!("{}/", folder.to_lowercase()))
+    };
+    if target.to_lowercase() == folder.to_lowercase() {
+        return Err(FOLDER_UNCHANGED);
+    }
+    if inside(&target, folder) {
+        return Err(FOLDER_INSIDE_ITSELF);
+    }
+    let prefix = format!("{folder}/");
+    let mut moved: Vec<&(String, String)> = pages
+        .iter()
+        .filter(|(path, _)| path.starts_with(&prefix))
+        .collect();
+    if moved.is_empty() {
+        return Err(FOLDER_EMPTY);
+    }
+    moved.sort_by(|a, b| a.0.cmp(&b.0));
+    moved
+        .into_iter()
+        .map(|(path, title)| {
+            let unique_title = pages
+                .iter()
+                .filter(|(_, other)| other.to_lowercase() == title.to_lowercase())
+                .count()
+                == 1;
+            let relocation = Relocation::new(
+                path,
+                &format!("{target}/{}", &path[prefix.len()..]),
+                false,
+                title,
+                unique_title,
+                true,
+                |path| !inside(path, folder) && taken(path),
+            )?;
+            Ok(Relocation {
+                record_title: false,
+                ..relocation
+            })
+        })
+        .collect()
 }
 
 /// One link change listed in the preview.
@@ -182,12 +254,33 @@ pub fn relocate_page(
     urls: &[Range<usize>],
     find_page: impl Fn(&str) -> Option<String>,
 ) -> Option<PageRelocation> {
-    let moved = path == relocation.source;
-    let destination = if moved {
-        relocation.target.as_str()
-    } else {
-        path
+    relocate_pages(
+        std::slice::from_ref(relocation),
+        path,
+        text,
+        references,
+        urls,
+        find_page,
+    )
+}
+
+/// Rewrites one page for several moves made together, such as every page of a moved folder.
+/// `find_page` resolves against the notebook before any move.
+pub fn relocate_pages(
+    relocations: &[Relocation],
+    path: &str,
+    text: &str,
+    references: &[Reference],
+    urls: &[Range<usize>],
+    find_page: impl Fn(&str) -> Option<String>,
+) -> Option<PageRelocation> {
+    let moving = |source: &str| {
+        relocations
+            .iter()
+            .find(|relocation| relocation.source == source)
     };
+    let own = moving(path);
+    let destination = own.map_or(path, |own| own.target.as_str());
     let mut changes: Vec<SourceEdit<String>> = Vec::new();
     for reference in references {
         let (base, fragment) = match reference.target.find('#') {
@@ -196,8 +289,8 @@ pub fn relocate_page(
         };
         let raw = &text[reference.range.clone()];
         let resolved = find_page(base);
-        if (reference.syntax == ReferenceSyntax::Wiki || !fragment.is_empty())
-            && resolved.as_deref() == Some(relocation.source.as_str())
+        if let Some(relocation) = resolved.as_deref().and_then(moving)
+            && (reference.syntax == ReferenceSyntax::Wiki || !fragment.is_empty())
         {
             if !relocation.rename
                 && relocation.unique_title
@@ -210,14 +303,14 @@ pub fn relocate_page(
                 range: reference.range.clone(),
                 replacement: replace_first(raw, &reference.target, &replacement),
             });
-        } else if moved
+        } else if let Some(own) = own
             && reference.kind == ReferenceKind::Embed
             && resolved.is_none()
             && !WORD_SCHEME.is_match(&reference.target)
-            && let Some(absolute) = relative_vault_path(Some(&relocation.source), &reference.target)
+            && let Some(absolute) = relative_vault_path(Some(&own.source), &reference.target)
                 .filter(|absolute| !absolute.is_empty())
         {
-            let replacement = format!("{}{fragment}", relative_path(&relocation.target, &absolute));
+            let replacement = format!("{}{fragment}", relative_path(&own.target, &absolute));
             changes.push(SourceEdit {
                 range: reference.range.clone(),
                 replacement: replace_first(raw, &reference.target, &replacement),
@@ -237,14 +330,11 @@ pub fn relocate_page(
             continue;
         };
         let fragment = url.find('#').map_or("", |hash| &url[hash..]);
-        if !moved && absolute != relocation.source {
+        let followed = moving(&absolute);
+        if own.is_none() && followed.is_none() {
             continue;
         }
-        let resolved = if absolute == relocation.source {
-            relocation.target.as_str()
-        } else {
-            absolute.as_str()
-        };
+        let resolved = followed.map_or(absolute.as_str(), |relocation| &relocation.target);
         let replacement = format!("{}{fragment}", relative_path(destination, resolved));
         changes.push(SourceEdit {
             range: range.clone(),
@@ -263,8 +353,8 @@ pub fn relocate_page(
             after: change.replacement.clone(),
         })
         .collect();
-    if moved {
-        changes.extend(title_edit(relocation, text));
+    if let Some(own) = own {
+        changes.extend(title_edit(own, text));
     }
     changes.sort_by_key(|change| (change.range.start, change.range.end));
     let mut edits: Vec<SourceEdit<String>> = Vec::new();
@@ -281,7 +371,7 @@ pub fn relocate_page(
         }
         edits.push(change);
     }
-    if !moved
+    if own.is_none()
         && edits
             .iter()
             .all(|edit| text[edit.range.clone()] == edit.replacement)
@@ -292,7 +382,7 @@ pub fn relocate_page(
     for edit in edits.iter().rev() {
         next.replace_range(edit.range.clone(), &edit.replacement);
     }
-    if !moved && next == text {
+    if own.is_none() && next == text {
         return None;
     }
     Some(PageRelocation {
@@ -316,6 +406,9 @@ fn title_edit(relocation: &Relocation, text: &str) -> Option<SourceEdit<String>>
             range,
             replacement: format!("title: {}", quoted(page_name(&relocation.target))),
         });
+    }
+    if !relocation.record_title {
+        return None;
     }
     let title = crate::markdown::page_title(&relocation.source, text).to_lossy_string();
     match METADATA.captures(text) {
