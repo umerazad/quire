@@ -319,3 +319,37 @@ fn renaming_a_folder_moves_every_page_inside_and_rewrites_links_to_them(cx: &mut
     assert!(read(&notebook, cx, |view, _| view.nav.dialog.is_none()));
     assert_eq!(stored(&store, "a").0, "Work/A.md");
 }
+
+#[gpui::test]
+fn a_page_list_that_shows_the_move_stops_following_it_without_another_index_change(
+    cx: &mut TestAppContext,
+) {
+    let notebook = open_notebook(&MOVED, "o", cx);
+    notebook
+        .window
+        .update(cx, |view, _, cx| {
+            let listed = view
+                .nav
+                .pages
+                .iter()
+                .find(|listed| listed.page.path == "Keep.md")
+                .unwrap();
+            view.nav.renamed = vec![crate::file_actions::Renamed {
+                previous: "k".into(),
+                page: "k".into(),
+                path: listed.page.path.clone(),
+                title: listed.page.title.clone(),
+            }];
+            view.refresh_catalogue(cx);
+        })
+        .unwrap();
+    wait_until(cx, "the page list", |cx| {
+        read(&notebook, cx, |view, _| view.nav.catalogue.is_none())
+    });
+    read(&notebook, cx, |view, _| {
+        assert!(
+            view.nav.renamed.is_empty(),
+            "a page list that already shows the move must settle it"
+        )
+    });
+}

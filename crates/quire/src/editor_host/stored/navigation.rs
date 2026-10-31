@@ -168,6 +168,7 @@ impl StoredWindow {
                 match pages {
                     Ok(pages) => {
                         this.nav.pages = pages;
+                        this.settle_rename();
                         this.forget_missing_pages(cx);
                     }
                     Err(error) => this.nav.error = Some(

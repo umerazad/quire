@@ -191,9 +191,14 @@ impl StoredWindow {
     /// An open page reaches the index through its overlays: the new path can arrive before the
     /// merged text that carries the new title, and both can land after the rename is written.
     pub(in crate::editor_host::stored) fn follow_rename(&mut self, cx: &mut gpui::Context<Self>) {
-        if self.nav.renamed.is_empty() {
-            return;
+        if !self.settle_rename() {
+            self.refresh_catalogue(cx);
         }
+    }
+
+    /// Stops following renamed pages once the page list shows them all. Returns whether nothing
+    /// is left to follow.
+    pub(in crate::editor_host::stored) fn settle_rename(&mut self) -> bool {
         let listed = self.nav.renamed.iter().all(|renamed| {
             self.nav.pages.iter().any(|listed| {
                 listed.page.page.as_str() == Some(renamed.page.as_str())
@@ -203,9 +208,8 @@ impl StoredWindow {
         });
         if listed {
             self.nav.renamed.clear();
-        } else {
-            self.refresh_catalogue(cx);
         }
+        listed
     }
 
     /// The page in the main pane, when a page rather than a browser or tag page is shown.
