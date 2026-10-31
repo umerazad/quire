@@ -701,9 +701,7 @@ impl StoredWindow {
 }
 
 pub(super) fn holds_focus(editor: &Entity<NotebookWindow>, window: &Window, cx: &App) -> bool {
-    let editor = editor.read(cx);
-    editor.source.focus_handle(cx).contains_focused(window, cx)
-        || editor.second.focus_handle(cx).contains_focused(window, cx)
+    editor.read(cx).focused_pane(window, cx).is_some()
 }
 
 impl StoredWindow {
@@ -927,3 +925,7 @@ mod block_move_tests;
 #[cfg(test)]
 #[path = "fresh_ids_tests.rs"]
 mod fresh_ids_tests;
+
+#[cfg(test)]
+#[path = "zoom_tests.rs"]
+mod zoom_tests;
