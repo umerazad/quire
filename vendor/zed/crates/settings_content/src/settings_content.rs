@@ -7,6 +7,7 @@ mod language;
 mod language_model;
 pub mod merge_from;
 mod project;
+mod quire;
 mod serde_helper;
 mod terminal;
 mod theme;
@@ -23,6 +24,7 @@ pub use language::*;
 pub use language_model::*;
 pub use merge_from::MergeFrom as MergeFromTrait;
 pub use project::*;
+pub use quire::*;
 use serde::de::DeserializeOwned;
 pub use serde_helper::{
     serialize_f32_with_two_decimal_places, serialize_optional_f32_with_two_decimal_places,
@@ -335,6 +337,9 @@ pub struct SettingsContent {
     /// Settings for developer-oriented instrumentation tools (profilers,
     /// tracers, etc.) that can be toggled at runtime.
     pub instrumentation: Option<InstrumentationSettingsContent>,
+
+    /// Settings for the Quire notes application.
+    pub quire: Option<QuireSettingsContent>,
 }
 
 /// Configuration for developer-oriented instrumentation tools that collect
@@ -412,7 +417,7 @@ fallible_options::flattened_deserialize!(SettingsContent {
         journal, log, line_indicator_format, language_models, copilot, outline_panel, project_panel,
         node, proxy, reduce_motion, server_url, credentials_url, session, telemetry, terminal,
         title_bar, vim_mode, calls, which_key, vim, modeline_lines, feature_flags,
-        instrumentation,
+        instrumentation, quire,
     },
     defaults: {},
 });

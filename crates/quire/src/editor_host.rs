@@ -1,5 +1,7 @@
 use editor::Editor;
-use gpui::{App, AppContext, Entity, Focusable, KeyBinding, UpdateGlobal, Window, prelude::*};
+#[cfg(test)]
+use gpui::UpdateGlobal;
+use gpui::{App, AppContext, Entity, Focusable, KeyBinding, Window, prelude::*};
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use ui::{Button, ButtonCommon, Clickable, Label, LabelCommon, Tooltip};
 
@@ -11,18 +13,8 @@ pub(super) const EDITOR_CONTEXT: &str = "Editor && !QuireControl";
 
 pub(super) fn init(cx: &mut App) -> Result<(), String> {
     settings::init(cx);
-    let result = settings::SettingsStore::update_global(cx, |store, cx| {
-        store.set_user_settings(
-            r#"{"vim_mode":true,"session":{"restore_unsaved_buffers":false}}"#,
-            cx,
-        )
-    });
-    if let settings::ParseStatus::Failed { error } = result.parse_status {
-        return Err(format!(
-            "Cannot initialize Quire editor settings: {error}. Check the bundled defaults."
-        ));
-    }
-    theme_settings::init(theme::LoadThemes::JustBase, cx);
+    crate::preferences::init(cx);
+    theme_settings::init(theme::LoadThemes::All(Box::new(assets::Assets)), cx);
     crate::markdown::init(cx)?;
     crate::media::init(cx);
     release_channel::init(semver::Version::new(0, 1, 0), cx);
@@ -120,6 +112,7 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     crate::page_menu::init(cx);
     stored::bind_keys(cx);
     crate::navigation::bind_keys(cx);
+    crate::preferences::bind_keys(cx);
     crate::media::bind_keys(cx);
     if !cx.has_global::<db::AppDatabase>() {
         let name = format!("quire-interface-{}", uuid::Uuid::new_v4());
@@ -180,7 +173,7 @@ fn editor(
     editor
 }
 
-struct NotebookWindow {
+pub(crate) struct NotebookWindow {
     analysis: Entity<crate::page_analysis::PageAnalysis>,
     source: Entity<Editor>,
     second: Entity<Editor>,
@@ -304,7 +297,12 @@ impl NotebookWindow {
     }
 
     #[cfg(test)]
-    fn new(text: &str, window: &mut Window, cx: &mut gpui::Context<Self>) -> Self {
+    pub(crate) fn source_text(&self, cx: &App) -> String {
+        self.source.read(cx).text(cx)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new(text: &str, window: &mut Window, cx: &mut gpui::Context<Self>) -> Self {
         let buffer = crate::markdown::buffer(text, cx);
         Self::for_buffer(buffer, None, window, cx)
     }
@@ -346,6 +344,7 @@ impl NotebookWindow {
         cx.observe(&analysis, |_, _, cx| cx.notify()).detach();
         cx.observe_global::<crate::outline::Notice>(|_, cx| cx.notify())
             .detach();
+        crate::preferences::follow_system_appearance(window, cx);
         window.focus(&source.focus_handle(cx), cx);
         Self {
             analysis,
@@ -501,6 +500,9 @@ pub fn run() {
             cx.quit();
             return;
         }
+        let fs = ::fs::RealFs::new(None, cx.background_executor().clone());
+        <dyn ::fs::Fs>::set_global(fs.clone(), cx);
+        crate::preferences::load(fs, cx);
         if let Err(error) = assets::Assets.load_fonts(cx) {
             eprintln!("Cannot load Quire's bundled fonts: {error}. Rebuild the application assets.");
             cx.quit();

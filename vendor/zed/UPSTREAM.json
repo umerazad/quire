@@ -317,6 +317,18 @@
     {
       "path": "crates/gpui_macos/src/platform.rs",
       "change": "Route applicationShouldTerminate through the optional cancellable request callback before applicationWillTerminate. Preserve the original final shutdown callback and default immediate termination."
+    },
+    {
+      "path": "crates/settings_content/src/quire.rs",
+      "change": "Add QuireSettingsContent (format_tags, capture_target) so Quire application preferences are typed settings in the same settings.json, layered and live-reloaded by SettingsStore like Zed settings."
+    },
+    {
+      "path": "crates/settings_content/src/settings_content.rs",
+      "change": "Declare the quire module and add the optional quire section to SettingsContent."
+    },
+    {
+      "path": "crates/settings/src/vscode_import.rs",
+      "change": "Leave the new quire section unset when importing VS Code settings."
     }
   ]
 }

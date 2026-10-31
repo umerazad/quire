@@ -101,6 +101,9 @@ mod markdown_links;
 #[cfg(feature = "full-editor")]
 mod page_menu;
 
+#[cfg(feature = "full-editor")]
+mod preferences;
+
 #[path = "example_support/fonts.rs"]
 mod example_support;
 
