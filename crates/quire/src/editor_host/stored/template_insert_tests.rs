@@ -131,18 +131,19 @@ fn open(alpha: &'static str, vim: bool, cx: &mut TestAppContext) -> Notebook {
 }
 
 fn wait_for_text(notebook: &Notebook, expected: &str, cx: &mut TestAppContext) {
-    let mut last = (String::new(), None);
-    let deadline = std::time::Instant::now() + crate::test_patience::PATIENCE;
-    while last.0 != expected {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for the inserted template; the page reads {:?} with notice {:?}",
-            last.0,
-            last.1
-        );
-        wait_until(cx, "a step", |_| true);
-        last = (text_and_caret(notebook, cx).0, notice(cx));
-    }
+    crate::test_wait::until(
+        cx,
+        std::time::Duration::ZERO,
+        |cx| wait_until(cx, "a step", |_| true),
+        |cx| text_and_caret(notebook, cx).0 == expected,
+        |cx| {
+            format!(
+                "the inserted template; the page reads {:?} with notice {:?}",
+                text_and_caret(notebook, cx).0,
+                notice(cx)
+            )
+        },
+    );
 }
 
 #[gpui::test]

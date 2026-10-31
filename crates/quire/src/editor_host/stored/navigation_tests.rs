@@ -3,7 +3,7 @@ use crate::navigation::palette::PaletteItem;
 use gpui::{TestAppContext, WindowHandle};
 use quire_core::workspace::Destination;
 use quire_store::notebook::{Edit, NotebookStore};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub(super) struct Notebook {
     pub _root: tempfile::TempDir,
@@ -37,19 +37,16 @@ pub(super) fn save(store: &NotebookStore, page: &str, path: &str, text: &str) {
 pub(super) fn wait_until(
     cx: &mut TestAppContext,
     what: &str,
-    mut done: impl FnMut(&mut TestAppContext) -> bool,
+    done: impl FnMut(&mut TestAppContext) -> bool,
 ) {
     cx.executor().allow_parking();
-    let deadline = Instant::now() + crate::test_patience::PATIENCE;
-    loop {
-        cx.executor().advance_clock(Duration::from_millis(200));
-        cx.run_until_parked();
-        if done(cx) {
-            return;
-        }
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        std::thread::sleep(Duration::from_millis(2));
-    }
+    crate::test_wait::until(
+        cx,
+        Duration::from_millis(2),
+        crate::test_wait::advance(Duration::from_millis(200)),
+        done,
+        |_| what.to_owned(),
+    );
 }
 
 pub(super) fn open_notebook(

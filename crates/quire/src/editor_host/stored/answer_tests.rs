@@ -161,20 +161,19 @@ async fn questions_read_unsaved_edits_of_open_pages(cx: &mut TestAppContext) {
     // Past the index's 150 ms debounce but short of the 450 ms idle save.
     cx.executor()
         .advance_clock(std::time::Duration::from_millis(200));
-    let deadline = std::time::Instant::now() + crate::test_patience::PATIENCE;
-    while !futures::executor::block_on(client.with_generation(|index| index.tasks()).unwrap())
-        .unwrap()
-        .1
-        .iter()
-        .any(|task| task.text.contains("Water plants"))
-    {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for the unsaved task in the index"
-        );
-        cx.run_until_parked();
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
+    crate::test_wait::until(
+        cx,
+        std::time::Duration::from_millis(5),
+        crate::test_wait::park,
+        |_| {
+            futures::executor::block_on(client.with_generation(|index| index.tasks()).unwrap())
+                .unwrap()
+                .1
+                .iter()
+                .any(|task| task.text.contains("Water plants"))
+        },
+        |_| "the unsaved task in the index".into(),
+    );
     assert_eq!(
         stored_text(&notebook, "work").unwrap(),
         FRUIT[2].2,
