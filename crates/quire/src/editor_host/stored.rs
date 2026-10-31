@@ -17,6 +17,7 @@ mod exchange;
 mod folder;
 mod instance;
 mod links;
+mod live;
 mod navigation;
 mod profiles;
 mod sync;
@@ -129,11 +130,19 @@ pub(super) struct OpenOptions {
     notebook: String,
     writer: String,
     page: String,
+    /// The synced folder saves publish to and other computers' changes come from.
+    folder: Option<PathBuf>,
 }
 
 impl OpenOptions {
     pub fn parse(arguments: Vec<String>) -> Result<Option<Self>, String> {
-        const FLAGS: [&str; 4] = ["--notebook-db", "--notebook-id", "--writer-id", "--page-id"];
+        const FLAGS: [&str; 5] = [
+            "--notebook-db",
+            "--notebook-id",
+            "--writer-id",
+            "--page-id",
+            "--synced-folder",
+        ];
         if !arguments
             .iter()
             .any(|argument| FLAGS.contains(&argument.split('=').next().unwrap_or_default()))
@@ -145,7 +154,7 @@ impl OpenOptions {
         while let Some(flag) = arguments.next() {
             if !FLAGS.contains(&flag.as_str()) {
                 return Err(format!(
-                    "Unsupported stored-page argument {flag:?}. Pass --notebook-db, --notebook-id, --writer-id, and --page-id with their values; open editor harnesses separately."
+                    "Unsupported stored-page argument {flag:?}. Pass --notebook-db, --notebook-id, --writer-id, and --page-id with their values, and --synced-folder for a Quire notebook's synced folder; open editor harnesses separately."
                 ));
             }
             let value = arguments
@@ -160,6 +169,9 @@ impl OpenOptions {
                 ));
             }
         }
+        let folder = values
+            .remove("--synced-folder")
+            .map(|folder| std::path::absolute(&folder).unwrap_or_else(|_| folder.into()));
         let mut take = |flag| {
             values.remove(flag).ok_or_else(|| format!("Missing stored-page argument {flag}. Pass --notebook-db, --notebook-id, --writer-id, and --page-id with the original database identities."))
         };
@@ -168,6 +180,7 @@ impl OpenOptions {
             notebook: take("--notebook-id")?,
             writer: take("--writer-id")?,
             page: take("--page-id")?,
+            folder,
         }))
     }
 
@@ -179,10 +192,12 @@ impl OpenOptions {
                 database: database.clone(),
                 notebook: notebook.clone(),
                 writer: self.writer.clone(),
+                folder: self.folder.clone(),
             },
             cx,
         )?;
-        let mut session = NotebookSession::open(self.database, self.notebook, self.writer)?;
+        let mut session =
+            NotebookSession::open_synced(self.database, self.notebook, self.writer, self.folder)?;
         let page = session.open_page(self.page, cx);
         let options = gpui::WindowOptions {
             window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
@@ -226,6 +241,9 @@ struct StoredWindow {
     exchange: Entity<crate::exchange::Exchange>,
     backups: Entity<crate::backups::Backups>,
     sync: Entity<crate::sync_status::SyncStatus>,
+    /// Publishing and importing for a Quire notebook with a synced folder.
+    live: Option<Entity<crate::live_sync::LiveSync>>,
+    live_view: Option<Entity<crate::live_sync::LiveSyncView>>,
 }
 
 impl StoredWindow {
@@ -259,24 +277,33 @@ impl StoredWindow {
             cx,
         );
         let sync = sync::new_sync_status(&session, location.clone(), calendar.clone().ok(), cx);
+        let (live, live_view) =
+            live::new_live_sync(&session, location.as_ref(), calendar.clone().ok(), cx).unzip();
         let close = CloseState {
             session: session.clone(),
-            services: Rc::new(RefCell::new(vec![
-                CloseState::busy_while(
-                    {
-                        let backups = backups.clone();
-                        move |cx| backups.read(cx).is_running()
-                    },
-                    "A backup is running.",
-                ),
-                CloseState::busy_while(
-                    {
-                        let sync = sync.clone();
-                        move |cx| sync.read(cx).is_running()
-                    },
-                    "Git sync is running.",
-                ),
-            ])),
+            services: Rc::new(RefCell::new(
+                vec![
+                    CloseState::busy_while(
+                        {
+                            let backups = backups.clone();
+                            move |cx| backups.read(cx).is_running()
+                        },
+                        "A backup is running.",
+                    ),
+                    CloseState::busy_while(
+                        {
+                            let sync = sync.clone();
+                            move |cx| sync.read(cx).is_running()
+                        },
+                        "Git sync is running.",
+                    ),
+                ]
+                .into_iter()
+                .chain(live.clone().map(|live| -> Rc<crate::lifecycle::Service> {
+                    Rc::new(move |cx| live.read(cx).activity())
+                }))
+                .collect(),
+            )),
             closing: Rc::new(Cell::new(None)),
             since: Rc::new(Cell::new(None)),
             window: window.window_handle(),
@@ -317,6 +344,8 @@ impl StoredWindow {
             exchange: cx.new(|_| crate::exchange::Exchange::default()),
             backups,
             sync,
+            live,
+            live_view,
         };
         let pages = this.session.borrow().open_pages();
         for observed in pages {
@@ -328,6 +357,7 @@ impl StoredWindow {
         }
         this.watch_backups(window, cx);
         this.watch_sync(window, cx);
+        this.watch_live_sync(window, cx);
         this.load_settings(cx);
         #[cfg(unix)]
         this.offer_notebook_tools(cx);
@@ -438,6 +468,9 @@ impl StoredWindow {
 
     fn finish_close(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
         use crate::lifecycle::{Activity, PATIENCE};
+        if self.closing.get().is_some() && !self.asking {
+            self.prepare_live_close(cx);
+        }
         let write_failed = matches!(self.closing.get(), Some(CloseIntent::SaveWindow))
             && self
                 .page
@@ -695,6 +728,7 @@ impl Render for StoredWindow {
         .child(self.exchange.clone())
         .child(self.backups.clone())
         .child(self.sync.clone())
+        .when_some(self.live_view.clone(), |div, live| div.child(live))
         .when_some(conflict, |div, conflict| div.child(conflict))
         .when_some(self.close_error.clone(), |div, error| {
             div.child(gpui::div().p_2().child(error))

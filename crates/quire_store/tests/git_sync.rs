@@ -630,3 +630,24 @@ fn a_failed_push_keeps_the_published_change_files_and_a_later_sync_delivers_them
     assert_eq!(home_store.heads("plan")?, [saved.revision_id()]);
     Ok(())
 }
+#[test]
+fn a_quire_sync_never_commits_a_writers_temporary_files() -> Result<()> {
+    let lab = Lab::new();
+    let office = lab.folder("office");
+    quire_notebook(&office);
+    let store = NotebookStore::open(&lab.path("office.sqlite"), "nb", "office")?;
+    store.save(&edit("plan", vec![], "- start"))?;
+    store.publish_to(&office, 10)?;
+    // A publication and a status rewrite caught halfway: both write under a dot name first.
+    write(&office, "devices/office/log/.quire-half", "partial");
+    write(&office, "devices/office/.status-half", "{");
+    lab.sync_quire(&office)?;
+    let committed = lab.run(&office, &["ls-files"]);
+    assert!(committed.contains("devices/office/log/"), "{committed}");
+    assert!(!committed.contains("-half"), "{committed}");
+    assert_eq!(
+        lab.run(&office, &["status", "--porcelain"]),
+        "?? devices/office/.status-half\n?? devices/office/log/.quire-half"
+    );
+    Ok(())
+}

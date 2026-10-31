@@ -237,6 +237,7 @@ pub(in crate::editor_host) fn open_location(
             database,
             notebook,
             writer,
+            folder,
         } => {
             let page = crate::navigation::WorkspaceFile::beside(database, notebook)
                 .load()
@@ -248,6 +249,7 @@ pub(in crate::editor_host) fn open_location(
                 notebook: notebook.clone(),
                 writer: writer.clone(),
                 page,
+                folder: folder.clone(),
             }
             .open(cx)
         }

@@ -6,6 +6,7 @@ pub mod folder_attachment;
 pub mod folder_notebook;
 pub mod git_sync;
 pub mod index;
+pub mod live_sync;
 pub mod markdown_import;
 pub mod notebook;
 pub mod notebook_lock;

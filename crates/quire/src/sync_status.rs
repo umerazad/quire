@@ -14,6 +14,7 @@ use quire_store::{
     git_sync::{self, Git, Target},
     profiles::{Notebook, Profile, ProfileId},
     provider::{self, Provider, Scan},
+    worker::StorageClient,
 };
 use std::{
     path::PathBuf,
@@ -36,11 +37,30 @@ gpui::actions!(
 );
 
 pub const BUSY: &str = "Git sync is already running. Wait for it to finish.";
-pub const NO_FOLDER: &str = "Git sync and provider checks work on folder notebooks. Open the notebook's folder to sync it with Git.";
+pub const NO_FOLDER: &str = "Git sync and provider checks need the notebook's folder. Open a folder notebook, or a Quire notebook with its synced folder, to sync it with Git.";
 pub const NOT_PERSONAL: &str = "Git sync is available only in Personal, so Work notes never reach a personal remote. Choose File > Profile > Personal and open this notebook there, then enter the remote.";
 
 /// A Git sync changed notes in the folder: the window rereads them.
 pub struct Synced;
+
+/// What the synced folder holds, which decides how a Git sync backs it up and merges it.
+#[derive(Clone)]
+pub enum Kind {
+    /// A Markdown folder notebook, with Quire's state folder for it in application data.
+    Folder { state: PathBuf },
+    /// A Quire notebook's synced folder. Its saves publish there before each Git sync, and
+    /// other computers' change files merge in Git because each writer adds only its own.
+    Quire {
+        database: PathBuf,
+        client: StorageClient,
+    },
+}
+
+/// Why a Git sync stopped before Git ran.
+enum Stopped {
+    Backup(String),
+    Publication(String),
+}
 
 fn now_millis() -> u64 {
     SystemTime::now()
@@ -52,8 +72,8 @@ pub struct SyncStatus {
     root: Option<PathBuf>,
     /// The notebook, whose profile keeps the remote and the last push.
     notebook: Option<Notebook>,
-    /// Quire's state folder for a folder notebook, for the backup before each sync.
-    state: Option<PathBuf>,
+    /// How the folder is backed up and merged.
+    kind: Option<Kind>,
     git: Git,
     provider: Option<Provider>,
     scan: Option<Result<Scan, String>>,
@@ -70,18 +90,18 @@ impl EventEmitter<Synced> for SyncStatus {}
 
 impl SyncStatus {
     pub fn new(
-        root: Option<(PathBuf, PathBuf)>,
+        root: Option<(PathBuf, Kind)>,
         notebook: Option<Notebook>,
         git: Git,
         label: Rc<dyn Fn(i64) -> String>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (root, state) = root.unzip();
+        let (root, kind) = root.unzip();
         let mut this = Self {
             provider: root.as_deref().and_then(provider::detect),
             root,
             notebook,
-            state,
+            kind,
             git,
             scan: None,
             warnings: Vec::new(),
@@ -127,9 +147,15 @@ impl SyncStatus {
             return;
         };
         let git = self.git.clone();
+        let folder = matches!(self.kind, Some(Kind::Folder { .. }));
         let work = cx.background_spawn(async move {
             let scan = provider::scan(&root).map_err(|error| format!("{error:#}"));
-            (scan, git_sync::protect_notebook(&git, &root))
+            let warnings = if folder {
+                git_sync::protect_notebook(&git, &root)
+            } else {
+                Vec::new()
+            };
+            (scan, warnings)
         });
         cx.spawn(async move |this, cx| {
             let (scan, warnings) = work.await;
@@ -215,7 +241,7 @@ impl SyncStatus {
         if self.is_running() {
             return self.finish(BUSY, cx);
         }
-        let (Some(root), Some(state)) = (self.root.clone(), self.state.clone()) else {
+        let (Some(root), Some(kind)) = (self.root.clone(), self.kind.clone()) else {
             return self.finish(NO_FOLDER, cx);
         };
         let Some(ProfileId::Personal) = self.profile(cx) else {
@@ -235,33 +261,48 @@ impl SyncStatus {
         let git = self.git.clone();
         let at = now_millis();
         let work = cx.background_spawn(async move {
+            let source = match &kind {
+                Kind::Folder { state } => Source::Folder {
+                    root: root.clone(),
+                    state: state.clone(),
+                },
+                Kind::Quire { database, .. } => Source::Store {
+                    database: database.clone(),
+                },
+            };
             let backed_up = profile
                 .backup_folder
                 .map(|folder| {
-                    let source = Source::Folder {
-                        root: root.clone(),
-                        state,
-                    };
                     backup::create(&source, &folder, at)
                         .map(|made| (made.created, made.path))
-                        .map_err(|error| format!("{error:#}"))
+                        .map_err(|error| Stopped::Backup(format!("{error:#}")))
                 })
                 .transpose()?;
+            if let Kind::Quire { client, .. } = &kind {
+                crate::live_sync::publish_all(client.clone(), root.clone(), at)
+                    .await
+                    .0
+                    .map_err(Stopped::Publication)?;
+            }
             let target = Target {
                 profile: ProfileId::Personal.git(),
                 root: &root,
                 remote: profile.git_remote.as_deref(),
             };
-            let synced =
-                git_sync::sync_folder(&git, &target, at).map_err(|error| format!("{error:#}"));
-            Ok::<_, String>((backed_up, synced))
+            let synced = match kind {
+                Kind::Folder { .. } => git_sync::sync_folder(&git, &target, at),
+                Kind::Quire { .. } => git_sync::sync_quire(&git, &target, at),
+            }
+            .map_err(|error| format!("{error:#}"));
+            Ok::<_, Stopped>((backed_up, synced))
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             this.update(cx, |this, cx| {
                 let backup = match &result {
                     Ok((made, _)) => made.clone().map(Ok),
-                    Err(error) => Some(Err(error.clone())),
+                    Err(Stopped::Backup(error)) => Some(Err(error.clone())),
+                    Err(Stopped::Publication(_)) => None,
                 };
                 if let Some(outcome) = backup {
                     crate::profiles::update(cx, |profiles| {
@@ -270,8 +311,11 @@ impl SyncStatus {
                     .ok();
                 }
                 let message = match result {
-                    Err(error) => format!(
+                    Err(Stopped::Backup(error)) => format!(
                         "Git sync did not run because the backup before it failed: {error}. Fix the backup folder in Backups…, then sync again."
+                    ),
+                    Err(Stopped::Publication(error)) => format!(
+                        "Git sync did not run because saved changes could not be published to the synced folder first: {error}. They stay saved on this computer; make the folder available, then sync again."
                     ),
                     Ok((_, Ok(pushed))) => {
                         this.record_git(Ok(pushed.at), cx);
