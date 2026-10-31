@@ -290,7 +290,7 @@ fn zoom_reaches_the_settings_help_migration_and_readme_windows(cx: &mut TestAppC
     let notebook = open_notebook(&[("plan", "Plan.md", PLAN)], "plan", cx);
     let data = tempfile::tempdir().unwrap();
     let windows: [gpui::AnyWindowHandle; 4] = [
-        cx.add_window(|window, cx| crate::preferences::view::PreferencesWindow::new(window, cx))
+        cx.add_window(crate::preferences::view::PreferencesWindow::new)
             .into(),
         cx.add_window(|window, cx| crate::help::view::HelpWindow::new(false, window, cx))
             .into(),

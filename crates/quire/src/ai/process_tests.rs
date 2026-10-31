@@ -66,10 +66,13 @@ impl Bench {
         }
     }
 
+    /// The calls the fake CLI has logged so far. A line the CLI is still writing has no newline
+    /// yet and is left for a later read.
     pub fn calls(&self) -> Vec<serde_json::Value> {
         std::fs::read_to_string(self.log())
             .unwrap_or_default()
-            .lines()
+            .split_inclusive('\n')
+            .filter_map(|line| line.strip_suffix('\n'))
             .map(|line| serde_json::from_str(line).unwrap())
             .collect()
     }

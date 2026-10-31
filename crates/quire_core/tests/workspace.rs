@@ -398,6 +398,6 @@ fn an_ask_the_notebook_tab_survives_save_and_load_in_the_reference_form() {
         "{saved}"
     );
     let loaded = Workspace::load(&saved);
-    assert_eq!(loaded.tabs, [ai.clone()]);
+    assert_eq!(loaded.tabs, std::slice::from_ref(&ai));
     assert_eq!(loaded.active, Some(ai));
 }
