@@ -138,6 +138,9 @@ mod showcase;
 mod tag_labels;
 
 #[cfg(feature = "full-editor")]
+mod motion;
+
+#[cfg(feature = "full-editor")]
 mod script_fonts;
 
 #[cfg(feature = "full-editor")]

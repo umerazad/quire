@@ -654,6 +654,7 @@ pub fn run() {
         if let Some(line) = crate::rt_migration::import_ai_settings(paths::data_dir(), cx) {
             crate::outline::show_notice(line, cx);
         }
+        crate::motion::init(cx);
         crate::app_menus::refresh(cx);
         if let Some(listener) = listener {
             serve_launches(listener, cx);

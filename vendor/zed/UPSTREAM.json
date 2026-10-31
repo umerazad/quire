@@ -243,6 +243,10 @@
       "change": "Reject insertion of a different source buffer into a single-page shared-history excerpt before changing its excerpt map. Disable generic context expansion for these page embeds; their host owns the semantic range."
     },
     {
+      "path": "crates/editor/src/blink_manager.rs",
+      "change": "Hold the cursor steady while App::reduce_motion is set, as the editor already does for cursor glides, so the system Reduce motion setting stops the blink. Covered by quire's motion test."
+    },
+    {
       "path": "crates/editor/src/display_map/tab_map.rs",
       "change": "Skip empty fold chunks when seeking tab stops, avoiding a zero-length subtraction overflow with empty replacement text. Add a focused UTF-8/tab regression with empty fold placeholders."
     },

@@ -78,6 +78,11 @@ serde_json.workspace = true
 tree-sitter-md.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+block2.workspace = true
+objc2-app-kit = { workspace = true, features = ["NSAccessibility", "NSWorkspace"] }
+objc2-foundation = { workspace = true, features = ["NSNotification", "NSOperation", "NSString", "block2"] }
+
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 gpui_apple.workspace = true
 
