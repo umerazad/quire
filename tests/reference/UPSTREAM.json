@@ -323,5 +323,62 @@
       "bun": "1.4.2",
       "source": "7 handwritten export notebooks (the rt test plus cycles, re-indented block embeds, media and escapes, a malformed escape, Unicode and duplicates, front matter) and 40 seeded ones; 3 attachment rewrites; 7 export names; 4 import folders including the rt engine case and an unusable path."
     }
+  },
+  "roam_extractions": {
+    "repository": "rt",
+    "revision": "5ea5c22310fff0c3d97f069930500fd85067fa96",
+    "files": [
+      {
+        "source": "src/core/roam.ts",
+        "source_sha256": "1ae2df04b9550a6a85ddf380afba162dcaea4b6a9fe866a17763c3cc5efda920",
+        "destination": "core/roam.ts",
+        "sha256": "c3e06e8f46405b654e3af988c51f2b845dd7dea27aa1274377e3be2f4026be0e",
+        "change": "Copied unchanged except the import path ./roam-markdown (the frozen Markdown functions, recording each references and parseBlocks call, with counted identifiers)."
+      },
+      {
+        "source": "src/core/roam-edn.ts",
+        "source_sha256": "82213f588dbed0ca526d9edd3311c23852d26d278b55ffcc86a499e677f3081e",
+        "destination": "core/roam-edn.ts",
+        "sha256": "82213f588dbed0ca526d9edd3311c23852d26d278b55ffcc86a499e677f3081e",
+        "change": "Copied unchanged."
+      },
+      {
+        "source": "src/core/edn.ts",
+        "source_sha256": "0a36612a8002decf20793c229faf420d3cdaf8294d48a635d3f629ef5236f5ff",
+        "destination": "core/edn.ts",
+        "sha256": "0a36612a8002decf20793c229faf420d3cdaf8294d48a635d3f629ef5236f5ff",
+        "change": "Copied unchanged."
+      },
+      {
+        "source": "(new)",
+        "destination": "core/roam-markdown.ts",
+        "sha256": "20534d06975b47be058a70e4253e34e130dd73674819ef29cb21aa3873e6a2e2",
+        "change": "Re-exports the frozen Markdown functions roam.ts imports. references returns a copy, because roam.ts reverses the result in place and would reorder the parser's cached array for a later call with the same text (an rt defect the port does not reproduce); newId counts from a settable start instead of drawing random UUIDs."
+      }
+    ],
+    "test": {
+      "sources": [
+        {
+          "source": "tests/import.test.ts",
+          "source_sha256": "fba9daa97535bab50c1283426b8feabd65a5e1de8542324cb432bc7fe93d4be6",
+          "destination": "roam-import.test.ts",
+          "sha256": "e60d619ac7ade580648fe9b76cbd7fafbc0717f00d0fe2505dcdf1f1b14a8e05"
+        },
+        {
+          "source": "tests/roam-edn.test.ts",
+          "source_sha256": "316549534e7d1f057f8f793eb16acb11e98cbca229eb5b98ada5489c2b35d930",
+          "destination": "roam-edn.test.ts",
+          "sha256": "3e5190d7796227b1b34dae6246688f40b227bc10caf5832b0ebef1b285865e1f"
+        }
+      ],
+      "change": "Copied unchanged except import paths, so rt's Roam JSON and EDN expectations rerun through the frozen code. The file cases in tests/roam-files.test.ts and tests/roam-worker.test.ts are ported as Rust store and GPUI tests."
+    },
+    "vectors": {
+      "tool": "tools/roam-vectors.ts",
+      "output": "tests/fixtures/roam-vectors.json",
+      "sha256": "f5d765b0171610b3c9ee8f43c8f9e4166927922fb4af9ee06d3787127ccb5363",
+      "bun": "1.4.2",
+      "source": "JSON imports (rt's import.test.ts inputs, malformed graphs, depth limits, macros, list markers and fences, titles, attribute order, number forms, duplicate keys, escapes, JavaScript replacement patterns, and 30 seeded graphs); EDN imports (rt's roam-edn, roam-files and roam-worker inputs, invalid databases, ordering, recovery, aliases and users, and 20 seeded databases); EDN reads; and JSON exports (rt's cases, front matter, gaps, CRLF and links, invalid metadata, and round trips of the imports with and without edits)."
+    }
   }
 }

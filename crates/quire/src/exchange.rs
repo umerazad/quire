@@ -1,6 +1,9 @@
-//! Markdown import and export: the commands, the status line that shows a running import or
-//! export with its Cancel button, and the notebook reads a page export flattens over. Planning
-//! comes from `quire_core::exchange`; writes go through `quire_store::markdown_import`.
+//! Markdown and Roam import and export: the commands, the status line that shows a running import
+//! or export with its Cancel button, and the notebook reads a page export flattens over. Planning
+//! comes from `quire_core::exchange`; writes go through `quire_store::markdown_import` and
+//! `quire_store::roam_files`.
+
+pub mod roam;
 
 use crate::{
     notebook_backend::NotebookBackend, notebook_session::OpenPage, page_writes, query_index::ask,
@@ -34,6 +37,10 @@ gpui::actions!(
         ExportPageMarkdown,
         /// Writes every page and file of this notebook into a folder as Markdown.
         ExportNotebookMarkdown,
+        /// Reads a Roam JSON or EDN export into a new folder notebook and opens it.
+        ImportRoamData,
+        /// Writes every page of this notebook into a Roam JSON file.
+        ExportRoamJson,
         /// Stops the running import or export before it writes anything.
         CancelExchange,
     ]

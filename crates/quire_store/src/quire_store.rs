@@ -7,6 +7,7 @@ pub mod folder_notebook;
 pub mod index;
 pub mod markdown_import;
 pub mod notebook;
+pub mod roam_files;
 mod schema;
 pub mod sync;
 pub mod worker;

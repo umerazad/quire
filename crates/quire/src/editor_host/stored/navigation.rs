@@ -829,6 +829,10 @@ mod file_tests;
 mod exchange_tests;
 
 #[cfg(test)]
+#[path = "roam_tests.rs"]
+mod roam_tests;
+
+#[cfg(test)]
 #[path = "move_tests.rs"]
 mod move_tests;
 

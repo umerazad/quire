@@ -12,7 +12,7 @@ path = "src/quire_core.rs"
 jiff = "=0.2.15"
 unicode-normalization = "=0.1.25"
 serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["unbounded_depth", "float_roundtrip"] }
 ryu-js = "=1.0.2"
 regex = { workspace = true, features = ["unicode-gencat"] }
 icu_collator = "=2.3.0"

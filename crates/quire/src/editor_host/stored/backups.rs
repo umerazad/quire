@@ -97,7 +97,7 @@ impl StoredWindow {
             .open(cx),
             Location::Folder { root, state } => {
                 let path = page.path(cx).filter(|path| root.join(path).is_file());
-                folder::open_folder_window(root, state, path, cx)
+                folder::show_folder_window(root, state, path, Vec::new(), cx)
             }
         };
         match opened {
