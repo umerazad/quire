@@ -158,8 +158,8 @@ pub struct Tidied {
     pub refused: Vec<Refusal>,
 }
 
-/// Keeps the allowed changes of `proposed` to `original`, line by line. Lines added or deleted
-/// are refused, and blank-line differences are ignored.
+/// Keeps the allowed changes of `proposed` to `original`, pairing changed lines in order. Lines
+/// added or deleted are refused, and blank lines are left as they were.
 pub fn filter(
     original: &str,
     proposed: &str,
@@ -172,19 +172,20 @@ pub fn filter(
     let mut changed = 0;
     let mut refused = Vec::new();
     let mut refuse = |line: &str, reason: &str| {
-        if !line.trim().is_empty() {
-            refused.push(Refusal {
-                line: line.to_owned(),
-                reason: reason.to_owned(),
-            });
-        }
+        refused.push(Refusal {
+            line: line.to_owned(),
+            reason: reason.to_owned(),
+        })
     };
     for region in diff_regions(&before, &after) {
-        let removed = region.a_start..region.a_end;
-        let added = region.b_start..region.b_end;
+        let written = |range: std::ops::Range<usize>, lines: &[&str]| -> Vec<usize> {
+            range.filter(|at| !lines[*at].trim().is_empty()).collect()
+        };
+        let removed = written(region.a_start..region.a_end, &before);
+        let added = written(region.b_start..region.b_end, &after);
         let paired = removed.len().min(added.len());
-        for offset in 0..paired {
-            let (at, new) = (region.a_start + offset, after[region.b_start + offset]);
+        for (&at, &new) in removed.iter().zip(&added) {
+            let new = after[new];
             match check_line(before[at], new, &exists, &is_daily) {
                 Ok(line) if line != before[at] => {
                     lines[at] = line;
@@ -194,10 +195,10 @@ pub fn filter(
                 Err(reason) => refuse(new, &reason),
             }
         }
-        for at in removed.skip(paired) {
+        for &at in &removed[paired..] {
             refuse(before[at], REMOVED_LINE);
         }
-        for at in added.skip(paired) {
+        for &at in &added[paired..] {
             refuse(after[at], ADDED_LINE);
         }
     }

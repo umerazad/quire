@@ -293,6 +293,16 @@ fn tidy_keeps_allowed_lines_restores_ids_and_refuses_the_rest() {
     assert_eq!(id.refused[0].reason, tidy::CHANGED_ID);
     let bullet = tidy::filter("- Atlas", "* [[Atlas]]", exists, is_daily);
     assert_eq!(bullet.text, "- Atlas");
+    let trailing = tidy::filter("- Atlas\n", "- [[Atlas]]\n- extra", exists, is_daily);
+    assert_eq!(trailing.text, "- [[Atlas]]\n");
+    assert_eq!(
+        trailing.refused,
+        [tidy::Refusal {
+            line: "- extra".into(),
+            reason: tidy::ADDED_LINE.into()
+        }],
+        "a page's trailing blank line never pairs with an added line"
+    );
 }
 
 #[test]
