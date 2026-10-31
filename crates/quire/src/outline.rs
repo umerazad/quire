@@ -435,11 +435,17 @@ const LITERAL: &[&str] = &[
     "setext_heading",
 ];
 
-/// Whether the position is inside code, a table, raw HTML, or a heading, which keep their text.
+/// Whether the character before the position is in code, a table, raw HTML, or a heading, which
+/// keep their text, so a caret right after a closing backtick counts as inside. At a line start
+/// the line itself decides.
 fn literal(buffer: &Entity<language::Buffer>, position: usize, cx: &App) -> bool {
     let snapshot = buffer.read(cx).snapshot();
+    let before = match snapshot.reversed_chars_at(position).next() {
+        Some('\n') | None => position,
+        Some(_) => position - 1,
+    };
     snapshot.syntax_layers().any(|layer| {
-        let mut node = layer.node().descendant_for_byte_range(position, position);
+        let mut node = layer.node().descendant_for_byte_range(before, position);
         while let Some(current) = node {
             if LITERAL.contains(&current.kind()) {
                 return true;
