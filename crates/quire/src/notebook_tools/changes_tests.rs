@@ -506,10 +506,11 @@ fn the_review_window_labels_diffs_applies_and_undoes_terminal_changes(cx: &mut T
         ]
     );
     let window = review_window(cx);
-    window.update(cx, |view, _, cx| view.apply_all(cx)).unwrap();
+    let changes_list = window.read_with(cx, |view, _| view.list.clone()).unwrap();
+    changes_list.update(cx, |list, cx| list.apply_all(cx));
     wait_for(cx, |cx| {
         window
-            .read_with(cx, |view, _| view.error.is_some())
+            .read_with(cx, |view, cx| view.list.read(cx).error.is_some())
             .unwrap()
     });
     let changes = list(cx);
@@ -522,7 +523,7 @@ fn the_review_window_labels_diffs_applies_and_undoes_terminal_changes(cx: &mut T
     );
     assert_eq!(status_text(&changes[0]), "Applied");
     let error = window
-        .read_with(cx, |view, _| view.error.clone())
+        .read_with(cx, |view, cx| view.list.read(cx).error.clone())
         .unwrap()
         .unwrap();
     assert!(
@@ -531,7 +532,7 @@ fn the_review_window_labels_diffs_applies_and_undoes_terminal_changes(cx: &mut T
     );
     for at in [1, 0] {
         let id = changes[at].id.clone();
-        window.update(cx, |view, _, cx| view.undo(&id, cx)).unwrap();
+        changes_list.update(cx, |list, cx| list.undo(&id, cx));
         wait_for(cx, |cx| list(cx)[at].status == Status::Undone);
     }
     assert_eq!(status_text(&list(cx)[0]), "Undone");

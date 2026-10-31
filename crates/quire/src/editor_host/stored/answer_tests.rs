@@ -12,8 +12,12 @@ use crate::ai::{
     proposal::tests::{Ai, ended, notice, setup, started},
     proposal::{self, Invocation},
 };
+use crate::notebook_tools::{
+    changes::{self, Status as ChangeStatus},
+    review::{ChangeList, label},
+};
 use gpui::TestAppContext;
-use quire_core::ai::ask::DEFAULT_SYNTHESIS;
+use quire_core::ai::{ask::DEFAULT_SYNTHESIS, tools::Writes};
 
 /// 2026-10-30T12:00:00Z, a date every inhabited time zone shares at that instant.
 const NOW: i64 = 1_793_361_600_000;
@@ -473,6 +477,212 @@ async fn a_question_shows_each_tool_call_as_a_row_that_becomes_its_summary(
     );
     assert!(tools.iter().all(|row| row.done && !row.failed), "{tools:?}");
     assert!(rendered.contains("[Fruit](quire-page:Fruit)"), "{rendered}");
+}
+
+fn turn_changes(notebook: &Notebook, index: usize, cx: &mut TestAppContext) -> Entity<ChangeList> {
+    let pane = pane(notebook, cx);
+    cx.read(|cx| pane.read(cx).turns[index].changes.clone())
+        .and_then(|view| view.downcast::<ChangeList>().ok())
+        .expect("the turn has a change list")
+}
+
+/// Each change in `list`: its ID, label, and status.
+fn listed(
+    list: &Entity<ChangeList>,
+    cx: &mut TestAppContext,
+) -> Vec<(String, String, ChangeStatus)> {
+    cx.read(|cx| {
+        list.read(cx)
+            .changes(cx)
+            .into_iter()
+            .map(|change| (change.id, label(&change.request), change.status))
+            .collect()
+    })
+}
+
+fn page_text(notebook: &Notebook, cx: &mut TestAppContext) -> String {
+    page_editor(notebook, cx).read_with(cx, |editor, cx| editor.text(cx))
+}
+
+#[gpui::test]
+async fn a_questions_changes_wait_under_it_to_apply_reject_and_undo(cx: &mut TestAppContext) {
+    let (ai, notebook) = notebook(&FRUIT, "fruit", cx).await;
+    ai.answer_with_tools(
+        "I proposed two additions.",
+        serde_json::json!([
+            { "name": "append_block", "arguments": { "page": "Fruit", "text": "plums are sweet" } },
+            { "name": "append_block", "arguments": { "page": "Trees", "text": "Plant a plum" } },
+        ]),
+        cx,
+    );
+    run_ai(&notebook, "", cx);
+    type_question(&notebook, "Add plums", cx);
+    wait_done(&notebook, 0, cx);
+    let list = turn_changes(&notebook, 0, cx);
+    assert_eq!(
+        listed(&list, cx),
+        [
+            (
+                "change-1".into(),
+                "Add to [[Fruit]]".into(),
+                ChangeStatus::Staged
+            ),
+            (
+                "change-2".into(),
+                "Add to [[Trees]]".into(),
+                ChangeStatus::Staged
+            ),
+        ]
+    );
+    draw(&notebook, cx);
+    assert_eq!(
+        page_text(&notebook, cx),
+        FRUIT[0].2,
+        "staging leaves the page alone"
+    );
+    cx.update(|cx| changes::reject("change-2", cx));
+    list.update(cx, |list, cx| list.apply("change-1", cx));
+    wait_until(cx, "the applied change", |cx| {
+        listed(&list, cx)[0].2 == ChangeStatus::Applied
+    });
+    assert_eq!(listed(&list, cx)[1].2, ChangeStatus::Rejected);
+    assert_eq!(
+        page_text(&notebook, cx),
+        format!("{}- plums are sweet\n", FRUIT[0].2)
+    );
+    list.update(cx, |list, cx| list.undo("change-1", cx));
+    wait_until(cx, "the undone change", |cx| {
+        listed(&list, cx)[0].2 == ChangeStatus::Undone
+    });
+    assert_eq!(page_text(&notebook, cx), FRUIT[0].2);
+    assert_eq!(stored_text(&notebook, "trees").unwrap(), FRUIT[1].2);
+    draw(&notebook, cx);
+}
+
+#[gpui::test]
+async fn apply_all_applies_a_questions_staged_changes_and_reports_a_stale_one(
+    cx: &mut TestAppContext,
+) {
+    let (ai, notebook) = notebook(&FRUIT, "fruit", cx).await;
+    ai.answer_with_tools(
+        "Proposed.",
+        serde_json::json!([
+            { "name": "append_block", "arguments": { "page": "Trees", "text": "Plant a plum" } },
+            { "name": "replace_block", "arguments": { "id": "b-apple", "text": "apples are crisp" } },
+        ]),
+        cx,
+    );
+    run_ai(&notebook, "", cx);
+    type_question(&notebook, "Tidy fruit", cx);
+    wait_done(&notebook, 0, cx);
+    let list = turn_changes(&notebook, 0, cx);
+    wait_until(cx, "both changes", |cx| listed(&list, cx).len() == 2);
+    let editor = page_editor(&notebook, cx);
+    cx.update_window(notebook.window.into(), |_, window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.move_to_beginning(&editor::actions::MoveToBeginning, window, cx);
+            editor.move_to_end_of_line(&Default::default(), window, cx);
+            editor.insert("!", window, cx);
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    list.update(cx, |list, cx| list.apply_all(cx));
+    wait_until(cx, "Apply all", |cx| {
+        cx.read(|cx| list.read(cx).error.is_some())
+    });
+    assert_eq!(
+        cx.read(|cx| list.read(cx).error.clone()).unwrap(),
+        format!("1 of 2 changes did not apply: {}", changes::STALE)
+    );
+    assert_eq!(
+        listed(&list, cx)
+            .into_iter()
+            .map(|(_, _, status)| status)
+            .collect::<Vec<_>>(),
+        [ChangeStatus::Applied, ChangeStatus::Staged]
+    );
+    assert!(page_text(&notebook, cx).starts_with("- apples are good and tasty ^b-apple!"));
+}
+
+#[gpui::test]
+async fn with_ai_writes_on_apply_a_questions_changes_apply_at_once_and_undo(
+    cx: &mut TestAppContext,
+) {
+    let (ai, notebook) = notebook(&FRUIT, "fruit", cx).await;
+    cx.update(|cx| crate::ai::settings::set_writes(Writes::Apply, cx));
+    cx.run_until_parked();
+    ai.answer_with_tools(
+        "Added.",
+        serde_json::json!([
+            { "name": "append_block", "arguments": { "page": "Fruit", "text": "figs" } },
+        ]),
+        cx,
+    );
+    run_ai(&notebook, "", cx);
+    type_question(&notebook, "Add figs", cx);
+    wait_done(&notebook, 0, cx);
+    let applied: serde_json::Value =
+        serde_json::from_str(ai.tool_calls()[0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(applied["status"], "applied");
+    assert!(
+        ai.bench.calls().iter().any(|call| call["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|arg| arg.as_str().unwrap().contains("apply at once"))),
+        "the run's rules say writes apply at once"
+    );
+    let list = turn_changes(&notebook, 0, cx);
+    assert_eq!(
+        listed(&list, cx),
+        [(
+            "change-1".into(),
+            "Add to [[Fruit]]".into(),
+            ChangeStatus::Applied
+        )]
+    );
+    assert_eq!(page_text(&notebook, cx), format!("{}- figs\n", FRUIT[0].2));
+    list.update(cx, |list, cx| list.undo("change-1", cx));
+    wait_until(cx, "the undone change", |cx| {
+        listed(&list, cx)[0].2 == ChangeStatus::Undone
+    });
+    assert_eq!(page_text(&notebook, cx), FRUIT[0].2);
+}
+
+#[gpui::test]
+async fn the_pane_lists_changes_from_a_terminal(cx: &mut TestAppContext) {
+    let (_ai, notebook) = notebook(&FRUIT, "fruit", cx).await;
+    run_ai(&notebook, "", cx);
+    let pane = pane(&notebook, cx);
+    let terminal = cx
+        .read(|cx| pane.read(cx).terminal.clone())
+        .and_then(|view| view.downcast::<ChangeList>().ok())
+        .unwrap();
+    assert!(listed(&terminal, cx).is_empty());
+    let call = crate::notebook_tools::bridge::Call {
+        name: "append_block".into(),
+        input: serde_json::json!({ "page": "Trees", "text": "From the terminal" }),
+        run: None,
+        writes: Writes::Review,
+    };
+    let staged = cx.update(|cx| crate::notebook_tools::host::answer(call, cx));
+    let result = std::rc::Rc::new(std::cell::RefCell::new(None));
+    cx.spawn({
+        let result = result.clone();
+        async move |_| *result.borrow_mut() = Some(staged.await)
+    })
+    .detach();
+    wait_until(cx, "the terminal call", |_| result.borrow().is_some());
+    assert_eq!(
+        listed(&terminal, cx),
+        [(
+            "change-1".into(),
+            "Add to [[Trees]]".into(),
+            ChangeStatus::Staged
+        )]
+    );
+    draw(&notebook, cx);
 }
 
 #[gpui::test]

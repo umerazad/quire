@@ -13,8 +13,8 @@ use ::settings::Settings as _;
 use editor::Editor;
 use futures::{StreamExt as _, channel::oneshot};
 use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle, SharedString, Task,
-    Window, prelude::*,
+    AnyView, App, Context, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle,
+    SharedString, Task, Window, prelude::*,
 };
 use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use quire_core::ai::{
@@ -123,6 +123,8 @@ pub enum Status {
 }
 
 pub struct TurnView {
+    /// The changes it proposed, where the notebook tools exist.
+    pub changes: Option<AnyView>,
     pub question: String,
     first: bool,
     pub context: Vec<String>,
@@ -146,6 +148,8 @@ pub struct AnswerPane {
     pub input: Entity<Editor>,
     pub editing_synthesis: bool,
     pub notice: Option<SharedString>,
+    /// Changes from terminal sessions, where the notebook tools exist.
+    pub terminal: Option<AnyView>,
     focus: FocusHandle,
     scroll: ScrollHandle,
 }
@@ -191,6 +195,28 @@ async fn label_blocks(ids: Vec<String>, index: Option<IndexClient>) -> Vec<(Stri
     labels
 }
 
+/// The changes run `run` proposed, or with None those from terminal sessions, where the
+/// notebook tools exist.
+fn change_list(run: Option<&str>, cx: &mut App) -> Option<AnyView> {
+    #[cfg(unix)]
+    {
+        use crate::notebook_tools::{
+            changes::TERMINAL_RUN,
+            review::{ChangeList, RUN_TITLE, TERMINAL_TITLE},
+        };
+        let list = match run {
+            Some(run) => ChangeList::for_run(run, RUN_TITLE, cx),
+            None => ChangeList::for_run(TERMINAL_RUN, TERMINAL_TITLE, cx),
+        };
+        Some(list.into())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (run, cx);
+        None
+    }
+}
+
 /// Why questions cannot run now, or None.
 pub fn blocked(cx: &App) -> Option<&'static str> {
     (!settings::is_on(cx)).then(|| {
@@ -232,6 +258,7 @@ impl AnswerPane {
             input,
             editing_synthesis: synthesis,
             notice: blocked(cx).map(SharedString::from),
+            terminal: change_list(None, cx),
             focus: cx.focus_handle(),
             scroll: ScrollHandle::new(),
         };
@@ -298,6 +325,7 @@ impl AnswerPane {
         let run = format!("ask-{}", uuid::Uuid::new_v4().simple());
         let markdown = cx.new(|cx| Markdown::new(SharedString::default(), None, None, cx));
         self.turns.push(TurnView {
+            changes: change_list(Some(&run), cx),
             question: question.clone(),
             first,
             context: ask_context_summary(range.as_ref(), None),
@@ -738,6 +766,7 @@ impl AnswerPane {
             }))
             .child(body)
             .child(actions)
+            .children(turn.changes.clone())
     }
 }
 
@@ -877,6 +906,7 @@ impl Render for AnswerPane {
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
+                    .children(self.terminal.clone())
                     .children(presets)
                     .children(turns),
             )
