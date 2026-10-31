@@ -219,3 +219,106 @@ for (let seed = 0; seed < 120; seed++) {
 
 writeFileSync("tests/fixtures/relocate-vectors.json", "[\n" + cases.map((item) => JSON.stringify(item)).join(",\n") + "\n]\n");
 console.log(`Generated ${cases.length} relocation vectors from the frozen planRelocation.`);
+
+// Folder moves, which the reference has no command for, are defined as the reference moving each
+// page of the folder in turn, in path order, on the notebook the previous move left. Pages keep
+// their file names, so the title a reference move records in front matter is taken out again.
+function withoutRecordedTitle(before: string, after: string, title: string) {
+  const line = `title: ${JSON.stringify(title)}\n`;
+  const metadata = /^﻿?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(before);
+  if (!metadata) {
+    const prefix = `---\n${line}---\n\n`;
+    if (!after.startsWith(prefix)) throw new Error("expected a recorded title block");
+    return after.slice(prefix.length);
+  }
+  if (/^title:/m.test(metadata[1])) return after;
+  const opener = /^﻿?---\r?\n/.exec(after)![0];
+  if (!after.slice(opener.length).startsWith(line)) throw new Error("expected a recorded title line");
+  return opener + after.slice(opener.length + line.length);
+}
+
+function folderVector(name: string, pages: Page[], folder: string, target: string) {
+  const normalized = pages.map((page) => ({ path: page.path, text: editorText(page.text) }));
+  const model = notebook(normalized);
+  const resolutions: Record<string, string | null> = {};
+  for (const page of normalized)
+    for (const reference of references(page.text)) {
+      const hash = reference.target.indexOf("#");
+      const base = hash < 0 ? reference.target : reference.target.slice(0, hash);
+      resolutions[base] = model.findPage(base) ?? null;
+    }
+  let current = new Map(normalized.map((page) => [page.path, page.text]));
+  const moves = normalized.map((page) => page.path).filter((path) => path.startsWith(folder + "/")).sort();
+  let result: unknown;
+  try {
+    for (const source of moves) {
+      const step = notebook([...current].map(([path, text]) => ({ path, text })));
+      const destination = target + source.slice(folder.length);
+      const plan = planRelocation(step, source, destination);
+      const next = new Map(current);
+      next.delete(source);
+      for (const edit of plan.edits.filter((edit) => !edit.remove))
+        next.set(
+          edit.path,
+          edit.path === plan.target
+            ? withoutRecordedTitle(current.get(source)!, edit.text, step.title(source))
+            : edit.text,
+        );
+      current = next;
+    }
+    const original = new Map(normalized.map((page) => [page.path, page.text]));
+    result = {
+      texts: Object.fromEntries([...current].filter(([path, text]) => original.get(path) !== text)),
+    };
+  } catch (error) {
+    result = { error: String(error).replace(/^Error: /, "") };
+  }
+  return {
+    name,
+    folder,
+    target,
+    titles: normalized.map((page) => [page.path, model.title(page.path)]),
+    resolutions,
+    pages: normalized.map((page) => {
+      const { codeRanges, urls } = analysis(page.text);
+      return { ...page, codeRanges: bytes(page.text, codeRanges), urls: bytes(page.text, urls) };
+    }),
+    result,
+  };
+}
+
+const folders: ReturnType<typeof folderVector>[] = [];
+const project = [
+  { path: "Projects/A.md", text: "- a ^ida [[B]] [b](B.md) [up](../Top.md) ![i](img/p.png) [[Projects/Deep/C]]\n" },
+  { path: "Projects/B.md", text: "---\ntags: [x]\n---\n- b [[A]] ![[A#^ida]] [a](<A.md#h>) [[Projects/Note]]\n" },
+  { path: "Projects/Deep/C.md", text: "- c [x](../A.md) [[Top]] ![[../img/q.png]]\n" },
+  { path: "Projects/Note.md", text: "---\ntitle: Shared\n---\n- dup\n" },
+  { path: "Other/Note.md", text: "---\ntitle: Shared\n---\n- other [[Shared]] [x](../Projects/Note.md)\n" },
+  { path: "Projects2/Z.md", text: "- [[Projects/A]] [z](../Projects/B.md) [[Z]]\n" },
+  { path: "Top.md", text: "- [[A]] [[Projects/B#^x]] [p](Projects/Deep/C.md) [[Shared]] `[c](Projects/A.md)`\n" },
+];
+for (const [name, target] of [["rename", "Work"], ["deeper", "Archive/Projects"], ["case-sibling", "Projects 3"], ["taken", "Other"], ["traversal", "../x"], ["reserved", "con"]] as const)
+  folders.push(folderVector(`folder-${name}`, project, "Projects", target));
+folders.push(folderVector("folder-nested", project, "Projects/Deep", "Deep"));
+folders.push(folderVector("folder-crlf", project.map((page) => ({ ...page, text: page.text.replaceAll("\n", "\r\n") })), "Projects", "Work"));
+
+// Seeded mixtures: every link form, aimed at pages inside the folder, from inside and outside.
+state = 0xf01de5;
+const inside = ["Notes/Old.md", "Notes/Old name.md", "Notes/Sub/Deep.md"];
+const outside = ["Links.md", "Deep/Sub/Links.md", "Notes2/Near.md"];
+for (let seed = 0; seed < 60; seed++) {
+  const texts = new Map<string, string>(inside.map((path, index) => [path, selfContent[(seed + index) % selfContent.length]]));
+  for (const linker of [...inside, ...outside]) {
+    const lines = Array.from({ length: 1 + random(4) }, () => {
+      const source = inside[random(inside.length)];
+      const title = pageTitle(source, texts.get(source) ?? "");
+      return "- " + Array.from({ length: 1 + random(3) }, () => linkText(forms[random(forms.length)], source, linker, title)).join(" ");
+    });
+    texts.set(linker, (texts.get(linker) ?? "") + lines.join("\n") + "\n");
+  }
+  texts.set("Other.md", "- other\n");
+  const target = ["Moved", `Renamed ${seed}`, `Deep/Notes ${seed}`, "Archive/Notes"][random(4)];
+  folders.push(folderVector(`folder-seeded-${seed}`, [...texts].map(([path, text]) => ({ path, text })), "Notes", target));
+}
+writeFileSync("tests/fixtures/folder-relocate-vectors.json", "[\n" + folders.map((item) => JSON.stringify(item)).join(",\n") + "\n]\n");
+console.log(`Generated ${folders.length} folder relocation vectors from the frozen planRelocation.`);

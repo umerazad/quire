@@ -440,15 +440,15 @@ fn a_rename_is_followed_until_the_page_list_shows_its_new_title(cx: &mut TestApp
         .update(cx, |view, _, cx| {
             // An overlay with the new path but the text from before the merge.
             view.nav.pages = vec![listed("Old")];
-            view.nav.renamed = Some(renamed.clone());
+            view.nav.renamed = vec![renamed.clone()];
             view.nav.catalogue = None;
             view.follow_rename(cx);
-            assert_eq!(view.nav.renamed.as_ref(), Some(&renamed));
+            assert_eq!(view.nav.renamed, std::slice::from_ref(&renamed));
             assert!(view.nav.catalogue.is_some(), "the page list is asked again");
 
             view.nav.pages = vec![listed("New")];
             view.follow_rename(cx);
-            assert_eq!(view.nav.renamed, None);
+            assert!(view.nav.renamed.is_empty());
         })
         .unwrap();
 }

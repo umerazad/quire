@@ -441,7 +441,7 @@ fn renaming_a_folder_page_moves_its_file_rewrites_links_and_keeps_its_tabs(
     });
     wait_until(cx, "the page list with the new name", |cx| {
         read(notebook, cx, |view, _| {
-            view.nav.renamed.is_none()
+            view.nav.renamed.is_empty()
                 && view.nav.title(&new) == Some("New name")
                 && view.nav.title(&old).is_none()
         })
@@ -541,6 +541,146 @@ fn a_rename_interrupted_by_a_crash_finishes_on_open_and_says_so(cx: &mut TestApp
         "- old [[New]]\n"
     );
     assert!(!opened.file("Old.md").exists());
+}
+
+/// A rename journal whose old note changed before the next open, so the change stays stuck.
+fn open_stuck(cx: &mut TestAppContext) -> FolderNotebook {
+    let old = "- old [[Old]]\n";
+    let journal = serde_json::json!({
+        "edits": [
+            {
+                "path": "New.md",
+                "text": "- old [[New]]\n",
+                "expectedRevision": null,
+                "historyFrom": "Old.md",
+            },
+            {
+                "path": "Old.md",
+                "text": "",
+                "expectedRevision": quire_store::folder_notebook::revision(old),
+                "remove": true,
+                "retirement": "0123456789abcdef0123456789abcdef",
+            },
+        ],
+        "createdAt": 1,
+    })
+    .to_string();
+    let opened = open_folder_with(
+        &[
+            ("Old.md", "- edited after the crash\n"),
+            ("Keep.md", "- keep\n"),
+        ],
+        &[("transactions/interrupted.json", &journal)],
+        "Keep.md",
+        cx,
+    );
+    opened
+        .notebook
+        .window
+        .update(cx, |view, _, cx| view.load_folder_notices(cx))
+        .unwrap();
+    wait_until(cx, "the stuck change", |cx| {
+        read(&opened.notebook, cx, |view, _| {
+            !view.folder.stuck.is_empty()
+        })
+    });
+    opened
+}
+
+fn resolve(
+    notebook: &Notebook,
+    resolution: super::folder::Resolution,
+    cx: &mut TestAppContext,
+) -> Vec<String> {
+    let before = read(notebook, cx, |view, _| view.folder.notices.len());
+    notebook
+        .window
+        .update(cx, |view, _, cx| {
+            view.resolve_stuck("interrupted.json".into(), resolution, cx)
+        })
+        .unwrap();
+    wait_until(cx, "the resolution", |cx| {
+        read(notebook, cx, |view, _| {
+            view.folder.resolving.is_none()
+                && (view.folder.notices.len() > before || view.folder.error.is_some())
+        })
+    });
+    read(notebook, cx, |view, _| {
+        view.folder
+            .notices
+            .iter()
+            .skip(before)
+            .map(|notice| notice.to_string())
+            .chain(view.folder.error.iter().map(|error| error.to_string()))
+            .collect()
+    })
+}
+
+#[gpui::test]
+fn a_stuck_change_is_listed_and_finishes_on_retry_once_its_note_is_put_back(
+    cx: &mut TestAppContext,
+) {
+    let opened = open_stuck(cx);
+    let notebook = &opened.notebook;
+    let summary = read(notebook, cx, |view, _| view.folder.stuck[0].summary());
+    assert_eq!(
+        summary,
+        "Changed since the change was planned: Old.md. Already updated: New.md."
+    );
+    draw(notebook, cx);
+    let refused = resolve(notebook, super::folder::Resolution::Retry, cx);
+    assert_eq!(refused.len(), 1);
+    assert!(refused[0].contains("Old.md"), "{refused:?}");
+    assert!(refused[0].ends_with("Put the note back or set the change aside."));
+    assert_eq!(
+        fs::read_to_string(opened.file("Old.md")).unwrap(),
+        "- edited after the crash\n",
+        "a retry never overwrites the newer note"
+    );
+
+    fs::write(opened.file("Old.md"), "- old [[Old]]\n").unwrap();
+    notebook
+        .window
+        .update(cx, |view, _, _| view.folder.error = None)
+        .unwrap();
+    assert_eq!(
+        resolve(notebook, super::folder::Resolution::Retry, cx),
+        ["Finished the interrupted change. Its notes and links are now saved."]
+    );
+    assert!(!opened.file("Old.md").exists());
+    assert_eq!(
+        fs::read_to_string(opened.file("New.md")).unwrap(),
+        "- old [[New]]\n"
+    );
+    assert!(read(notebook, cx, |view, _| view.folder.stuck.is_empty()));
+}
+
+#[gpui::test]
+fn a_stuck_change_set_aside_leaves_both_notes_and_keeps_its_journal(cx: &mut TestAppContext) {
+    let opened = open_stuck(cx);
+    let notebook = &opened.notebook;
+    draw(notebook, cx);
+    let notices = resolve(notebook, super::folder::Resolution::SetAside, cx);
+    assert_eq!(notices.len(), 1);
+    let kept = notebook
+        .path
+        .parent()
+        .unwrap()
+        .join("transactions/set-aside/interrupted.json");
+    assert_eq!(
+        notices[0],
+        format!(
+            "Set the interrupted change aside. Its notes stay as they are now; every version it planned is kept in {}.",
+            kept.display()
+        )
+    );
+    assert!(kept.exists());
+    assert_eq!(
+        fs::read_to_string(opened.file("Old.md")).unwrap(),
+        "- edited after the crash\n"
+    );
+    assert!(opened.file("New.md").exists());
+    assert!(read(notebook, cx, |view, _| view.folder.stuck.is_empty()));
 }
 
 #[gpui::test]
@@ -701,4 +841,204 @@ fn newer_reference_settings_stay_read_only_and_unchanged(cx: &mut TestAppContext
         fs::read_to_string(opened.file(".quire/notebook.json")).unwrap(),
         newer
     );
+}
+
+const PROJECT: [(&str, &str); 5] = [
+    ("Projects/A.md", "- a [[B]] [b](B.md) ![i](img.png)\n"),
+    ("Projects/B.md", "- b [[Projects/A]]\n"),
+    ("Projects/img.png", "png"),
+    ("Top.md", "- [[Projects/A]] [p](Projects/B.md) [[A]]\n"),
+    ("Projects2/Z.md", "- z [[Projects/B]]\n"),
+];
+
+#[gpui::test]
+fn moving_a_folder_moves_each_note_journaled_and_keeps_tabs_and_other_files(
+    cx: &mut TestAppContext,
+) {
+    use super::move_tests::{preview, select_file, update};
+    let opened = open_folder(&PROJECT, "Projects/A.md", cx);
+    let notebook = &opened.notebook;
+    let (old, new) = (
+        page_id_for_path("Projects/A.md"),
+        page_id_for_path("Work/A.md"),
+    );
+    wait_until(cx, "A's editor", |cx| {
+        read(notebook, cx, |view, _| view.editor.is_some())
+    });
+    draw(notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "i y escape");
+    select_file(notebook, "Projects", cx);
+    cx.simulate_keystrokes(notebook.window.into(), "f2");
+    rename_to(notebook, "Work", cx);
+    assert_eq!(
+        preview(notebook, cx),
+        (
+            "Projects → Work".into(),
+            "2 pages move. 2 other pages need link updates. The original files and saved history are retained for recovery.".into(),
+            vec!["Projects2/Z.md".into(), "Top.md".into()],
+            vec![
+                update("Projects/A.md", "img.png", "../Projects/img.png"),
+                update("Projects/B.md", "[[Projects/A]]", "[[Work/A]]"),
+                update("Projects2/Z.md", "[[Projects/B]]", "[[Work/B]]"),
+                update("Top.md", "[[Projects/A]]", "[[Work/A]]"),
+                update("Top.md", "Projects/B.md", "Work/B.md"),
+            ]
+        )
+    );
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the folder move", |cx| {
+        read(notebook, cx, |view, _| view.nav.dialog.is_none())
+    });
+    for (path, text) in [
+        (
+            "Work/A.md",
+            "y- a [[B]] [b](B.md) ![i](../Projects/img.png)\n",
+        ),
+        ("Work/B.md", "- b [[Work/A]]\n"),
+        ("Top.md", "- [[Work/A]] [p](Work/B.md) [[A]]\n"),
+        ("Projects2/Z.md", "- z [[Work/B]]\n"),
+        ("Projects/img.png", "png"),
+    ] {
+        assert_eq!(
+            fs::read_to_string(opened.file(path)).unwrap(),
+            text,
+            "{path}"
+        );
+    }
+    assert!(!opened.file("Projects/A.md").exists());
+    assert!(!opened.file("Projects/B.md").exists());
+    let state = notebook.path.parent().unwrap().to_owned();
+    assert_eq!(fs::read_dir(state.join("retired")).unwrap().count(), 2);
+    assert_eq!(fs::read_dir(state.join("transactions")).unwrap().count(), 0);
+    wait_until(cx, "the moved page to open", |cx| {
+        active(notebook, cx) == new
+    });
+    read(notebook, cx, |view, _| {
+        assert!(view.nav.workspace.tabs.contains(&Destination::page(&new)));
+        assert!(!view.nav.workspace.tabs.contains(&Destination::page(&old)));
+    });
+    wait_until(cx, "the page list with the moved pages", |cx| {
+        read(notebook, cx, |view, _| view.nav.renamed.is_empty())
+    });
+}
+
+#[gpui::test]
+fn renaming_a_folder_page_in_place_from_files_follows_links_and_escape_keeps_it(
+    cx: &mut TestAppContext,
+) {
+    // rt tests/e2e/editor.spec.ts "renames a page in place from the Files menu and its links
+    // follow", with F2 in Files opening the rename dialog.
+    use super::move_tests::select_file;
+    let opened = open_folder(
+        &[
+            ("Old name.md", "- Linked page\n"),
+            (
+                "Welcome.md",
+                "A place for thoughts.\n\n- See [[Old name]] ^seed\n",
+            ),
+        ],
+        "Welcome.md",
+        cx,
+    );
+    let notebook = &opened.notebook;
+    select_file(notebook, "Old name.md", cx);
+    cx.simulate_keystrokes(notebook.window.into(), "f2");
+    wait_until(cx, "the rename field", |cx| {
+        read(notebook, cx, |view, cx| {
+            view.nav
+                .dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.read(cx).name(cx) == Some("Old name".into()))
+        })
+    });
+    rename_to(notebook, "New name", cx);
+    wait_until(cx, "the rename", |cx| {
+        read(notebook, cx, |view, _| view.nav.dialog.is_none())
+    });
+    assert_eq!(
+        fs::read_to_string(opened.file("New name.md")).unwrap(),
+        "- Linked page\n"
+    );
+    assert_eq!(
+        fs::read_to_string(opened.file("Welcome.md")).unwrap(),
+        "A place for thoughts.\n\n- See [[New name]] ^seed\n"
+    );
+    wait_until(cx, "Files to list the new name", |cx| {
+        read(notebook, cx, |view, _| {
+            view.file_rows().iter().any(|row| row.path == "New name.md")
+        })
+    });
+    // Escape leaves the name alone.
+    select_file(notebook, "New name.md", cx);
+    cx.simulate_keystrokes(notebook.window.into(), "f2");
+    wait_until(cx, "the rename field", |cx| {
+        read(notebook, cx, |view, cx| {
+            view.nav
+                .dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.read(cx).name(cx) == Some("New name".into()))
+        })
+    });
+    cx.simulate_keystrokes(notebook.window.into(), "escape");
+    assert!(read(notebook, cx, |view, _| view.nav.dialog.is_none()));
+    assert!(opened.file("New name.md").exists());
+    assert!(read(notebook, cx, |view, _| {
+        view.file_rows().iter().any(|row| row.path == "New name.md")
+    }));
+}
+
+#[gpui::test]
+fn folder_page_history_restores_an_earlier_file_and_keeps_the_replaced_one(
+    cx: &mut TestAppContext,
+) {
+    let opened = open_folder(&[("Note.md", "- disk\n")], "Note.md", cx);
+    let notebook = &opened.notebook;
+    wait_until(cx, "Note's editor", |cx| {
+        read(notebook, cx, |view, _| view.editor.is_some())
+    });
+    draw(notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "i x escape");
+    cx.simulate_keystrokes(notebook.window.into(), &super::tests::key("s"));
+    wait_until(cx, "the save", |_| {
+        fs::read_to_string(opened.file("Note.md")).unwrap() == "x- disk\n"
+    });
+    cx.dispatch_action(notebook.window.into(), crate::navigation::ShowPageHistory);
+    wait_until(cx, "the saved version", |cx| {
+        read(notebook, cx, |view, cx| {
+            view.nav
+                .page_history
+                .as_ref()
+                .is_some_and(|history| history.read(cx).can_restore())
+        })
+    });
+    let history = read(notebook, cx, |view, _| view.nav.page_history.clone()).unwrap();
+    assert_eq!(
+        history.read_with(cx, |history, _| history.labels().len()),
+        1
+    );
+    assert_eq!(
+        history.read_with(cx, |history, _| history.preview_text().map(str::to_owned)),
+        Some("- disk\n".into())
+    );
+    draw(notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the restore", |cx| {
+        read(notebook, cx, |view, _| view.nav.page_history.is_none())
+    });
+    assert_eq!(
+        fs::read_to_string(opened.file("Note.md")).unwrap(),
+        "- disk\n"
+    );
+    wait_until(cx, "the open page to show it", |cx| {
+        text(notebook, cx) == "- disk\n"
+    });
+    cx.dispatch_action(notebook.window.into(), crate::navigation::ShowPageHistory);
+    wait_until(cx, "the longer history", |cx| {
+        read(notebook, cx, |view, cx| {
+            view.nav
+                .page_history
+                .as_ref()
+                .is_some_and(|history| history.read(cx).labels().len() == 2)
+        })
+    });
 }

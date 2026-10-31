@@ -1,8 +1,9 @@
 use quire_core::{
     markdown::{page_title, references},
     relocate::{
-        CASE_ONLY, NAME_HAS_SLASH, Relocation, notebook_path, relative_path, relocate_page,
-        rename_target,
+        CASE_ONLY, FOLDER_EMPTY, FOLDER_INSIDE_ITSELF, FOLDER_UNCHANGED, NAME_HAS_SLASH,
+        Relocation, folder_relocations, notebook_path, relative_path, relocate_page,
+        relocate_pages, rename_target,
     },
     source_text::SourceText,
 };
@@ -210,5 +211,126 @@ fn new_names_are_literal_and_fragment_links_stay() {
     assert_eq!(
         page_title("Notes/Cost $&.md", &planned.text).to_lossy_string(),
         "Cost $&"
+    );
+}
+
+/// Plans one folder vector through the port: every changed page's text by its final path.
+fn plan_folder(vector: &Value) -> Result<BTreeMap<String, String>, String> {
+    let titles: Vec<(String, String)> = vector["titles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|pair| {
+            (
+                pair[0].as_str().unwrap().to_owned(),
+                pair[1].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    let relocations = folder_relocations(
+        vector["folder"].as_str().unwrap(),
+        vector["target"].as_str().unwrap(),
+        &titles,
+        |target| {
+            titles
+                .iter()
+                .any(|(path, _)| path.to_lowercase() == target.to_lowercase())
+        },
+    )
+    .map_err(str::to_owned)?;
+    let resolutions = vector["resolutions"].as_object().unwrap();
+    let mut texts = BTreeMap::new();
+    for page in vector["pages"].as_array().unwrap() {
+        let path = page["path"].as_str().unwrap();
+        let text = page["text"].as_str().unwrap();
+        let found = references(text, &ranges(&page["codeRanges"]));
+        let Some(planned) = relocate_pages(
+            &relocations,
+            path,
+            text,
+            &found,
+            &ranges(&page["urls"]),
+            |base| resolutions[base].as_str().map(str::to_owned),
+        ) else {
+            continue;
+        };
+        let (original, _) = SourceText::prepare(text.to_owned());
+        assert_eq!(
+            *original.apply(planned.edits.clone()).unwrap(),
+            planned.text,
+            "{}: edits and text disagree for {path}",
+            vector["name"]
+        );
+        if planned.path != path || planned.text != text {
+            texts.insert(planned.path, planned.text);
+        }
+    }
+    Ok(texts)
+}
+
+#[test]
+fn folder_moves_match_the_frozen_plan_relocation_applied_page_by_page() {
+    let vectors: Vec<Value> = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/folder-relocate-vectors.json"
+    ))
+    .unwrap();
+    assert!(vectors.len() > 60);
+    let failures: Vec<String> = vectors
+        .iter()
+        .filter_map(|vector| {
+            let actual = match plan_folder(vector) {
+                Err(error) => serde_json::json!({ "error": error }),
+                Ok(texts) => serde_json::json!({ "texts": texts }),
+            };
+            let mut expected = vector["result"].clone();
+            if let Some(texts) = expected.get_mut("texts") {
+                let sorted: BTreeMap<String, Value> =
+                    serde_json::from_value(texts.clone()).unwrap();
+                *texts = serde_json::to_value(sorted).unwrap();
+            }
+            (expected != actual).then(|| {
+                format!(
+                    "{}\n  expected {expected}\n  actual   {actual}",
+                    vector["name"]
+                )
+            })
+        })
+        .collect();
+    assert!(
+        failures.is_empty(),
+        "{} of {} folder vectors differ:\n{}",
+        failures.len(),
+        vectors.len(),
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn folder_moves_refuse_the_same_folder_a_folder_inside_itself_and_an_empty_folder() {
+    let pages = vec![
+        ("Projects/A.md".to_owned(), "A".to_owned()),
+        ("Projects2/B.md".to_owned(), "B".to_owned()),
+    ];
+    let none = |_: &str| false;
+    assert_eq!(
+        folder_relocations("Projects", "projects", &pages, none),
+        Err(FOLDER_UNCHANGED)
+    );
+    assert_eq!(
+        folder_relocations("Projects", "Projects/Sub", &pages, none),
+        Err(FOLDER_INSIDE_ITSELF)
+    );
+    assert_eq!(
+        folder_relocations("Empty", "Full", &pages, none),
+        Err(FOLDER_EMPTY)
+    );
+    // A sibling folder sharing the name's start is not inside it and does not move.
+    let moved = folder_relocations("Projects", "Projects2/Old", &pages, none).unwrap();
+    assert_eq!(
+        moved
+            .iter()
+            .map(|relocation| (relocation.source.as_str(), relocation.target.as_str()))
+            .collect::<Vec<_>>(),
+        [("Projects/A.md", "Projects2/Old/A.md")]
     );
 }

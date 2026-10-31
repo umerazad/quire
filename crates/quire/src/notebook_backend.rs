@@ -5,7 +5,7 @@
 
 use quire_store::{
     folder_notebook::{FolderClient, FolderConflict},
-    notebook::{CheckedSaves, Draft, DraftStamp, Edit, PageCheckout, SaveAck},
+    notebook::{CheckedSaves, Draft, DraftStamp, Edit, PageCheckout, SaveAck, SavedVersion},
     sync::json::Json,
     worker::{QueueError, Reply, StorageClient},
 };
@@ -86,6 +86,21 @@ impl NotebookBackend {
         match self {
             Self::Store(client) => client.save_many_if_heads(edits),
             Self::Folder(client) => client.save_many_if_heads(edits),
+        }
+    }
+
+    /// The page's earlier saved versions, newest first.
+    pub fn history(&self, page: String) -> Answer<Vec<SavedVersion>> {
+        match self {
+            Self::Store(client) => client.history(page),
+            Self::Folder(client) => client.history(page),
+        }
+    }
+
+    pub fn version_text(&self, page: String, id: String) -> Answer<String> {
+        match self {
+            Self::Store(client) => client.version_text(page, id),
+            Self::Folder(client) => client.version_text(page, id),
         }
     }
 }

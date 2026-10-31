@@ -420,6 +420,63 @@ fn a_rename_never_replaces_a_file_whose_name_differs_only_in_case() {
 }
 
 #[test]
+fn an_interrupted_folder_move_finishes_on_the_next_open_from_every_step() {
+    const A: &str = "- a [[Projects/B]]\n";
+    const B: &str = "- b\n";
+    const TOP: &str = "- [[Projects/A]] [[Projects/B]]\n";
+    let moved = |from: &str, to: &str, text: &str, base: &str| Edit {
+        page: page_id_for_path(from),
+        recovery: None,
+        ..edit(to, text, &[revision(base)])
+    };
+    let edits = || {
+        vec![
+            moved("Projects/A.md", "Work/A.md", "- a [[Work/B]]\n", A),
+            moved("Projects/B.md", "Work/B.md", B, B),
+            moved("Top.md", "Top.md", "- [[Work/A]] [[Work/B]]\n", TOP),
+        ]
+    };
+    // Steps: 0 create Work/B.md, 1 create Work/A.md, 2 rewrite Top.md, 3 and 4 archive the old
+    // notes. Every interruption leaves the journal, and the next open finishes the move.
+    for step in 0..5 {
+        let opened = fixture(&[("Projects/A.md", A), ("Projects/B.md", B), ("Top.md", TOP)]);
+        opened.notebook.interrupt_at.set(Some(step));
+        let error = opened.notebook.save_many_if_heads(&edits()).unwrap_err();
+        assert!(error.to_string().contains("Injected interruption"));
+        assert_eq!(journals(&opened.state).len(), 1, "step {step}");
+
+        let reopened = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+        assert_eq!(reopened.notices().len(), 1, "step {step}");
+        assert!(reopened.notices()[0].starts_with("Finished an interrupted change"));
+        for (path, text) in [
+            ("Work/A.md", "- a [[Work/B]]\n"),
+            ("Work/B.md", B),
+            ("Top.md", "- [[Work/A]] [[Work/B]]\n"),
+        ] {
+            assert_eq!(
+                fs::read_to_string(opened.folder.join(path)).unwrap(),
+                text,
+                "step {step}: {path}"
+            );
+        }
+        assert!(!opened.folder.join("Projects/A.md").exists(), "step {step}");
+        assert!(!opened.folder.join("Projects/B.md").exists(), "step {step}");
+        let mut archived = retired(&opened.state);
+        archived.sort();
+        assert_eq!(archived, [A, B], "step {step}: both originals are archived");
+        assert!(journals(&opened.state).is_empty());
+        assert!(
+            reopened
+                .revisions("Work/A.md")
+                .unwrap()
+                .iter()
+                .any(|saved| reopened.revision_text("Work/A.md", saved.id).unwrap() == A),
+            "step {step}: the moved note keeps its history"
+        );
+    }
+}
+
+#[test]
 fn an_interrupted_rename_finishes_on_the_next_open_from_every_step() {
     // Steps: 0 create New.md, 1 rewrite Links.md, 2 archive Old.md.
     for step in 0..3 {
@@ -481,6 +538,89 @@ fn an_interrupted_rename_never_overwrites_a_note_changed_before_recovery() {
         1,
         "the journal stays for review"
     );
+}
+
+/// A rename interrupted before rewriting Links.md, whose note then changed elsewhere, as the
+/// next open finds it.
+fn stuck_rename() -> (super::tests::Fixture, FolderNotebook) {
+    let opened = fixture(&[("Old.md", OLD), ("Links.md", LINKS)]);
+    opened.notebook.interrupt_at.set(Some(1));
+    opened
+        .notebook
+        .save_many_if_heads(&rename_edits())
+        .unwrap_err();
+    fs::write(opened.folder.join("Links.md"), "- edited elsewhere\n").unwrap();
+    let reopened = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    (opened, reopened)
+}
+
+#[test]
+fn a_stuck_change_names_where_each_note_stands_and_finishes_once_the_note_is_put_back() {
+    let (opened, reopened) = stuck_rename();
+    let stuck = reopened.stuck_changes();
+    assert_eq!(stuck.len(), 1);
+    assert_eq!(
+        stuck[0].steps,
+        [
+            ("New.md".to_owned(), StepState::Done),
+            ("Links.md".to_owned(), StepState::ChangedElsewhere),
+            ("Old.md".to_owned(), StepState::Waiting),
+        ]
+    );
+    assert_eq!(
+        stuck[0].summary(),
+        "Changed since the change was planned: Links.md. Still to update: Old.md. Already updated: New.md."
+    );
+    let refused = reopened.retry_change(&stuck[0].name).unwrap_err();
+    assert!(refused.to_string().contains("Links.md"), "{refused:#}");
+    assert_eq!(
+        fs::read_to_string(opened.folder.join("Links.md")).unwrap(),
+        "- edited elsewhere\n",
+        "a retry never overwrites the newer note"
+    );
+    for name in ["../escape.json", "", ".hidden.json", "missing.json"] {
+        assert!(reopened.retry_change(name).is_err(), "{name:?}");
+    }
+
+    fs::write(opened.folder.join("Links.md"), LINKS).unwrap();
+    reopened.retry_change(&stuck[0].name).unwrap();
+    assert_renamed(&opened.folder, &opened.state, &reopened);
+    assert!(reopened.stuck_changes().is_empty());
+}
+
+#[test]
+fn a_stuck_change_set_aside_keeps_its_journal_and_every_note_as_it_is() {
+    let (opened, reopened) = stuck_rename();
+    let name = reopened.stuck_changes()[0].name.clone();
+    let kept = fs::read(opened.state.join("transactions").join(&name)).unwrap();
+    let moved = reopened.set_aside_change(&name).unwrap();
+    assert_eq!(
+        moved,
+        opened.state.join("transactions/set-aside").join(&name)
+    );
+    assert_eq!(
+        fs::read(&moved).unwrap(),
+        kept,
+        "every planned version is kept"
+    );
+    assert!(reopened.stuck_changes().is_empty());
+    for (path, text) in [
+        ("Links.md", "- edited elsewhere\n"),
+        ("Old.md", OLD),
+        ("New.md", RENAMED),
+    ] {
+        assert_eq!(
+            fs::read_to_string(opened.folder.join(path)).unwrap(),
+            text,
+            "{path}"
+        );
+    }
+    let again = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    assert!(
+        again.notices().is_empty(),
+        "a set-aside change is not resumed"
+    );
+    assert!(again.stuck_changes().is_empty());
 }
 
 const DEVICE: &str = "6f1c2b3a-0d4e-4f5a-8b9c-0123456789ab";

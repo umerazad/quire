@@ -1,7 +1,8 @@
-//! Deleting and renaming pages. A deletion plans what goes and how many links break, then
-//! writes every tombstone or none, or in a folder notebook moves the files to the system Trash; a
-//! rename rewrites every link that follows the page and writes every page or none, journaled in a
-//! folder notebook. Both go through `page_writes`.
+//! Deleting, renaming, and moving pages and folders. A deletion plans what goes and how many
+//! links break, then writes every tombstone or none, or in a folder notebook moves the files to
+//! the system Trash. A rename or move, of one page or of a folder with every page inside, rewrites
+//! every link that follows and writes every page or none, journaled in a folder notebook. All go
+//! through `page_writes`.
 
 use crate::{
     notebook_backend::NotebookBackend,
@@ -11,15 +12,18 @@ use crate::{
 };
 use gpui::{App, AppContext as _, Entity, Task};
 use quire_core::{
-    markdown::page_title,
-    relocate::{MISSING_SOURCE, Relocation, relocate_page, rename_target},
+    markdown::{copy_with_new_ids, page_name, page_title, safe_page_path},
+    relocate::{
+        MISSING_SOURCE, Relocation, folder_path, folder_relocations, notebook_path, relocate_pages,
+        rename_target,
+    },
     source_text::SourceText,
 };
 use quire_store::{
     index::{DeletionTarget, IndexClient},
     sync::format::page_id_for_path,
 };
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 pub const STALE_DELETION: &str =
     "A page changed after you chose to delete it. Nothing was deleted; try again.";
@@ -185,8 +189,11 @@ pub fn delete(
 
 pub const STALE_RENAME: &str =
     "A page changed while it was being renamed. Nothing was renamed; rename it again.";
+pub const STALE_MOVE: &str =
+    "A page changed after the preview. Nothing was moved; preview the move again.";
+const NO_GRAMMAR: &str = "Cannot read links because the Markdown grammar is unavailable. Rebuild Quire with its bundled grammars.";
 
-/// Where a renamed page now lives and the title the page list will show for it.
+/// Where a renamed or moved page now lives and the title the page list will show for it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Renamed {
     /// The page's identity before the rename. A folder notebook's page identity follows its
@@ -197,10 +204,229 @@ pub struct Renamed {
     pub title: String,
 }
 
-/// A planned rename: the writes of the renamed page and every page whose links follow it.
-pub struct RenamePlan {
-    pub renamed: Renamed,
+/// What to relocate: a page renamed in its folder, a page moved to a path, or a folder moved
+/// with every page inside it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Relocate {
+    Rename { page: String, name: String },
+    Move { page: String, path: String },
+    Folder { folder: String, path: String },
+}
+
+/// One link that changes, in the page that holds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkUpdate {
+    pub path: String,
+    pub before: String,
+    pub after: String,
+}
+
+/// A planned rename or move: the writes of every moved page and every page whose links follow,
+/// with what the preview lists.
+pub struct RelocationPlan {
+    pub source: String,
+    pub target: String,
+    pub moved: Vec<Renamed>,
+    /// Pages that stay where they are but get link updates, by path.
+    pub updated: Vec<String>,
+    pub updates: Vec<LinkUpdate>,
+    trash: bool,
     writes: Vec<PageWrite>,
+}
+
+impl RelocationPlan {
+    pub fn heading(&self) -> String {
+        format!("{} → {}", self.source, self.target)
+    }
+
+    pub fn detail(&self) -> String {
+        let pages = match self.updated.len() {
+            0 => "No other page needs link updates.".to_owned(),
+            1 => "1 other page needs link updates.".to_owned(),
+            count => format!("{count} other pages need link updates."),
+        };
+        let moved = match self.moved.len() {
+            1 => String::new(),
+            count => format!("{count} pages move. "),
+        };
+        let kept = if self.trash {
+            "The original files and saved history are retained for recovery."
+        } else {
+            "Pages keep their block IDs and saved history."
+        };
+        format!("{moved}{pages} {kept}")
+    }
+}
+
+/// Reads the pages a relocation touches, rewrites their links, and returns the writes. None when
+/// a rename keeps the name.
+pub fn plan_relocation(
+    request: Relocate,
+    open_pages: Vec<Entity<OpenPage>>,
+    index: IndexClient,
+    storage: NotebookBackend,
+    cx: &mut App,
+) -> Task<Result<Option<RelocationPlan>, String>> {
+    cx.spawn(async move |cx| {
+        let (relocations, moved_pages, source, target) = match &request {
+            Relocate::Rename { page, name } | Relocate::Move { page, path: name } => {
+                let Some(source) =
+                    page_writes::read(page.clone(), &open_pages, &storage, cx).await?
+                else {
+                    return Err(MISSING_SOURCE.into());
+                };
+                let (rename, target) = match &request {
+                    Relocate::Rename { .. } => match rename_target(&source.path, name)? {
+                        Some(target) => (true, target),
+                        None => return Ok(None),
+                    },
+                    _ => (false, notebook_path(name, true)?),
+                };
+                let Some(facts) = ask(index.relocation(page.as_str().into())).await? else {
+                    return Err(MISSING_SOURCE.into());
+                };
+                let taken = ask(index.path_taken(target.clone())).await?;
+                let relocation = Relocation::new(
+                    &source.path,
+                    &target,
+                    rename,
+                    &facts.page.title,
+                    facts.unique_title,
+                    true,
+                    |_| taken,
+                )?;
+                let target = relocation.target.clone();
+                (vec![relocation], vec![page.clone()], source.path, target)
+            }
+            Relocate::Folder { folder, path } => {
+                let listed = ask(index.pages()).await?;
+                let titles: Vec<(String, String)> = listed
+                    .iter()
+                    .map(|listed| (listed.page.path.clone(), listed.page.title.clone()))
+                    .collect();
+                let taken: HashSet<String> =
+                    titles.iter().map(|(path, _)| path.to_lowercase()).collect();
+                let relocations = folder_relocations(folder, path, &titles, |path| {
+                    taken.contains(&path.to_lowercase())
+                })?;
+                let pages = relocations
+                    .iter()
+                    .filter_map(|relocation| {
+                        listed
+                            .iter()
+                            .find(|listed| listed.page.path == relocation.source)
+                            .map(|listed| listed.page.page.to_lossy_string())
+                    })
+                    .collect();
+                let target = folder_path(path)?;
+                (relocations, pages, folder.clone(), target)
+            }
+        };
+        let mut candidates: Vec<String> = moved_pages.clone();
+        for page in &moved_pages {
+            let Some(facts) = ask(index.relocation(page.as_str().into())).await? else {
+                return Err(MISSING_SOURCE.into());
+            };
+            for candidate in facts.candidates {
+                let id = candidate.page.to_lossy_string();
+                if !candidates.contains(&id) {
+                    candidates.push(id);
+                }
+            }
+        }
+        let mut analyzed = Vec::new();
+        for id in candidates {
+            let Some(source) = page_writes::read(id.clone(), &open_pages, &storage, cx).await?
+            else {
+                if moved_pages.contains(&id) {
+                    return Err(MISSING_SOURCE.into());
+                }
+                continue;
+            };
+            let (original, normalized) = SourceText::prepare(source.stored.clone());
+            let work = cx.update(|cx| crate::page_index::relocation_links(normalized.clone(), cx));
+            let Some((references, urls)) = cx.background_spawn(work).await else {
+                return Err(NO_GRAMMAR.into());
+            };
+            analyzed.push((source, original, normalized, references, urls));
+        }
+        let bases: Vec<String> = analyzed
+            .iter()
+            .flat_map(|(_, _, _, references, _)| references.iter())
+            .map(|reference| {
+                reference
+                    .target
+                    .split('#')
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let (_, resolved) = ask(index.with_generation(move |index| {
+            bases
+                .into_iter()
+                .map(|base| Ok((base.clone(), index.find_page(&base)?.map(|page| page.path))))
+                .collect::<Result<HashMap<_, _>, _>>()
+        }))
+        .await?;
+        let folder = storage.folder().is_some();
+        let mut plan = RelocationPlan {
+            source,
+            target,
+            moved: Vec::new(),
+            updated: Vec::new(),
+            updates: Vec::new(),
+            trash: folder,
+            writes: Vec::new(),
+        };
+        for (source, original, normalized, references, urls) in analyzed {
+            let Some(planned) = relocate_pages(
+                &relocations,
+                &source.path,
+                &normalized,
+                &references,
+                &urls,
+                |base| resolved.get(base).cloned().flatten(),
+            ) else {
+                continue;
+            };
+            let text = original.apply(planned.edits).map_err(|error| {
+                format!(
+                    "Could not rewrite links in {}: {error}. Preview the change again.",
+                    source.path
+                )
+            })?;
+            plan.updates
+                .extend(planned.changes.into_iter().map(|change| LinkUpdate {
+                    path: source.path.clone(),
+                    before: change.before,
+                    after: change.after,
+                }));
+            if moved_pages.contains(&source.page) {
+                plan.moved.push(Renamed {
+                    previous: source.page.clone(),
+                    page: if folder {
+                        page_id_for_path(&planned.path)
+                    } else {
+                        source.page.clone()
+                    },
+                    path: planned.path.clone(),
+                    title: page_title(&planned.path, &text).to_lossy_string(),
+                });
+            } else {
+                plan.updated.push(source.path.clone());
+            }
+            plan.writes.push(source.write_at(planned.path, text));
+        }
+        if plan.moved.len() != moved_pages.len() {
+            return Err(MISSING_SOURCE.into());
+        }
+        plan.updated.sort();
+        plan.updates.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(Some(plan))
+    })
 }
 
 /// Plans renaming `page` to `name` in its folder, as the reference `renamePage` does: the file
@@ -213,102 +439,92 @@ pub fn plan_rename(
     index: IndexClient,
     storage: NotebookBackend,
     cx: &mut App,
-) -> Task<Result<Option<RenamePlan>, String>> {
-    cx.spawn(async move |cx| {
-        let Some(source) = page_writes::read(page.clone(), &open_pages, &storage, cx).await? else {
-            return Err(MISSING_SOURCE.into());
-        };
-        let Some(target) = rename_target(&source.path, &name)? else {
-            return Ok(None);
-        };
-        let Some(facts) = ask(index.relocation(page.as_str().into())).await? else {
-            return Err(MISSING_SOURCE.into());
-        };
-        let taken = ask(index.path_taken(target.clone())).await?;
-        let relocation = Relocation::new(
-            &source.path,
-            &target,
-            true,
-            &facts.page.title,
-            facts.unique_title,
-            true,
-            |_| taken,
-        )?;
-        let mut sources = vec![source];
-        for candidate in facts.candidates.iter().skip(1) {
-            let id = candidate.page.to_lossy_string();
-            if let Some(source) = page_writes::read(id, &open_pages, &storage, cx).await? {
-                sources.push(source);
-            }
-        }
-        let mut analyzed = Vec::new();
-        for source in sources {
-            let (original, normalized) = SourceText::prepare(source.stored.clone());
-            let work = cx.update(|cx| crate::page_index::relocation_links(normalized.clone(), cx));
-            let Some((references, urls)) = cx.background_spawn(work).await else {
-                return Err("Cannot read links because the Markdown grammar is unavailable. Rebuild Quire with its bundled grammars.".into());
-            };
-            analyzed.push((source, original, normalized, references, urls));
-        }
-        let bases: Vec<String> = analyzed
-            .iter()
-            .flat_map(|(_, _, _, references, _)| references.iter())
-            .map(|reference| reference.target.split('#').next().unwrap_or_default().to_owned())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        let (_, resolved) = ask(index.with_generation(move |index| {
-            bases
-                .into_iter()
-                .map(|base| Ok((base.clone(), index.find_page(&base)?.map(|page| page.path))))
-                .collect::<Result<HashMap<_, _>, _>>()
-        }))
-        .await?;
-        let mut writes = Vec::new();
-        let mut title = None;
-        for (source, original, normalized, references, urls) in analyzed {
-            let Some(planned) = relocate_page(
-                &relocation,
-                &source.path,
-                &normalized,
-                &references,
-                &urls,
-                |base| resolved.get(base).cloned().flatten(),
-            ) else {
-                continue;
-            };
-            let text = original.apply(planned.edits).map_err(|error| {
-                format!("Could not rewrite links in {}: {error}. Rename again.", source.path)
-            })?;
-            if source.page == page {
-                title = Some(page_title(&planned.path, &text).to_lossy_string());
-            }
-            writes.push(source.write_at(planned.path, text));
-        }
-        let Some(title) = title else {
-            return Err(MISSING_SOURCE.into());
-        };
-        let renamed_page = match storage.folder() {
-            Some(_) => page_id_for_path(&relocation.target),
-            None => page.clone(),
-        };
-        Ok(Some(RenamePlan {
-            renamed: Renamed {
-                previous: page,
-                page: renamed_page,
-                path: relocation.target,
-                title,
-            },
-            writes,
-        }))
-    })
+) -> Task<Result<Option<RelocationPlan>, String>> {
+    plan_relocation(
+        Relocate::Rename { page, name },
+        open_pages,
+        index,
+        storage,
+        cx,
+    )
 }
 
-/// Writes the rename and every link change or none. Returns how many pages were written.
+/// Writes the relocation and every link change or none, refusing with `stale` when a page
+/// changed since planning. Returns how many pages were written.
+pub fn relocate(
+    plan: RelocationPlan,
+    storage: NotebookBackend,
+    stale: &'static str,
+    cx: &mut App,
+) -> Task<Result<usize, String>> {
+    page_writes::apply(plan.writes, storage, stale, cx)
+}
+
+/// Writes a rename and every link change or none.
 pub fn rename(
-    plan: RenamePlan,
+    plan: RelocationPlan,
     storage: NotebookBackend,
     cx: &mut App,
 ) -> Task<Result<usize, String>> {
-    page_writes::apply(plan.writes, storage, STALE_RENAME, cx)
+    relocate(plan, storage, STALE_RENAME, cx)
+}
+
+pub const STALE_RESTORE: &str = "The page changed after this version was compared with it. Nothing was restored; review the changes shown now and restore again.";
+
+/// Makes `text`, an earlier saved version, the page's newest version in one checked save, when
+/// the page still reads `compared`, the text the preview showed it against. An open page's
+/// unsaved typing is saved first, so it stays in history, and the page then shows the restored
+/// text. Returns whether anything was written.
+pub fn restore_version(
+    page: String,
+    text: String,
+    compared: String,
+    open_pages: Vec<Entity<OpenPage>>,
+    storage: NotebookBackend,
+    cx: &mut App,
+) -> Task<Result<bool, String>> {
+    cx.spawn(async move |cx| {
+        let Some(source) = page_writes::read(page, &open_pages, &storage, cx).await? else {
+            return Err(
+                "This page has no saved version to restore over. Restore it as a new page instead."
+                    .into(),
+            );
+        };
+        if source.stored != compared {
+            return Err(STALE_RESTORE.into());
+        }
+        if source.stored == text {
+            return Ok(false);
+        }
+        let write = source.write(text.into());
+        let applied = cx.update(|cx| page_writes::apply(vec![write], storage, STALE_RESTORE, cx));
+        applied.await.map(|_| true)
+    })
+}
+
+/// The title and text of a copy of `text`, a version of the page at `path`, saved as a new page
+/// with fresh block IDs, as the reference `createSavedCopy` names it: the page title cut to 50
+/// characters, then `label`, the date, and a short random suffix.
+pub fn page_copy(
+    path: &str,
+    text: &str,
+    label: &str,
+    date: &str,
+) -> Result<(String, String), String> {
+    let source = page_title(path, text).to_lossy_string();
+    let short: String = uuid::Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(8)
+        .collect();
+    let title = format!(
+        "{} ({label} {date} {short})",
+        source.chars().take(50).collect::<String>()
+    );
+    let destination = safe_page_path(&title).map_err(|error| error.to_string())?;
+    let copied = copy_with_new_ids(text, &destination, &[page_name(path), &source], || {
+        format!("b-{}", uuid::Uuid::new_v4().simple())
+    });
+    Ok((title, copied))
 }

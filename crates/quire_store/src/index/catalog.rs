@@ -69,7 +69,10 @@ impl QueryIndex {
             "p.revision IN (SELECT revision FROM live_blocks WHERE content LIKE ?)",
             "%.md%",
         )?;
-        for candidate in linked.chain(marked) {
+        // A page saved elsewhere and not analyzed yet has no links or blocks to look at, so it
+        // is read in full rather than missed.
+        let unread = self.pages_where("p.analyzed=0 AND ?", "1")?;
+        for candidate in linked.chain(marked).chain(unread) {
             if seen.insert(candidate.page.as_bytes().to_vec()) {
                 candidates.push(candidate);
             }

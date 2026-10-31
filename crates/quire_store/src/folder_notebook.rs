@@ -22,11 +22,15 @@ pub use files::{
     DiskDocument, ListedFile, Listing, MAX_NOTE_BYTES, is_markdown, list, read, revision, validate,
 };
 pub use history::FolderRevision;
+pub use journal::{StepState, StuckChange};
 pub use reference::RecoveredDraft;
 
 use crate::{
     database,
-    notebook::{CheckedSaves, Draft, DraftStamp, Edit, PageCheckout, SaveAck},
+    notebook::{
+        CheckedSaves, Draft, DraftStamp, Edit, PageCheckout, SaveAck, SavedVersion,
+        VERSION_UNAVAILABLE,
+    },
     sync::{format::page_id_for_path, json::Json},
     worker::{Client, QueueError, QueueLimits, Reply, Worker},
 };
@@ -633,6 +637,26 @@ impl FolderNotebook {
             "That saved revision is unavailable. Refresh page history and choose another version.",
         )
     }
+
+    /// `page`'s saved versions in the store-shaped form page history lists, newest first.
+    pub fn history(&self, page: &str) -> Result<Vec<SavedVersion>> {
+        let Some(path) = self.path_of(page) else {
+            return Ok(Vec::new());
+        };
+        Ok(self
+            .revisions(&path)?
+            .into_iter()
+            .map(|revision| SavedVersion {
+                id: revision.id.to_string(),
+                saved_at: revision.saved_at,
+            })
+            .collect())
+    }
+
+    pub fn version_text(&self, page: &str, id: &str) -> Result<String> {
+        let path = self.path_of(page).context(VERSION_UNAVAILABLE)?;
+        self.revision_text(&path, id.parse().context(VERSION_UNAVAILABLE)?)
+    }
 }
 
 pub type FolderClient = Client<FolderNotebook>;
@@ -744,6 +768,27 @@ impl Client<FolderNotebook> {
     pub fn revision_text(&self, path: String, id: i64) -> Answer<String> {
         self.request(128 + path.len(), move |notebook| {
             notebook.revision_text(&path, id)
+        })
+    }
+    pub fn history(&self, page: String) -> Answer<Vec<SavedVersion>> {
+        self.request(128 + page.len(), move |notebook| notebook.history(&page))
+    }
+    pub fn stuck_changes(&self) -> Answer<Vec<StuckChange>> {
+        self.request(128, |notebook| Ok(notebook.stuck_changes()))
+    }
+    pub fn retry_change(&self, name: String) -> Answer<()> {
+        self.request(128 + name.len(), move |notebook| {
+            notebook.retry_change(&name)
+        })
+    }
+    pub fn set_aside_change(&self, name: String) -> Answer<PathBuf> {
+        self.request(128 + name.len(), move |notebook| {
+            notebook.set_aside_change(&name)
+        })
+    }
+    pub fn version_text(&self, page: String, id: String) -> Answer<String> {
+        self.request(128 + page.len() + id.len(), move |notebook| {
+            notebook.version_text(&page, &id)
         })
     }
 }

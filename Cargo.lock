@@ -11589,6 +11589,7 @@ dependencies = [
  "anyhow",
  "assets",
  "base64",
+ "buffer_diff",
  "db",
  "editor",
  "fs",

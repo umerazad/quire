@@ -283,44 +283,203 @@ impl FolderNotebook {
         Ok(())
     }
 
-    /// Rolls interrupted changes forward, as the reference `resumeTransactions` does, and
-    /// reports what happened to each.
-    pub(super) fn resume(&self) -> Vec<String> {
-        let folder = self.journals();
-        let Ok(entries) = fs::read_dir(&folder) else {
+    /// The journals waiting in the state folder, in name order.
+    fn waiting(&self) -> Vec<PathBuf> {
+        let Ok(entries) = fs::read_dir(self.journals()) else {
             return Vec::new();
         };
         let mut journals: Vec<PathBuf> = entries
             .flatten()
             .map(|entry| entry.path())
             .filter(|path| {
-                path.extension()
-                    .is_some_and(|extension| extension == "json")
+                path.is_file()
+                    && path
+                        .extension()
+                        .is_some_and(|extension| extension == "json")
             })
             .collect();
         journals.sort();
         journals
+    }
+
+    fn load(journal: &Path) -> Result<Journal> {
+        let recorded: Journal = fs::read(journal)
+            .context("Cannot read the journal")
+            .and_then(|bytes| serde_json::from_slice(&bytes).context("The journal is malformed"))?;
+        ensure!(
+            !recorded.edits.is_empty() && recorded.edits.len() <= MAX_EDITS * 2,
+            "The journal is malformed"
+        );
+        Ok(recorded)
+    }
+
+    /// Applies one journal's steps again and removes it once every step is done.
+    fn finish(&self, journal: &Path) -> Result<()> {
+        self.apply(&Self::load(journal)?.edits)?;
+        fs::remove_file(journal)?;
+        Ok(())
+    }
+
+    /// Rolls interrupted changes forward, as the reference `resumeTransactions` does, and
+    /// reports what happened to each.
+    pub(super) fn resume(&self) -> Vec<String> {
+        self.waiting()
+            .into_iter()
+            .map(|journal| match self.finish(&journal) {
+                Ok(()) => FINISHED.to_owned(),
+                Err(error) => interrupted(&journal, &error),
+            })
+            .collect()
+    }
+
+    /// The journal named `name` in the state folder; a name with a path in it is refused.
+    fn named(&self, name: &str) -> Result<PathBuf> {
+        ensure!(
+            !name.is_empty()
+                && name.ends_with(".json")
+                && !name.contains(['/', '\\'])
+                && !name.starts_with('.'),
+            "That change journal name is not valid. Reopen the notebook to list interrupted changes again."
+        );
+        let path = self.journals().join(name);
+        ensure!(
+            path.is_file(),
+            "That interrupted change is gone; it may already be finished. Reopen the notebook to check."
+        );
+        Ok(path)
+    }
+
+    /// Interrupted changes that opening could not finish, each with where its notes stand.
+    pub fn stuck_changes(&self) -> Vec<StuckChange> {
+        self.waiting()
             .into_iter()
             .map(|journal| {
-                let resumed = fs::read(&journal)
-                    .context("Cannot read the journal")
-                    .and_then(|bytes| {
-                        serde_json::from_slice::<Journal>(&bytes).context("The journal is malformed")
-                    })
-                    .and_then(|recorded| {
-                        ensure!(
-                            !recorded.edits.is_empty() && recorded.edits.len() <= MAX_EDITS * 2,
-                            "The journal is malformed"
-                        );
-                        self.apply(&recorded.edits)?;
-                        fs::remove_file(&journal)?;
-                        Ok(())
-                    });
-                match resumed {
-                    Ok(()) => "Finished an interrupted change across notes, such as a rename. Its notes and links are now saved.".to_owned(),
-                    Err(error) => interrupted(&journal, &error),
+                let name = journal
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                match Self::load(&journal) {
+                    Ok(recorded) => StuckChange {
+                        name,
+                        created_at: recorded.created_at,
+                        steps: recorded
+                            .edits
+                            .iter()
+                            .map(|step| (step.path.clone(), self.state_of(step)))
+                            .collect(),
+                    },
+                    Err(_) => StuckChange {
+                        name,
+                        created_at: 0,
+                        steps: Vec::new(),
+                    },
                 }
             })
             .collect()
+    }
+
+    fn state_of(&self, step: &Step) -> StepState {
+        let Ok(disk) = files::read(&self.root, &step.path) else {
+            return StepState::Unreadable;
+        };
+        let revision = disk.as_ref().map(|disk| &disk.revision);
+        match (step.remove, &disk) {
+            (true, None) => StepState::Done,
+            (false, Some(disk)) if disk.text == step.text => StepState::Done,
+            _ if revision == step.expected_revision.as_ref() => StepState::Waiting,
+            _ => StepState::ChangedElsewhere,
+        }
+    }
+
+    /// Tries an interrupted change again, after its notes were put back or reviewed.
+    pub fn retry_change(&self, name: &str) -> Result<()> {
+        let journal = self.named(name)?;
+        self.finish(&journal)
+            .map_err(|error| anyhow::anyhow!(interrupted(&journal, &error)))
+    }
+
+    /// Stops trying an interrupted change: its notes stay as they are now, and its journal moves
+    /// to `transactions/set-aside`, keeping every planned version. Returns where it went.
+    pub fn set_aside_change(&self, name: &str) -> Result<PathBuf> {
+        let journal = self.named(name)?;
+        let folder = self.journals().join(SET_ASIDE);
+        fs::create_dir_all(&folder).with_context(|| {
+            format!("Cannot create {}. Check write access to Quire's application data folder and retry.", folder.display())
+        })?;
+        let target = folder.join(name);
+        ensure!(
+            !target.exists(),
+            "{} already holds a set-aside change with this name. Move that file elsewhere and retry.",
+            folder.display()
+        );
+        fs::rename(&journal, &target).with_context(|| {
+            format!(
+                "Cannot move the change journal to {}. Check write access and retry.",
+                target.display()
+            )
+        })?;
+        files::sync_directory(&folder)?;
+        files::sync_directory(&self.journals())?;
+        Ok(target)
+    }
+}
+
+const FINISHED: &str = "Finished an interrupted change across notes, such as a rename. Its notes and links are now saved.";
+const SET_ASIDE: &str = "set-aside";
+
+/// Where one note of an interrupted change stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StepState {
+    /// The note already holds what the change planned.
+    Done,
+    /// The note still holds the version the change was planned from.
+    Waiting,
+    /// The note changed after the change was planned, so finishing would overwrite that.
+    ChangedElsewhere,
+    Unreadable,
+}
+
+/// An interrupted change across notes that opening could not finish. A journal that cannot be
+/// read lists no steps.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StuckChange {
+    /// The journal's file name in the state folder.
+    pub name: String,
+    pub created_at: i64,
+    pub steps: Vec<(String, StepState)>,
+}
+
+impl StuckChange {
+    /// One sentence per kind of state, naming the notes.
+    pub fn summary(&self) -> String {
+        if self.steps.is_empty() {
+            return "This interrupted change cannot be read. Set it aside to keep the file for review.".into();
+        }
+        let named = |state: StepState| {
+            let mut paths: Vec<&str> = self
+                .steps
+                .iter()
+                .filter(|(_, step)| *step == state)
+                .map(|(path, _)| path.as_str())
+                .collect();
+            paths.dedup();
+            paths.join(", ")
+        };
+        [
+            (
+                StepState::ChangedElsewhere,
+                "Changed since the change was planned",
+            ),
+            (StepState::Unreadable, "Cannot be read"),
+            (StepState::Waiting, "Still to update"),
+            (StepState::Done, "Already updated"),
+        ]
+        .into_iter()
+        .filter_map(|(state, label)| {
+            let paths = named(state);
+            (!paths.is_empty()).then(|| format!("{label}: {paths}."))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
     }
 }

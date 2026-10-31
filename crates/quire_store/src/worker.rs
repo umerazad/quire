@@ -367,6 +367,21 @@ impl Client<NotebookStore> {
     pub fn heads(&self, page: String) -> std::result::Result<Reply<Vec<String>>, QueueError> {
         self.request(128 + page.capacity(), move |store| store.heads(&page))
     }
+    pub fn history(
+        &self,
+        page: String,
+    ) -> std::result::Result<Reply<Vec<crate::notebook::SavedVersion>>, QueueError> {
+        self.request(128 + page.capacity(), move |store| store.history(&page))
+    }
+    pub fn version_text(
+        &self,
+        page: String,
+        id: String,
+    ) -> std::result::Result<Reply<String>, QueueError> {
+        self.request(128 + page.capacity() + id.capacity(), move |store| {
+            store.version_text(&page, &id)
+        })
+    }
     pub fn attach(
         &self,
         data: Vec<u8>,
