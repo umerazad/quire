@@ -403,7 +403,7 @@ impl QueryIndex {
         } else {
             "ORDER BY path,ordinal".to_owned()
         };
-        let rows: Vec<(PageRow, (String, Option<String>, u32))> =
+        let rows: Vec<TextHitRow> =
             self.connection.select_bound(&format!(
                 "SELECT revision,page,path,title,text,id,start FROM (
                    SELECT {PAGE_COLUMNS},b.text AS text,b.id AS id,b.start AS start,b.ordinal AS ordinal,
@@ -432,6 +432,9 @@ impl QueryIndex {
             .collect()
     }
 }
+
+/// A page and one block of it: its text, ID, and UTF-16 start.
+type TextHitRow = (PageRow, (String, Option<String>, u32));
 
 /// What SQLite can look for in `lower(text)` for the lowercased `needle`, and whether that test
 /// is exact. SQLite folds only ASCII case, so a needle with other cased letters is narrowed to
