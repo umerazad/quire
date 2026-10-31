@@ -384,3 +384,20 @@ fn chrome_choices_survive_save_and_load_and_stay_out_of_older_files() {
     let damaged = Workspace::load(r#"{"tabs":[],"chrome":{"sidebar_hidden":"yes"}}"#);
     assert_eq!(damaged.chrome, ChromeChoices::default());
 }
+
+#[test]
+fn an_ask_the_notebook_tab_survives_save_and_load_in_the_reference_form() {
+    let ai = Destination::Browser {
+        view: BrowserView::Ai,
+    };
+    let mut workspace = Workspace::default();
+    workspace.visit(ai.clone());
+    let saved = workspace.save();
+    assert!(
+        saved.contains(r#"{"kind":"browser","view":"ai"}"#),
+        "{saved}"
+    );
+    let loaded = Workspace::load(&saved);
+    assert_eq!(loaded.tabs, [ai.clone()]);
+    assert_eq!(loaded.active, Some(ai));
+}

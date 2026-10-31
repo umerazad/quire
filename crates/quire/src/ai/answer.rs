@@ -146,6 +146,8 @@ pub struct Place {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AnswerEvent {
     Close,
+    /// Move this pane, conversation and all, into an "Ask the notebook" tab.
+    OpenAsTab,
     /// Keep turn `index`'s answer in today's page.
     Keep {
         index: usize,
@@ -202,6 +204,9 @@ pub struct AnswerPane {
     pub notice: Option<SharedString>,
     /// Changes from terminal sessions, where the notebook tools exist.
     pub terminal: Option<AnyView>,
+    /// Shown as a tab's content rather than beside a page, so it offers neither Open as tab nor
+    /// Close; its tab closes it.
+    pub in_tab: bool,
     focus: FocusHandle,
     scroll: ScrollHandle,
 }
@@ -314,6 +319,7 @@ impl AnswerPane {
             editing_synthesis: synthesis,
             notice,
             terminal: change_list(None, cx),
+            in_tab: false,
             focus: cx.focus_handle(),
             scroll: ScrollHandle::new(),
         };
@@ -981,11 +987,27 @@ impl Render for AnswerPane {
                     .gap_2()
                     .child(Label::new(self.title()))
                     .child(gpui::div().flex_1())
-                    .child(
-                        Button::new("ai-close", "Close")
-                            .style(ButtonStyle::Subtle)
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(AnswerEvent::Close))),
-                    ),
+                    .when(!self.in_tab, |header| {
+                        header
+                            .child(
+                                gpui::div()
+                                    .debug_selector(|| "quire-ai-open-tab".into())
+                                    .child(
+                                        Button::new("ai-open-tab", "Open as tab")
+                                            .style(ButtonStyle::Subtle)
+                                            .on_click(cx.listener(|_, _, _, cx| {
+                                                cx.emit(AnswerEvent::OpenAsTab)
+                                            })),
+                                    ),
+                            )
+                            .child(
+                                Button::new("ai-close", "Close")
+                                    .style(ButtonStyle::Subtle)
+                                    .on_click(
+                                        cx.listener(|_, _, _, cx| cx.emit(AnswerEvent::Close)),
+                                    ),
+                            )
+                    }),
             )
             .when_some(self.notice.clone(), |pane, notice| {
                 pane.child(Label::new(notice).color(Color::Warning))

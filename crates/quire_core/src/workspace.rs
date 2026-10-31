@@ -21,6 +21,8 @@ pub enum BrowserView {
     Daily,
     Tags,
     Tasks,
+    /// The answer pane opened as a tab ("Ask the notebook").
+    Ai,
 }
 
 /// The list the Tasks browser shows.

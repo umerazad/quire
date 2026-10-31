@@ -358,6 +358,7 @@ impl StoredWindow {
         match (self.nav.view, self.nav.tags.shown.clone()) {
             (Some(BrowserView::Tags), _) => self.show_tags(window, cx),
             (Some(BrowserView::Tasks), _) => self.show_tasks(window, cx),
+            (Some(BrowserView::Ai), _) => self.show_answer_tab(window, cx),
             (Some(view), _) => self.open_browser(view, window, cx),
             (None, Some(tag)) => self.show_tag(tag, window, cx),
             (None, None) => {}
@@ -825,8 +826,13 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> gpui::Div {
-        let content = match (self.nav.view, self.tag_content().or(self.task_content())) {
-            (Some(BrowserView::Tags | BrowserView::Tasks), Some(view)) | (None, Some(view)) => view,
+        let shown = self
+            .tag_content()
+            .or(self.task_content())
+            .or(self.answer_tab_content());
+        let content = match (self.nav.view, shown) {
+            (Some(BrowserView::Tags | BrowserView::Tasks | BrowserView::Ai), Some(view))
+            | (None, Some(view)) => view,
             (Some(view), _) => self.render_browser(view, window, cx).into_any_element(),
             (None, None) => match self.editor.clone() {
                 Some(editor) => gpui::div()

@@ -35,6 +35,9 @@ pub(in crate::editor_host::stored) struct BrowserRow {
     pub(in crate::editor_host::stored) detail: String,
 }
 
+/// The answer pane's title, which its tab takes, as rt names it.
+const ASK_THE_NOTEBOOK: &str = "Ask the notebook";
+
 fn shift(event: &ClickEvent) -> bool {
     event.modifiers().shift
 }
@@ -56,6 +59,9 @@ fn tab_icon(destination: &Destination) -> IconName {
         Destination::Browser {
             view: BrowserView::Pages,
         } => IconName::FileMultiple,
+        Destination::Browser {
+            view: BrowserView::Ai,
+        } => IconName::Sparkle,
     }
 }
 
@@ -103,6 +109,9 @@ impl StoredWindow {
             Destination::Browser {
                 view: BrowserView::Tasks,
             } => "Tasks".into(),
+            Destination::Browser {
+                view: BrowserView::Ai,
+            } => ASK_THE_NOTEBOOK.into(),
             Destination::Tag { tag } => tag.clone().into(),
             Destination::Page { page } => self
                 .nav
@@ -232,7 +241,7 @@ impl StoredWindow {
                     })
                     .collect()
             }
-            Some(BrowserView::Tags | BrowserView::Tasks) | None => Vec::new(),
+            Some(BrowserView::Tags | BrowserView::Tasks | BrowserView::Ai) | None => Vec::new(),
         }
     }
 
@@ -1033,6 +1042,7 @@ impl StoredWindow {
             BrowserView::Daily => "Daily notes",
             BrowserView::Tags => "Tags",
             BrowserView::Tasks => "Tasks",
+            BrowserView::Ai => ASK_THE_NOTEBOOK,
         };
         let chips: Vec<_> = match view {
             BrowserView::Pages => namespaces(
@@ -1062,7 +1072,7 @@ impl StoredWindow {
                 self.daily_month_menu(window, cx).into_any_element(),
                 self.render_daily_settings(cx).into_any_element(),
             ],
-            BrowserView::Tags | BrowserView::Tasks => Vec::new(),
+            BrowserView::Tags | BrowserView::Tasks | BrowserView::Ai => Vec::new(),
         };
         let rows =
             v_flex()
