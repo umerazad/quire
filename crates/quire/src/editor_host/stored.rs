@@ -498,6 +498,7 @@ impl Render for StoredWindow {
                         .child(history),
                 )
             })
+            .children(self.render_menu())
     }
 }
 

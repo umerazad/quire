@@ -23,7 +23,7 @@ pub(in crate::editor_host::stored) struct Browsers {
     scroll: UniformListScrollHandle,
     pub(in crate::editor_host::stored) files_selected: usize,
     pub(in crate::editor_host::stored) files_focus: Option<FocusHandle>,
-    files_scroll: UniformListScrollHandle,
+    pub(in crate::editor_host::stored) files_scroll: UniformListScrollHandle,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -358,7 +358,18 @@ impl StoredWindow {
                                 .child(Label::new(row.name.clone()).truncate())
                                 .on_click(cx.listener(move |this, event, window, cx| {
                                     this.activate_file(index, shift(event), window, cx)
-                                })),
+                                }))
+                                .on_secondary_mouse_down(cx.listener(
+                                    move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                        cx.stop_propagation();
+                                        this.deploy_file_menu(
+                                            index,
+                                            Some(event.position),
+                                            window,
+                                            cx,
+                                        )
+                                    },
+                                )),
                         )
                     })
                     .collect()
@@ -394,6 +405,26 @@ impl StoredWindow {
                 let index = this.nav.browsers.files_selected;
                 this.activate_file(index, true, window, cx)
             }))
+            .on_action(cx.listener(|this, _: &OpenContextMenu, window, cx| {
+                let index = this.nav.browsers.files_selected;
+                this.deploy_file_menu(index, None, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &CopyLink, _, cx| {
+                if let Some(page) = this.selected_file_page() {
+                    this.copy_link(&page, cx)
+                }
+            }))
+            .on_action(cx.listener(|this, _: &ToggleFavorite, _, cx| {
+                if let Some(page) = this.selected_file_page() {
+                    this.toggle_favorite_of(Destination::page(page), cx)
+                }
+            }))
+            .on_action(
+                cx.listener(|this, _: &RevealInFileManager, _, cx| this.reveal_selected_file(cx)),
+            )
+            .on_action(cx.listener(|this, _: &NewPageHere, window, cx| {
+                this.new_page_in_selected_folder(window, cx)
+            }))
             .child(
                 Label::new("FILES")
                     .size(LabelSize::Small)
@@ -409,11 +440,21 @@ impl StoredWindow {
         &self,
         id: impl Into<gpui::ElementId>,
         destination: &Destination,
+        sidebar: menu_views::Sidebar,
         cx: &mut gpui::Context<Self>,
     ) -> ListItem {
         let label = self.destination_label(destination, cx);
         let target = destination.clone();
+        let page = destination.page_id().map(str::to_owned);
         ListItem::new(id)
+            .when_some(page, |item, page| {
+                item.on_secondary_mouse_down(cx.listener(
+                    move |this, event: &gpui::MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.deploy_sidebar_menu(page.clone(), sidebar, event.position, window, cx)
+                    },
+                ))
+            })
             .spacing(ListItemSpacing::Dense)
             .toggle_state(self.nav.workspace.active.as_ref() == Some(destination))
             .child(Label::new(label).truncate())
@@ -436,8 +477,13 @@ impl StoredWindow {
             .iter()
             .enumerate()
             .map(|(index, favorite)| {
-                self.destination_item(("favorite", index), favorite, cx)
-                    .start_slot(ui::Icon::new(IconName::Star).color(Color::Accent))
+                self.destination_item(
+                    ("favorite", index),
+                    favorite,
+                    menu_views::Sidebar::Favorite,
+                    cx,
+                )
+                .start_slot(ui::Icon::new(IconName::Star).color(Color::Accent))
             })
             .collect();
         let recent: Vec<_> = self
@@ -449,16 +495,17 @@ impl StoredWindow {
             .enumerate()
             .map(|(index, item)| {
                 let removing = item.clone();
-                self.destination_item(("recent", index), item, cx).end_slot(
-                    IconButton::new(("remove-recent", index), IconName::Close)
-                        .icon_size(ui::IconSize::XSmall)
-                        .tooltip(ui::Tooltip::text("Remove from recent"))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.nav.workspace.remove_recent(&removing);
-                            this.persist(cx);
-                            cx.notify();
-                        })),
-                )
+                self.destination_item(("recent", index), item, menu_views::Sidebar::Recent, cx)
+                    .end_slot(
+                        IconButton::new(("remove-recent", index), IconName::Close)
+                            .icon_size(ui::IconSize::XSmall)
+                            .tooltip(ui::Tooltip::text("Remove from recent"))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.nav.workspace.remove_recent(&removing);
+                                this.persist(cx);
+                                cx.notify();
+                            })),
+                    )
             })
             .collect();
         v_flex()
@@ -580,6 +627,7 @@ impl StoredWindow {
                 let closing = tab.clone();
                 let middle = tab.clone();
                 Tab::new(("tab", index))
+                    .debug_selector(move || format!("quire-tab-{index}"))
                     .toggle_state(self.nav.workspace.active.as_ref() == Some(tab))
                     .child(Label::new(label).truncate())
                     .end_slot(
@@ -594,6 +642,13 @@ impl StoredWindow {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.visit(target.clone(), window, cx)
                     }))
+                    .on_mouse_down(
+                        gpui::MouseButton::Right,
+                        cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            this.deploy_tab_menu(index, event.position, window, cx)
+                        }),
+                    )
                     .on_mouse_down(
                         gpui::MouseButton::Middle,
                         cx.listener(move |this, _, window, cx| {

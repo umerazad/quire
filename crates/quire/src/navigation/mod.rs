@@ -6,6 +6,7 @@ pub mod file_dialog;
 pub mod live;
 pub mod page_history;
 pub mod palette;
+pub mod pointer_menu;
 pub mod references;
 pub mod tag_edits;
 pub mod tag_page;
@@ -67,6 +68,14 @@ gpui::actions!(
         MoveFile,
         /// Lists the shown page's earlier saved versions to compare and restore.
         ShowPageHistory,
+        /// Opens the pointer menu of the highlighted Files item, or of the active tab.
+        OpenContextMenu,
+        /// Copies a `[[link]]` to the highlighted Files page, or to the shown page.
+        CopyLink,
+        /// Shows the highlighted Files item, or the shown page, in Finder or Explorer.
+        RevealInFileManager,
+        /// Creates a page in the highlighted Files folder, or beside the highlighted page.
+        NewPageHere,
     ]
 );
 
@@ -101,6 +110,8 @@ pub fn list_keys<V: 'static, E: InteractiveElement>(
 }
 
 pub const NAVIGATION_CONTEXT: &str = "QuireNotebook";
+/// The key context of a Zed `ContextMenu`, which every pointer menu is.
+pub const MENU_CONTEXT: &str = "menu";
 pub const NEW_PAGE_TEXT: &str = "- ";
 
 macro_rules! primary {
@@ -195,6 +206,17 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", menu::Cancel, Some(file_dialog::DIALOG_CONTEXT)),
         KeyBinding::new("enter", menu::Confirm, Some("QuireDialog > Editor")),
         KeyBinding::new("escape", menu::Cancel, Some("QuireDialog > Editor")),
+        KeyBinding::new("shift-f10", OpenContextMenu, context),
+        KeyBinding::new("up", menu::SelectPrevious, Some(MENU_CONTEXT)),
+        KeyBinding::new("down", menu::SelectNext, Some(MENU_CONTEXT)),
+        KeyBinding::new("ctrl-p", menu::SelectPrevious, Some(MENU_CONTEXT)),
+        KeyBinding::new("ctrl-n", menu::SelectNext, Some(MENU_CONTEXT)),
+        KeyBinding::new("home", menu::SelectFirst, Some(MENU_CONTEXT)),
+        KeyBinding::new("end", menu::SelectLast, Some(MENU_CONTEXT)),
+        KeyBinding::new("enter", menu::Confirm, Some(MENU_CONTEXT)),
+        KeyBinding::new("space", menu::Confirm, Some(MENU_CONTEXT)),
+        KeyBinding::new("escape", menu::Cancel, Some(MENU_CONTEXT)),
+        KeyBinding::new("tab", menu::Cancel, Some(MENU_CONTEXT)),
         KeyBinding::new("f2", RenameFile, Some(FILES_CONTEXT)),
         KeyBinding::new("shift-f2", MoveFile, Some(FILES_CONTEXT)),
         KeyBinding::new("enter", menu::Confirm, Some(page_history::HISTORY_CONTEXT)),

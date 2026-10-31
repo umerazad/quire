@@ -1042,3 +1042,82 @@ fn folder_page_history_restores_an_earlier_file_and_keeps_the_replaced_one(
         })
     });
 }
+
+#[gpui::test]
+fn renaming_a_folder_page_from_the_files_menu_writes_what_f2_writes(cx: &mut TestAppContext) {
+    // rt tests/e2e/editor.spec.ts "renames a page in place from the Files menu and its links
+    // follow", started from the right-click menu.
+    use super::menu_tests::{choose, menu, right_click_file};
+    let opened = open_folder(
+        &[
+            ("Old name.md", "- Linked page\n"),
+            (
+                "Welcome.md",
+                "A place for thoughts.\n\n- See [[Old name]] ^seed\n",
+            ),
+        ],
+        "Welcome.md",
+        cx,
+    );
+    let notebook = &opened.notebook;
+    right_click_file(notebook, "Old name.md", cx);
+    assert_eq!(
+        menu(notebook, cx),
+        Some((
+            "Page actions for Old name".into(),
+            [
+                "Open",
+                "Open beside",
+                "Copy link",
+                "Add to favorites",
+                "-",
+                "New note here",
+                "-",
+                "Rename",
+                "Move to…",
+                "Reveal in Finder / Explorer",
+                "-",
+                "Delete page…",
+            ]
+            .map(str::to_owned)
+            .to_vec()
+        ))
+    );
+    choose(notebook, "Rename", cx);
+    wait_until(cx, "the rename field", |cx| {
+        read(notebook, cx, |view, cx| {
+            view.nav
+                .dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.read(cx).name(cx) == Some("Old name".into()))
+        })
+    });
+    rename_to(notebook, "New name", cx);
+    wait_until(cx, "the rename", |cx| {
+        read(notebook, cx, |view, _| view.nav.dialog.is_none())
+    });
+    assert_eq!(
+        fs::read_to_string(opened.file("New name.md")).unwrap(),
+        "- Linked page\n"
+    );
+    assert_eq!(
+        fs::read_to_string(opened.file("Welcome.md")).unwrap(),
+        "A place for thoughts.\n\n- See [[New name]] ^seed\n"
+    );
+    assert!(!opened.file("Old name.md").exists());
+    wait_until(cx, "Files to list the new name", |cx| {
+        read(notebook, cx, |view, _| {
+            view.file_rows().iter().any(|row| row.path == "New name.md")
+        })
+    });
+    let revealed = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let recorder = revealed.clone();
+    cx.update(|cx| {
+        cx.set_global(super::menu_views::RevealFiles(Rc::new(move |path| {
+            recorder.borrow_mut().push(path.to_owned())
+        })))
+    });
+    right_click_file(notebook, "New name.md", cx);
+    choose(notebook, "Reveal in Finder / Explorer", cx);
+    assert_eq!(*revealed.borrow(), [opened.file("New name.md")]);
+}
