@@ -531,6 +531,20 @@ impl StoredWindow {
                         },
                     ))),
             )
+            .child(
+                gpui::div()
+                    .debug_selector(|| "quire-templates-entry".into())
+                    .child(
+                        ListItem::new("templates")
+                            .spacing(ListItemSpacing::Dense)
+                            .toggle_state(self.showing_templates(cx))
+                            .start_slot(ui::Icon::new(IconName::FileDoc).color(Color::Muted))
+                            .child(Label::new(quire_core::templates::TEMPLATES_TITLE))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.open_templates(window, cx)),
+                            ),
+                    ),
+            )
             .when(!favorites.is_empty(), |div| {
                 div.child(
                     Label::new("FAVORITES")
