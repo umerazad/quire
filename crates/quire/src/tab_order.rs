@@ -24,10 +24,7 @@ impl TabOrder {
 
     /// A container whose own controls are numbered from zero, at the next index.
     pub fn group(&mut self) -> gpui::Div {
-        gpui::div()
-            .tab_group()
-            .tab_index(self.next())
-            .tab_stop(false)
+        gpui::div().tab_group().tab_index(self.next())
     }
 }
 
