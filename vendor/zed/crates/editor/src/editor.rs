@@ -12813,6 +12813,8 @@ pub enum EditorEvent {
     CursorShapeChanged,
     BreadcrumbsChanged,
     OutlineSymbolsChanged,
+    /// Emitted when folds are added to or removed from this editor.
+    FoldsChanged,
     PushedToNavHistory {
         anchor: Anchor,
         is_deactivate: bool,

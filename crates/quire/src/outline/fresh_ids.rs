@@ -10,10 +10,6 @@ use std::ops::Range;
 use text::ToOffset as _;
 use text::TransactionId;
 
-fn new_id() -> String {
-    format!("b-{}", uuid::Uuid::new_v4().simple())
-}
-
 /// The block IDs `inserted` brought into `text`, as byte ranges after their `^`, split into
 /// those already on the page and those to check against the rest of the notebook. Of several
 /// inserted copies, the first stays a candidate and the later ones are duplicates.
@@ -70,7 +66,7 @@ pub(super) fn follow(
         .collect();
     let fresh: Vec<_> = duplicates
         .into_iter()
-        .map(|range| (range, new_id()))
+        .map(|range| (range, crate::references::new_block_id()))
         .collect();
     super::amend(buffer, &fresh, into, cx);
     let Some(host) = crate::references::host(editor) else {
@@ -99,7 +95,12 @@ pub(super) fn follow(
                 let snapshot = buffer.read(cx).snapshot();
                 let range = anchors.start.to_offset(&snapshot)..anchors.end.to_offset(&snapshot);
                 if snapshot.text_for_range(range.clone()).collect::<String>() == id {
-                    super::amend(&buffer, &[(range, new_id())], into, cx);
+                    super::amend_later(
+                        &buffer,
+                        &[(range, crate::references::new_block_id())],
+                        into,
+                        cx,
+                    );
                 }
             });
         })

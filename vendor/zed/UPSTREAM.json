@@ -248,7 +248,7 @@
     },
     {
       "path": "crates/editor/src/display_map/tab_map.rs",
-      "change": "Skip empty fold chunks when seeking tab stops, avoiding a zero-length subtraction overflow with empty replacement text. Add a focused UTF-8/tab regression with empty fold placeholders."
+      "change": "Skip empty fold chunks when seeking tab stops, avoiding a zero-length subtraction overflow with empty replacement text. Add a focused UTF-8/tab regression with empty fold placeholders. Pass a fold placeholder with empty text and a renderer through as its own chunk, so its element still renders."
     },
     {
       "path": "crates/editor/src/test/editor_lsp_test_context.rs",
@@ -299,8 +299,20 @@
       "change": "Retain a filtered view's complete source selection during clipboard copy and paste rather than clipping its hidden prefix through a display round trip. Reuse the input helper and original clipboard/autoindent/history paths; partial selections and ordinary views retain their existing resolution."
     },
     {
+      "path": "crates/editor/src/fold.rs",
+      "change": "Emit EditorEvent::FoldsChanged from folds_did_change. Fold behavior is unchanged."
+    },
+    {
+      "path": "crates/editor/src/display_map/fold_map.rs",
+      "change": "When chunks start exactly at a fold whose placeholder text is empty, include that fold so its rendered placeholder shows on the first visible line too. Other folds and offsets are unchanged."
+    },
+    {
+      "path": "crates/editor/src/display_map.rs",
+      "change": "Keep a highlighted chunk with empty text and an element renderer instead of dropping it while splitting invisibles, so empty-text fold placeholders render their element."
+    },
+    {
       "path": "crates/editor/src/editor.rs",
-      "change": "Let editor addons supply source-anchored interaction regions for the visible viewport, retaining native text layout and selection. Expose clipped fragment geometry to their renderers."
+      "change": "Let editor addons supply source-anchored interaction regions for the visible viewport, retaining native text layout and selection. Expose clipped fragment geometry to their renderers. Emit FoldsChanged when folds are added or removed, so hosts can follow fold state from any fold command."
     },
     {
       "path": "crates/editor/src/element.rs",

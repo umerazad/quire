@@ -8,7 +8,7 @@ const MOD: &str = if cfg!(target_os = "macos") {
 };
 
 /// A Write view of `marked`, whose `|` is the caret, with Vim on or off.
-fn write_view(marked: &str, vim: bool, cx: &mut TestAppContext) -> WindowHandle<Editor> {
+pub(super) fn write_view(marked: &str, vim: bool, cx: &mut TestAppContext) -> WindowHandle<Editor> {
     cx.update(|cx| {
         crate::editor_host::init(cx).expect("editor initialization");
         if !vim {
@@ -53,7 +53,7 @@ fn place(window: WindowHandle<Editor>, cursor: usize, cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
 }
 
-fn state(window: WindowHandle<Editor>, cx: &mut TestAppContext) -> String {
+pub(super) fn state(window: WindowHandle<Editor>, cx: &mut TestAppContext) -> String {
     cx.executor().run_until_parked();
     window
         .update(cx, |editor, _, cx| {
@@ -70,7 +70,7 @@ fn state(window: WindowHandle<Editor>, cx: &mut TestAppContext) -> String {
         .unwrap()
 }
 
-fn keys(window: WindowHandle<Editor>, keys: &str, cx: &mut TestAppContext) {
+pub(super) fn keys(window: WindowHandle<Editor>, keys: &str, cx: &mut TestAppContext) {
     cx.simulate_keystrokes(window.into(), keys);
     cx.executor().run_until_parked();
 }
@@ -82,7 +82,7 @@ fn expect(window: WindowHandle<Editor>, steps: &[(&str, &str)], cx: &mut TestApp
     }
 }
 
-fn displayed(window: WindowHandle<Editor>, cx: &mut TestAppContext) -> String {
+pub(super) fn displayed(window: WindowHandle<Editor>, cx: &mut TestAppContext) -> String {
     window
         .update(cx, |editor, window, cx| {
             editor.snapshot(window, cx).display_snapshot.text()
@@ -356,6 +356,101 @@ fn folding_collapses_children_and_enter_adds_a_sibling(cx: &mut TestAppContext) 
     assert_eq!(displayed(window, cx), "Parent⋯\nAfter\n");
     keys(window, &format!("{MOD}-alt-]"), cx);
     assert_eq!(displayed(window, cx), "Parent\n  Kid\nAfter\n");
+}
+
+pub(super) fn click(window: WindowHandle<Editor>, selector: &'static str, cx: &mut TestAppContext) {
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    let bounds = visual
+        .debug_bounds(selector)
+        .unwrap_or_else(|| panic!("a rendered {selector}"));
+    visual.simulate_click(bounds.center(), Default::default());
+    cx.executor().run_until_parked();
+}
+
+fn collapsed_count(window: WindowHandle<Editor>, cx: &mut TestAppContext) -> usize {
+    window
+        .update(cx, |editor, _, cx| folds::collapsed(editor, cx).len())
+        .unwrap()
+}
+
+#[gpui::test]
+fn bullets_draw_without_changing_text_and_their_arrow_folds(cx: &mut TestAppContext) {
+    let window = write_view("- Parent|\n  - Kid\n- After\n", false, cx);
+    assert_eq!(displayed(window, cx), "Parent\n  Kid\nAfter\n");
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    let bullet = visual
+        .debug_bounds("quire-bullet")
+        .expect("a rendered bullet");
+    assert!(
+        bullet.size.width <= gpui::px(24.),
+        "a bullet is as narrow as rt's: {bullet:?}"
+    );
+    click(window, "quire-bullet-fold", cx);
+    assert_eq!(displayed(window, cx), "Parent⋯\nAfter\n");
+    assert_eq!(collapsed_count(window, cx), 1);
+    click(window, "quire-bullet-fold", cx);
+    assert_eq!(displayed(window, cx), "Parent\n  Kid\nAfter\n");
+    assert_eq!(state(window, cx), "- Parent|\n  - Kid\n- After\n");
+}
+
+#[gpui::test]
+fn zed_fold_actions_fold_blocks_and_keep_write_syntax_hidden(cx: &mut TestAppContext) {
+    let window = write_view("- Parent\n  - Ki|d\n- After\n", false, cx);
+    cx.dispatch_action(window.into(), editor::actions::Fold);
+    cx.executor().run_until_parked();
+    assert_eq!(displayed(window, cx), "Parent⋯\nAfter\n");
+    place(window, "- Parent".len(), cx);
+    expect(
+        window,
+        &[("enter", "- Parent\n  - Kid\n- |\n- After\n")],
+        cx,
+    );
+    keys(window, &undo(false), cx);
+    place(window, "- Par".len(), cx);
+    cx.dispatch_action(window.into(), editor::actions::UnfoldLines);
+    cx.executor().run_until_parked();
+    assert_eq!(
+        displayed(window, cx),
+        "Parent\n  Kid\nAfter\n",
+        "markers stay hidden after Zed's unfold"
+    );
+}
+
+#[gpui::test]
+fn folds_follow_moved_blocks_and_keep_nested_folds(cx: &mut TestAppContext) {
+    let window = write_view(
+        "- Parent|\n  - Kid\n    - Grand\n- After\n  - Below\n",
+        true,
+        cx,
+    );
+    keys(window, "j z c k z c", cx);
+    assert_eq!(displayed(window, cx), "Parent⋯\nAfter\n  Below\n");
+    keys(window, "z o", cx);
+    assert_eq!(
+        displayed(window, cx),
+        "Parent\n  Kid⋯\nAfter\n  Below\n",
+        "opening a block keeps its children's folds"
+    );
+    keys(window, "z c alt-down", cx);
+    assert_eq!(
+        state(window, cx).replace('|', ""),
+        "- After\n  - Below\n- Parent\n  - Kid\n    - Grand\n"
+    );
+    assert_eq!(displayed(window, cx), "After\n  Below\nParent⋯\n");
+    keys(window, "z o", cx);
+    assert_eq!(displayed(window, cx), "After\n  Below\nParent\n  Kid⋯\n");
+    keys(window, "z shift-m", cx);
+    assert_eq!(displayed(window, cx), "After⋯\nParent⋯\n");
+    keys(window, "z shift-r", cx);
+    assert_eq!(
+        displayed(window, cx),
+        "After\n  Below\nParent\n  Kid\n    Grand\n"
+    );
+    assert_eq!(collapsed_count(window, cx), 0);
 }
 
 #[gpui::test]
@@ -669,5 +764,65 @@ fn vim_counts_and_visual_shifts_move_sibling_subtrees(cx: &mut TestAppContext) {
         cx.update(|cx| notice(cx)).as_deref(),
         Some(model::NOT_SIBLINGS),
         "a kid and its parent's siblings move only together with the parent"
+    );
+
+    let page = "- A\n  - B\n    - C\n- D|\n  - Kid\n- E\n";
+    let window = write_view(page, true, cx);
+    expect(
+        window,
+        &[
+            (
+                "shift-v j j 3 >",
+                "- A\n  - B\n    - C\n      - |D\n        - Kid\n      - E\n",
+            ),
+            ("u", "- A\n  - B\n    - C\n- |D\n  - Kid\n- E\n"),
+            (
+                "shift-v 5 >",
+                "- A\n  - B\n    - C\n      - |D\n        - Kid\n- E\n",
+            ),
+        ],
+        cx,
+    );
+    expect(
+        window,
+        &[(
+            "shift-v 2 <",
+            "- A\n  - B\n    - C\n  - |D\n    - Kid\n- E\n",
+        )],
+        cx,
+    );
+}
+
+/// A fresh ID the index names after the writer typed on is part of the paste's undo step.
+#[gpui::test]
+fn a_late_follow_up_edit_joins_its_edit_after_later_typing(cx: &mut TestAppContext) {
+    cx.update(|cx| crate::editor_host::init(cx).expect("editor initialization"));
+    let buffer = cx.update(|cx| crate::markdown::buffer("- Here\n", cx));
+    let edit = |at: usize, text: &str, cx: &mut TestAppContext| {
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(at..at, text)], None, cx);
+            buffer.finalize_last_transaction();
+            buffer.peek_undo_stack().map(|entry| entry.transaction_id())
+        })
+    };
+    let pasted = edit(7, "- Copy ^far\n", cx);
+    edit(0, "!", cx);
+    cx.update(|cx| {
+        let at = "!- Here\n- Copy ^".len();
+        amend_later(&buffer, &[(at..at + 3, "new".into())], pasted, cx)
+    });
+    let text = |cx: &mut TestAppContext| buffer.read_with(cx, |buffer, _| buffer.text());
+    assert_eq!(text(cx), "!- Here\n- Copy ^new\n");
+    buffer.update(cx, |buffer, cx| buffer.undo(cx));
+    assert_eq!(
+        text(cx),
+        "- Here\n- Copy ^new\n",
+        "undo reverts the typing first"
+    );
+    buffer.update(cx, |buffer, cx| buffer.undo(cx));
+    assert_eq!(
+        text(cx),
+        "- Here\n",
+        "the next undo reverts the paste with its follow-up"
     );
 }

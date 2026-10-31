@@ -37,10 +37,6 @@ fn describe(error: anyhow::Error) -> String {
     format!("{error:#}")
 }
 
-fn new_id() -> String {
-    format!("b-{}", uuid::Uuid::new_v4().simple())
-}
-
 /// Whether the reference parser could find a reference in `text`.
 fn may_reference(text: &str) -> bool {
     text.contains("((") || text.contains("[[") || text.contains("{{pdf:")
@@ -263,8 +259,12 @@ pub async fn import(
                 ..Parsed::default()
             };
             let imported = match graph {
-                Graph::Json(pages) => import_roam_json(pages, &markdown, &mut new_id),
-                Graph::Edn(graph) => import_roam_edn(graph, &markdown, &mut new_id),
+                Graph::Json(pages) => {
+                    import_roam_json(pages, &markdown, &mut crate::references::new_block_id)
+                }
+                Graph::Edn(graph) => {
+                    import_roam_edn(graph, &markdown, &mut crate::references::new_block_id)
+                }
             }?;
             let metadata = js_json::stringify(&imported.metadata);
             Ok::<_, String>((imported.documents, imported.report, metadata))
@@ -384,7 +384,7 @@ pub async fn export(
                     &documents,
                     metadata.as_ref().as_ref(),
                     &markdown,
-                    &mut new_id,
+                    &mut crate::references::new_block_id,
                 )?;
                 let missing = std::mem::take(&mut *markdown.missing.borrow_mut());
                 Ok::<_, String>((markdown, missing))
@@ -425,7 +425,7 @@ pub async fn export(
             &documents,
             metadata.as_ref().as_ref(),
             &markdown,
-            &mut new_id,
+            &mut crate::references::new_block_id,
         )?;
         let text = export_file_text(exported.pages);
         roam_files::write_export(&destination, &forbidden, &text, exported.report).map_err(describe)

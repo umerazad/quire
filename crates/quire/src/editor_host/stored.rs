@@ -326,7 +326,12 @@ impl StoredWindow {
             navigation::Navigation::new(&database, &notebook, calendar.ok(), cx.focus_handle());
         nav.error = profile_error.map(Into::into);
         let id = page.read(cx).id().to_owned();
-        let links = links::Links::new(cx.weak_entity(), Rc::downgrade(&session), cx);
+        let links = links::Links::new(
+            cx.weak_entity(),
+            Rc::downgrade(&session),
+            crate::outline::fold_store::FoldStore::beside(&database, &notebook),
+            cx,
+        );
         let mut this = Self {
             session,
             location,

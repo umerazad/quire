@@ -17,6 +17,8 @@ pub struct Block {
 pub struct SyntaxSpan {
     pub marker: Range<usize>,
     pub id: Option<Range<usize>>,
+    /// Where a list item's children start, when it has any.
+    pub children: Option<usize>,
 }
 
 pub fn syntax_spans(snapshot: &BufferSnapshot, blocks: &[Block]) -> Vec<SyntaxSpan> {
@@ -39,7 +41,13 @@ pub fn syntax_spans(snapshot: &BufferSnapshot, blocks: &[Block]) -> Vec<SyntaxSp
                     range.start + block.content_from..range.end + block.content_from
                 })
             });
-            Some(SyntaxSpan { marker, id })
+            let children = (block.kind == "list" && block.subtree_to > block.content_to)
+                .then_some(block.content_to);
+            Some(SyntaxSpan {
+                marker,
+                id,
+                children,
+            })
         })
         .collect()
 }

@@ -735,6 +735,13 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
+/// Whether this editor is embedded in another view.
+pub(crate) fn is_nested(editor: &Editor) -> bool {
+    editor
+        .addon::<Embeds>()
+        .is_some_and(|embeds| embeds.outer.is_some())
+}
+
 /// The nested editors this view shows, in page order.
 #[cfg(test)]
 pub(crate) fn nested_editors(editor: &Editor) -> Vec<Entity<Editor>> {
