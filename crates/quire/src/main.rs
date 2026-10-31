@@ -33,6 +33,9 @@ mod notebook_backend;
 mod notebook_session;
 
 #[cfg(feature = "full-editor")]
+mod page_conflict;
+
+#[cfg(feature = "full-editor")]
 mod navigation;
 
 #[cfg(feature = "full-editor")]

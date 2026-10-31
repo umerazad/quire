@@ -184,6 +184,14 @@ impl StoredWindow {
             cx.notify();
         })
         .detach();
+        cx.subscribe_in(
+            page,
+            window,
+            |this, page, _: &crate::page_conflict::ConflictResolved, window, cx| {
+                this.reopen_resolved(page, window, cx)
+            },
+        )
+        .detach();
         if let Ok(index) = &self.index {
             index.update(cx, |index, cx| index.track(page.clone(), cx));
         }

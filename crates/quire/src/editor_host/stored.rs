@@ -645,7 +645,9 @@ impl StoredWindow {
 
 impl Render for StoredWindow {
     fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let conflict = self.render_folder_conflict(cx);
+        let conflict = self
+            .render_folder_conflict(cx)
+            .or_else(|| self.render_version_conflict(cx));
         let page = self.page.read(cx);
         let loading = page.is_loading();
         let header =

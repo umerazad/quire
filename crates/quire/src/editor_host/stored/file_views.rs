@@ -407,4 +407,45 @@ impl StoredWindow {
         self.refresh_catalogue(cx);
         cx.notify();
     }
+
+    /// The choice between a page's competing versions, while the shown page has them.
+    pub(in crate::editor_host::stored) fn render_version_conflict(
+        &self,
+        cx: &App,
+    ) -> Option<gpui::AnyElement> {
+        self.shown_page(cx)?;
+        let conflict = self.page.read(cx).loaded()?.conflict.clone()?;
+        Some(conflict.into_any_element())
+    }
+
+    /// A page whose competing versions were resolved opens afresh from storage, with one
+    /// version and editing allowed.
+    pub(in crate::editor_host::stored) fn reopen_resolved(
+        &mut self,
+        page: &Entity<OpenPage>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let id = page.read(cx).id().to_owned();
+        let shown = self.page.entity_id() == page.entity_id() && self.shown_page(cx).is_some();
+        if self
+            .nav
+            .side
+            .as_ref()
+            .is_some_and(|side| side.page.entity_id() == page.entity_id())
+        {
+            self.nav.side = None;
+        }
+        if let Some(open) = self.session.borrow_mut().forget(&id) {
+            if let Ok(index) = &self.index {
+                index.update(cx, |index, cx| index.forget(&open, cx));
+            }
+            self.nav.editors.remove(&open.entity_id());
+            self.nav.watched.remove(&open.entity_id());
+        }
+        if shown {
+            self.show(&Destination::page(&id), window, cx);
+        }
+        self.refresh_catalogue(cx);
+    }
 }

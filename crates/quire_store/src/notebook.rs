@@ -12,6 +12,7 @@ mod census;
 mod checkout;
 #[cfg(all(test, unix))]
 mod commit_faults;
+mod conflict;
 mod delivery;
 mod folder;
 mod history;
@@ -27,6 +28,7 @@ mod restored;
 mod revision;
 pub use census::StoreCensus;
 pub use checkout::PageCheckout;
+pub use conflict::ConflictVersion;
 pub use folder::{RescanCursor, RescanLimits, RescanProblem, RescanReport, RescanWait};
 pub use history::{SavedVersion, VERSION_UNAVAILABLE};
 pub use import::{BatchImport, ImportedBatch, ImportedPage};

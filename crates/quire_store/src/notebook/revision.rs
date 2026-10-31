@@ -281,7 +281,7 @@ impl NotebookStore {
         })
     }
 
-    fn save_one(&self, edit: &Edit) -> Result<SaveAck> {
+    pub(super) fn save_one(&self, edit: &Edit) -> Result<SaveAck> {
         ensure!(
             !edit.page.is_empty(),
             "Cannot save a page without an identity. Reopen the page and retry."
