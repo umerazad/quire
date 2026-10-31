@@ -107,6 +107,9 @@ mod preferences;
 #[cfg(feature = "full-editor")]
 mod help;
 
+#[cfg(feature = "full-editor")]
+mod showcase;
+
 #[path = "example_support/fonts.rs"]
 mod example_support;
 

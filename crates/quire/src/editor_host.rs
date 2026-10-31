@@ -15,6 +15,7 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     settings::init(cx);
     crate::preferences::init(cx);
     crate::help::init(cx);
+    crate::showcase::init(cx);
     theme_settings::init(theme::LoadThemes::All(Box::new(assets::Assets)), cx);
     crate::markdown::init(cx)?;
     crate::media::init(cx);
@@ -299,6 +300,11 @@ impl NotebookWindow {
     }
 
     #[cfg(test)]
+    pub(crate) fn second_is_written(&self, cx: &App) -> bool {
+        crate::editor_projection::enabled(self.second.read(cx))
+    }
+
+    #[cfg(test)]
     pub(crate) fn source_text(&self, cx: &App) -> String {
         self.source.read(cx).text(cx)
     }
@@ -320,7 +326,15 @@ impl NotebookWindow {
         Self::for_page(analysis, excerpt, window, cx)
     }
 
-    fn for_page(
+    /// Shows the second pane as Write, the way a reader first meets a page.
+    pub(crate) fn show_written(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        if !crate::editor_projection::enabled(self.second.read(cx)) {
+            let second = self.second.clone();
+            self.change_presentation(&second, window, cx);
+        }
+    }
+
+    pub(crate) fn for_page(
         analysis: Entity<crate::page_analysis::PageAnalysis>,
         excerpt: Option<Entity<multi_buffer::MultiBuffer>>,
         window: &mut Window,

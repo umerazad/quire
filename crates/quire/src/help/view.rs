@@ -227,6 +227,18 @@ impl Render for HelpWindow {
                             .child(self.search.clone()),
                     )
                     .child(nav)
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Button::new("open-readme", "README.md rendering sample")
+                                    .on_click(|_, _, cx| crate::showcase::open(cx)),
+                            )
+                            .child(
+                                Button::new("open-settings", "Settings")
+                                    .on_click(|_, _, cx| crate::preferences::view::open(cx)),
+                            ),
+                    )
                     .child(muted(
                         "Keys match this platform. Editor shortcuts need focus in a note; notebook shortcuts work outside dialogs.",
                     )),
