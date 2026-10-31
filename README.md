@@ -1,6 +1,8 @@
 # Quire native
 
-The Rust/GPUI rewrite is underway. The default executable hosts Zed's editor and Vim in two panes sharing an in-memory example note. Each pane can switch between Source and Write presentation using the copied Markdown and inline grammars. Existing stored pages support editing, recovery, and local saves. Daily-page navigation and the remaining application workflows are still in [the task queue](plans/native-rewrite-tasks.md).
+Quire native is a Rust/GPUI rewrite of the `rt` notes app on Zed's editor and Vim. It opens folder notebooks and Quire (format 1) notebooks with daily pages, outlines, references, tags, tasks, templates, media, history, backups, sync, profiles, AI commands, import and export, and migration from `rt`. Launched with no notebook in the active profile, it shows a two-pane demo note rather than `rt`'s example notebook (parity row E20).
+
+The build is experimental and not ready for daily-driver cutover. The NR37 review of 2026-11-01 found 31 of 68 [parity rows](plans/native-parity.md) proven by native tests on the headless macOS test platform and 37 not yet: performance budgets fail, spellcheck is in progress, several gaps remain, and no native desktop, Linux, or Windows acceptance run exists. The blocking list, with an owner for each item, is in [NR37](plans/native-rewrite-tasks.md). Keep `rt` and a verified backup until that list is empty.
 
 Open a stored page with its native database and original identities:
 
