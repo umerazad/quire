@@ -59,6 +59,41 @@ impl Ai {
         cx.update(|cx| cx.set_global(host));
     }
 
+    /// The next run makes `calls` (`[{name, arguments}]`) through its tool server, then streams
+    /// `result`.
+    pub fn answer_with_tools(
+        &self,
+        result: &str,
+        calls: serde_json::Value,
+        cx: &mut TestAppContext,
+    ) {
+        let file = self
+            .bench
+            .folder
+            .path()
+            .join(format!("calls-{}.json", uuid::Uuid::new_v4()));
+        std::fs::write(&file, calls.to_string()).unwrap();
+        let log = self.tool_log();
+        std::fs::remove_file(&log).ok();
+        self.answer(
+            result,
+            &[
+                ("FAKE_AI_TOOLS", &file.to_string_lossy()),
+                ("FAKE_AI_TOOL_LOG", &log.to_string_lossy()),
+            ],
+            cx,
+        );
+    }
+
+    fn tool_log(&self) -> std::path::PathBuf {
+        self.bench.folder.path().join("tools.json")
+    }
+
+    /// The last run's tool calls: name, arguments, the text each returned, and whether it failed.
+    pub fn tool_calls(&self) -> Vec<serde_json::Value> {
+        serde_json::from_str(&std::fs::read_to_string(self.tool_log()).unwrap()).unwrap()
+    }
+
     /// What the CLI received on standard input, last run first.
     pub fn sent(&self) -> Vec<String> {
         let mut sent: Vec<String> = self

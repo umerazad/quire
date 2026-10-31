@@ -206,6 +206,15 @@ pub struct Applied {
     pub created: bool,
     before: String,
     after: String,
+    /// The undo step applying made in an open page's buffer.
+    step: Option<Step>,
+}
+
+/// One transaction in an open page's buffer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Step {
+    buffer: WeakEntity<language::Buffer>,
+    transaction: text::TransactionId,
 }
 
 #[derive(Clone, Debug)]
@@ -349,7 +358,8 @@ pub fn apply(id: &str, cx: &mut App) -> Task<Result<(), String>> {
     })
 }
 
-/// Applies every staged change of `run`, one after another; reports the ones that failed.
+/// Applies every staged change of `run`, one after another, and makes the changes to each open
+/// page one undo step, as accepting one proposal is; reports the ones that failed.
 pub fn apply_all(run: &str, cx: &mut App) -> Task<Vec<(String, String)>> {
     let staged: Vec<String> = list(Some(run), cx)
         .into_iter()
@@ -358,13 +368,38 @@ pub fn apply_all(run: &str, cx: &mut App) -> Task<Vec<(String, String)>> {
         .collect();
     cx.spawn(async move |cx| {
         let mut failed = Vec::new();
+        let mut steps: Vec<Step> = Vec::new();
         for id in staged {
-            if let Err(error) = cx.update(|cx| apply(&id, cx)).await {
-                failed.push((id, error));
+            match cx.update(|cx| apply(&id, cx)).await {
+                Ok(()) => steps.extend(cx.update(|cx| {
+                    list(None, cx)
+                        .into_iter()
+                        .find(|change| change.id == id)
+                        .and_then(|change| change.applied?.step)
+                })),
+                Err(error) => failed.push((id, error)),
             }
         }
+        cx.update(|cx| group_steps(steps, cx));
         failed
     })
+}
+
+/// Folds each later step into the first one made in the same buffer.
+fn group_steps(steps: Vec<Step>, cx: &mut App) {
+    let mut firsts: Vec<&Step> = Vec::new();
+    for step in &steps {
+        match firsts.iter().find(|first| first.buffer == step.buffer) {
+            Some(first) => {
+                if let Some(buffer) = step.buffer.upgrade() {
+                    buffer.update(cx, |buffer, _| {
+                        buffer.merge_transactions(step.transaction, first.transaction)
+                    });
+                }
+            }
+            None => firsts.push(step),
+        }
+    }
 }
 
 /// Reverses an applied change while its page is exactly as applying left it.
@@ -496,15 +531,21 @@ async fn observe(
     }))
 }
 
+/// The page's text after a change, and the undo step it made in an open page's buffer.
+struct Committed {
+    text: String,
+    step: Option<Step>,
+}
+
 /// Applies `edits` to the observed text as one step, refusing with `stale` when the page
-/// changed since it was observed. Returns the page's new text.
+/// changed since it was observed.
 async fn commit(
     notebook: &LiveNotebook,
     observed: Observed,
     mut edits: Vec<Edit>,
     stale: &str,
     cx: &mut AsyncApp,
-) -> Result<String, String> {
+) -> Result<Committed, String> {
     edits.sort_by_key(|edit| edit.range.start);
     if let Some((persistence, snapshot)) = observed.open {
         return cx.update(|cx| {
@@ -513,7 +554,7 @@ async fn commit(
             if buffer.read(cx).version() != *snapshot.version() {
                 return Err(stale.to_owned());
             }
-            let text = buffer.update(cx, |buffer, cx| {
+            let (text, transaction) = buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction();
                 buffer.start_transaction();
                 buffer.edit(
@@ -521,12 +562,18 @@ async fn commit(
                     None,
                     cx,
                 );
-                buffer.end_transaction(cx);
+                let transaction = buffer.end_transaction(cx);
                 buffer.finalize_last_transaction();
-                buffer.text()
+                (buffer.text(), transaction)
             });
             persistence.update(cx, |persistence, cx| persistence.save(cx));
-            Ok(text)
+            Ok(Committed {
+                text,
+                step: transaction.map(|transaction| Step {
+                    buffer: buffer.downgrade(),
+                    transaction,
+                }),
+            })
         });
     }
     let Some((source, original)) = observed.source else {
@@ -548,7 +595,7 @@ async fn commit(
         )
     });
     match written.await {
-        Ok(_) => Ok(text),
+        Ok(_) => Ok(Committed { text, step: None }),
         Err(error) if error == STALE => Err(stale.to_owned()),
         Err(error) => Err(error),
     }
@@ -565,13 +612,14 @@ async fn analysis(text: &str, cx: &mut AsyncApp) -> Result<quire_store::index::P
         .ok_or_else(|| NOT_READY.to_owned())
 }
 
-fn applied(page: String, title: &str, created: bool, before: String, after: String) -> Applied {
+fn applied(page: String, title: &str, before: String, committed: Committed) -> Applied {
     Applied {
         page,
         title: title.to_owned(),
-        created,
+        created: false,
         before,
-        after,
+        after: committed.text,
+        step: committed.step,
     }
 }
 
@@ -590,7 +638,14 @@ async fn create(
         text.to_owned(),
     )
     .await?;
-    Ok(applied(page, title, true, String::new(), text.to_owned()))
+    Ok(Applied {
+        page,
+        title: title.to_owned(),
+        created: true,
+        before: String::new(),
+        after: text.to_owned(),
+        step: None,
+    })
 }
 
 async fn append(
@@ -614,8 +669,8 @@ async fn append(
         range: end..end,
         replacement: format!("{gap}{block}\n"),
     };
-    let after = commit(notebook, observed, vec![edit], STALE, cx).await?;
-    Ok(applied(page.to_owned(), title, false, before, after))
+    let committed = commit(notebook, observed, vec![edit], STALE, cx).await?;
+    Ok(applied(page.to_owned(), title, before, committed))
 }
 
 fn daily(notebook: &LiveNotebook) -> Result<(String, String, String), String> {
@@ -707,8 +762,8 @@ async fn run(
                 replacement: after.clone(),
             };
             let previous = observed.text.clone();
-            let text = commit(notebook, observed, vec![edit], STALE, cx).await?;
-            Ok(applied(page, &target.title, false, previous, text))
+            let committed = commit(notebook, observed, vec![edit], STALE, cx).await?;
+            Ok(applied(page, &target.title, previous, committed))
         }
         Request::TaskState {
             target,
@@ -740,13 +795,12 @@ async fn run(
                 })
             })?;
             let previous = observed.text.clone();
-            let text = commit(notebook, observed, edits, STALE, cx).await?;
+            let committed = commit(notebook, observed, edits, STALE, cx).await?;
             Ok(applied(
                 target.page.clone(),
                 &target.title,
-                false,
                 previous,
-                text,
+                committed,
             ))
         }
         Request::Capture { text, project, .. } => {
@@ -827,8 +881,8 @@ async fn capture(
         .ok_or_else(|| "The capture page changed while capturing. Ask again.".to_owned())?;
     let edit = capture_edit(&observed.text, value, &tags, link.as_deref(), &stamp)?;
     let previous = observed.text.clone();
-    let text = commit(notebook, observed, vec![edit], STALE, cx).await?;
-    Ok(applied(page, &title, false, previous, text))
+    let committed = commit(notebook, observed, vec![edit], STALE, cx).await?;
+    Ok(applied(page, &title, previous, committed))
 }
 
 #[cfg(test)]
