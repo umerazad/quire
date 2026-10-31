@@ -11,8 +11,11 @@ use std::{
 };
 use theme::ActiveTheme;
 
+mod folder;
 mod links;
 mod navigation;
+
+pub(super) use folder::FolderOptions;
 
 pub(super) fn bind_keys(cx: &mut App) {
     cx.bind_keys([KeyBinding::new(
@@ -131,6 +134,7 @@ struct StoredWindow {
     index: Result<Entity<IndexSync>, gpui::SharedString>,
     nav: navigation::Navigation,
     links: links::Links,
+    folder: folder::FolderView,
 }
 
 impl StoredWindow {
@@ -175,6 +179,7 @@ impl StoredWindow {
             index,
             nav,
             links: links::Links::new(cx.weak_entity(), cx),
+            folder: folder::FolderView::default(),
         };
         let pages = this.session.borrow().open_pages();
         for observed in pages {
@@ -344,6 +349,7 @@ impl StoredWindow {
 
 impl Render for StoredWindow {
     fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let conflict = self.render_folder_conflict(cx);
         let page = self.page.read(cx);
         let loading = page.is_loading();
         let header = gpui::div()
@@ -392,6 +398,7 @@ impl Render for StoredWindow {
             .flex_col()
             .bg(cx.theme().colors().editor_background)
             .child(header)
+            .when_some(conflict, |div, conflict| div.child(conflict))
             .when_some(self.close_error.clone(), |div, error| {
                 div.child(gpui::div().p_2().child(error))
             })

@@ -4,13 +4,13 @@
 //! pages save first and hold further saves, every page is written in one checked save, and open
 //! pages then take in their new version.
 
-use crate::{notebook_session::OpenPage, page_persistence::PagePersistence, query_index::ask};
+use crate::{
+    notebook_backend::NotebookBackend, notebook_session::OpenPage,
+    page_persistence::PagePersistence, query_index::ask,
+};
 use futures::{StreamExt as _, channel::mpsc};
 use gpui::{App, AsyncApp, Entity, Task, WeakEntity};
-use quire_store::{
-    notebook::{CheckedSaves, Edit},
-    worker::StorageClient,
-};
+use quire_store::notebook::{CheckedSaves, Edit};
 use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -72,7 +72,7 @@ fn open_source(page: &Entity<OpenPage>, cx: &App) -> Option<Result<PageSource, S
 }
 
 async fn stored_source(
-    storage: &StorageClient,
+    storage: &NotebookBackend,
     page: String,
 ) -> Result<Option<PageSource>, String> {
     let checkout = ask(storage.checkout(page.clone(), None)).await?;
@@ -102,7 +102,7 @@ async fn stored_source(
 pub async fn read(
     page: String,
     open_pages: &[Entity<OpenPage>],
-    storage: &StorageClient,
+    storage: &NotebookBackend,
     cx: &mut AsyncApp,
 ) -> Result<Option<PageSource>, String> {
     let open = cx.update(|cx| {
@@ -161,7 +161,7 @@ async fn idle(open: &[Entity<PagePersistence>], cx: &mut AsyncApp) {
 /// or another writer saved a page meanwhile. Returns how many pages were written.
 pub fn apply(
     writes: Vec<PageWrite>,
-    storage: StorageClient,
+    storage: NotebookBackend,
     stale: &'static str,
     cx: &mut App,
 ) -> Task<Result<usize, String>> {

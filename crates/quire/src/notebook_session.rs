@@ -1,4 +1,5 @@
 use crate::{
+    notebook_backend::NotebookBackend,
     page_analysis::PageAnalysis,
     page_persistence::{OpenedPage, PagePersistence},
     stored_source::{PreparedSource, StoredSource},
@@ -9,14 +10,15 @@ use futures::{
 };
 use gpui::{App, AppContext, Context, Entity, SharedString, Task};
 use quire_store::{
+    folder_notebook::{DiskDocument, FolderChange, FolderWorker},
     notebook::PageCheckout,
     sync::json::Json,
-    worker::{QueueError, QueueLimits, StorageClient, StorageWorker},
+    worker::{QueueError, QueueLimits, StorageWorker},
 };
 use std::{
     cell::Cell,
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
@@ -26,10 +28,12 @@ type Ready = Shared<BoxFuture<'static, Result<(), Arc<str>>>>;
 
 /// Own one session per opened notebook and pass its registered pages to every view.
 pub struct NotebookSession {
-    client: StorageClient,
+    client: NotebookBackend,
     ready: Ready,
     pages: HashMap<String, Entity<OpenPage>>,
     editing: Rc<Cell<bool>>,
+    /// The notebook folder and Quire's state folder for it, when this is a folder notebook.
+    folder: Option<(PathBuf, PathBuf)>,
 }
 
 impl NotebookSession {
@@ -44,13 +48,74 @@ impl NotebookSession {
         Ok(Self::from_worker(worker.client, ready))
     }
 
-    fn from_worker(client: StorageClient, ready: Ready) -> Self {
+    /// Opens the folder notebook at `root`, keeping its recovery, history, and index in `state`.
+    pub fn open_folder(root: PathBuf, state: PathBuf) -> Result<Self, String> {
+        let worker =
+            FolderWorker::spawn_folder(root.clone(), state.clone(), QueueLimits::default())
+                .map_err(|error| format!("{error:#}"))?;
+        let ready = worker
+            .ready
+            .map(|result| result.map_err(|error| Arc::from(format!("{error:#}"))))
+            .boxed()
+            .shared();
+        Ok(Self {
+            folder: Some((root, state)),
+            ..Self::from_worker(worker.client, ready)
+        })
+    }
+
+    fn from_worker(client: impl Into<NotebookBackend>, ready: Ready) -> Self {
         Self {
-            client,
+            client: client.into(),
             ready,
             pages: HashMap::new(),
             editing: Rc::new(Cell::new(false)),
+            folder: None,
         }
+    }
+
+    /// The notebook folder and its state folder, for a folder notebook.
+    pub fn folder(&self) -> Option<(&Path, &Path)> {
+        self.folder
+            .as_ref()
+            .map(|(root, state)| (root.as_path(), state.as_path()))
+    }
+
+    /// Rereads folder notebook files that changed outside Quire (`None`: every file this session
+    /// read) and hands each open page its new contents. Clean pages reload; pages with unsaved
+    /// edits enter a conflict. Resolves once every open page has been told.
+    pub fn folder_changed(
+        &self,
+        paths: Option<Vec<String>>,
+        cx: &mut App,
+    ) -> Task<Result<(), String>> {
+        let Some(folder) = self.client.folder() else {
+            return Task::ready(Ok(()));
+        };
+        let request = match paths {
+            Some(paths) => folder.refresh(paths),
+            None => folder.rescan(),
+        };
+        let pages = self.pages.clone();
+        cx.spawn(async move |cx| {
+            let changes = crate::query_index::ask(request).await?;
+            cx.update(|cx| {
+                for change in changes {
+                    let Some(persistence) = pages
+                        .get(change.page())
+                        .and_then(|page| page.read(cx).persistence().cloned())
+                    else {
+                        continue;
+                    };
+                    let disk = match change {
+                        FolderChange::Changed { document, .. } => Some(document),
+                        FolderChange::Removed { .. } => None,
+                    };
+                    persistence.update(cx, |persistence, cx| persistence.external(disk, cx));
+                }
+            });
+            Ok(())
+        })
     }
 
     pub fn open_page(&mut self, page: String, cx: &mut App) -> Entity<OpenPage> {
@@ -74,7 +139,7 @@ impl NotebookSession {
             .clone()
     }
 
-    pub fn storage(&self) -> StorageClient {
+    pub fn storage(&self) -> NotebookBackend {
         self.client.clone()
     }
 
@@ -139,7 +204,7 @@ enum LoadState {
 
 pub struct OpenPage {
     id: String,
-    client: StorageClient,
+    client: NotebookBackend,
     ready: Ready,
     editing: Rc<Cell<bool>>,
     state: LoadState,
@@ -200,15 +265,23 @@ impl OpenPage {
                 (error.to_string(), retryable)
             })?;
             let checkout = reply.await.map_err(|error| (format!("{error:#}"), true))?;
+            let folder = client.folder().is_some();
+            let recovered_folder = folder
+                .then(|| FolderRecovery::new(&id, &checkout))
+                .flatten();
             let base = match checkout.draft.as_ref().map(|draft| draft.base.as_slice()) {
-                Some([base]) if checkout.heads != [base.as_str()] => client
+                Some([base]) if !folder && checkout.heads != [base.as_str()] => client
                     .get(base.clone())
                     .map_err(|error| (error.to_string(), error == QueueError::Busy))?
                     .await
                     .map_err(|error| (format!("{error:#}"), true))?,
                 _ => None,
             };
-            PreparedPage::new(id, checkout, base).map_err(|error| (error, true))
+            let page = PreparedPage::new(id, checkout, base).map_err(|error| (error, true))?;
+            Ok(match recovered_folder {
+                Some(recovery) => recovery.apply(page),
+                None => page,
+            })
         });
         self.task = Some(cx.spawn(async move |this, cx| {
             let result = work.await;
@@ -231,6 +304,10 @@ impl OpenPage {
                                 )
                             });
                             cx.observe(&persistence, |_, _, cx| cx.notify()).detach();
+                            if let Some(disk) = page.conflict.clone() {
+                                persistence
+                                    .update(cx, |page, cx| page.recovered_conflict(disk, cx));
+                            }
                             if this.editing.get() {
                                 persistence.update(cx, |page, cx| page.enable(cx));
                             }
@@ -273,6 +350,54 @@ struct PreparedPage {
     loaded_revision_bodies: usize,
     status: String,
     opened: Option<OpenedPage>,
+    /// A folder notebook draft typed into another version than the file holds now: the file, or
+    /// None when it is gone. The page opens in conflict.
+    conflict: Option<Option<DiskDocument>>,
+}
+
+/// How a folder notebook page with a recovery draft opens. A draft made from the file's current
+/// version, or a new note's draft while the file still does not exist, is saved at once. A draft
+/// made from another version opens in conflict with the file, as in the reference app.
+struct FolderRecovery {
+    opened: OpenedPage,
+    conflict: Option<Option<DiskDocument>>,
+}
+
+impl FolderRecovery {
+    fn new(id: &str, checkout: &PageCheckout) -> Option<Self> {
+        let draft = checkout.draft.as_ref()?;
+        let current = draft.base == checkout.heads;
+        if current && !checkout.heads.is_empty() {
+            return None;
+        }
+        let disk = checkout.selected.as_ref().and_then(|record| {
+            let field = |name| record.root().field(name).as_str().map(str::to_owned);
+            Some(DiskDocument::new(field("path")?, field("text")?))
+        });
+        Some(Self {
+            opened: OpenedPage {
+                page: id.to_owned(),
+                path: draft.path.clone(),
+                base: draft.base.clone(),
+                draft: Some(draft.stamp.clone()),
+                base_text: None,
+                settle: current,
+            },
+            conflict: (!current).then_some(disk),
+        })
+    }
+
+    fn apply(self, mut page: PreparedPage) -> PreparedPage {
+        page.status = if self.conflict.is_some() {
+            "Recovered unsaved work. Compare it with the disk version, or save a separate copy."
+                .into()
+        } else {
+            "Recovered an unsaved new note; saving it now.".into()
+        };
+        page.opened = Some(self.opened);
+        page.conflict = self.conflict;
+        page
+    }
 }
 
 impl PreparedPage {
@@ -361,6 +486,7 @@ impl PreparedPage {
             })
             .flatten();
         Ok(Self {
+            conflict: None,
             text: PreparedSource::new(text),
             path,
             heads: checkout.heads,

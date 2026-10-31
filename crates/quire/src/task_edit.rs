@@ -4,6 +4,7 @@
 //! through `page_writes`, so a task that changed since it was listed is refused, never
 //! overwritten.
 
+use crate::notebook_backend::NotebookBackend;
 use crate::{
     notebook_session::OpenPage,
     page_writes::{self, PageWrite},
@@ -19,10 +20,7 @@ use quire_core::{
         find_current,
     },
 };
-use quire_store::{
-    index::{IndexClient, TaskItem},
-    worker::StorageClient,
-};
+use quire_store::index::{IndexClient, TaskItem};
 use std::sync::Arc;
 
 pub const STALE_TASKS: &str = "changed since it was listed. Review the list and try again.";
@@ -119,7 +117,7 @@ pub fn update(
     tasks: Vec<TaskRef>,
     change: TaskChange,
     open_pages: Vec<Entity<OpenPage>>,
-    storage: StorageClient,
+    storage: NotebookBackend,
     cx: &mut App,
 ) -> Task<Result<usize, String>> {
     cx.spawn(async move |cx| {
@@ -190,7 +188,7 @@ pub fn capture(
     project: Option<CaptureProject>,
     open_pages: Vec<Entity<OpenPage>>,
     index: IndexClient,
-    storage: StorageClient,
+    storage: NotebookBackend,
     cx: &mut App,
 ) -> Task<Result<Captured, String>> {
     cx.spawn(async move |cx| {

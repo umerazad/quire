@@ -1,11 +1,12 @@
+use crate::notebook_backend::{NotebookBackend, folder_conflict};
 use crate::stored_source::StoredSource;
 use gpui::{App, AppContext, Context, Entity, SharedString, Subscription, Task};
 use language::{Buffer, BufferEvent, BufferSnapshot};
 use quire_core::{merge::merge_text, source_text::SourceText};
 use quire_store::{
+    folder_notebook::{DiskDocument, FolderConflict},
     notebook::{Draft, DraftStamp, Edit},
     sync::json::Json,
-    worker::StorageClient,
 };
 use std::{
     sync::Arc,
@@ -51,6 +52,18 @@ struct Saved {
 struct Completion {
     recovered: bool,
     result: Result<Option<Saved>, String>,
+    /// A folder notebook refused the save because its file is not the version it was made from.
+    conflict: Option<FolderConflict>,
+}
+
+/// A folder notebook page whose file changed or disappeared while it had unsaved edits, or
+/// whose save was refused for that reason. Saving stops until the user chooses a version;
+/// recovery keeps recording the buffer meanwhile.
+#[derive(Clone, Debug)]
+pub struct Conflict {
+    /// The file as it is now, or None when it no longer exists.
+    pub disk: Option<DiskDocument>,
+    pub message: SharedString,
 }
 
 /// A version to merge into the buffer: the edits made since `base` merge into `text`.
@@ -87,9 +100,12 @@ enum Resolution {
 pub struct PagePersistence {
     buffer: Entity<Buffer>,
     source: Arc<StoredSource>,
-    client: StorageClient,
+    client: NotebookBackend,
     opened: OpenedPage,
     session: String,
+    conflict: Option<Conflict>,
+    /// An outside change that arrived while a save or merge was in flight.
+    deferred: Option<Option<DiskDocument>>,
     version: u64,
     seen: BufferSnapshot,
     saved: Option<BufferSnapshot>,
@@ -116,7 +132,7 @@ impl PagePersistence {
     pub fn new(
         buffer: Entity<Buffer>,
         source: Arc<StoredSource>,
-        client: StorageClient,
+        client: impl Into<NotebookBackend>,
         opened: OpenedPage,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -138,9 +154,11 @@ impl PagePersistence {
         Self {
             buffer,
             source,
-            client,
+            client: client.into(),
             opened,
             session: uuid::Uuid::new_v4().to_string(),
+            conflict: None,
+            deferred: None,
             version: 0,
             seen: snapshot,
             saved,
@@ -182,7 +200,11 @@ impl PagePersistence {
         self.enabled
     }
     pub fn has_error(&self) -> bool {
-        self.error.is_some()
+        self.error.is_some() || self.conflict.is_some()
+    }
+    /// The folder conflict waiting for the user to choose a version, if any.
+    pub fn conflict(&self) -> Option<&Conflict> {
+        self.conflict.as_ref()
     }
     /// The stored-source adapter for the buffer's current lineage; it follows merged versions.
     pub fn source(&self) -> Arc<StoredSource> {
@@ -218,6 +240,14 @@ impl PagePersistence {
     pub fn status(&self, cx: &App) -> SharedString {
         if let Some(error) = &self.error {
             return error.clone();
+        }
+        if let Some(conflict) = &self.conflict {
+            let recorded = if self.is_secured(cx) {
+                "Your edits are recorded locally."
+            } else {
+                "Recording your edits locally…"
+            };
+            return format!("{} {recorded}", conflict.message).into();
         }
         let state = if self.task.is_some() {
             if self.pending.as_ref().is_some_and(|request| request.save) {
@@ -275,7 +305,7 @@ impl PagePersistence {
     }
 
     fn reconcile(&mut self, cx: &mut Context<Self>) {
-        if !self.stale || self.merge.is_some() || self.saving() {
+        if !self.stale || self.merge.is_some() || self.saving() || self.conflict.is_some() {
             return;
         }
         self.stale = false;
@@ -327,6 +357,11 @@ impl PagePersistence {
 
     fn request(&mut self, save: bool, cx: &mut Context<Self>) {
         if !self.enabled {
+            return;
+        }
+        if save && self.conflict.is_some() {
+            self.autosave = None;
+            self.save_by = None;
             return;
         }
         self.debounce = None;
@@ -423,11 +458,14 @@ impl PagePersistence {
             self.opened.draft = Some(request.stamp.clone());
             self.durable = Some(request.snapshot.clone());
         }
-        let succeeded = completion.result.is_ok();
-        match completion.result {
-            Ok(Some(saved)) => self.saved(request, saved, cx),
-            Ok(None) => {}
-            Err(error) => {
+        let succeeded = completion.result.is_ok() || completion.conflict.is_some();
+        match (completion.result, completion.conflict) {
+            (Ok(Some(saved)), _) => self.saved(request, saved, cx),
+            (Ok(None), _) => {}
+            (Err(_), Some(refused)) => {
+                self.enter_conflict(refused.disk, refused.message.into(), cx)
+            }
+            (Err(error), None) => {
                 self.error = Some(error.into());
                 self.pending = Some(request);
             }
@@ -445,6 +483,7 @@ impl PagePersistence {
             }
         }
         self.reconcile(cx);
+        self.resume_external(cx);
     }
 
     fn saved(&mut self, request: Frozen, saved: Saved, cx: &mut Context<Self>) {
@@ -536,6 +575,7 @@ impl PagePersistence {
             self.recover(cx);
         }
         self.reconcile(cx);
+        self.resume_external(cx);
         cx.notify();
     }
 
@@ -564,6 +604,13 @@ impl PagePersistence {
             self.durable = Some(snapshot);
             self.autosave = None;
             self.save_by = None;
+            if let (Some(folder), Some(text)) = (self.client.folder(), &self.opened.base_text) {
+                // A draft that already equals the file has nothing left to recover.
+                folder
+                    .clear_draft(self.opened.page.clone(), text.to_string())
+                    .map(|reply| cx.background_spawn(reply).detach())
+                    .ok();
+            }
         } else {
             self.saved = None;
             if self.enabled {
@@ -571,6 +618,152 @@ impl PagePersistence {
                 self.schedule_autosave(cx);
             }
         }
+    }
+}
+
+const CHANGED_OUTSIDE: &str =
+    "This file changed outside Quire. Compare versions before continuing.";
+const REMOVED_OUTSIDE: &str =
+    "This file was removed outside Quire. Save a copy to keep this page, or accept the deletion.";
+const RECOVERED: &str =
+    "Recovered unsaved work. Compare it with the disk version, or save a separate copy.";
+const ACCEPTED_REMOVAL: &str =
+    "This file was removed outside Quire. Open another page, or create this one again.";
+
+/// Outside changes to a folder notebook's files, and choosing a version after a conflict.
+impl PagePersistence {
+    /// The page's file changed (`Some`) or disappeared (`None`) outside Quire. A page without
+    /// unsaved changes shows the new version; one with changes keeps them and enters a conflict
+    /// until the user chooses a version, as the reference folder notebook does. A change that
+    /// arrives during a save or merge waits for it, so its outcome decides.
+    pub fn external(&mut self, disk: Option<DiskDocument>, cx: &mut Context<Self>) {
+        if disk
+            .as_ref()
+            .is_some_and(|disk| self.opened.base == [disk.revision.as_str()])
+        {
+            return;
+        }
+        if self.task.is_some() || self.merge.is_some() {
+            self.deferred = Some(disk);
+            return;
+        }
+        let local = match self.source.render(&self.buffer.read(cx).snapshot()) {
+            Ok(local) => local,
+            Err(error) => {
+                self.error = Some(error.into());
+                cx.notify();
+                return;
+            }
+        };
+        match disk {
+            Some(disk)
+                if *local == *disk.text || (self.conflict.is_none() && !self.is_dirty(cx)) =>
+            {
+                self.conflict = None;
+                self.show(disk, local, cx);
+            }
+            Some(disk) => self.enter_conflict(Some(disk), CHANGED_OUTSIDE.into(), cx),
+            None => self.enter_conflict(None, REMOVED_OUTSIDE.into(), cx),
+        }
+    }
+
+    fn resume_external(&mut self, cx: &mut Context<Self>) {
+        if self.task.is_none()
+            && self.merge.is_none()
+            && let Some(disk) = self.deferred.take()
+        {
+            self.external(disk, cx);
+        }
+    }
+
+    /// Replaces the buffer with `disk` as one edit outside undo history and marks it saved.
+    fn show(&mut self, disk: DiskDocument, local: Arc<str>, cx: &mut Context<Self>) {
+        self.start_merge(
+            Incoming::Known(Known {
+                revision: disk.revision,
+                base: local,
+                text: disk.text.into(),
+            }),
+            cx,
+        );
+    }
+
+    fn enter_conflict(
+        &mut self,
+        disk: Option<DiskDocument>,
+        message: SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        self.conflict = Some(Conflict { disk, message });
+        self.error = None;
+        self.autosave = None;
+        self.save_by = None;
+        self.queued_save = None;
+        self.recover(cx);
+        cx.notify();
+    }
+
+    /// Opens a recovered folder draft that was typed into another version than the file holds.
+    pub fn recovered_conflict(&mut self, disk: Option<DiskDocument>, cx: &mut Context<Self>) {
+        self.conflict = Some(Conflict {
+            disk,
+            message: RECOVERED.into(),
+        });
+        cx.notify();
+    }
+
+    /// The page's current text in stored form, for saving it as a copy.
+    pub fn local_text(&self, cx: &App) -> Result<Arc<str>, String> {
+        self.source.render(&self.buffer.read(cx).snapshot())
+    }
+
+    /// Resolves a conflict with the version on disk: the buffer shows the file, or becomes
+    /// read-only when the file was removed, and this page's recovery draft is discarded. Callers
+    /// keep the unsaved text first when the user asked to, through a saved copy.
+    pub fn use_disk(&mut self, cx: &mut Context<Self>) {
+        let Some(conflict) = self.conflict.take() else {
+            return;
+        };
+        self.debounce = None;
+        let local = match self.local_text(cx) {
+            Ok(local) => local,
+            Err(error) => {
+                self.conflict = Some(conflict);
+                self.error = Some(error.into());
+                cx.notify();
+                return;
+            }
+        };
+        match conflict.disk {
+            Some(disk) => self.show(disk, local, cx),
+            None => {
+                self.opened.base.clear();
+                self.opened.base_text = None;
+                self.warning = Some(ACCEPTED_REMOVAL.into());
+                let snapshot = self.buffer.update(cx, |buffer, cx| {
+                    buffer.set_capability(language::Capability::ReadOnly, cx);
+                    buffer.snapshot()
+                });
+                self.saved = Some(snapshot.clone());
+                self.durable = Some(snapshot);
+            }
+        }
+        if let Some(folder) = self.client.folder() {
+            let discard = folder.discard_draft(self.opened.page.clone());
+            self.opened.draft = None;
+            cx.spawn(async move |this, cx| {
+                let result = crate::query_index::ask(discard).await;
+                if let Err(error) = result {
+                    this.update(cx, |this, cx| {
+                        this.error = Some(format!("Showing the disk version, but its old recovery copy could not be removed: {error}. It will reopen for review; choose the disk version again then.").into());
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            })
+            .detach();
+        }
+        cx.notify();
     }
 }
 
@@ -636,7 +829,7 @@ fn revision_id(record: &Json) -> String {
         .to_owned()
 }
 
-async fn read(client: &StorageClient, id: String) -> Result<Json, String> {
+async fn read(client: &NotebookBackend, id: String) -> Result<Json, String> {
     client
         .get(id)
         .map_err(|error| error.to_string())?
@@ -648,7 +841,7 @@ async fn read(client: &StorageClient, id: String) -> Result<Json, String> {
 /// Reads the page's single current version. Every version stored since `base` descends from it,
 /// so the edits made here since `base` merge into it safely.
 async fn current(
-    client: StorageClient,
+    client: NotebookBackend,
     page: String,
     base: Vec<String>,
     base_text: Option<Arc<str>>,
@@ -716,12 +909,13 @@ fn plan(snapshot: BufferSnapshot, source: Arc<StoredSource>, known: Known) -> Re
 /// Records recovery, then saves from the captured base. A base that is no longer the page's
 /// head is saved anyway: the store merges it with the newer versions in the same transaction.
 async fn persist(
-    client: StorageClient,
+    client: NotebookBackend,
     page: String,
     path: String,
     request: Frozen,
     mut recovered: bool,
 ) -> Completion {
+    let mut conflict = None;
     let result = async {
         let text = request.source.render(&request.snapshot)?;
         if !recovered {
@@ -757,7 +951,10 @@ async fn persist(
             })
             .map_err(|error| error.to_string())?
             .await
-            .map_err(|error| format!("{error:#}"))?;
+            .map_err(|error| {
+                conflict = folder_conflict(&error).cloned();
+                format!("{error:#}")
+            })?;
         let merged = ack
             .merged
             .as_ref()
@@ -775,8 +972,15 @@ async fn persist(
         }))
     }
     .await;
-    Completion { recovered, result }
+    Completion {
+        recovered,
+        result,
+        conflict,
+    }
 }
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(test)]
+pub(crate) mod folder_tests;

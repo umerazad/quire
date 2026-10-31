@@ -91,8 +91,16 @@ impl StoredWindow {
         };
         self.install_task_context(cx);
         let config = crate::query_index::config(self.nav.daily.layout.clone(), calendar);
-        self.index =
-            IndexSync::spawn(self.nav.database.clone(), config, cx).map_err(SharedString::from);
+        let folder = self
+            .session
+            .borrow()
+            .folder()
+            .map(|(root, state)| (root.to_owned(), state.to_owned()));
+        self.index = match folder {
+            Some((root, state)) => IndexSync::spawn_folder(root, state, config, cx),
+            None => IndexSync::spawn(self.nav.database.clone(), config, cx),
+        }
+        .map_err(SharedString::from);
         if let Ok(index) = &self.index {
             cx.observe(index, |this, _, cx| {
                 this.refresh_catalogue(cx);

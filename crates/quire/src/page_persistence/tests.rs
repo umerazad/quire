@@ -3,7 +3,7 @@ use futures::executor::block_on;
 use gpui::{AppContext, TestAppContext};
 use quire_store::{
     notebook::{Draft, DraftStamp, Edit, NotebookStore},
-    worker::{QueueLimits, StorageWorker},
+    worker::{QueueLimits, StorageClient, StorageWorker},
 };
 use std::time::{Duration, Instant};
 use text::ToOffset as _;

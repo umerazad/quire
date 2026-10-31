@@ -1,6 +1,7 @@
 //! Bulk rename and delete for the tags chosen in the Tags browser: a name field, a preview of
 //! every change by page, and one all-or-nothing apply.
 
+use crate::notebook_backend::NotebookBackend;
 use crate::{
     notebook_session::OpenPage,
     tag_edit::{self, TagEditPlan},
@@ -8,7 +9,7 @@ use crate::{
 use editor::{Editor, EditorEvent};
 use gpui::{App, Context, Entity, EventEmitter, Subscription, Task, Window};
 use quire_core::{markdown::page_name, tag_edits::Retag};
-use quire_store::{index::IndexClient, worker::StorageClient};
+use quire_store::index::IndexClient;
 use std::rc::Rc;
 use ui::{
     Button, ButtonStyle, Color, Disableable, IconButton, IconName, Label, LabelCommon, LabelSize,
@@ -19,7 +20,7 @@ use ui::{
 pub const SHOWN_CHANGES: usize = 20;
 
 /// The open pages and storage an edit writes through, read when it is planned and applied.
-pub type Writers = Rc<dyn Fn(&App) -> (Vec<Entity<OpenPage>>, StorageClient)>;
+pub type Writers = Rc<dyn Fn(&App) -> (Vec<Entity<OpenPage>>, NotebookBackend)>;
 
 pub enum TagEditsEvent {
     /// The edit was written; the selection no longer names existing tags.
