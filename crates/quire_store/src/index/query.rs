@@ -38,6 +38,8 @@ pub struct TagCount {
 
 pub(super) const PAGE_COLUMNS: &str = "p.revision,p.page,p.path,p.title";
 pub(super) type PageRow = (String, String, String, String);
+/// A page's `name_key`, `title_key`, and `date`.
+type PageKeys = (String, String, Option<String>);
 type LinkRow = (
     PageRow,
     (String, String, String, Option<String>, Option<String>),
@@ -114,38 +116,83 @@ impl QueryIndex {
     }
 
     pub(super) fn resolve_page(&self, target: &str) -> Result<Option<PageRef>> {
+        self.resolve_with(target, |column, value| {
+            self.pages_where(&format!("p.{column}=?"), value)
+        })
+    }
+
+    /// [`Self::resolve_page`] for many names: every live page read once and grouped by name,
+    /// title, and date, because preparing its queries per name dominated the task browser.
+    pub(super) fn page_resolver(&self) -> Result<impl Fn(&str) -> Result<Option<PageRef>> + '_> {
+        let rows: Vec<(PageRow, PageKeys)> =
+            self.connection.select(&format!(
+                "SELECT {PAGE_COLUMNS},p.name_key,p.title_key,p.date FROM live_pages p WHERE p.deleted=0"
+            ))?()?;
+        let mut keyed: HashMap<(&'static str, String), Vec<PageRef>> = HashMap::new();
+        for (page, (name, title, date)) in rows {
+            let page = page_ref(page)?;
+            for key in [
+                ("name_key", Some(name)),
+                ("title_key", Some(title)),
+                ("date", date),
+            ] {
+                if let (column, Some(value)) = key {
+                    keyed.entry((column, value)).or_default().push(page.clone());
+                }
+            }
+        }
+        Ok(move |target: &str| {
+            self.resolve_with(target, |column, value| {
+                Ok(keyed
+                    .get(&(column, value.to_owned()))
+                    .cloned()
+                    .unwrap_or_default())
+            })
+        })
+    }
+
+    /// The reference resolution order over `pages(column, value)`, which lists the live pages
+    /// whose `name_key`, `title_key`, or `date` column holds `value`.
+    fn resolve_with(
+        &self,
+        target: &str,
+        mut pages: impl FnMut(&'static str, &str) -> Result<Vec<PageRef>>,
+    ) -> Result<Option<PageRef>> {
         let name = page_key(target);
-        let mut exact = self.pages_where("p.name_key=?", &name)?;
+        let mut exact = pages("name_key", &name)?;
         if !exact.is_empty() {
             // Paths differing only in case share a name; take a stable one.
             exact.sort_by(|a, b| utf16_order(&a.path, &b.path));
             return Ok(exact.into_iter().next());
         }
-        let titled = self.pages_where("p.title_key=?", &name)?;
+        let titled = pages("title_key", &name)?;
         if !titled.is_empty() {
             return Ok((titled.len() == 1)
                 .then(|| titled.into_iter().next())
                 .flatten());
         }
-        match self.date(target) {
-            Some(date) => self.daily_page(&date),
-            None => Ok(None),
-        }
+        Ok(match self.date(target) {
+            Some(date) => self.preferred_daily(&date, pages("date", &date)?),
+            None => None,
+        })
     }
 
     /// The reference `dailyPage`: among pages titled for `date`, prefer the one in the
     /// configured daily folder, otherwise the first by path.
     pub fn daily_page(&self, date: &str) -> Result<Option<PageRef>> {
-        let mut pages = self.pages_where("p.date=?", date)?;
+        Ok(self.preferred_daily(date, self.pages_where("p.date=?", date)?))
+    }
+
+    fn preferred_daily(&self, date: &str, mut pages: Vec<PageRef>) -> Option<PageRef> {
         pages.sort_by(|a, b| utf16_order(&a.path, &b.path));
         let folder = self.layout.folder(date, &self.calendar).ok();
         let preferred = pages.iter().position(|page| {
             Some(&page.path[..page.path.rfind('/').unwrap_or(0)]) == folder.as_deref()
         });
-        Ok(match preferred {
+        match preferred {
             Some(index) => Some(pages.swap_remove(index)),
             None => pages.into_iter().next(),
-        })
+        }
     }
 
     /// The reference `resolve`: a block reference names exactly one block, optionally within

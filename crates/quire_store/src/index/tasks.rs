@@ -202,23 +202,22 @@ impl QueryIndex {
         Ok(tasks)
     }
 
-    /// Everything the Tasks browser shows, read in one step so counts, projects, and rows always
-    /// describe one index state.
     /// Resolves a page name to a page identity, remembering answers for one query.
-    fn page_finder(&self) -> impl Fn(&str) -> Option<String> + '_ {
+    fn page_finder(&self) -> Result<impl Fn(&str) -> Option<String> + '_> {
+        let resolve = self.page_resolver()?;
         let found: RefCell<HashMap<String, Option<String>>> = RefCell::default();
-        move |name: &str| {
+        Ok(move |name: &str| {
             found
                 .borrow_mut()
                 .entry(name.to_owned())
                 .or_insert_with(|| {
-                    self.resolve_page(name)
+                    resolve(name)
                         .ok()
                         .flatten()
                         .map(|page| page.page.to_lossy_string())
                 })
                 .clone()
-        }
+        })
     }
 
     /// Project pages, ordered by title, and for each task the projects it belongs to.
@@ -255,9 +254,11 @@ impl QueryIndex {
         Ok((pages, members))
     }
 
+    /// Everything the Tasks browser shows, read in one step so counts, projects, and rows always
+    /// describe one index state.
     pub fn task_board(&self, query: &TaskQuery) -> Result<TaskBoard> {
         let tasks = self.tasks()?;
-        let find = self.page_finder();
+        let find = self.page_finder()?;
         let (pages, members) = self.project_members(&tasks, &find)?;
         let projects: Vec<String> = pages
             .iter()
@@ -375,7 +376,7 @@ impl QueryIndex {
     /// The tasks a `{{tasks: ...}}` block lists, unsaved edits included.
     pub fn task_list(&self, list: &TaskListQuery) -> Result<TaskList> {
         let tasks = self.tasks()?;
-        let find = self.page_finder();
+        let find = self.page_finder()?;
         let (projects, members) = if list.query.uses_projects() {
             let (pages, members) = self.project_members(&tasks, &find)?;
             let projects = pages

@@ -398,14 +398,14 @@ impl QueryIndex {
             let mut planned = std::collections::HashSet::new();
             let titles = analyses
                 .iter()
-                .map(|(revision, _)| {
+                .map(|&(revision, _)| {
                     let row: Option<(bool, String)> =
                         self.connection.select_row_bound(
                             "SELECT analyzed,title FROM pages WHERE revision=?",
-                        )?(*revision)?;
+                        )?(revision)?;
                     Ok(match row {
                         None => Err(false),
-                        Some((false, title)) if planned.insert(*revision) => Ok(title),
+                        Some((false, title)) if planned.insert(revision) => Ok(title),
                         Some(_) => Err(true),
                     })
                 })
@@ -416,12 +416,12 @@ impl QueryIndex {
             analyses
                 .iter()
                 .zip(titles)
-                .map(|((revision, analysis), title)| match title {
+                .map(|(&(revision, analysis), title)| match title {
                     Ok(_) => {
                         self.insert_rows("main.", revision, analysis)?;
                         self.connection
                             .exec_bound("UPDATE pages SET analyzed=1 WHERE revision=?")?(
-                            *revision,
+                            revision
                         )?;
                         Ok(true)
                     }
@@ -765,6 +765,60 @@ mod tests {
             "an analyzed revision stays stored, as put reports"
         );
         assert_eq!(index.search("alphaword")?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn the_page_resolver_answers_as_resolve_page_does() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let database = root.path().join("local.sqlite");
+        let store = crate::notebook::NotebookStore::open(&database, "nb", "local")?;
+        for (page, path) in [
+            ("a1", "Alpha.md"),
+            ("a2", "alpha.md"),
+            ("s1", "One/Same.md"),
+            ("s2", "Two/Same.md"),
+            ("u", "Folder/Unique title.md"),
+            ("d1", "2024-01-02.md"),
+            ("d2", "Old/2024-01-02.md"),
+        ] {
+            store.save(&crate::notebook::Edit {
+                page: page.into(),
+                path: path.into(),
+                text: "- text".into(),
+                base: Vec::new(),
+                deleted: false,
+                created: 1,
+                recovery: None,
+            })?;
+        }
+        let index = QueryIndex::open(
+            &database,
+            IndexConfig {
+                analyzer: 1,
+                layout: DailyLayout::default(),
+                calendar: DailyCalendar::utc(),
+            },
+        )?;
+        index.refresh()?;
+        let resolve = index.page_resolver()?;
+        for name in [
+            "Alpha",
+            "ALPHA",
+            "Same",
+            "Unique title",
+            "Folder/Unique title",
+            "2024-01-02",
+            "Jan 2nd, 2024",
+            "Missing",
+        ] {
+            assert_eq!(resolve(name)?, index.resolve_page(name)?, "{name}");
+        }
+        assert!(
+            resolve("Same")?.is_none(),
+            "a shared title resolves to none"
+        );
+        assert_eq!(resolve("Alpha")?.unwrap().path, "Alpha.md");
         Ok(())
     }
 
