@@ -168,6 +168,27 @@ macro_rules! primary {
     };
 }
 
+/// The notebook keys bound again at a Vim page editor's depth. Off macOS, Vim binds Ctrl-K,
+/// Ctrl-N, Ctrl-J, Ctrl-W, and Ctrl-\ inside the editor, and a binding nearer the focus wins;
+/// these are bound after Vim's keymap, which wins the tie and drops Vim's Ctrl-W chords. An open
+/// completion menu keeps Ctrl-N.
+pub(crate) fn inside_pages(command: bool) -> Vec<KeyBinding> {
+    let [k, n, j, w, side] = if command {
+        ["cmd-k", "cmd-n", "cmd-j", "cmd-w", "cmd-\\"]
+    } else {
+        ["ctrl-k", "ctrl-n", "ctrl-j", "ctrl-w", "ctrl-\\"]
+    };
+    let context = format!("{NAVIGATION_CONTEXT} > Editor && vim_mode && !showing_completions");
+    let context = Some(context.as_str());
+    vec![
+        KeyBinding::new(k, FindPage, context),
+        KeyBinding::new(n, NewPage, context),
+        KeyBinding::new(j, OpenToday, context),
+        KeyBinding::new(w, CloseTab, context),
+        KeyBinding::new(side, ToggleSidePane, context),
+    ]
+}
+
 pub fn bind_keys(cx: &mut App) {
     let context = Some(NAVIGATION_CONTEXT);
     let mut bindings = vec![
@@ -298,6 +319,7 @@ pub fn bind_keys(cx: &mut App) {
         bindings.push(KeyBinding::new("alt-left", GoBack, context));
         bindings.push(KeyBinding::new("alt-right", GoForward, context));
     }
+    bindings.extend(inside_pages(cfg!(target_os = "macos")));
     cx.bind_keys(bindings);
 }
 

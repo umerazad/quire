@@ -400,3 +400,42 @@ fn vim_insert_keys_outside_a_text_field_go_to_the_page_editor(cx: &mut TestAppCo
         "a text field keeps its own typing"
     );
 }
+
+#[gpui::test]
+fn notebook_ctrl_keys_win_over_vim_inside_a_page(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&PAGES, "a", cx);
+    cx.update(|cx| cx.bind_keys(crate::navigation::inside_pages(false)));
+    wait_until(cx, "the first page", |cx| {
+        read(&notebook, cx, |view, _| view.editor.is_some())
+    });
+    draw(&notebook, cx);
+    assert!(editor_focused(&notebook, cx));
+    cx.simulate_keystrokes(notebook.window.into(), "ctrl-k");
+    draw(&notebook, cx);
+    assert!(
+        read(&notebook, cx, |view, _| view.nav.palette.is_some()),
+        "Ctrl-K finds a page instead of Vim's digraph"
+    );
+    cx.simulate_keystrokes(notebook.window.into(), "escape");
+    draw(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "ctrl-\\");
+    wait_until(cx, "the side pane", |cx| {
+        read(&notebook, cx, |view, _| view.nav.side.is_some())
+    });
+    notebook
+        .window
+        .update(cx, |view, window, cx| view.focus_active(window, cx))
+        .unwrap();
+    super::file_tests::visit(&notebook, Destination::page("b"), cx);
+    wait_until(cx, "Beta's editor", |cx| {
+        read(&notebook, cx, |view, _| view.editor.is_some())
+    });
+    draw(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "i ctrl-w");
+    draw(&notebook, cx);
+    assert_eq!(
+        active(&notebook, cx),
+        "a",
+        "Ctrl-W closes the tab in Insert mode instead of deleting a word"
+    );
+}
