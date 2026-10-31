@@ -99,13 +99,19 @@ const CASES: &[Case] = &[
         rt: "opens a block with Vim o on an empty block, and repeats it with .",
         page: "- one\n- |\n- three\n",
         vim: true,
-        steps: &[("o n e w escape", "- one\n- \n- ne|w\n- three\n")],
+        steps: &[
+            ("o n e w escape", "- one\n- \n- ne|w\n- three\n"),
+            (
+                "g g o d o t escape .",
+                "- one\n- dot\n- do|t\n- \n- new\n- three\n",
+            ),
+        ],
     },
     Case {
         rt: "keeps a hidden ID through Vim D and C",
         page: "- al|pha ^abc\n- two\n",
         vim: true,
-        steps: &[("shift-d", "- al| ^abc\n- two\n")],
+        steps: &[("shift-d", "- a|l ^abc\n- two\n")],
     },
     Case {
         rt: "keeps a hidden ID through Vim D and C: C",

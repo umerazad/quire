@@ -1208,6 +1208,8 @@ fn clamp_carets(
         })
         .unwrap_or_default();
     let collapsed = crate::outline::folds::collapsed(editor, cx);
+    // Vim's Normal mode keeps the caret on a character, so the last visible one before an ID.
+    let on_characters = editor.clip_at_line_ends(cx);
     let mut changed = false;
     let selections = editor
         .selections
@@ -1244,10 +1246,15 @@ fn clamp_carets(
                     }
                 }
                 if let Some(id) = id_range(block, &snapshot)
-                    && position > id.start
+                    && position >= id.start
                     && position <= id.end
                 {
-                    position = id.start;
+                    position = match snapshot.reversed_chars_at(id.start).next() {
+                        Some(last) if on_characters && id.start > content => {
+                            MultiBufferOffset(id.start.0 - last.len_utf8())
+                        }
+                        _ => id.start,
+                    };
                 }
             }
             changed |= position != selection.start;

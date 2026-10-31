@@ -11,18 +11,16 @@ const MOD: &str = if cfg!(target_os = "macos") {
 pub(super) fn write_view(marked: &str, vim: bool, cx: &mut TestAppContext) -> WindowHandle<Editor> {
     cx.update(|cx| {
         crate::editor_host::init(cx).expect("editor initialization");
-        if !vim {
-            let result = settings::SettingsStore::update_global(cx, |store, cx| {
-                store.set_user_settings(
-                    r#"{"vim_mode":false,"session":{"restore_unsaved_buffers":false}}"#,
-                    cx,
-                )
-            });
-            assert!(!matches!(
-                result.parse_status,
-                settings::ParseStatus::Failed { .. }
-            ));
-        }
+        let result = settings::SettingsStore::update_global(cx, |store, cx| {
+            store.set_user_settings(
+                &format!(r#"{{"vim_mode":{vim},"session":{{"restore_unsaved_buffers":false}}}}"#),
+                cx,
+            )
+        });
+        assert!(!matches!(
+            result.parse_status,
+            settings::ParseStatus::Failed { .. }
+        ));
     });
     let cursor = marked.find('|').expect("caret marker");
     let text = marked.replacen('|', "", 1);
@@ -138,10 +136,12 @@ fn enter_continues_splits_and_ends_list_items(cx: &mut TestAppContext) {
             cx,
         );
 
+        // Vim's Normal-mode caret rests on the last visible character, so `A` appends.
+        let append = if vim { "shift-a " } else { "" };
         let window = write_view("- Parent ^p|\n  - Kid\n", vim, cx);
         expect(
             window,
-            &[(&format!("{insert}enter"), "- Parent ^p\n  - |\n  - Kid\n")],
+            &[(&format!("{append}enter"), "- Parent ^p\n  - |\n  - Kid\n")],
             cx,
         );
 
@@ -154,7 +154,7 @@ fn enter_continues_splits_and_ends_list_items(cx: &mut TestAppContext) {
         let window = write_view("Paragraph| ^p\n", vim, cx);
         expect(
             window,
-            &[(&format!("{insert}enter"), "Paragraph ^p\n|\n")],
+            &[(&format!("{append}enter"), "Paragraph ^p\n|\n")],
             cx,
         );
     }
@@ -592,6 +592,25 @@ fn vim_dot_repeats_opening_a_block_with_its_text(cx: &mut TestAppContext) {
                 "k shift-o u p escape .",
                 "- One\n- u|p\n- up\n- new\n- new\n",
             ),
+        ],
+        cx,
+    );
+}
+
+#[gpui::test]
+fn vim_dot_repeats_opened_text_that_contains_o(cx: &mut TestAppContext) {
+    let window = write_view("- |one\n", true, cx);
+    expect(
+        window,
+        &[("o d o t escape .", "- one\n- dot\n- do|t\n")],
+        cx,
+    );
+    let window = write_view("- |one\n", true, cx);
+    expect(
+        window,
+        &[
+            ("o d o t escape", "- one\n- do|t\n"),
+            (".", "- one\n- dot\n- do|t\n"),
         ],
         cx,
     );
