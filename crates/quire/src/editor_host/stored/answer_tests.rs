@@ -1013,3 +1013,61 @@ async fn tidy_needs_ai_writes_and_runs_only_on_days(cx: &mut TestAppContext) {
     assert_eq!(notice(cx), proposal::NOT_DAILY);
     assert!(ai.sent().is_empty());
 }
+
+/// rt `AiPage.tsx` 339-343: Open as tab moves the answers into an "Ask the notebook" tab. Quire
+/// moves the pane itself, so the conversation survives the move, where rt starts afresh.
+#[gpui::test]
+async fn open_as_tab_moves_the_conversation_into_an_ask_the_notebook_tab(cx: &mut TestAppContext) {
+    use super::file_tests::visit;
+    use quire_core::workspace::{BrowserView, Destination};
+    let (ai, notebook) = notebook(&FRUIT, "trees", cx).await;
+    ai.answer("Pears are gritty.", &[], cx);
+    run_ai(&notebook, "", cx);
+    let side = pane(&notebook, cx);
+    type_question(&notebook, "What about pears?", cx);
+    wait_done(&notebook, 0, cx);
+    super::template_tests::click(&notebook, "quire-ai-open-tab", cx);
+    wait_until(cx, "the answer tab", |cx| {
+        read(&notebook, cx, |view, _| {
+            view.nav.view == Some(BrowserView::Ai)
+        })
+    });
+    let tab = Destination::Browser {
+        view: BrowserView::Ai,
+    };
+    read(&notebook, cx, |view, cx| {
+        assert!(view.nav.answer.pane.is_none(), "the pane leaves the side");
+        let shown = view.nav.answer.tab.clone().unwrap();
+        assert_eq!(shown.entity_id(), side.entity_id());
+        assert!(shown.read(cx).in_tab);
+        assert_eq!(shown.read(cx).turns[0].answer, "Pears are gritty.");
+        assert_eq!(view.nav.workspace.active, Some(tab.clone()));
+        assert!(view.nav.workspace.tabs.contains(&tab));
+        assert_eq!(view.destination_label(&tab, cx), "Ask the notebook");
+    });
+    draw(&notebook, cx);
+    let mut visual = gpui::VisualTestContext::from_window(notebook.window.into(), cx);
+    assert!(
+        visual.debug_bounds("quire-ai-open-tab").is_none(),
+        "the tab offers no Open as tab"
+    );
+
+    visit(&notebook, Destination::page("fruit"), cx);
+    visit(&notebook, tab.clone(), cx);
+    read(&notebook, cx, |view, cx| {
+        let shown = view.nav.answer.tab.clone().unwrap();
+        assert_eq!(shown.entity_id(), side.entity_id());
+        assert_eq!(shown.read(cx).turns.len(), 1, "the tab keeps its answers");
+    });
+
+    super::workspace_tests::saved(&notebook, cx);
+    let notebook = super::workspace_tests::reopen(notebook, "trees", cx);
+    read(&notebook, cx, |view, _| {
+        assert!(view.nav.workspace.tabs.contains(&tab), "the tab is kept");
+    });
+    visit(&notebook, tab, cx);
+    read(&notebook, cx, |view, cx| {
+        let fresh = view.nav.answer.tab.clone().unwrap();
+        assert!(fresh.read(cx).in_tab && fresh.read(cx).turns.is_empty());
+    });
+}

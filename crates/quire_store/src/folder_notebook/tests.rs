@@ -617,37 +617,6 @@ fn reads_for_other_purposes_never_hide_a_change_from_refresh() {
     assert_eq!(fixture.notebook.refresh(&paths).unwrap().len(), 1);
 }
 
-#[test]
-fn a_folder_without_notes_moves_whole_unless_a_note_appeared_or_the_target_exists() {
-    let fixture = fixture(&[
-        ("Keep.md", "- keep"),
-        ("Scans/2024/receipt.pdf", "pdf"),
-        ("Taken/Note.md", "- taken"),
-    ]);
-    let notebook = &fixture.notebook;
-    let refused = |from: &str, to: &str| {
-        notebook
-            .move_noteless_folder(from, to)
-            .unwrap_err()
-            .to_string()
-    };
-    assert!(refused("Scans", "Taken").contains("already exists"));
-    assert!(refused("Scans", "Scans/Inner").contains("inside itself"));
-    assert!(refused("Scans", "../Out").contains("Invalid folder path"));
-    assert!(refused("Taken", "Elsewhere").contains("A note appeared in Taken"));
-    assert!(fixture.folder.join("Taken/Note.md").exists());
-
-    notebook
-        .move_noteless_folder("Scans", "Archive/Scans")
-        .unwrap();
-    assert!(!fixture.folder.join("Scans").exists());
-    assert_eq!(
-        fs::read_to_string(fixture.folder.join("Archive/Scans/2024/receipt.pdf")).unwrap(),
-        "pdf"
-    );
-    assert!(refused("Scans", "Again").contains("no longer in the notebook"));
-}
-
 const LEGACY_SETTINGS: &str = r#"{"version":1,"daily":{"folder":"Journal"}}"#;
 
 #[test]

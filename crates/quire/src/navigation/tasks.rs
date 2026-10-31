@@ -17,7 +17,8 @@ use quire_core::{
 use quire_store::index::{IndexClient, ProjectSummary, TaskBoard, TaskItem, TaskQuery};
 use ui::{
     Button, ButtonStyle, Checkbox, Color, ContextMenu, Disableable, DropdownMenu, Label,
-    LabelCommon, LabelSize, ListItem, ListItemSpacing, ToggleState, Toggleable, prelude::*, v_flex,
+    LabelCommon, LabelSize, ListItem, ListItemSpacing, PopoverMenu, ToggleState, Toggleable,
+    prelude::*, v_flex,
 };
 
 gpui::actions!(
@@ -577,6 +578,25 @@ impl TasksView {
         );
     }
 
+    /// Moves the task at `index` to `state`, as each row's state menu does (rt's per-row state
+    /// select), leaving any other selected tasks where they are.
+    pub fn set_state(&mut self, index: usize, state: TaskState, cx: &mut Context<Self>) {
+        let Some(task) = self.rows().get(index) else {
+            return;
+        };
+        if task.state == state {
+            return;
+        }
+        let task = TaskRef::from(task);
+        self.highlighted = index;
+        self.run(
+            vec![task],
+            TaskChange::State(Action::Set(state)),
+            move |_| format!("Moved to {}.", state_label(state)),
+            cx,
+        );
+    }
+
     /// Moves the selected tasks, or the highlighted one, to `state`.
     pub fn move_to(&mut self, state: TaskState, cx: &mut Context<Self>) {
         let tasks = self.targets();
@@ -844,6 +864,7 @@ impl TasksView {
         } else {
             &[DateField::Created, DateField::Due]
         };
+        let state = self.state_menu(index, task.state, cx);
         let chips = fields.iter().map(|field| {
             let field = *field;
             let label = date_chip(task, field, today).map_or_else(
@@ -919,17 +940,55 @@ impl TasksView {
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             )
-                            .child(
-                                Label::new(state_label(task.state))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Accent),
-                            ),
+                            .child(state),
                     ),
             )
             .end_slot(h_flex().gap_1().children(chips))
             .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
                 this.open(index, event.modifiers().shift, cx)
             }))
+    }
+
+    /// The row's state, as a menu that moves the task to another state. The menu is built only
+    /// when opened, so long lists build none.
+    fn state_menu(
+        &self,
+        index: usize,
+        current: TaskState,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let view = cx.entity().downgrade();
+        let menu = PopoverMenu::new(("task-state", index))
+            .trigger(
+                Button::new(("task-state-button", index), state_label(current))
+                    .label_size(LabelSize::Small)
+                    .color(Color::Accent)
+                    .end_icon(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
+            )
+            .menu(move |window, cx| {
+                let view = view.clone();
+                let menu = ContextMenu::build(window, cx, move |mut menu, _, _| {
+                    for state in TaskState::ALL {
+                        let view = view.clone();
+                        menu = menu.toggleable_entry(
+                            state_label(state),
+                            state == current,
+                            IconPosition::Start,
+                            None,
+                            move |_, cx| {
+                                view.update(cx, |this, cx| this.set_state(index, state, cx))
+                                    .ok();
+                            },
+                        );
+                    }
+                    menu
+                });
+                menu.update(cx, |menu, cx| menu.select_toggled_or_first(window, cx));
+                Some(menu)
+            });
+        gpui::div()
+            .debug_selector(move || format!("quire-task-state-{index}"))
+            .child(menu)
     }
 
     fn render_projects(&self, cx: &mut Context<Self>) -> impl IntoElement {

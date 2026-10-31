@@ -651,9 +651,7 @@ impl StoredWindow {
 
 impl Render for StoredWindow {
     fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        window.set_rem_size(
-            <theme_settings::ThemeSettings as settings::Settings>::get_global(cx).ui_font_size(cx),
-        );
+        crate::app_menus::follow_zoom(window, cx);
         let conflict = self
             .render_folder_conflict(cx)
             .or_else(|| self.render_version_conflict(cx));

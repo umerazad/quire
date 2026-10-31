@@ -358,6 +358,7 @@ impl StoredWindow {
         match (self.nav.view, self.nav.tags.shown.clone()) {
             (Some(BrowserView::Tags), _) => self.show_tags(window, cx),
             (Some(BrowserView::Tasks), _) => self.show_tasks(window, cx),
+            (Some(BrowserView::Ai), _) => self.show_answer_tab(window, cx),
             (Some(view), _) => self.open_browser(view, window, cx),
             (None, Some(tag)) => self.show_tag(tag, window, cx),
             (None, None) => {}
@@ -825,8 +826,13 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> gpui::Div {
-        let content = match (self.nav.view, self.tag_content().or(self.task_content())) {
-            (Some(BrowserView::Tags | BrowserView::Tasks), Some(view)) | (None, Some(view)) => view,
+        let shown = self
+            .tag_content()
+            .or(self.task_content())
+            .or(self.answer_tab_content());
+        let content = match (self.nav.view, shown) {
+            (Some(BrowserView::Tags | BrowserView::Tasks | BrowserView::Ai), Some(view))
+            | (None, Some(view)) => view,
             (Some(view), _) => self.render_browser(view, window, cx).into_any_element(),
             (None, None) => match self.editor.clone() {
                 Some(editor) => gpui::div()
@@ -876,10 +882,19 @@ impl StoredWindow {
                 main.child(tasks)
                     .when(!listing, |main| main.children(self.shown_references(cx)))
             });
-        let side = self.nav.side.as_ref().and_then(|side| {
-            let editor = side.editor.clone()?;
-            Some((self.render_page_header(&side.page, cx), editor))
-        });
+        let side = self
+            .nav
+            .side
+            .as_ref()
+            .and_then(|side| Some((side.page.clone(), side.editor.clone()?)))
+            .map(|(page, editor)| {
+                (
+                    self.render_side_tools(&page, cx),
+                    self.render_page_header(&page, cx),
+                    editor,
+                    self.render_side_details(&page, cx),
+                )
+            });
         let showcase = self.showcase_pane(cx);
         let answer = self.nav.answer.pane.clone();
         let help = self.help_pane(cx);
@@ -902,7 +917,7 @@ impl StoredWindow {
                         .child(pane),
                 )
             })
-            .when_some(side, |div, (header, editor)| {
+            .when_some(side, |div, (tools, header, editor, details)| {
                 div.child(
                     gpui::div()
                         .flex()
@@ -912,8 +927,23 @@ impl StoredWindow {
                         .min_h_0()
                         .border_l_1()
                         .border_color(cx.theme().colors().border)
-                        .child(header)
-                        .child(gpui::div().flex_1().min_h_0().child(editor))
+                        .child(tools)
+                        .child(
+                            gpui::div()
+                                .flex()
+                                .flex_1()
+                                .min_h_0()
+                                .child(
+                                    gpui::div()
+                                        .flex()
+                                        .flex_col()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(header)
+                                        .child(gpui::div().flex_1().min_h_0().child(editor)),
+                                )
+                                .children(details),
+                        )
                         .children(self.render_side_references(cx)),
                 )
             })

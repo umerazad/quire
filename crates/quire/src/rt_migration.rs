@@ -13,7 +13,7 @@ use crate::{
     ai::settings::RtAiChoices,
     preferences::{local_storage, rt_import},
 };
-use quire_core::workspace::{Destination, Workspace};
+use quire_core::workspace::{ChromeChoices, Destination, Workspace};
 use quire_store::{
     notebook::NotebookStore,
     notebook_lock::{NotebookLock, folder_lock, store_lock},
@@ -41,6 +41,19 @@ fn now() -> u64 {
 pub fn default_rt_data() -> Option<PathBuf> {
     rt_import::profile_candidates().into_iter().find(|folder| {
         folder.join("profiles.sqlite").is_file() || folder.join("settings.json").is_file()
+    })
+}
+
+/// A Daily notes month as rt's month input writes it, `YYYY-MM`.
+fn is_month(value: &str) -> bool {
+    value.split_once('-').is_some_and(|(year, month)| {
+        year.len() == 4
+            && month.len() == 2
+            && year
+                .bytes()
+                .chain(month.bytes())
+                .all(|byte| byte.is_ascii_digit())
+            && (1..=12).contains(&month.parse::<u8>().unwrap_or(0))
     })
 }
 
@@ -90,6 +103,16 @@ pub fn convert_workspace(rt: &Value, page_id: impl Fn(&str) -> Option<String>) -
             .iter()
             .filter_map(|path| page_id(path))
             .collect(),
+        chrome: ChromeChoices {
+            files_collapsed: rt.get("filesOpen").and_then(Value::as_bool) == Some(false),
+            daily_month: rt
+                .pointer("/browsers/daily/month")
+                .and_then(Value::as_str)
+                .filter(|month| is_month(month))
+                .unwrap_or_default()
+                .to_owned(),
+            ..ChromeChoices::default()
+        },
         ..Workspace::default()
     };
     Workspace::load(&converted.save())

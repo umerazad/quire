@@ -192,3 +192,94 @@ fn a_deletion_against_an_edit_resolves_to_a_live_page_at_the_edited_path() -> Re
     assert_eq!(record.field("deleted").as_bool(), Some(false));
     Ok(())
 }
+
+/// Runs rt's side through the frozen reference replica (`tests/sync/rt-conflict.ts`) against
+/// the shared folder. No network: Bun runs the copied rt modules locally.
+fn rt(folder: &Path, mode: &str, text: &str) -> Result<serde_json::Value> {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/sync/rt-conflict.ts");
+    let output = std::process::Command::new("bun")
+        .arg(script)
+        .arg(folder)
+        .arg(mode)
+        .arg("p")
+        .arg(text)
+        .output()
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "Cannot run the rt reference replica: {error}. Install Bun, then rerun cargo test -p quire_store."
+            )
+        })?;
+    anyhow::ensure!(
+        output.status.success(),
+        "The rt reference replica failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(serde_json::from_slice(&output.stdout)?)
+}
+
+fn ids(value: &serde_json::Value) -> Vec<String> {
+    let mut ids: Vec<String> = value
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|id| id.as_str().unwrap().to_owned())
+        .collect();
+    ids.sort();
+    ids
+}
+
+#[test]
+fn a_conflict_rt_resolves_ends_here_and_one_resolved_here_ends_in_rt() -> Result<()> {
+    // rt chooses while this computer shows the competing versions: importing the choice ends
+    // the conflict here with no merge of its own.
+    let root = tempfile::tempdir()?;
+    let folder = root.path().join("notebook");
+    let (office, home) = competing(&folder)?;
+    let mut both = vec![
+        office["id"].as_str().unwrap().to_owned(),
+        home["id"].as_str().unwrap().to_owned(),
+    ];
+    both.sort();
+    let desk_db = root.path().join("desk.sqlite");
+    let desk = NotebookStore::open(&desk_db, "nb", "desk")?;
+    let refusal = refuse_merges(&desk_db)?;
+    desk.rescan(&folder, RescanLimits::default(), None)?;
+    allow_merges(&refusal)?;
+    assert_eq!(desk.conflict_versions("p")?.len(), 2);
+    let chosen = rt(&folder, "resolve", "office line\n")?;
+    assert_eq!(ids(&chosen["competing"]), both);
+    let id = chosen["id"].as_str().unwrap();
+    assert_eq!(ids(&chosen["heads"]), [id]);
+    assert_eq!(chosen["published"], 1);
+    assert_eq!(chosen["outbox"], serde_json::json!([]));
+    let report = desk.rescan(&folder, RescanLimits::default(), None)?;
+    assert!(report.problems.is_empty(), "{:?}", report.problems);
+    assert!(report.merged.is_empty(), "rt's choice needs no merge here");
+    assert_eq!(desk.heads("p")?, [id]);
+    assert!(desk.conflict_versions("p")?.is_empty());
+    assert!(desk.outbox()?.is_empty());
+    assert_eq!(
+        desk.get(id)?.unwrap().root().field("text").as_str(),
+        Some("office line\n")
+    );
+
+    // This computer chooses: rt imports the choice and has one version, with nothing to publish.
+    let root = tempfile::tempdir()?;
+    let folder = root.path().join("notebook");
+    competing(&folder)?;
+    let laptop_db = root.path().join("laptop.sqlite");
+    let laptop = NotebookStore::open(&laptop_db, "nb", "laptop")?;
+    let refusal = refuse_merges(&laptop_db)?;
+    laptop.rescan(&folder, RescanLimits::default(), None)?;
+    allow_merges(&refusal)?;
+    let heads = laptop.heads("p")?;
+    let ack = laptop.resolve_conflict("p", &heads, "home line\n".into(), 30)?;
+    laptop.publish_to(&folder, 31)?;
+    let seen = rt(&folder, "import", "")?;
+    assert_eq!(ids(&seen["heads"]), [ack.revision_id()]);
+    assert_eq!(seen["text"], "home line\n");
+    assert_eq!(seen["outbox"], serde_json::json!([]), "rt made no merge");
+    assert_eq!(seen["conflicts"], serde_json::json!([]));
+    assert_eq!(seen["problems"], serde_json::json!([]));
+    Ok(())
+}

@@ -166,6 +166,7 @@ fn muted(text: impl Into<gpui::SharedString>) -> Label {
 
 impl Render for HelpWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::app_menus::follow_zoom(window, cx);
         let mut order = TabOrder::default();
         let close = order.next();
         let search = tab_order::field(&self.search, &mut order, window, cx).flex_1();

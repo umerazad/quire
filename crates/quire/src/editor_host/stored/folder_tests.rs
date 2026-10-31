@@ -963,18 +963,23 @@ fn newer_reference_settings_stay_read_only_and_unchanged(cx: &mut TestAppContext
     );
 }
 
-const PROJECT: [(&str, &str); 5] = [
+const PROJECT: [(&str, &str); 7] = [
     ("Projects/A.md", "- a [[B]] [b](B.md) ![i](img.png)\n"),
     ("Projects/B.md", "- b [[Projects/A]]\n"),
     ("Projects/img.png", "png"),
+    ("Projects/Scans/receipt.pdf", "pdf"),
     ("Top.md", "- [[Projects/A]] [p](Projects/B.md) [[A]]\n"),
+    (
+        "Gallery.md",
+        "- ![i](Projects/img.png) ![[Projects/Scans/receipt.pdf]]\n",
+    ),
     ("Projects2/Z.md", "- z [[Projects/B]]\n"),
 ];
 
+/// rt renames a moved folder (`VaultFiles.rename`), so its attachments move with its notes and
+/// links to them from elsewhere follow.
 #[gpui::test]
-fn moving_a_folder_moves_each_note_journaled_and_keeps_tabs_and_other_files(
-    cx: &mut TestAppContext,
-) {
+fn moving_a_folder_moves_it_whole_with_its_attachments_and_keeps_tabs(cx: &mut TestAppContext) {
     use super::move_tests::{preview, select_file, update};
     let opened = open_folder(&PROJECT, "Projects/A.md", cx);
     let notebook = &opened.notebook;
@@ -994,10 +999,15 @@ fn moving_a_folder_moves_each_note_journaled_and_keeps_tabs_and_other_files(
         preview(notebook, cx),
         (
             "Projects → Work".into(),
-            "2 pages move. 2 other pages need link updates. The original files and saved history are retained for recovery.".into(),
-            vec!["Projects2/Z.md".into(), "Top.md".into()],
+            "2 pages and 2 other files move. 3 other pages need link updates. Saved history keeps the text of every note the move rewrites.".into(),
+            vec!["Gallery.md".into(), "Projects2/Z.md".into(), "Top.md".into()],
             vec![
-                update("Projects/A.md", "img.png", "../Projects/img.png"),
+                update(
+                    "Gallery.md",
+                    "![[Projects/Scans/receipt.pdf]]",
+                    "![[Work/Scans/receipt.pdf]]"
+                ),
+                update("Gallery.md", "Projects/img.png", "Work/img.png"),
                 update("Projects/B.md", "[[Projects/A]]", "[[Work/A]]"),
                 update("Projects2/Z.md", "[[Projects/B]]", "[[Work/B]]"),
                 update("Top.md", "[[Projects/A]]", "[[Work/A]]"),
@@ -1010,14 +1020,16 @@ fn moving_a_folder_moves_each_note_journaled_and_keeps_tabs_and_other_files(
         read(notebook, cx, |view, _| view.nav.dialog.is_none())
     });
     for (path, text) in [
-        (
-            "Work/A.md",
-            "y- a [[B]] [b](B.md) ![i](../Projects/img.png)\n",
-        ),
+        ("Work/A.md", "y- a [[B]] [b](B.md) ![i](img.png)\n"),
         ("Work/B.md", "- b [[Work/A]]\n"),
+        ("Work/img.png", "png"),
+        ("Work/Scans/receipt.pdf", "pdf"),
         ("Top.md", "- [[Work/A]] [p](Work/B.md) [[A]]\n"),
+        (
+            "Gallery.md",
+            "- ![i](Work/img.png) ![[Work/Scans/receipt.pdf]]\n",
+        ),
         ("Projects2/Z.md", "- z [[Work/B]]\n"),
-        ("Projects/img.png", "png"),
     ] {
         assert_eq!(
             fs::read_to_string(opened.file(path)).unwrap(),
@@ -1025,10 +1037,9 @@ fn moving_a_folder_moves_each_note_journaled_and_keeps_tabs_and_other_files(
             "{path}"
         );
     }
-    assert!(!opened.file("Projects/A.md").exists());
-    assert!(!opened.file("Projects/B.md").exists());
+    assert!(!opened.file("Projects").exists(), "nothing stays behind");
     let state = notebook.path.parent().unwrap().to_owned();
-    assert_eq!(fs::read_dir(state.join("retired")).unwrap().count(), 2);
+    assert!(!state.join("retired").exists());
     assert_eq!(fs::read_dir(state.join("transactions")).unwrap().count(), 0);
     wait_until(cx, "the moved page to open", |cx| {
         active(notebook, cx) == new

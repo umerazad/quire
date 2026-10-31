@@ -84,6 +84,26 @@ impl QueryIndex {
         }))
     }
 
+    /// Pages whose text may link to a file inside `folder`, which moves whole with its
+    /// attachments: any page naming the folder's last part, as written or with `%20` for
+    /// spaces, and any page not analyzed yet.
+    pub fn folder_link_candidates(&self, folder: &str) -> Result<Vec<PageRef>> {
+        self.refresh()?;
+        let name = folder.rsplit('/').next().unwrap_or(folder);
+        let mut names = vec![name.to_owned(), name.replace(' ', "%20")];
+        names.dedup();
+        let mut found = self.pages_where("p.analyzed=0 AND ?", "1")?;
+        for name in names {
+            found.extend(self.pages_where(
+                "p.revision IN (SELECT revision FROM live_blocks WHERE instr(content, ?) > 0)",
+                &name,
+            )?);
+        }
+        let mut seen = HashSet::new();
+        found.retain(|page| seen.insert(page.page.as_bytes().to_vec()));
+        Ok(found)
+    }
+
     /// What deleting a page or a folder takes: the pages that go, ordered by path, and how many
     /// links from the pages that stay will stop resolving.
     pub fn deletion(&self, target: &DeletionTarget) -> Result<Deletion> {
@@ -150,6 +170,11 @@ impl super::IndexClient {
     pub fn relocation(&self, page: JsString) -> super::Answer<Option<RelocationFacts>> {
         self.request(128 + page.as_bytes().len(), move |index| {
             index.relocation(&page)
+        })
+    }
+    pub fn folder_link_candidates(&self, folder: String) -> super::Answer<Vec<PageRef>> {
+        self.request(128 + folder.len(), move |index| {
+            index.folder_link_candidates(&folder)
         })
     }
     pub fn deletion(&self, target: DeletionTarget) -> super::Answer<Deletion> {

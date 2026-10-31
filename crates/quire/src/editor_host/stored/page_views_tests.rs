@@ -8,7 +8,7 @@ use crate::app_menus::{
     ActualSize, ShowNotebookFolder, TogglePageDetails, ToggleSidebar, ToggleVim, ZoomIn, ZoomOut,
 };
 use crate::page_details::PageFacts;
-use gpui::TestAppContext;
+use gpui::{AppContext as _, TestAppContext};
 use quire_core::workspace::{BrowserView, Destination};
 use std::{cell::RefCell, rc::Rc};
 
@@ -137,6 +137,58 @@ fn details_list_headings_that_jump_and_count_references_and_ids(cx: &mut TestApp
     assert!(!drawn(&notebook, "quire-page-details", cx));
 }
 
+/// rt's second pane is a whole page pane, with its own save icon and details panel.
+#[gpui::test]
+fn the_side_pane_has_its_own_save_icon_and_details(cx: &mut TestAppContext) {
+    let notebook = open_notebook(
+        &[
+            ("other", "Other.md", "- see [[Plan]]\n"),
+            ("plan", "Plan.md", PLAN),
+        ],
+        "other",
+        cx,
+    );
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.open_beside("plan".into(), window, cx)
+        })
+        .unwrap();
+    wait_until(cx, "the side page's figures", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.nav.side.as_ref().is_some_and(|side| {
+                side.editor.is_some() && view.page_facts(&side.page, cx).is_some()
+            })
+        })
+    });
+    assert!(drawn(&notebook, "quire-side-save-indicator", cx));
+    assert!(!drawn(&notebook, "quire-side-page-details", cx));
+    super::template_tests::click(&notebook, "quire-side-details-toggle", cx);
+    assert!(drawn(&notebook, "quire-side-page-details", cx));
+    assert!(
+        !drawn(&notebook, "quire-page-details", cx),
+        "the main page's panel stays closed"
+    );
+    let later = read(&notebook, cx, |view, cx| {
+        let side = view.nav.side.as_ref().unwrap();
+        view.page_facts(&side.page, cx).unwrap().headings[1].clone()
+    });
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.reveal_in_side(
+                crate::navigation::Jump::at(later.block.clone(), later.from),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(caret_text(&notebook, true, cx), "## Later");
+    super::template_tests::click(&notebook, "quire-side-details-toggle", cx);
+    assert!(!drawn(&notebook, "quire-side-page-details", cx));
+}
+
 #[gpui::test]
 fn the_save_icon_and_tab_dot_follow_saving(cx: &mut TestAppContext) {
     let notebook = open_notebook(&[("plan", "Plan.md", PLAN)], "plan", cx);
@@ -231,6 +283,57 @@ fn zoom_scales_editor_and_interface_text_until_actual_size(cx: &mut TestAppConte
     assert_eq!(sizes(cx), (buffer + 1., ui + 1., ui + 1.));
     dispatch(&notebook, ActualSize, cx);
     assert_eq!(sizes(cx), (buffer, ui, rem));
+}
+
+#[gpui::test]
+fn zoom_reaches_the_settings_help_migration_and_readme_windows(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&[("plan", "Plan.md", PLAN)], "plan", cx);
+    let data = tempfile::tempdir().unwrap();
+    let windows: [gpui::AnyWindowHandle; 4] = [
+        cx.add_window(crate::preferences::view::PreferencesWindow::new)
+            .into(),
+        cx.add_window(|window, cx| crate::help::view::HelpWindow::new(false, window, cx))
+            .into(),
+        cx.add_window(|window, cx| {
+            crate::rt_migration::view::MigrationWindow::new(
+                data.path().to_owned(),
+                None,
+                window,
+                cx,
+            )
+        })
+        .into(),
+        cx.add_window(|window, cx| {
+            let page = crate::showcase::sample(cx);
+            crate::showcase::ShowcaseWindow::new(page, false, window, cx)
+        })
+        .into(),
+    ];
+    let rems = |cx: &mut TestAppContext| {
+        windows.map(|handle| {
+            cx.update_window(handle, |_, window, cx| {
+                window.draw(cx).clear(cx);
+                f32::from(window.rem_size())
+            })
+            .unwrap()
+        })
+    };
+    let ui = read(&notebook, cx, |_, cx| {
+        f32::from(
+            <theme_settings::ThemeSettings as settings::Settings>::get_global(cx).ui_font_size(cx),
+        )
+    });
+    assert_eq!(rems(cx), [ui; 4]);
+    cx.dispatch_action(windows[1], ZoomIn);
+    cx.run_until_parked();
+    assert_eq!(
+        rems(cx),
+        [ui + 1.; 4],
+        "zoom from Help reaches every window"
+    );
+    cx.dispatch_action(windows[0], ActualSize);
+    cx.run_until_parked();
+    assert_eq!(rems(cx), [ui; 4]);
 }
 
 #[gpui::test]

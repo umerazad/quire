@@ -13,7 +13,11 @@ const NO_PAGE_FOR_AI: &str =
 
 #[derive(Default)]
 pub(in crate::editor_host::stored) struct AnswerState {
+    /// The pane beside the main page.
     pub(in crate::editor_host::stored) pane: Option<Entity<AnswerPane>>,
+    /// The pane the "Ask the notebook" tab shows, kept while the window lives so the tab finds
+    /// its conversation again.
+    pub(in crate::editor_host::stored) tab: Option<Entity<AnswerPane>>,
     keeping: Option<gpui::Task<()>>,
 }
 
@@ -42,6 +46,66 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        let pane = self.new_answer_pane(seed, window, cx);
+        self.nav.answer.pane = Some(pane);
+        self.nav.answer.keeping = None;
+        cx.notify();
+    }
+
+    /// Shows the "Ask the notebook" tab's pane, starting a fresh conversation when the tab has
+    /// none, as after reopening the notebook.
+    pub(in crate::editor_host::stored) fn show_answer_tab(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let pane = match self.nav.answer.tab.clone() {
+            Some(pane) => pane,
+            None => {
+                let pane = self.new_answer_pane(Seed::default(), window, cx);
+                pane.update(cx, |pane, _| pane.in_tab = true);
+                self.nav.answer.tab = Some(pane.clone());
+                pane
+            }
+        };
+        let input = pane.read(cx).input.focus_handle(cx);
+        window.focus(&input, cx);
+    }
+
+    /// The tab's pane, while the main pane shows the "Ask the notebook" tab.
+    pub(in crate::editor_host::stored) fn answer_tab_content(&self) -> Option<gpui::AnyElement> {
+        (self.nav.view == Some(quire_core::workspace::BrowserView::Ai))
+            .then(|| self.nav.answer.tab.clone())
+            .flatten()
+            .map(IntoElement::into_any_element)
+    }
+
+    /// Moves the pane beside the page into the "Ask the notebook" tab, as rt's Open as tab
+    /// does, keeping its conversation and any run in progress.
+    fn answer_to_tab(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        let Some(pane) = self.nav.answer.pane.take() else {
+            return;
+        };
+        pane.update(cx, |pane, cx| {
+            pane.in_tab = true;
+            cx.notify();
+        });
+        self.nav.answer.tab = Some(pane);
+        self.visit(
+            quire_core::workspace::Destination::Browser {
+                view: quire_core::workspace::BrowserView::Ai,
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn new_answer_pane(
+        &mut self,
+        seed: Seed,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> Entity<AnswerPane> {
         let page = self
             .nav
             .view
@@ -62,6 +126,7 @@ impl StoredWindow {
             window,
             |this, pane, event: &AnswerEvent, window, cx| match event {
                 AnswerEvent::Close => this.close_answer(window, cx),
+                AnswerEvent::OpenAsTab => this.answer_to_tab(window, cx),
                 AnswerEvent::Keep { index, answer } => {
                     this.keep_answer(pane.clone(), *index, answer.clone(), cx)
                 }
@@ -69,11 +134,7 @@ impl StoredWindow {
             },
         )
         .detach();
-        self.nav.answer = AnswerState {
-            pane: Some(pane),
-            keeping: None,
-        };
-        cx.notify();
+        pane
     }
 
     pub(in crate::editor_host::stored) fn close_answer(
@@ -81,7 +142,8 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        self.nav.answer = AnswerState::default();
+        self.nav.answer.pane = None;
+        self.nav.answer.keeping = None;
         self.focus_active(window, cx);
         cx.notify();
     }

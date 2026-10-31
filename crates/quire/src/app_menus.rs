@@ -93,6 +93,14 @@ pub fn init(cx: &mut App) {
     refresh(cx);
 }
 
+/// Sizes `window`'s interface from the UI font size, which View zoom changes, so every window
+/// zooms with the notebook windows. Each window's render calls it.
+pub fn follow_zoom(window: &mut gpui::Window, cx: &App) {
+    window.set_rem_size(
+        <theme_settings::ThemeSettings as settings::Settings>::get_global(cx).ui_font_size(cx),
+    );
+}
+
 pub fn bind_keys(cx: &mut App) {
     let [zoom_in, zoom_in_plus, zoom_out, actual] = if cfg!(target_os = "macos") {
         ["cmd-=", "cmd-+", "cmd--", "cmd-0"]

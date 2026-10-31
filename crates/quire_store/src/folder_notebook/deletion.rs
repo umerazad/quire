@@ -30,58 +30,6 @@ impl FolderNotebook {
             .collect()
     }
 
-    /// Renames or moves `from`, a folder that holds no notes, to `to`, with every other file in
-    /// it. Notes move one at a time so links to them follow; this refuses, moving nothing, when a
-    /// note appeared inside meanwhile, when `to` exists, or when `to` lies inside `from`.
-    pub fn move_noteless_folder(&self, from: &str, to: &str) -> Result<()> {
-        for folder in [from, to] {
-            ensure!(
-                !folder.is_empty()
-                    && !folder.contains('\\')
-                    && !folder
-                        .split('/')
-                        .any(|part| part.is_empty() || part == ".." || part.starts_with('.')),
-                "Invalid folder path {folder:?}. Choose a folder inside the open notebook."
-            );
-        }
-        ensure!(
-            !to.to_lowercase()
-                .starts_with(&format!("{}/", from.to_lowercase())),
-            "A folder cannot move inside itself. Choose another folder."
-        );
-        let source = self.root.join(from);
-        ensure!(
-            fs::symlink_metadata(&source).is_ok_and(|found| found.is_dir()),
-            "{from} is no longer in the notebook. Refresh files and try again."
-        );
-        let target = self.root.join(to);
-        ensure!(
-            fs::symlink_metadata(&target).is_err(),
-            "{to} already exists. Nothing was moved; choose another name."
-        );
-        let prefix = format!("{from}/");
-        ensure!(
-            !self
-                .listing()
-                .files
-                .iter()
-                .any(|file| file.path.starts_with(&prefix)),
-            "A note appeared in {from}. Nothing was moved; try again so its links follow."
-        );
-        let parent = target.parent().unwrap_or(&self.root);
-        fs::create_dir_all(parent).with_context(|| {
-            format!("Cannot create the folder for {to}. Check the notebook folder's permissions and retry.")
-        })?;
-        fs::rename(&source, &target).with_context(|| {
-            format!("Cannot move {from} to {to}. Nothing was moved; check the notebook folder's permissions and retry.")
-        })?;
-        for directory in [source.parent(), Some(parent)].into_iter().flatten() {
-            files::sync_directory(directory).ok();
-        }
-        self.listing();
-        Ok(())
-    }
-
     /// Moves every chosen note to the Trash, or `folder` with everything in it, when each note
     /// still holds its edit's base. Refuses before moving anything when a note changed
     /// (`HeadsChanged`), a note appeared in the folder (`Appeared`), or a note has unsaved work
