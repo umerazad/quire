@@ -596,7 +596,11 @@ impl PdfView {
                             },
                             |_, _, _, _| {},
                         )
+                        // Without an inset an absolute child sits after the in-flow page
+                        // image, a page lower than the page it measures.
                         .absolute()
+                        .top_0()
+                        .left_0()
                         .size_full(),
                     )
                     .on_mouse_down(

@@ -194,7 +194,9 @@ fn find_and_selection_read_the_stored_pdf_text(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_selection_runs_across_pdf_pages_and_copies_with_a_break_between_them(cx: &mut TestAppContext) {
+fn a_mouse_drag_selects_across_pdf_pages_and_copies_with_a_break_between_them(
+    cx: &mut TestAppContext,
+) {
     serve(cx);
     let (notebook, _) = open_with_attachments(
         &[(
@@ -206,18 +208,40 @@ fn a_selection_runs_across_pdf_pages_and_copies_with_a_break_between_them(cx: &m
     );
     let editor = enter_write(&notebook, cx);
     let view = wait_open(&notebook, &editor, 1, cx).remove(0);
-    wait_until(cx, "every page's text", |cx| {
-        view.read_with(cx, |view, _| view.texts_read()) == 3
+    view.update(cx, |view, cx| view.set_zoom(0.5, cx));
+    wait_until(cx, "every page's text laid out at 50%", |cx| {
+        draw(&notebook, cx);
+        view.read_with(cx, |view, _| {
+            view.texts_read() == 3 && (0..3).all(|page| view.char_center(page, 0).is_some())
+        })
     });
-    // Dragging backwards from the third page's "Third" to the first page's "page".
-    view.update(cx, |view, cx| view.select((2, 4), (0, 6), cx));
+    let mut visual = VisualTestContext::from_window(notebook.window.into(), cx);
+    let drag = |from: (usize, usize), to: (usize, usize), visual: &mut VisualTestContext| {
+        let (from, to) = view.read_with(visual, |view, _| {
+            (
+                view.char_center(from.0, from.1).unwrap(),
+                view.char_center(to.0, to.1).unwrap(),
+            )
+        });
+        visual.simulate_mouse_down(from, MouseButton::Left, Modifiers::none());
+        visual.simulate_mouse_move(to, MouseButton::Left, Modifiers::none());
+        visual.simulate_mouse_up(to, MouseButton::Left, Modifiers::none());
+        view.read_with(visual, |view, _| view.selected_text())
+    };
     assert_eq!(
-        view.read_with(cx, |view, _| view.selected_text()),
-        Some("page\nSecond page\nThird".into())
+        drag((0, 0), (0, 4), &mut visual),
+        Some("First".into()),
+        "a press on the first page selects there"
     );
-    view.update(cx, |view, cx| view.select((1, 0), (1, 5), cx));
     assert_eq!(
-        view.read_with(cx, |view, _| view.selected_text()),
+        drag((2, 4), (0, 6), &mut visual),
+        Some("page\nSecond page\nThird".into()),
+        "dragging backwards from the third page's \"Third\" to the first page's \"page\""
+    );
+    assert_eq!(drag((1, 0), (1, 5), &mut visual), Some("Second".into()));
+    visual.dispatch_action(editor::actions::Copy);
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
         Some("Second".into())
     );
 }
