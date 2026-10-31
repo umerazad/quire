@@ -2,3 +2,4 @@
 //! the backend settings, the prompt, and the proposal shown under the text until it is accepted.
 
 pub mod process;
+pub mod settings;

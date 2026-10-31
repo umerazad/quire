@@ -14,6 +14,7 @@ pub(super) const EDITOR_CONTEXT: &str = "Editor && !QuireControl";
 pub(super) fn init(cx: &mut App) -> Result<(), String> {
     settings::init(cx);
     crate::preferences::init(cx);
+    crate::ai::settings::init(cx);
     crate::help::init(cx);
     crate::showcase::init(cx);
     theme_settings::init(theme::LoadThemes::All(Box::new(assets::Assets)), cx);

@@ -11615,6 +11615,7 @@ dependencies = [
  "rope",
  "search",
  "semver",
+ "serde",
  "serde_json",
  "settings",
  "smol",

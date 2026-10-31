@@ -529,4 +529,4 @@ pub async fn test(
 
 #[cfg(test)]
 #[path = "process_tests.rs"]
-mod tests;
+pub(crate) mod tests;
