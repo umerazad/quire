@@ -1,4 +1,5 @@
 pub mod daily;
+pub mod exchange;
 pub mod fuzzy;
 pub mod json;
 pub mod markdown;

@@ -256,5 +256,72 @@
       "bun": "1.4.2",
       "source": "103 Templates pages (42 handwritten edges, the starters, all 14 examples, and 60 seeded), 821 expansions over three clocks, two daily layouts, two destinations, and dismissed questions, with block IDs from a counter in place of crypto.randomUUID; 114 date phrases, 10 past-name cases, 512 fuzzy matches, and the guide lists. TZ is fixed to UTC; clocks are local wall times."
     }
+  },
+  "exchange_extractions": {
+    "repository": "rt",
+    "revision": "5ea5c22310fff0c3d97f069930500fd85067fa96",
+    "files": [
+      {
+        "source": "src/core/page-export.ts",
+        "source_sha256": "90cda93808c57b57af34cf993889d8a47bd19f0d7240700490a30b90e7cadfda",
+        "destination": "core/page-export.ts",
+        "sha256": "b38cf898d404a7122dca0bec6f54cf5a03dbb8798da0970fc1c81dffc851cc66",
+        "change": "Copied unchanged except import paths: ./export-markdown (the frozen references and relativeVaultPath, recording each references call) and ./export-notebook (the Notebook methods it reads)."
+      },
+      {
+        "source": "src/core/attachments.ts",
+        "source_sha256": "29c885e6288ca0a482c72dfd31927e394d020690ca0eb18f4390384f5797323f",
+        "destination": "core/attachments.ts",
+        "sha256": "90e84a0739aeec937d87a9693ed64c4f57a3b2ed41f1e594f9016719f19efeb6",
+        "change": "Copied unchanged except the import path ../markdown/markdown."
+      },
+      {
+        "source": "src/desktop/page-export.ts",
+        "source_sha256": "4afb296cdbad466d96f0f33862e186539869459ec8a95c26d905d6582685cee9",
+        "destination": "core/export-files.ts",
+        "sha256": "c80db181e44eba78ee6c5bfa93e67887269ed48d32a852f2f607b7134c834f47",
+        "change": "Keeps exportName and localizeAttachments. The realpath, containment and ordinary-file checks become a resolver argument that receives the decoded notebook path; the AI export handlers are not copied."
+      },
+      {
+        "source": "src/desktop/engine/engine.ts",
+        "source_sha256": "ec7a673fab7cfd52675ee433431351c8219a027e008b8d35388922457c4a1376",
+        "destination": "core/markdown-import.ts",
+        "sha256": "fe3c1458623a1b5df7727d71478e4862b36f321234c9544ae72bb62edc8aec79",
+        "change": "Keeps the planning in importMarkdown: the walk over an in-memory folder in readdir order, the 500-page loop, notebookPath, and the skip rule. store.pageByPath becomes a set of sqlite-store pathKey values and this.write records the path; file copies are counted, not written."
+      },
+      {
+        "source": "(new)",
+        "destination": "core/export-markdown.ts",
+        "sha256": "98b19c5fd266278623c890aad5a722c7a61d50bde0c230f70a860720447650f7",
+        "change": "Re-exports the frozen references and relativeVaultPath, recording every references call by text for the vectors."
+      },
+      {
+        "source": "(new)",
+        "destination": "core/export-notebook.ts",
+        "sha256": "a65745f20020f9ebea355612fa28169c8dc3281e637b02c0e57fe1502cf65ae1",
+        "change": "The Notebook methods page-export.ts reads: text, title, findPage, resolve."
+      }
+    ],
+    "test": {
+      "sources": [
+        {
+          "source": "tests/page-export.test.ts",
+          "source_sha256": "efd2735f40ca96cb00e2ccd3ceca9d2febfd3104716a581893e5724902a4cd86"
+        },
+        {
+          "source": "tests/engine.test.ts",
+          "source_sha256": "6e46703f0bf13edf6e614e98f1f7fda3b126bb8cb19261db9fffd7be6f19b6b2"
+        }
+      ],
+      "destination": "exchange.test.ts",
+      "change": "The Markdown export, attachment, name and folder import expectations rerun over in-memory notebooks; the AI PDF and Word cases belong to NR31."
+    },
+    "vectors": {
+      "tool": "tools/exchange-vectors.ts",
+      "output": "tests/fixtures/exchange-vectors.json",
+      "sha256": "6f5967ae9a02fc95706da00b09b51eb3fb97961834522d29c2f9e8cf80519642",
+      "bun": "1.4.2",
+      "source": "7 handwritten export notebooks (the rt test plus cycles, re-indented block embeds, media and escapes, a malformed escape, Unicode and duplicates, front matter) and 40 seeded ones; 3 attachment rewrites; 7 export names; 4 import folders including the rt engine case and an unusable path."
+    }
   }
 }
