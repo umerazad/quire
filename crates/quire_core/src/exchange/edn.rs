@@ -662,27 +662,35 @@ pub fn roam_pages_from_edn(text: &str) -> Result<EdnGraph, String> {
 /// The reference `importRoamEDN`: the rebuilt pages imported as Roam JSON, with the rebuild's
 /// report after the first line.
 pub fn import_roam_edn(
-    graph: EdnGraph,
+    mut graph: EdnGraph,
     markdown: &dyn RoamMarkdown,
     new_id: &mut dyn FnMut() -> String,
 ) -> Result<Imported, String> {
-    let mut imported = import_roam_json(graph.pages, markdown, new_id)?;
-    let mut lines = vec![format!(
-        "Read {} DataScript datoms. Recovered {} detached text blocks on a separate recovery page. The original database archive retains all non-outline entities and settings.",
-        graph.datoms, graph.detached
-    )];
-    if graph.repaired > 0 {
-        lines.push(format!(
-            "Assigned new identifiers to {} blocks with empty database UIDs; original values remain in the source archive.",
-            graph.repaired
-        ));
-    }
-    if graph.missing_orders > 0 {
-        lines.push(format!(
-            "{} blocks had no order; placed them after ordered siblings using their database IDs.",
-            graph.missing_orders
-        ));
-    }
+    let lines = graph.report();
+    let mut imported = import_roam_json(graph.pages.take(), markdown, new_id)?;
     imported.report.splice(1..1, lines);
     Ok(imported)
+}
+
+impl EdnGraph {
+    /// The rebuild's report lines, which follow an import report's first line.
+    pub fn report(&self) -> Vec<String> {
+        let mut lines = vec![format!(
+            "Read {} DataScript datoms. Recovered {} detached text blocks on a separate recovery page. The original database archive retains all non-outline entities and settings.",
+            self.datoms, self.detached
+        )];
+        if self.repaired > 0 {
+            lines.push(format!(
+                "Assigned new identifiers to {} blocks with empty database UIDs; original values remain in the source archive.",
+                self.repaired
+            ));
+        }
+        if self.missing_orders > 0 {
+            lines.push(format!(
+                "{} blocks had no order; placed them after ordered siblings using their database IDs.",
+                self.missing_orders
+            ));
+        }
+        lines
+    }
 }

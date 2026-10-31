@@ -25,6 +25,100 @@ pub fn parse(text: &str) -> Result<Value, String> {
     Ok(value)
 }
 
+/// Why [`each_element`] stopped.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Streamed {
+    /// The text is not JSON, or nests too deep ([`TOO_DEEP`]).
+    Invalid(String),
+    /// The text is JSON whose top level is not an array.
+    NotArray,
+    /// The callback's first error. The rest of the text was still checked to be JSON.
+    Stopped(String),
+}
+
+/// Reads JSON text whose top level is an array, handing each element to `each` in order as
+/// [`parse`] would build it, so only one element is in memory at a time. After `each` fails, later
+/// elements are only checked, so a syntax error anywhere still wins as it does for [`parse`].
+pub fn each_element(
+    text: &str,
+    mut each: impl FnMut(Value) -> Result<(), String>,
+) -> Result<(), Streamed> {
+    if depth(text) > MAX_DEPTH {
+        return Err(Streamed::Invalid(TOO_DEEP.to_owned()));
+    }
+    let mut elements = Elements {
+        each: &mut each,
+        stopped: None,
+    };
+    let mut deserializer = serde_json::Deserializer::from_str(text);
+    deserializer.disable_recursion_limit();
+    let array = serde::Deserializer::deserialize_any(&mut deserializer, &mut elements)
+        .and_then(|array| deserializer.end().map(|()| array))
+        .map_err(|error| Streamed::Invalid(error.to_string()))?;
+    match (array, elements.stopped) {
+        (false, _) => Err(Streamed::NotArray),
+        (true, Some(error)) => Err(Streamed::Stopped(error)),
+        (true, None) => Ok(()),
+    }
+}
+
+struct Elements<'a> {
+    each: &'a mut dyn FnMut(Value) -> Result<(), String>,
+    stopped: Option<String>,
+}
+
+impl<'de> serde::de::Visitor<'de> for &mut Elements<'_> {
+    /// Whether the value was an array.
+    type Value = bool;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("JSON")
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<bool, A::Error> {
+        while let Some(value) = seq.next_element::<Value>()? {
+            if self.stopped.is_none()
+                && let Err(error) = (self.each)(value)
+            {
+                self.stopped = Some(error);
+            }
+        }
+        Ok(true)
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<bool, A::Error> {
+        while map
+            .next_entry::<serde::de::IgnoredAny, serde::de::IgnoredAny>()?
+            .is_some()
+        {}
+        Ok(false)
+    }
+
+    fn visit_unit<E>(self) -> Result<bool, E> {
+        Ok(false)
+    }
+
+    fn visit_bool<E>(self, _: bool) -> Result<bool, E> {
+        Ok(false)
+    }
+
+    fn visit_i64<E>(self, _: i64) -> Result<bool, E> {
+        Ok(false)
+    }
+
+    fn visit_u64<E>(self, _: u64) -> Result<bool, E> {
+        Ok(false)
+    }
+
+    fn visit_f64<E>(self, _: f64) -> Result<bool, E> {
+        Ok(false)
+    }
+
+    fn visit_str<E>(self, _: &str) -> Result<bool, E> {
+        Ok(false)
+    }
+}
+
 /// The deepest bracket nesting outside strings.
 fn depth(text: &str) -> usize {
     let (mut depth, mut deepest, mut string, mut escaped) = (0usize, 0, false, false);
@@ -199,5 +293,49 @@ mod tests {
             "a lone surrogate is refused"
         );
         assert!(parse(r#"["\ud83d\ude00"]"#).is_ok());
+    }
+
+    #[test]
+    fn elements_stream_as_parse_reads_them_and_errors_keep_their_order() {
+        let text = r#"[{"b":1,"a":2,"b":3}, [1e21], "x", null]"#;
+        let mut seen = Vec::new();
+        each_element(text, |value| {
+            seen.push(value);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(Value::Array(seen), parse(text).unwrap());
+        assert_eq!(
+            stringify(&parse(text).unwrap()),
+            r#"[{"b":3,"a":2},[1e+21],"x",null]"#
+        );
+
+        for not_array in [r#"{"a":[1]}"#, "1", r#""[]""#, "null", "true"] {
+            assert_eq!(each_element(not_array, |_| Ok(())), Err(Streamed::NotArray));
+        }
+        let mut calls = 0;
+        let stopped = each_element("[1,2,3]", |_| {
+            calls += 1;
+            Err(format!("stopped at {calls}"))
+        });
+        assert_eq!(stopped, Err(Streamed::Stopped("stopped at 1".into())));
+        assert_eq!(calls, 1, "later elements are only checked");
+        assert!(matches!(
+            each_element("[1,2,", |_| Err("first".into())),
+            Err(Streamed::Invalid(_))
+        ));
+        assert!(matches!(
+            each_element("[1] x", |_| Ok(())),
+            Err(Streamed::Invalid(_))
+        ));
+        assert!(matches!(
+            each_element(r#"["\ud800"]"#, |_| Ok(())),
+            Err(Streamed::Invalid(_))
+        ));
+        let deep = format!("{}{}", "[".repeat(MAX_DEPTH + 1), "]".repeat(MAX_DEPTH + 1));
+        assert_eq!(
+            each_element(&deep, |_| Ok(())),
+            Err(Streamed::Invalid(TOO_DEEP.to_owned()))
+        );
     }
 }

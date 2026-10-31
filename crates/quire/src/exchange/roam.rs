@@ -7,16 +7,16 @@ use super::Exchange;
 use gpui::{AppContext as _, AsyncApp, Entity};
 use quire_core::{
     exchange::{
-        edn::{import_roam_edn, roam_pages_from_edn},
+        edn::{EdnGraph, roam_pages_from_edn},
         js_json,
         roam::{
-            Document, RoamMarkdown, TextBlock, export_file_text, export_roam_json,
-            import_folder_name, import_roam_json, reference_texts,
+            Document, NOT_ROAM, RoamImport, RoamMarkdown, TextBlock, export_file_text,
+            export_roam_json, import_folder_name, page_reference_texts,
         },
     },
     markdown::Reference,
 };
-use quire_store::roam_files::{self, Format, IMPORT_CANCELED, ImportedGraph};
+use quire_store::roam_files::{self, Format, IMPORT_CANCELED, ImportStaging, RoamSource};
 use serde_json::Value;
 use std::{
     cell::RefCell,
@@ -183,19 +183,104 @@ fn progress(exchange: &Entity<Exchange>, label: String, cancellable: bool, cx: &
     exchange.update(cx, |exchange, cx| exchange.progress(label, cancellable, cx));
 }
 
-/// A Roam export read and rebuilt as Roam pages.
-enum Graph {
-    Json(Value),
-    Edn(quire_core::exchange::edn::EdnGraph),
+/// A Roam export after the first pass: its pages checked and their UIDs registered.
+struct Scanned {
+    source: RoamSource,
+    /// The EDN database's pages, rebuilt whole; JSON pages are read again from the source.
+    edn: Option<EdnGraph>,
+    import: RoamImport,
+    pages: usize,
+    texts: Vec<String>,
 }
 
-impl Graph {
-    fn pages(&self) -> &Value {
-        match self {
-            Self::Json(pages) => pages,
-            Self::Edn(graph) => &graph.pages,
+/// The first pass over an export: JSON is read a page at a time and never held whole; an EDN
+/// database is rebuilt whole first, since its datoms only form pages together.
+fn scan(source: RoamSource) -> Result<Scanned, String> {
+    let mut import = RoamImport::new();
+    let mut texts = BTreeSet::new();
+    let mut pages = 0;
+    let mut scan_page = |page: &Value| {
+        import.scan(page, &mut new_id)?;
+        let mut found = Vec::new();
+        page_reference_texts(page, &mut found);
+        texts.extend(found);
+        pages += 1;
+        Ok::<_, String>(())
+    };
+    let edn = match source.format {
+        Format::Json => {
+            js_json::each_element(&source.text, |page| scan_page(&page)).map_err(json_error)?;
+            None
         }
+        Format::Edn => {
+            let graph = roam_pages_from_edn(&source.text)?;
+            for page in graph.pages.as_array().into_iter().flatten() {
+                scan_page(page)?;
+            }
+            Some(graph)
+        }
+    };
+    Ok(Scanned {
+        source,
+        edn,
+        import,
+        pages,
+        texts: texts.into_iter().collect(),
+    })
+}
+
+fn json_error(streamed: js_json::Streamed) -> String {
+    match streamed {
+        js_json::Streamed::Invalid(error) if error == js_json::TOO_DEEP => error,
+        js_json::Streamed::Invalid(_) => "The Roam export is not valid UTF-8 JSON. Extract its JSON or EDN file from the Roam export ZIP, then select that file.".to_owned(),
+        js_json::Streamed::NotArray => NOT_ROAM.to_owned(),
+        js_json::Streamed::Stopped(error) => error,
     }
+}
+
+/// The second pass: converts each page in export order and writes it straight into the staging
+/// folder, then publishes the notebook. Calls `wrote` with the count after each page.
+fn convert_and_publish(
+    scanned: Scanned,
+    markdown: &Parsed,
+    parent: &Path,
+    cancel: &AtomicBool,
+    mut wrote: impl FnMut(usize),
+) -> Result<(PathBuf, Vec<String>), String> {
+    let Scanned {
+        source,
+        edn,
+        mut import,
+        ..
+    } = scanned;
+    let name = import_folder_name(
+        super::now() as i64,
+        &uuid::Uuid::new_v4().simple().to_string()[..8],
+    );
+    let mut staging = ImportStaging::create(parent, &name).map_err(describe)?;
+    let convert = |page: Value| {
+        let (document, page) = import.convert(page, markdown)?;
+        staging.add(&document, &page, cancel).map_err(describe)?;
+        wrote(staging.pages());
+        Ok::<_, String>(())
+    };
+    let edn_report = match edn {
+        None => {
+            js_json::each_element(&source.text, convert).map_err(json_error)?;
+            Vec::new()
+        }
+        Some(mut graph) => {
+            let report = graph.report();
+            let Value::Array(pages) = graph.pages.take() else {
+                return Err(NOT_ROAM.to_owned());
+            };
+            pages.into_iter().try_for_each(convert)?;
+            report
+        }
+    };
+    let mut report = import.finish();
+    report.splice(1..1, edn_report);
+    staging.publish(&source, report, cancel).map_err(describe)
 }
 
 /// Imports the Roam export at `source` as a new folder notebook inside `parent`. Returns the
@@ -208,26 +293,13 @@ pub async fn import(
     cx: &mut AsyncApp,
 ) -> Result<(PathBuf, Vec<String>), String> {
     let canceled = || cancel.load(Ordering::Relaxed);
-    let (source, graph, texts) = cx
-        .background_spawn(async move {
-            let source = roam_files::read_source(&source).map_err(describe)?;
-            let graph = match source.format {
-                Format::Json => Graph::Json(js_json::parse(&source.text).map_err(|error| {
-                    if error == js_json::TOO_DEEP {
-                        error
-                    } else {
-                        "The Roam export is not valid UTF-8 JSON. Extract its JSON or EDN file from the Roam export ZIP, then select that file.".to_owned()
-                    }
-                })?),
-                Format::Edn => Graph::Edn(roam_pages_from_edn(&source.text)?),
-            };
-            let texts: BTreeSet<String> = reference_texts(graph.pages()).into_iter().collect();
-            Ok::<_, String>((source, graph, texts.into_iter().collect::<Vec<_>>()))
-        })
+    let mut scanned = cx
+        .background_spawn(async move { scan(roam_files::read_source(&source).map_err(describe)?) })
         .await?;
     if canceled() {
         return Err(IMPORT_CANCELED.into());
     }
+    let texts = std::mem::take(&mut scanned.texts);
     let total = texts.len();
     progress(
         exchange,
@@ -247,14 +319,17 @@ pub async fn import(
     if canceled() {
         return Err(IMPORT_CANCELED.into());
     }
+    let total = scanned.pages;
     progress(
         exchange,
-        "Importing Roam data: converting pages…".into(),
+        format!("Importing Roam data: writing {total} pages…"),
         true,
         cx,
     );
-    let imported = cx
-        .background_spawn(async move {
+    let (written, mut counted) = futures::channel::mpsc::unbounded();
+    let publishing = cx.background_spawn({
+        let cancel = cancel.clone();
+        async move {
             let markdown = Parsed {
                 references: parsed
                     .into_iter()
@@ -262,45 +337,9 @@ pub async fn import(
                     .collect(),
                 ..Parsed::default()
             };
-            let imported = match graph {
-                Graph::Json(pages) => import_roam_json(pages, &markdown, &mut new_id),
-                Graph::Edn(graph) => import_roam_edn(graph, &markdown, &mut new_id),
-            }?;
-            let metadata = js_json::stringify(&imported.metadata);
-            Ok::<_, String>((imported.documents, imported.report, metadata))
-        })
-        .await?;
-    let (documents, report, metadata) = imported;
-    let total = documents.len();
-    progress(
-        exchange,
-        format!("Importing Roam data: writing {total} pages…"),
-        true,
-        cx,
-    );
-    let name = import_folder_name(
-        super::now() as i64,
-        &uuid::Uuid::new_v4().simple().to_string()[..8],
-    );
-    let (written, mut counted) = futures::channel::mpsc::unbounded();
-    let publishing = cx.background_spawn({
-        let cancel = cancel.clone();
-        async move {
-            roam_files::publish_import(
-                &parent,
-                &name,
-                ImportedGraph {
-                    documents: &documents,
-                    metadata: &metadata,
-                    source: &source,
-                    report,
-                },
-                &cancel,
-                |count| {
-                    written.unbounded_send(count).ok();
-                },
-            )
-            .map_err(describe)
+            convert_and_publish(scanned, &markdown, &parent, &cancel, |count| {
+                written.unbounded_send(count).ok();
+            })
         }
     });
     while let Some(count) = futures::StreamExt::next(&mut counted).await {
