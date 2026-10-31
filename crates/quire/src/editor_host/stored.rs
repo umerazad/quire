@@ -355,56 +355,60 @@ impl Render for StoredWindow {
         let conflict = self.render_folder_conflict(cx);
         let page = self.page.read(cx);
         let loading = page.is_loading();
-        let header = gpui::div()
-            .p_2()
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(Label::new(page.status(cx)))
-            .when(page.persistence().is_some(), |div| {
-                div.child(
-                    Button::new("save-page", "Save locally")
-                        .on_click(cx.listener(|this, _, _, cx| this.save_page(cx))),
-                )
-            })
-            .when(page.loaded().is_some(), |div| {
-                div.child(
-                    Button::new(
-                        "copy-markdown",
-                        if self.copy_task.is_some() {
-                            "Copying Markdown…"
-                        } else {
-                            "Copy Markdown"
-                        },
+        let header =
+            gpui::div()
+                .p_2()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(Label::new(page.status(cx)))
+                .when(page.persistence().is_some(), |div| {
+                    div.child(
+                        Button::new("save-page", "Save locally")
+                            .on_click(cx.listener(|this, _, _, cx| this.save_page(cx))),
                     )
-                    .on_click(cx.listener(|this, _, _, cx| this.copy_markdown(cx))),
-                )
-            })
-            .when(
-                page.persistence().is_some() && self.shown_page(cx).is_some(),
-                |div| {
-                    div.child(Button::new("rename-page", "Rename…").on_click(
-                        cx.listener(|this, _, window, cx| this.rename_shown_page(window, cx)),
-                    ))
-                    .child(Button::new("move-page", "Move…").on_click(
-                        cx.listener(|this, _, window, cx| this.move_shown_page(window, cx)),
-                    ))
-                    .child(
-                        Button::new("delete-page", "Delete page…").on_click(
-                            cx.listener(|this, _, window, cx| this.delete_shown_page(window, cx)),
-                        ),
+                })
+                .when(page.loaded().is_some(), |div| {
+                    div.child(
+                        Button::new(
+                            "copy-markdown",
+                            if self.copy_task.is_some() {
+                                "Copying Markdown…"
+                            } else {
+                                "Copy Markdown"
+                            },
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| this.copy_markdown(cx))),
                     )
-                },
-            )
-            .when(page.can_retry(), |div| {
-                div.child(
-                    Button::new("retry-page", "Retry page").on_click(cx.listener(
-                        |this, _, _, cx| {
-                            this.page.update(cx, |page, cx| page.retry(cx));
-                        },
-                    )),
+                })
+                .when(
+                    page.persistence().is_some() && self.shown_page(cx).is_some(),
+                    |div| {
+                        div.child(Button::new("rename-page", "Rename…").on_click(
+                            cx.listener(|this, _, window, cx| this.rename_shown_page(window, cx)),
+                        ))
+                        .child(Button::new("move-page", "Move…").on_click(
+                            cx.listener(|this, _, window, cx| this.move_shown_page(window, cx)),
+                        ))
+                        .child(Button::new("page-history", "History…").on_click(
+                            cx.listener(|this, _, window, cx| this.show_history(window, cx)),
+                        ))
+                        .child(
+                            Button::new("delete-page", "Delete page…").on_click(cx.listener(
+                                |this, _, window, cx| this.delete_shown_page(window, cx),
+                            )),
+                        )
+                    },
                 )
-            });
+                .when(page.can_retry(), |div| {
+                    div.child(
+                        Button::new("retry-page", "Retry page").on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.page.update(cx, |page, cx| page.retry(cx));
+                            },
+                        )),
+                    )
+                });
         let root = gpui::div()
             .size_full()
             .relative()
@@ -474,6 +478,19 @@ impl Render for StoredWindow {
                         .justify_center()
                         .occlude()
                         .child(dialog),
+                )
+            })
+            .when_some(self.nav.page_history.clone(), |div, history| {
+                div.child(
+                    gpui::div()
+                        .absolute()
+                        .top_16()
+                        .left_0()
+                        .right_0()
+                        .flex()
+                        .justify_center()
+                        .occlude()
+                        .child(history),
                 )
             })
     }

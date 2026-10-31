@@ -12,7 +12,7 @@ use crate::{
 };
 use gpui::{App, AppContext as _, Entity, Task};
 use quire_core::{
-    markdown::page_title,
+    markdown::{copy_with_new_ids, page_name, page_title, safe_page_path},
     relocate::{
         MISSING_SOURCE, Relocation, folder_path, folder_relocations, notebook_path, relocate_pages,
         rename_target,
@@ -467,4 +467,64 @@ pub fn rename(
     cx: &mut App,
 ) -> Task<Result<usize, String>> {
     relocate(plan, storage, STALE_RENAME, cx)
+}
+
+pub const STALE_RESTORE: &str = "The page changed after this version was compared with it. Nothing was restored; review the changes shown now and restore again.";
+
+/// Makes `text`, an earlier saved version, the page's newest version in one checked save, when
+/// the page still reads `compared`, the text the preview showed it against. An open page's
+/// unsaved typing is saved first, so it stays in history, and the page then shows the restored
+/// text. Returns whether anything was written.
+pub fn restore_version(
+    page: String,
+    text: String,
+    compared: String,
+    open_pages: Vec<Entity<OpenPage>>,
+    storage: NotebookBackend,
+    cx: &mut App,
+) -> Task<Result<bool, String>> {
+    cx.spawn(async move |cx| {
+        let Some(source) = page_writes::read(page, &open_pages, &storage, cx).await? else {
+            return Err(
+                "This page has no saved version to restore over. Restore it as a new page instead."
+                    .into(),
+            );
+        };
+        if source.stored != compared {
+            return Err(STALE_RESTORE.into());
+        }
+        if source.stored == text {
+            return Ok(false);
+        }
+        let write = source.write(text.into());
+        let applied = cx.update(|cx| page_writes::apply(vec![write], storage, STALE_RESTORE, cx));
+        applied.await.map(|_| true)
+    })
+}
+
+/// The title and text of a copy of `text`, a version of the page at `path`, saved as a new page
+/// with fresh block IDs, as the reference `createSavedCopy` names it: the page title cut to 50
+/// characters, then `label`, the date, and a short random suffix.
+pub fn page_copy(
+    path: &str,
+    text: &str,
+    label: &str,
+    date: &str,
+) -> Result<(String, String), String> {
+    let source = page_title(path, text).to_lossy_string();
+    let short: String = uuid::Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(8)
+        .collect();
+    let title = format!(
+        "{} ({label} {date} {short})",
+        source.chars().take(50).collect::<String>()
+    );
+    let destination = safe_page_path(&title).map_err(|error| error.to_string())?;
+    let copied = copy_with_new_ids(text, &destination, &[page_name(path), &source], || {
+        format!("b-{}", uuid::Uuid::new_v4().simple())
+    });
+    Ok((title, copied))
 }

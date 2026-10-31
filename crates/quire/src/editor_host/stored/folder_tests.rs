@@ -846,3 +846,59 @@ fn renaming_a_folder_page_in_place_from_files_follows_links_and_escape_keeps_it(
         view.file_rows().iter().any(|row| row.path == "New name.md")
     }));
 }
+
+#[gpui::test]
+fn folder_page_history_restores_an_earlier_file_and_keeps_the_replaced_one(
+    cx: &mut TestAppContext,
+) {
+    let opened = open_folder(&[("Note.md", "- disk\n")], "Note.md", cx);
+    let notebook = &opened.notebook;
+    wait_until(cx, "Note's editor", |cx| {
+        read(notebook, cx, |view, _| view.editor.is_some())
+    });
+    draw(notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "i x escape");
+    cx.simulate_keystrokes(notebook.window.into(), &super::tests::key("s"));
+    wait_until(cx, "the save", |_| {
+        fs::read_to_string(opened.file("Note.md")).unwrap() == "x- disk\n"
+    });
+    cx.dispatch_action(notebook.window.into(), crate::navigation::ShowPageHistory);
+    wait_until(cx, "the saved version", |cx| {
+        read(notebook, cx, |view, cx| {
+            view.nav
+                .page_history
+                .as_ref()
+                .is_some_and(|history| history.read(cx).can_restore())
+        })
+    });
+    let history = read(notebook, cx, |view, _| view.nav.page_history.clone()).unwrap();
+    assert_eq!(
+        history.read_with(cx, |history, _| history.labels().len()),
+        1
+    );
+    assert_eq!(
+        history.read_with(cx, |history, _| history.preview_text().map(str::to_owned)),
+        Some("- disk\n".into())
+    );
+    draw(notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the restore", |cx| {
+        read(notebook, cx, |view, _| view.nav.page_history.is_none())
+    });
+    assert_eq!(
+        fs::read_to_string(opened.file("Note.md")).unwrap(),
+        "- disk\n"
+    );
+    wait_until(cx, "the open page to show it", |cx| {
+        text(notebook, cx) == "- disk\n"
+    });
+    cx.dispatch_action(notebook.window.into(), crate::navigation::ShowPageHistory);
+    wait_until(cx, "the longer history", |cx| {
+        read(notebook, cx, |view, cx| {
+            view.nav
+                .page_history
+                .as_ref()
+                .is_some_and(|history| history.read(cx).labels().len() == 2)
+        })
+    });
+}

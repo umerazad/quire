@@ -11340,6 +11340,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assets",
+ "buffer_diff",
  "db",
  "editor",
  "fs",

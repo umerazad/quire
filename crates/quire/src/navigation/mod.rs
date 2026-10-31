@@ -4,6 +4,7 @@
 pub mod context_rows;
 pub mod file_dialog;
 pub mod live;
+pub mod page_history;
 pub mod palette;
 pub mod references;
 pub mod tag_edits;
@@ -64,6 +65,8 @@ gpui::actions!(
         MovePage,
         /// Moves the highlighted page or folder in Files after previewing every link change.
         MoveFile,
+        /// Lists the shown page's earlier saved versions to compare and restore.
+        ShowPageHistory,
     ]
 );
 
@@ -194,6 +197,23 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", menu::Cancel, Some("QuireDialog > Editor")),
         KeyBinding::new("f2", RenameFile, Some(FILES_CONTEXT)),
         KeyBinding::new("shift-f2", MoveFile, Some(FILES_CONTEXT)),
+        KeyBinding::new("enter", menu::Confirm, Some(page_history::HISTORY_CONTEXT)),
+        KeyBinding::new(
+            primary!("enter"),
+            menu::SecondaryConfirm,
+            Some(page_history::HISTORY_CONTEXT),
+        ),
+        KeyBinding::new("escape", menu::Cancel, Some(page_history::HISTORY_CONTEXT)),
+        KeyBinding::new(
+            "up",
+            menu::SelectPrevious,
+            Some(page_history::HISTORY_CONTEXT),
+        ),
+        KeyBinding::new(
+            "down",
+            menu::SelectNext,
+            Some(page_history::HISTORY_CONTEXT),
+        ),
         KeyBinding::new(
             primary!("enter"),
             ToggleTagSelected,

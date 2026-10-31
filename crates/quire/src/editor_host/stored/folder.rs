@@ -8,7 +8,6 @@ use ::fs::Fs as _;
 use anyhow::Context as _;
 use futures::StreamExt as _;
 use gpui::{SharedString, Task};
-use quire_core::markdown::{copy_with_new_ids, page_name, page_title, safe_page_path};
 use quire_store::{
     folder_notebook::{RecoveredDraft, Trash, is_markdown, list, validate},
     sync::format::{page_id_for_path, sha256},
@@ -301,29 +300,16 @@ impl StoredWindow {
                 return;
             }
         };
-        let source = page_title(&path, &text).to_lossy_string();
-        let short: String = uuid::Uuid::new_v4()
-            .simple()
-            .to_string()
-            .chars()
-            .take(8)
-            .collect();
         let date = self.today().unwrap_or_default();
-        let title = format!(
-            "{} (recovered {date} {short})",
-            source.chars().take(50).collect::<String>()
-        );
-        let destination = match safe_page_path(&title) {
-            Ok(destination) => destination,
+        let (title, copied) = match crate::file_actions::page_copy(&path, &text, "recovered", &date)
+        {
+            Ok(copy) => copy,
             Err(error) => {
-                self.folder.error = Some(error.to_string().into());
+                self.folder.error = Some(error.into());
                 cx.notify();
                 return;
             }
         };
-        let copied = copy_with_new_ids(&text, &destination, &[page_name(&path), &source], || {
-            format!("b-{}", uuid::Uuid::new_v4().simple())
-        });
         let work = create_page_with(
             self.session.borrow().storage(),
             index,
