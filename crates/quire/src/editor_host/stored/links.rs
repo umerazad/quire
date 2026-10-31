@@ -117,6 +117,16 @@ impl Notebook for WindowNotebook {
     fn media_files(&self) -> Option<quire_media::files::Files> {
         self.session.upgrade()?.try_borrow().ok()?.media_files()
     }
+
+    /// Beside the notebook's Quire data: the folder notebook's state folder, or the database.
+    fn transcripts(&self, cx: &App) -> Option<PathBuf> {
+        let session = self.session.upgrade()?;
+        if let Some((_, state)) = session.try_borrow().ok()?.folder() {
+            return Some(state.join("ai"));
+        }
+        let window = self.window.upgrade()?;
+        Some(window.read(cx).nav.database.with_file_name("quire-ai"))
+    }
 }
 
 impl StoredWindow {

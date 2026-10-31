@@ -362,6 +362,7 @@ impl AiSection {
         self.testing.is_some()
     }
 
+    #[cfg(test)]
     pub fn binary_field(&self) -> &Entity<Editor> {
         &self.binary
     }

@@ -1890,6 +1890,50 @@ pub fn page_command(input: &str, cx: &mut App) -> Task<std::result::Result<PageC
     })
 }
 
+/// Splits `[range]name arguments`, such as `:1,3ai tighten`, for a command the host runs itself,
+/// resolving the range with Vim's own grammar against `editor`. Returns None when `input` names
+/// another command, and the 0-based buffer rows of a typed range, inclusive, with the arguments.
+pub fn host_command(
+    input: &str,
+    name: &str,
+    editor: &Entity<Editor>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<std::result::Result<(Option<Range<u32>>, String), String>> {
+    let (range, rest) = VimCommand::parse_range(input.trim_start_matches([':', ' ']));
+    let arguments = rest.strip_prefix(name)?;
+    if !(arguments.is_empty() || arguments.starts_with(char::is_whitespace)) {
+        return None;
+    }
+    let arguments = arguments.trim().to_owned();
+    let Some(range) = range else {
+        return Some(Ok((None, arguments)));
+    };
+    let Some(vim) = editor
+        .read(cx)
+        .addon::<crate::VimAddon>()
+        .map(|addon| addon.entity.clone())
+    else {
+        return Some(Err(
+            "Vim mode is disabled. Enable Vim or press Escape to cancel.".into(),
+        ));
+    };
+    let rows = vim.update(cx, |vim, cx| {
+        vim.update_editor(cx, |vim, editor, cx| {
+            range.buffer_range(vim, editor, window, cx)
+        })
+        .unwrap_or_else(|| Err(anyhow!("the command's editor closed")))
+    });
+    Some(
+        rows.map(|rows| (Some(rows.start.0..rows.end.0), arguments))
+            .map_err(|error| {
+                format!(
+                    "Cannot run this command: {error}. Edit the command or press Escape to cancel."
+                )
+            }),
+    )
+}
+
 fn is_editor_command(action: &dyn Action) -> bool {
     if let Some(action) = action.as_any().downcast_ref::<WithRange>() {
         return is_editor_command(action.action.0.as_ref());
