@@ -627,5 +627,8 @@ pub fn start(
     })
 }
 
+#[cfg(feature = "test-support")]
+pub mod latency;
+
 #[cfg(test)]
 mod tests;

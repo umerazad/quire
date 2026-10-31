@@ -1099,6 +1099,14 @@ fn main() {
         );
         return;
     }
+    #[cfg(all(feature = "full-editor", feature = "test-support"))]
+    if std::env::args().nth(1).as_deref() == Some("--measure-sync-latency") {
+        let rounds = std::env::args()
+            .nth(2)
+            .and_then(|rounds| rounds.parse().ok());
+        live_sync::latency::run(rounds.unwrap_or(10));
+        return;
+    }
     #[cfg(feature = "full-editor")]
     editor_host::run();
     #[cfg(not(feature = "full-editor"))]
