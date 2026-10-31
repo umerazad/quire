@@ -91,6 +91,9 @@ fn write_renders_page_links_and_live_block_previews_that_open_on_click(cx: &mut 
     visual.simulate_click(preview.center(), Default::default());
     wait_until(cx, "the previewed block's page", |cx| {
         active(&notebook, cx) == "t"
+            && read(&notebook, cx, |view, cx| {
+                view.page.read(cx).loaded().is_some()
+            })
     });
 
     let target = read(&notebook, cx, |view, cx| {
