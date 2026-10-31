@@ -287,6 +287,15 @@ fn restoring_backs_up_first_and_opens_the_restored_notebook_in_place_of_this_one
         windows.len() == 1 && windows[0] != notebook.window
     });
     let restored = stored_windows(cx)[0];
+    // Read before the restored notebook's own hourly schedule can tick: a wait under load
+    // advances the test clock past its first minute, when it backs itself up.
+    let message = restored
+        .update(cx, |view, _, cx| view.backups.read(cx).message())
+        .unwrap();
+    assert_eq!(
+        message, None,
+        "the restored window starts without the old window's messages"
+    );
     let database = restored
         .update(cx, |view, _, _| view.nav.database.clone())
         .unwrap();
@@ -314,13 +323,10 @@ fn restoring_backs_up_first_and_opens_the_restored_notebook_in_place_of_this_one
         })
         .unwrap();
     assert_eq!(text, "- at backup time");
-    let message = restored
-        .update(cx, |view, _, cx| view.backups.read(cx).message())
-        .unwrap();
-    assert_eq!(
-        message, None,
-        "the restored window starts without the old window's messages"
-    );
+    // A loaded run reaches the restored notebook's first scheduled backup; it is its own and
+    // leaves this notebook's backups alone.
+    cx.executor().advance_clock(Duration::from_secs(61));
+    cx.run_until_parked();
     let after = completed(&notebook, destination.path());
     assert_eq!(after.len(), 2, "the safety backup joins the first");
     assert_eq!(after[1], chosen);
