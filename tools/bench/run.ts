@@ -103,8 +103,9 @@ if (!flag("only-store")) {
     // The same queries without the app, on the index the launches left: less noise from the GUI.
     const states = join(home, process.platform === "darwin" ? "Library/Application Support/QuireNative" : ".local/share/QuireNative", "folder-notebooks");
     const [state] = existsSync(states) ? readdirSync(states) : [];
+    // Raw results only, so a failure is recorded instead of discarding the launches.
     raw[`${scale}x_store_queries`] = state
-      ? JSON.parse(await run([join(root, "target/release/examples/index_queries"), notebook, join(states, state)]))
+      ? await run([join(root, "target/release/examples/index_queries"), notebook, join(states, state), String(runs[0].analyzer)]).then(JSON.parse, (error) => String(error))
       : "no folder state found; check where this platform keeps QuireNative data";
     rmSync(home, { recursive: true, force: true });
     raw[`${scale}x`] = runs;

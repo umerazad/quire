@@ -418,6 +418,7 @@ async fn run(
     Ok(serde_json::json!({
         "first_editable_ms": ms(first_editable.saturating_duration_since(launched)),
         "index_ready_ms": ms(index_ready.saturating_duration_since(launched)),
+        "analyzer": crate::page_index::ANALYZER_VERSION,
         "resident_kib_at_editable": resident_at_editable,
         "resident_kib_after_opens": resident_after_opens,
         "resident_kib_at_end": resident_kib(),

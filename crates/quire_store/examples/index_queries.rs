@@ -1,10 +1,10 @@
 //! Times index queries against a folder notebook's analyzed query index, without the app.
 //!
 //! `cargo run --release -p quire_store --example index_queries -- <notebook folder> <state folder>
-//! [analyzer version]` opens `<state folder>/query-index.sqlite` (the app keeps it in
+//! <analyzer version>` opens `<state folder>/query-index.sqlite` (the app keeps it in
 //! `folder-notebooks/<hash>` under its data folder) and prints one JSON object with each query's
-//! times in milliseconds. Pass the app's analyzer version (default 5); another version rebuilds
-//! the index instead of reading it.
+//! times in milliseconds. Pass the app's analyzer version, which its `QUIRE_BENCH` report names;
+//! another version would rebuild the index instead of reading it.
 
 use anyhow::{Context as _, Result, ensure};
 use quire_core::{
@@ -28,15 +28,14 @@ fn times<T>(mut query: impl FnMut() -> Result<T>) -> Result<Vec<f64>> {
 
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
-    let usage = "Pass the notebook folder and its state folder: index_queries <notebook> <state> [analyzer].";
+    let usage = "Pass the notebook folder and its state folder: index_queries <notebook> <state> <analyzer version from the app's QUIRE_BENCH report>.";
     let root = PathBuf::from(args.next().context(usage)?);
     let state = PathBuf::from(args.next().context(usage)?);
-    let analyzer = args
+    let analyzer: i64 = args
         .next()
-        .map(|version| version.parse())
-        .transpose()
-        .context("The analyzer version must be a whole number, such as 5.")?
-        .unwrap_or(5);
+        .context(usage)?
+        .parse()
+        .context("The analyzer version must be a whole number, such as 6.")?;
     ensure!(
         state.join("query-index.sqlite").exists(),
         "{} has no query-index.sqlite. Open the notebook in Quire until indexing finishes, then pass its state folder.",
