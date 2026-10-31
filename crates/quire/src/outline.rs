@@ -5,7 +5,9 @@
 
 use crate::markdown_blocks::Block;
 use editor::{Editor, FoldPlaceholder, SelectionEffects, display_map::Crease};
-use gpui::{Action, App, Context, Entity, Global, KeyBinding, SharedString, Window, actions};
+use gpui::{
+    Action, App, Context, Entity, Focusable as _, Global, KeyBinding, SharedString, Window, actions,
+};
 use multi_buffer::{MultiBuffer, MultiBufferOffset, ToOffset, ViewEditIntent};
 use std::{any::TypeId, ops::Range};
 
@@ -105,7 +107,10 @@ enum Handled {
 }
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(|editor: &mut Editor, _, cx| {
+    cx.observe_new(|editor: &mut Editor, window, cx| {
+        if let Some(window) = window {
+            follow_numbering(editor, window, cx);
+        }
         cx.subscribe_self(|editor, event: &editor::EditorEvent, cx| {
             let progress = crate::code_format::formatting(editor)
                 && notice(cx).as_deref() == Some(crate::code_format::FORMATTING);
@@ -501,6 +506,49 @@ fn apply(
     cx: &mut Context<Editor>,
 ) {
     apply_then(editor, page, plan, |_, _, _| None, window, cx)
+}
+
+/// Keeps numbered lists counting after edits that are not outline commands, such as typing a
+/// numbered line, Vim `dd`, or undo. The focused Write view renumbers the runs an edit touched
+/// right after it, so the buffer groups both into one undo step.
+fn follow_numbering(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
+    let Some(buffer) = source_buffer(editor, cx) else {
+        return;
+    };
+    let mut seen = buffer.read(cx).version();
+    cx.subscribe_in(&buffer, window, move |editor, buffer, event, window, cx| {
+        let language::BufferEvent::Edited { source } = event else {
+            return;
+        };
+        let snapshot = buffer.read(cx).snapshot();
+        let since = std::mem::replace(&mut seen, snapshot.version().clone());
+        if !source.is_local()
+            || !crate::editor_projection::enabled(editor)
+            || !editor.focus_handle(cx).is_focused(window)
+        {
+            return;
+        }
+        let touched: Vec<Range<usize>> = snapshot
+            .edits_since::<usize>(&since)
+            .map(|edit| edit.new)
+            .collect();
+        let text = snapshot.text();
+        let numbered = touched.iter().any(|range| {
+            let from = model::line_start(&text, range.start);
+            let to = model::line_end(&text, range.end);
+            let to = model::line_end(&text, (to + 1).min(text.len()));
+            text[from..to].lines().any(|line| {
+                model::list_mark(line.trim_start())
+                    .is_some_and(|mark| mark.starts_with(|c: char| c.is_ascii_digit()))
+            })
+        });
+        if !numbered {
+            return;
+        }
+        let renumbered = renumber_touched(buffer, &touched, cx);
+        source_edit(buffer, &renumbered, cx);
+    })
+    .detach();
 }
 
 /// Applies the plan, then the plan `then` computes from the edited page and the caret, as one

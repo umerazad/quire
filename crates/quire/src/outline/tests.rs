@@ -91,7 +91,11 @@ fn displayed(window: WindowHandle<Editor>, cx: &mut TestAppContext) -> String {
 }
 
 fn undo(vim: bool) -> String {
-    if vim { "u".into() } else { format!("{MOD}-z") }
+    if vim {
+        "u".into()
+    } else {
+        format!("{MOD}-z")
+    }
 }
 
 #[gpui::test]
@@ -520,4 +524,20 @@ fn moved_blocks_keep_the_caret_when_the_parse_lags(cx: &mut TestAppContext) {
         ],
         cx,
     );
+}
+
+#[gpui::test]
+fn numbered_lists_renumber_after_plain_edits(cx: &mut TestAppContext) {
+    let window = write_view("1. One\n2. T|wo\n3. Three\n", true, cx);
+    keys(window, "d d", cx);
+    assert_eq!(state(window, cx).replace('|', ""), "1. One\n2. Three\n");
+    keys(window, "u", cx);
+    assert_eq!(
+        state(window, cx).replace('|', ""),
+        "1. One\n2. Two\n3. Three\n"
+    );
+
+    let window = write_view("1. One\n2. Two\n|\n", false, cx);
+    keys(window, "1 . space c", cx);
+    assert_eq!(state(window, cx), "1. One\n2. Two\n3. c|\n");
 }
