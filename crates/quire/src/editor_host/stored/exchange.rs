@@ -4,8 +4,8 @@
 use super::StoredWindow;
 use crate::{
     exchange::{
-        BUSY, CancelExchange, Exchange, ExportNotebookMarkdown, ExportPageMarkdown,
-        ImportMarkdownFolder, flatten_page, now,
+        BUSY, CancelExchange, Exchange, ExportNotebookMarkdown, ExportPageMarkdown, ExportRoamJson,
+        ImportMarkdownFolder, ImportRoamData, flatten_page, now, roam,
     },
     notebook_backend::NotebookBackend,
     page_writes,
@@ -187,6 +187,126 @@ impl StoredWindow {
         .detach();
     }
 
+    /// Asks for a Roam JSON or EDN export and a parent folder, imports the graph there as a new
+    /// folder notebook, and opens it.
+    pub(super) fn import_roam_data(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.exchange_busy(cx) {
+            return;
+        }
+        let exchange = self.exchange.clone();
+        let chosen = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Import".into()),
+        });
+        cx.spawn(async move |_, cx| {
+            let Ok(Ok(Some(source))) = chosen
+                .await
+                .map(|chosen| chosen.map(|paths| paths.and_then(|paths| paths.into_iter().next())))
+            else {
+                return;
+            };
+            let chosen = cx.update(|cx| cx.prompt_for_paths(folder_prompt("Choose")));
+            let Ok(Ok(Some(parent))) = chosen
+                .await
+                .map(|chosen| chosen.map(|paths| paths.and_then(|paths| paths.into_iter().next())))
+            else {
+                return;
+            };
+            let cancel = Arc::new(AtomicBool::new(false));
+            exchange.update(cx, |exchange, cx| {
+                exchange.start(
+                    "Importing Roam data: reading the export…",
+                    Some(cancel.clone()),
+                    cx,
+                )
+            });
+            let result = roam::import(source, parent, cancel, &exchange, cx)
+                .await
+                .map(|(root, report)| {
+                    let opened = cx.update(|cx| {
+                        super::folder::open_folder_window(root.clone(), report[1..].to_vec(), cx)
+                    });
+                    let message = match opened {
+                        Ok(()) => {
+                            format!("{} Details are available in notebook notices.", report[0])
+                        }
+                        Err(error) => format!("{} {error}", report[0]),
+                    };
+                    (message, Some(root))
+                });
+            exchange.update(cx, |exchange, cx| exchange.finish(result, cx));
+        })
+        .detach();
+    }
+
+    /// Asks for a file and writes every page of this notebook into it as Roam JSON.
+    pub(super) fn export_roam_json(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        if self.exchange_busy(cx) {
+            return;
+        }
+        let Some(index) = self.index_client(cx) else {
+            self.nav.error = Some(
+                "Export needs the notebook index, which is still starting. Export again in a moment."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        };
+        let storage = self.session.borrow().storage();
+        let open = self.session.borrow().open_pages();
+        let folder = self
+            .session
+            .borrow()
+            .folder()
+            .map(|(root, state)| (root.to_path_buf(), state.to_path_buf()));
+        let exchange = self.exchange.clone();
+        let chosen = cx.prompt_for_new_path(
+            util::paths::home_dir(),
+            Some(&quire_core::exchange::roam::export_file_name(now() as i64)),
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(destination))) = chosen.await else {
+                return;
+            };
+            let cancel = Arc::new(AtomicBool::new(false));
+            exchange.update(cx, |exchange, cx| {
+                exchange.start(
+                    "Exporting Roam JSON: reading pages…",
+                    Some(cancel.clone()),
+                    cx,
+                )
+            });
+            let notebook = ExportedNotebook {
+                storage,
+                index,
+                open,
+                folder,
+            };
+            let result = export_roam(notebook, destination.clone(), cancel, &exchange, cx).await;
+            let result = result.map(|report| {
+                this.update(cx, |this, cx| {
+                    this.folder
+                        .notices
+                        .extend(report[1..].iter().cloned().map(Into::into));
+                    cx.notify();
+                })
+                .ok();
+                (
+                    format!(
+                        "Saved Roam JSON to {}. {}",
+                        destination.display(),
+                        report[0]
+                    ),
+                    Some(destination),
+                )
+            });
+            exchange.update(cx, |exchange, cx| exchange.finish(result, cx));
+        })
+        .detach();
+    }
+
     pub(super) fn cancel_exchange(&mut self, cx: &mut gpui::Context<Self>) {
         self.exchange.update(cx, |exchange, cx| exchange.cancel(cx));
     }
@@ -200,6 +320,10 @@ impl StoredWindow {
         .on_action(cx.listener(|this, _: &ExportNotebookMarkdown, window, cx| {
             this.export_notebook(window, cx)
         }))
+        .on_action(cx.listener(|this, _: &ImportRoamData, _, cx| this.import_roam_data(cx)))
+        .on_action(
+            cx.listener(|this, _: &ExportRoamJson, window, cx| this.export_roam_json(window, cx)),
+        )
         .on_action(cx.listener(|this, _: &CancelExchange, _, cx| this.cancel_exchange(cx)))
     }
 
@@ -223,6 +347,14 @@ impl StoredWindow {
             .child(
                 Button::new("export-notebook-markdown", "Export notebook as Markdown…")
                     .on_click(cx.listener(|this, _, window, cx| this.export_notebook(window, cx))),
+            )
+            .child(
+                Button::new("import-roam-data", "Import Roam data…")
+                    .on_click(cx.listener(|this, _, _, cx| this.import_roam_data(cx))),
+            )
+            .child(
+                Button::new("export-roam-json", "Export Roam JSON…")
+                    .on_click(cx.listener(|this, _, window, cx| this.export_roam_json(window, cx))),
             )
     }
 }
@@ -361,6 +493,80 @@ async fn export_page(
         format!("Exported {title} as Markdown."),
         Some(target),
     )))
+}
+
+/// The notebook a Roam export reads.
+struct ExportedNotebook {
+    storage: NotebookBackend,
+    index: quire_store::index::IndexClient,
+    open: Vec<gpui::Entity<crate::notebook_session::OpenPage>>,
+    /// The folder notebook and Quire's state folder for it.
+    folder: Option<(PathBuf, PathBuf)>,
+}
+
+/// Reads every page, refusing unsaved recovery as the reference does, and writes the notebook as
+/// Roam JSON to `destination`.
+async fn export_roam(
+    notebook: ExportedNotebook,
+    destination: PathBuf,
+    cancel: Arc<AtomicBool>,
+    exchange: &Entity<Exchange>,
+    cx: &mut gpui::AsyncWindowContext,
+) -> Result<Vec<String>, String> {
+    let ExportedNotebook {
+        storage,
+        index,
+        open,
+        folder,
+    } = notebook;
+    let pages = ask(index.pages()).await?;
+    let total = pages.len();
+    let mut documents = Vec::with_capacity(total);
+    for (count, listed) in pages.into_iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(roam::EXPORT_CANCELED.into());
+        }
+        let page = listed.page.page.to_lossy_string();
+        let Some(source) = page_writes::read(page.clone(), &open, &storage, cx).await? else {
+            continue;
+        };
+        let draft = match &storage {
+            NotebookBackend::Store(client) => ask(client.draft(page)).await?,
+            NotebookBackend::Folder(client) => ask(client.draft(page)).await?,
+        };
+        if draft.is_some_and(|draft| draft.text != source.stored) {
+            return Err(
+                "Unsaved recovery data exists. Resolve recovered pages before exporting the graph."
+                    .into(),
+            );
+        }
+        documents.push(quire_core::exchange::roam::Document {
+            path: source.path,
+            text: source.stored,
+        });
+        exchange.update(cx, |exchange, cx| {
+            exchange.progress(
+                format!("Exporting Roam JSON: read {} of {total} pages…", count + 1),
+                true,
+                cx,
+            )
+        });
+    }
+    let documents = roam::sorted(documents, folder.is_some());
+    let mut forbidden = vec![paths::data_dir().clone()];
+    let root = folder.map(|(root, state)| {
+        forbidden.extend([root.clone(), state]);
+        root
+    });
+    roam::export(
+        roam::Notebook { documents, root },
+        destination,
+        forbidden,
+        cancel,
+        exchange,
+        cx,
+    )
+    .await
 }
 
 /// One file a notebook export writes, at its path inside the chosen folder.

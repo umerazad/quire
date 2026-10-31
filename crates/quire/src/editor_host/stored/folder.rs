@@ -28,6 +28,33 @@ const COMPARED_LINES: usize = 400;
 pub(in crate::editor_host) struct FolderOptions {
     root: PathBuf,
     page: Option<String>,
+    /// Shown in the window's notices, such as an import's report.
+    notices: Vec<String>,
+    /// Quire's state folder for the notebook, when not the one in application data.
+    state: Option<PathBuf>,
+}
+
+/// Opens the folder notebook at a path in a new window, showing the given notices.
+pub(in crate::editor_host) type OpenFolderFn =
+    dyn Fn(PathBuf, Vec<String>, &mut App) -> Result<(), String>;
+
+/// Opens a folder notebook in a new window with `notices`; tests replace it to keep Quire's
+/// application data untouched.
+#[derive(Clone)]
+pub(in crate::editor_host) struct OpenFolder(pub std::rc::Rc<OpenFolderFn>);
+
+impl gpui::Global for OpenFolder {}
+
+/// Opens the folder notebook at `root` in a new window, showing `notices` there.
+pub(super) fn open_folder_window(
+    root: PathBuf,
+    notices: Vec<String>,
+    cx: &mut App,
+) -> Result<(), String> {
+    match cx.try_global::<OpenFolder>().cloned() {
+        Some(open) => (open.0)(root, notices, cx),
+        None => FolderOptions::new(root, notices, None).open(cx),
+    }
 }
 
 impl FolderOptions {
@@ -56,7 +83,19 @@ impl FolderOptions {
         Ok(Some(Self {
             root: root.into(),
             page,
+            notices: Vec::new(),
+            state: None,
         }))
+    }
+
+    /// The folder notebook at `root`, opening on its first note.
+    pub fn new(root: PathBuf, notices: Vec<String>, state: Option<PathBuf>) -> Self {
+        Self {
+            root,
+            page: None,
+            notices,
+            state,
+        }
     }
 
     pub fn open(self, cx: &mut App) -> Result<(), String> {
@@ -75,7 +114,9 @@ impl FolderOptions {
                 )
             })?,
         };
-        let state = state_folder(&root);
+        let state = self.state.unwrap_or_else(|| state_folder(&root));
+        let notices = self.notices;
+        let roam = crate::exchange::roam::is_roam_notebook(&root);
         let mut session =
             NotebookSession::open_folder(root.clone(), state.clone(), Some(system_trash(cx)))?;
         let page = session.open_page(page_id_for_path(&page), cx);
@@ -100,7 +141,19 @@ impl FolderOptions {
                     cx,
                 );
                 this.watch_folder(cx);
+                this.folder
+                    .notices
+                    .extend(notices.into_iter().map(SharedString::from));
                 this.load_folder_notices(cx);
+                if roam {
+                    this.visit(
+                        quire_core::workspace::Destination::Browser {
+                            view: quire_core::workspace::BrowserView::Pages,
+                        },
+                        window,
+                        cx,
+                    );
+                }
                 this
             })
         })
