@@ -7,6 +7,8 @@ use ui::{Button, ButtonCommon, Clickable, Label, LabelCommon, Tooltip};
 
 mod stored;
 
+pub(crate) use stored::{dispatch_to_notebook, notebook_windows, open_in_profile};
+
 gpui::actions!(quire, [TogglePresentation]);
 
 pub(super) const EDITOR_CONTEXT: &str = "Editor && !QuireControl";
@@ -18,6 +20,7 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     #[cfg(unix)]
     crate::notebook_tools::init(crate::notebook_tools::directory(), cx);
     crate::help::init(cx);
+    crate::rt_migration::view::init(cx);
     crate::showcase::init(cx);
     theme_settings::init(theme::LoadThemes::All(Box::new(assets::Assets)), cx);
     crate::markdown::init(cx)?;
@@ -639,7 +642,7 @@ pub fn run() {
             }
         }
     };
-    gpui_platform::application().with_assets(assets::Assets).run(move |cx| {
+    gpui_platform::application().with_assets(crate::quire_assets::Assets).run(move |cx| {
         if let Err(error) = init(cx) {
             eprintln!("{error}");
             cx.quit();
@@ -649,11 +652,15 @@ pub fn run() {
         <dyn ::fs::Fs>::set_global(fs.clone(), cx);
         crate::preferences::load(fs, cx);
         crate::profiles::load(paths::data_dir().join("profiles.json"), cx);
+        if let Some(line) = crate::rt_migration::import_ai_settings(paths::data_dir(), cx) {
+            crate::outline::show_notice(line, cx);
+        }
+        crate::motion::init(cx);
         crate::app_menus::refresh(cx);
         if let Some(listener) = listener {
             serve_launches(listener, cx);
         }
-        if let Err(error) = assets::Assets.load_fonts(cx) {
+        if let Err(error) = assets::Assets.load_fonts(cx).and_then(|()| crate::script_fonts::load(cx)) {
             eprintln!("Cannot load Quire's bundled fonts: {error}. Rebuild the application assets.");
             cx.quit();
             return;

@@ -532,3 +532,65 @@ pub fn page_copy(
     );
     Ok((title, copied))
 }
+
+/// Where Reveal puts a Quire notebook page: the reference app's `Quire pages` folder in the
+/// system's temporary folder.
+pub fn reveal_folder() -> std::path::PathBuf {
+    std::env::temp_dir().join("Quire pages")
+}
+
+/// Writes `text`, a Quire notebook page stored at `path`, as a read-only Markdown file in
+/// `folder` for Finder or Explorer to show. The notebook keeps its pages in its database, so the
+/// file is a copy: it is read-only, and replacing it on the next Reveal changes nothing stored.
+pub fn export_for_reveal(
+    folder: &std::path::Path,
+    path: &str,
+    text: &str,
+) -> Result<std::path::PathBuf, String> {
+    let name = std::path::Path::new(path).file_name().ok_or_else(|| {
+        format!("The page path {path} has no file name. Rename the page, then reveal it again.")
+    })?;
+    let target = folder.join(name);
+    let failed = |error: std::io::Error| {
+        format!(
+            "Cannot write a copy of the page to {}: {error}. Check that the temporary folder is writable, then reveal it again.",
+            target.display()
+        )
+    };
+    std::fs::create_dir_all(folder).map_err(failed)?;
+    #[cfg(windows)]
+    if let Ok(metadata) = std::fs::metadata(&target) {
+        let mut permissions = metadata.permissions();
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&target, permissions).map_err(failed)?;
+    }
+    match std::fs::remove_file(&target) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(failed(error)),
+        _ => {}
+    }
+    std::fs::write(&target, text).map_err(failed)?;
+    let mut permissions = std::fs::metadata(&target).map_err(failed)?.permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(&target, permissions).map_err(failed)?;
+    Ok(target)
+}
+
+#[cfg(test)]
+mod reveal_tests {
+    use super::*;
+
+    #[test]
+    fn a_revealed_page_is_a_read_only_copy_that_the_next_reveal_replaces() {
+        let folder = tempfile::tempdir().unwrap();
+        let first = export_for_reveal(folder.path(), "Projects/Plan.md", "- one\r\n").unwrap();
+        assert_eq!(first, folder.path().join("Plan.md"));
+        assert_eq!(std::fs::read_to_string(&first).unwrap(), "- one\r\n");
+        assert!(std::fs::metadata(&first).unwrap().permissions().readonly());
+        let again = export_for_reveal(folder.path(), "Plan.md", "- two").unwrap();
+        assert_eq!(again, first);
+        assert_eq!(std::fs::read_to_string(&again).unwrap(), "- two");
+        assert!(std::fs::metadata(&again).unwrap().permissions().readonly());
+        let error = export_for_reveal(folder.path(), "", "text").unwrap_err();
+        assert!(error.contains("has no file name"), "{error}");
+    }
+}

@@ -243,6 +243,10 @@
       "change": "Reject insertion of a different source buffer into a single-page shared-history excerpt before changing its excerpt map. Disable generic context expansion for these page embeds; their host owns the semantic range."
     },
     {
+      "path": "crates/editor/src/blink_manager.rs",
+      "change": "Hold the cursor steady while App::reduce_motion is set, as the editor already does for cursor glides, so the system Reduce motion setting stops the blink. Covered by quire's motion test."
+    },
+    {
       "path": "crates/editor/src/display_map/tab_map.rs",
       "change": "Skip empty fold chunks when seeking tab stops, avoiding a zero-length subtraction overflow with empty replacement text. Add a focused UTF-8/tab regression with empty fold placeholders."
     },
@@ -305,6 +309,14 @@
     {
       "path": "crates/gpui/src/platform.rs",
       "change": "Expose an optional native pre-termination callback, separate from final on_quit, without requiring changes to platforms that only support guarded programmatic quits."
+    },
+    {
+      "path": "crates/gpui/src/text_system.rs",
+      "change": "When a font's family is missing, try that font's own fallbacks as the family (each keeping the fallbacks after it, and the weight, style, and features) before the global fallback stack, so a configured fallback cascade, such as Quire's bundled Arabic font after the editor font, survives a missing editor font. Upstream dropped the requested fallbacks there. Covered by quire's script_fonts test."
+    },
+    {
+      "path": "crates/gpui_apple/src/text_system.rs",
+      "change": "Register each embedded font with Core Text for the process (CTFontManagerRegisterGraphicsFont) when it is added, because font fallback cascades resolve families through Core Text and never saw fonts held only in font-kit's memory source. Quire's bundled Noto Naskh Arabic is such a fallback; without this, Arabic fell to the system's Geeza Pro. Covered by quire's script_fonts test, which fails without it."
     },
     {
       "path": "crates/gpui/src/platform/test/platform.rs",

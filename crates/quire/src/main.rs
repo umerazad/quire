@@ -141,6 +141,21 @@ mod showcase;
 mod tag_labels;
 
 #[cfg(feature = "full-editor")]
+mod motion;
+
+#[cfg(feature = "full-editor")]
+mod tab_order;
+
+#[cfg(feature = "full-editor")]
+mod script_fonts;
+
+#[cfg(feature = "full-editor")]
+mod title_bar;
+
+#[cfg(feature = "full-editor")]
+mod quire_assets;
+
+#[cfg(feature = "full-editor")]
 mod ai;
 
 #[cfg(feature = "full-editor")]

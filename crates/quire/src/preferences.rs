@@ -2,6 +2,7 @@
 //! Electron app's defaults over Zed's, the settings file is watched so edits apply live, and the
 //! Electron profile is imported once when no settings file exists yet.
 
+pub mod data;
 pub mod local_storage;
 pub mod rt_import;
 pub mod view;
@@ -37,7 +38,12 @@ actions!(
 );
 
 pub const DEFAULT_FONT_FAMILY: &str = "Pragmata Pro Mono Liga";
-pub const FONT_FALLBACKS: [&str; 2] = ["PragmataPro Mono Liga", ".ZedMono"];
+/// After the editor fonts, Arabic-script text falls back to the bundled Naskh.
+pub const FONT_FALLBACKS: [&str; 3] = [
+    "PragmataPro Mono Liga",
+    ".ZedMono",
+    crate::script_fonts::ARABIC,
+];
 pub const DEFAULT_FONT_SIZE: f32 = 16.;
 pub const DEFAULT_LINE_SPACING: f32 = 1.85;
 pub const FONT_SIZES: std::ops::RangeInclusive<f32> = 10.0..=40.0;
@@ -305,7 +311,13 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", menu::Cancel, Some(view::CONTEXT)),
         KeyBinding::new("enter", menu::Confirm, Some(view::FIELD_CONTEXT)),
         KeyBinding::new("escape", menu::Cancel, Some(view::FIELD_CONTEXT)),
+        KeyBinding::new(
+            "escape",
+            menu::Cancel,
+            Some(crate::rt_migration::view::CONTEXT),
+        ),
     ]);
+    crate::tab_order::bind_keys(&[view::CONTEXT], cx);
 }
 
 /// Switches to the other of light and dark from what is shown, saved as an explicit choice.

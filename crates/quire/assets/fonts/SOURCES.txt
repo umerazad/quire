@@ -1,0 +1,16 @@
+Script fonts bundled with Quire, matching the reference app's "Quire Arabic" (Noto Naskh Arabic
+400, 500, 700) and "Quire Urdu" (Noto Nastaliq Urdu 400, 700). Static unhinted TTF builds, each
+licensed under the SIL Open Font License 1.1 (OFL.txt in its folder).
+
+noto-naskh-arabic/: NotoNaskhArabic/unhinted/ttf/ from
+  https://github.com/notofonts/arabic/releases/download/NotoNaskhArabic-v2.021/NotoNaskhArabic-v2.021.zip
+  zip SHA-256 6c050ab9bd087d69b733c505a7576e60c528c2f33cd7b91005a5bd7da4514032
+  NotoNaskhArabic-Regular.ttf c34fdbd98af4dbc45ca192a23d2eeb77032add83086f5fe32957d23b3f36b221
+  NotoNaskhArabic-Medium.ttf  3befc6c9270aa30b6332cd90c5eeb0c9cf801f5e146fca317704585e55c6981c
+  NotoNaskhArabic-Bold.ttf    380ac34b249d336e1a43c21053df440594e1e3db8f75fabd4d85b649ca1ea4c6
+
+noto-nastaliq-urdu/: NotoNastaliqUrdu/unhinted/ttf/ from
+  https://github.com/notofonts/nastaliq/releases/download/NotoNastaliqUrdu-v4.000/NotoNastaliqUrdu-v4.000.zip
+  zip SHA-256 0725a7a9dfd450961b18227445cc9a5d21624d68b1f88fa52e4c6a0fe7576728
+  NotoNastaliqUrdu-Regular.ttf 6decda3b03f6366dbd75e3a22544d248ca686b582f897fae8a7dc027302812e3
+  NotoNastaliqUrdu-Bold.ttf    af7f692a6be9feadfe30b90bd10292665337974a34fdd9b1c51abffe81f966d6

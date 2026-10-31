@@ -139,3 +139,97 @@ fn topics_follow_the_reference_order_without_ai() {
         ]
     );
 }
+
+#[gpui::test]
+fn tab_walks_help_from_search_to_capture_and_the_topics(cx: &mut TestAppContext) {
+    init_app(cx);
+    cx.update(view::open);
+    cx.run_until_parked();
+    let help = help_window(cx).unwrap();
+    let press =
+        |keys: &str, cx: &mut TestAppContext| crate::tab_order::press(help.into(), keys, cx);
+    let search_focused = |cx: &mut TestAppContext| {
+        help.update(cx, |view, window, cx| {
+            view.search().focus_handle(cx).is_focused(window)
+        })
+        .unwrap()
+    };
+    assert!(search_focused(cx), "Help opens with its search focused");
+    press("tab", cx);
+    assert!(!search_focused(cx));
+    press("shift-tab", cx);
+    assert!(search_focused(cx), "Capture a task follows the search");
+    help.update(cx, |view, window, cx| {
+        view.search().update(cx, |editor, cx| {
+            editor.set_text("no such help xyz", window, cx)
+        })
+    })
+    .unwrap();
+    let topics = content::SECTIONS.len();
+    press(&vec!["tab"; topics + 4].join(" "), cx);
+    press("enter", cx);
+    help.update(cx, |view, _, cx| {
+        assert_eq!(
+            view.topics(cx).len(),
+            topics,
+            "after Capture, each topic, README and Settings, Tab reaches Show all help"
+        )
+    })
+    .unwrap();
+}
+
+fn menu_names(items: &[gpui::MenuItem], prefix: &[String], out: &mut BTreeSet<Vec<String>>) {
+    for item in items {
+        let name = match item {
+            gpui::MenuItem::Submenu(menu) => menu.name.to_string(),
+            gpui::MenuItem::Action { name, .. } => name.to_string(),
+            _ => continue,
+        };
+        let path = [prefix, &[name]].concat();
+        if let gpui::MenuItem::Submenu(menu) = item {
+            menu_names(&menu.items, &path, out);
+        }
+        out.insert(path);
+    }
+}
+
+#[gpui::test]
+fn help_names_only_menu_items_that_exist(cx: &mut TestAppContext) {
+    init_app(cx);
+    let menus = cx.update(|cx| crate::app_menus::menus(cx));
+    let mut shipped = BTreeSet::new();
+    for menu in &menus {
+        menu_names(&menu.items, &[menu.name.to_string()], &mut shipped);
+    }
+    let text = content::SECTIONS
+        .iter()
+        .flat_map(|section| section.steps.iter().chain([&section.description]))
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let named = text.match_indices("File > ").map(|(at, _)| {
+        let mut path = vec!["File".to_owned()];
+        let mut rest = &text[at + "File > ".len()..];
+        loop {
+            let item = shipped
+                .iter()
+                .filter(|candidate| {
+                    candidate.len() == path.len() + 1 && candidate.starts_with(&path)
+                })
+                .filter_map(|candidate| candidate.last())
+                .filter(|name| rest.starts_with(name.as_str()))
+                .max_by_key(|name| name.len())
+                .unwrap_or_else(|| panic!("Help names File > {rest:.40}, which no menu has"));
+            path.push(item.clone());
+            rest = &rest[item.len()..];
+            match rest.strip_prefix(" > ") {
+                Some(after) => rest = after,
+                None => break path,
+            }
+        }
+    });
+    assert!(
+        named.count() >= 5,
+        "Help names the File menu where it guides"
+    );
+}

@@ -9,7 +9,10 @@
 //! `quire --restore-rt-backup <backup> --into <folder>` restore an `rt` backup as a new notebook.
 //! None of them opens a window, and none writes to `rt`'s data.
 
-use crate::preferences::{local_storage, rt_import};
+use crate::{
+    ai::settings::RtAiChoices,
+    preferences::{local_storage, rt_import},
+};
 use quire_core::workspace::{Destination, Workspace};
 use quire_store::{
     notebook::NotebookStore,
@@ -25,6 +28,8 @@ const WORKSPACE_PREFIX: &str = "quire-workspace:";
 const AI_HISTORY: &str = "quire.ai-history";
 const SYNTHESIS: &str = "quire.synthesis-instruction";
 pub const REPORT_FILE: &str = "rt-migration-report.md";
+
+pub mod view;
 
 fn now() -> u64 {
     std::time::SystemTime::now()
@@ -265,22 +270,75 @@ pub fn import_local_storage(rt_data: &Path, quire_data: &Path, record: &mut Reco
     lines
 }
 
-/// What `rt`'s AI settings held, for the user to choose again after Quire's own Test.
+const AI_SETTINGS_STEP: &str = "ai-settings";
+
+/// The AI choices `rt` saved, when it saved any Quire accepts.
+pub fn rt_ai_choices(rt_data: &Path) -> Option<RtAiChoices> {
+    let bytes = std::fs::read(rt_data.join("ai-settings.json")).ok()?;
+    let value = serde_json::from_slice::<Value>(&bytes).ok()?;
+    Some(RtAiChoices::parse(&value)).filter(|choices| !choices.is_empty())
+}
+
+fn describe_ai(choices: &RtAiChoices) -> String {
+    let backend = choices.backend.map(|backend| backend.name());
+    [
+        backend.map(|backend| format!("backend {backend}")),
+        choices.model.as_ref().map(|model| format!("model {model}")),
+        choices
+            .writes
+            .map(|writes| format!("writes {}", format!("{writes:?}").to_lowercase())),
+        choices
+            .claude_path
+            .as_ref()
+            .map(|path| format!("Claude Code at {path}")),
+        choices
+            .codex_path
+            .as_ref()
+            .map(|path| format!("Codex at {path}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(", ")
+}
+
+/// The report line for `rt`'s AI settings: Quire takes them up when it next runs.
 fn ai_settings_lines(rt_data: &Path) -> Vec<String> {
-    let Some(value) = std::fs::read(rt_data.join("ai-settings.json"))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-    else {
-        return Vec::new();
-    };
-    let field = |key: &str| value.get(key).map(Value::to_string).unwrap_or_default();
-    vec![format!(
-        "rt's AI settings: backend {}, model {}, writes {}, binaries {}. Choose them in Settings > AI and press Test; Quire turns AI on only after its own Test passes.",
-        field("backend"),
-        field("model"),
-        field("writes"),
-        field("paths")
-    )]
+    rt_ai_choices(rt_data)
+        .map(|choices| {
+            format!(
+                "rt's AI settings ({}) are imported when Quire next starts, unless Quire's AI is already set up. AI stays off until you press Test in Settings > AI.",
+                describe_ai(&choices)
+            )
+        })
+        .into_iter()
+        .collect()
+}
+
+/// Takes up `rt`'s AI choices once after a migration, into AI settings nobody changed in Quire.
+/// Returns what happened, for a notice or the report.
+pub fn import_ai_settings(quire_data: &Path, cx: &mut gpui::App) -> Option<String> {
+    let mut record = Record::load(quire_data).ok()?;
+    let source = record.source.clone()?;
+    if record.completed.contains(AI_SETTINGS_STEP) {
+        return None;
+    }
+    let line = rt_ai_choices(&source).map(|choices| {
+        if crate::ai::settings::is_unconfigured(cx) {
+            let described = describe_ai(&choices);
+            crate::ai::settings::import_rt(choices, cx);
+            format!("Imported rt's AI settings ({described}). AI stays off until you press Test in Settings > AI.")
+        } else {
+            "Kept Quire's own AI settings; rt's were not imported.".into()
+        }
+    });
+    record.completed.insert(AI_SETTINGS_STEP.into());
+    match record.save(quire_data) {
+        Ok(()) => line,
+        Err(error) => Some(format!(
+            "rt's AI settings could not be marked as imported: {error:#}. Check write access to Quire's data folder."
+        )),
+    }
 }
 
 /// Runs the whole migration: the store's part, then renderer storage, and saves the report.

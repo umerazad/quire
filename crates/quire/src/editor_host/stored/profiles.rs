@@ -4,7 +4,9 @@
 //! why, so no edit is left behind.
 
 use super::*;
-use crate::profiles::{OpenNotebookFolder, UseCurrentProfile, UsePersonalProfile, UseWorkProfile};
+use crate::profiles::{
+    OpenNotebookDatabase, OpenNotebookFolder, UseCurrentProfile, UsePersonalProfile, UseWorkProfile,
+};
 use quire_store::profiles::{Notebook, ProfileId};
 
 /// How long a switch waits for open pages to be recorded before giving up.
@@ -24,6 +26,10 @@ pub(super) fn init(cx: &mut App) {
         let id = crate::profiles::active(cx);
         choose_folder(id, cx)
     });
+    cx.on_action(|_: &OpenNotebookDatabase, cx| {
+        let id = crate::profiles::active(cx);
+        choose_database(id, cx)
+    });
 }
 
 pub(super) fn stored_windows(cx: &App) -> Vec<gpui::WindowHandle<StoredWindow>> {
@@ -31,6 +37,36 @@ pub(super) fn stored_windows(cx: &App) -> Vec<gpui::WindowHandle<StoredWindow>> 
         .into_iter()
         .filter_map(|window| window.downcast::<StoredWindow>())
         .collect()
+}
+
+/// Brings forward the window showing the active profile's notebook, or else any notebook window,
+/// and runs `action` there. Settings and the menus use it for a notebook's data commands.
+pub(crate) fn dispatch_to_notebook(
+    action: Box<dyn gpui::Action>,
+    cx: &mut App,
+) -> Result<(), String> {
+    let active = crate::profiles::get(crate::profiles::active(cx), cx).notebook;
+    let window = active
+        .as_ref()
+        .and_then(|notebook| showing(notebook, cx))
+        .or_else(|| stored_windows(cx).into_iter().next())
+        .ok_or_else(|| {
+            "No notebook is open. Open the profile's notebook from File > Profile, then try again."
+                .to_owned()
+        })?;
+    window
+        .update(cx, |_, window, cx| {
+            window.activate_window();
+            window.dispatch_action(action, cx);
+        })
+        .map_err(|error| {
+            format!("Cannot reach the notebook window: {error}. Bring it forward and use the command there.")
+        })
+}
+
+/// How many notebook windows are open.
+pub(crate) fn notebook_windows(cx: &App) -> usize {
+    stored_windows(cx).len()
 }
 
 /// The window already showing `notebook`.
@@ -89,6 +125,52 @@ fn choose_folder(id: ProfileId, cx: &mut App) {
     .detach();
 }
 
+/// The Quire notebook whose database is `path`, with the identities it records.
+pub(in crate::editor_host) fn database_notebook(
+    path: &std::path::Path,
+) -> Result<Notebook, String> {
+    let database = std::fs::canonicalize(path).map_err(|error| {
+        format!(
+            "Cannot open {}: {error}. Choose an existing Quire notebook database.",
+            path.display()
+        )
+    })?;
+    let identity = quire_store::notebook::NotebookStore::identity(&database)
+        .map_err(|error| format!("{error:#}"))?;
+    Ok(Notebook::Store {
+        database,
+        notebook: identity.notebook,
+        writer: identity.writer,
+        folder: None,
+    })
+}
+
+/// Asks for a Quire notebook's database and opens it as the notebook of `id`.
+pub(in crate::editor_host) fn choose_database(id: ProfileId, cx: &mut App) {
+    let chosen = cx.prompt_for_paths(gpui::PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: false,
+        prompt: Some(format!("Use as the {} notebook", id.label()).into()),
+    });
+    cx.spawn(async move |cx| {
+        let Some(path) = chosen
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .flatten()
+            .and_then(|paths| paths.into_iter().next())
+        else {
+            return;
+        };
+        cx.update(|cx| match database_notebook(&path) {
+            Ok(notebook) => open_in_profile(id, notebook, cx),
+            Err(error) => refuse(id, error, cx),
+        });
+    })
+    .detach();
+}
+
 fn refuse(id: ProfileId, reason: impl std::fmt::Display, cx: &mut App) {
     crate::outline::show_notice(
         format!(
@@ -100,7 +182,7 @@ fn refuse(id: ProfileId, reason: impl std::fmt::Display, cx: &mut App) {
 }
 
 /// Records every open page, then makes `notebook` the notebook of `id` and opens it.
-pub(super) fn open_in_profile(id: ProfileId, notebook: Notebook, cx: &mut App) {
+pub(crate) fn open_in_profile(id: ProfileId, notebook: Notebook, cx: &mut App) {
     if cx.default_global::<Switching>().0 {
         return refuse(
             id,
@@ -239,11 +321,17 @@ pub(in crate::editor_host) fn open_location(
             writer,
             folder,
         } => {
-            let page = crate::navigation::WorkspaceFile::beside(database, notebook)
+            let remembered = crate::navigation::WorkspaceFile::beside(database, notebook)
                 .load()
                 .active
-                .and_then(|active| active.page_id().map(str::to_owned))
-                .ok_or_else(|| format!("Quire does not know which page of the Quire notebook {} to show. Open it once with --page-id; Quire remembers the page after that.", database.display()))?;
+                .and_then(|active| active.page_id().map(str::to_owned));
+            let page = match remembered {
+                Some(page) => page,
+                None => quire_store::notebook::NotebookStore::identity(database)
+                    .map_err(|error| format!("{error:#}"))?
+                    .first_page
+                    .ok_or_else(|| format!("The Quire notebook {} has no pages to show yet. Add a page with --page-id once; Quire remembers the page after that.", database.display()))?,
+            };
             OpenOptions {
                 database: database.clone(),
                 notebook: notebook.clone(),

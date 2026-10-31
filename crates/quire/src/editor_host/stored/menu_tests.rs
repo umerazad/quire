@@ -127,6 +127,7 @@ fn files_menus_open_from_shift_f10_and_close_on_escape_back_to_files(cx: &mut Te
                 "-",
                 "Rename",
                 "Move to…",
+                "Reveal in Finder / Explorer",
                 "-",
                 "Delete page…",
             ])
@@ -284,6 +285,7 @@ fn tab_menus_close_around_the_tab_and_disable_what_cannot_close(cx: &mut TestApp
                 "Add to favorites",
                 "Open beside",
                 "Copy link",
+                "Reveal in Finder / Explorer",
                 "-",
                 "Rename or move…",
                 "Delete page…",
@@ -395,6 +397,7 @@ fn recent_and_favorite_menus_act_on_their_page(cx: &mut TestAppContext) {
                 "Add to favorites",
                 "-",
                 "Rename or move…",
+                "Reveal in Finder / Explorer",
                 "Remove from recent",
                 "-",
                 "Delete page…",

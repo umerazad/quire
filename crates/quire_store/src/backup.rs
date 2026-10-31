@@ -418,7 +418,6 @@ fn create_with(
 }
 
 fn write_manifest(folder: &Path, manifest: &Manifest) -> Result<()> {
-    use std::io::Write as _;
     let path = folder.join(MANIFEST);
     let mut file = fs::File::options()
         .write(true)
@@ -430,7 +429,7 @@ fn write_manifest(folder: &Path, manifest: &Manifest) -> Result<()> {
                 path.display()
             )
         })?;
-    file.write_all(&serde_json::to_vec_pretty(manifest)?)?;
+    files::write(&mut file, &serde_json::to_vec_pretty(manifest)?, &path)?;
     file.sync_all()
         .with_context(|| format!("Cannot flush {} to the drive. Retry.", path.display()))?;
     Ok(())

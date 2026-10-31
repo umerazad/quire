@@ -15,6 +15,7 @@ mod backups;
 mod document_export;
 mod exchange;
 mod folder;
+mod help_pane;
 mod instance;
 mod links;
 mod live;
@@ -25,6 +26,7 @@ mod sync;
 pub(super) use folder::FolderOptions;
 pub(super) use instance::{Handover, handle_launch};
 pub(super) use profiles::open_location;
+pub(crate) use profiles::{dispatch_to_notebook, notebook_windows, open_in_profile};
 
 pub(super) fn bind_keys(cx: &mut App) {
     profiles::init(cx);
@@ -199,14 +201,7 @@ impl OpenOptions {
         let mut session =
             NotebookSession::open_synced(self.database, self.notebook, self.writer, self.folder)?;
         let page = session.open_page(self.page, cx);
-        let options = gpui::WindowOptions {
-            window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
-                None,
-                gpui::size(gpui::px(1100.), gpui::px(760.)),
-                cx,
-            ))),
-            ..Default::default()
-        };
+        let options = crate::title_bar::options(1100., 760., cx);
         cx.open_window(options, move |window, cx| {
             window.set_window_title("Quire Native");
             cx.new(|cx| StoredWindow::new(session, page, database, notebook, window, cx))
@@ -241,6 +236,8 @@ struct StoredWindow {
     exchange: Entity<crate::exchange::Exchange>,
     backups: Entity<crate::backups::Backups>,
     sync: Entity<crate::sync_status::SyncStatus>,
+    /// Help beside the pages, while it is open.
+    help: Option<Entity<crate::help::view::HelpWindow>>,
     /// Publishing and importing for a Quire notebook with a synced folder.
     live: Option<Entity<crate::live_sync::LiveSync>>,
     live_view: Option<Entity<crate::live_sync::LiveSyncView>>,
@@ -344,6 +341,7 @@ impl StoredWindow {
             exchange: cx.new(|_| crate::exchange::Exchange::default()),
             backups,
             sync,
+            help: None,
             live,
             live_view,
         };
@@ -710,10 +708,13 @@ impl Render for StoredWindow {
             .on_action(cx.listener(|this, _: &SaveAndClosePage, window, cx| {
                 this.save_and_close(window, cx)
             }));
-        Self::register_sync(
-            Self::register_backups(
-                Self::register_document_export(
-                    Self::register_exchange(Self::register_navigation(root, cx), cx),
+        Self::register_help(
+            Self::register_sync(
+                Self::register_backups(
+                    Self::register_document_export(
+                        Self::register_exchange(Self::register_navigation(root, cx), cx),
+                        cx,
+                    ),
                     cx,
                 ),
                 cx,
@@ -723,6 +724,11 @@ impl Render for StoredWindow {
         .flex()
         .flex_col()
         .bg(cx.theme().colors().editor_background)
+        .children(crate::title_bar::render(
+            crate::title_bar::notebook_title(self.location.as_ref()),
+            window,
+            cx,
+        ))
         .child(header)
         .child(profile)
         .child(self.exchange.clone())
