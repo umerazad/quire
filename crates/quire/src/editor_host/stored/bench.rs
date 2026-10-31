@@ -198,14 +198,27 @@ fn resident_kib() -> Option<u64> {
     String::from_utf8_lossy(&output.stdout).trim().parse().ok()
 }
 
-fn client(
+/// The index, once the window has read the notebook's settings and started it, which can come
+/// after the first editable page.
+async fn client(
     this: &WeakEntity<StoredWindow>,
     cx: &mut AsyncWindowContext,
 ) -> Result<quire_store::index::IndexClient, String> {
-    this.read_with(cx, |this, cx| this.index_client(cx))
-        .ok()
-        .flatten()
-        .ok_or_else(|| "The notebook index is unavailable, so queries cannot be timed. Check the index status line and retry.".into())
+    let started = Instant::now();
+    loop {
+        let client = this
+            .read_with(cx, |this, cx| this.index_client(cx))
+            .map_err(closed)?;
+        if let Some(client) = client {
+            return Ok(client);
+        }
+        if started.elapsed() > Duration::from_secs(60) {
+            return Err("The notebook index did not start within 60 s, so queries cannot be timed. Check the index status line and retry.".into());
+        }
+        cx.background_executor()
+            .timer(Duration::from_millis(10))
+            .await;
+    }
 }
 
 /// Times `count` keystrokes typed into the focused page at a typist's pace: the foreground work
@@ -289,7 +302,7 @@ async fn run(
     stage(launched, "waiting for the first editable page");
     let first_editable = paint(editable(this, None), cx).await?;
     let resident_at_editable = resident_kib();
-    let client = client(this, cx)?;
+    let client = client(this, cx).await?;
     stage(launched, "waiting for the index");
     let index_ready = loop {
         let unanalyzed = client
@@ -303,7 +316,7 @@ async fn run(
             break Instant::now();
         }
         cx.background_executor()
-            .timer(Duration::from_millis(10))
+            .timer(Duration::from_millis(50))
             .await;
     };
     stage(launched, "typing");

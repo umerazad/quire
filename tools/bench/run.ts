@@ -3,7 +3,7 @@
 //        [--skip-build] [--only-store]
 // Fixtures come from tools/synthetic-notebook.ts (seed 1) plus a 1 MiB Large.md page, cached
 // under target/bench/fixtures. Raw results go to target/bench/results/<time>.json.
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { loadavg } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -33,7 +33,7 @@ async function run(command: string[], env: Record<string, string> = {}) {
 if (!flag("skip-build")) {
   const featureArgs = features ? ["--features", features] : [];
   await run(["cargo", "build", "--release", "--locked", "-p", "quire", ...featureArgs]);
-  await run(["cargo", "build", "--release", "--locked", "-p", "quire_store", "--example", "journal_bench"]);
+  await run(["cargo", "build", "--release", "--locked", "-p", "quire_store", "--example", "journal_bench", "--example", "index_queries"]);
 }
 
 function fixture(scale: number) {
@@ -100,6 +100,12 @@ if (!flag("only-store")) {
       runs.push(report);
       console.error(`${scale}x ${index ? "warm" : "first open"} ${index}: editable ${report.first_editable_ms} ms, index ${report.index_ready_ms} ms, unpainted ${report.unpainted}, load ${report.load.map((l) => l.toFixed(1)).join(" ")}`);
     }
+    // The same queries without the app, on the index the launches left: less noise from the GUI.
+    const states = join(home, process.platform === "darwin" ? "Library/Application Support/QuireNative" : ".local/share/QuireNative", "folder-notebooks");
+    const [state] = existsSync(states) ? readdirSync(states) : [];
+    raw[`${scale}x_store_queries`] = state
+      ? JSON.parse(await run([join(root, "target/release/examples/index_queries"), notebook, join(states, state)]))
+      : "no folder state found; check where this platform keeps QuireNative data";
     rmSync(home, { recursive: true, force: true });
     raw[`${scale}x`] = runs;
     const [first, ...warm] = runs;
