@@ -336,6 +336,59 @@ async fn a_synthesis_waits_for_its_instruction_and_reruns_over_the_same_referenc
 }
 
 #[gpui::test]
+async fn synthesize_on_a_tag_page_sends_every_block_carrying_the_tag(cx: &mut TestAppContext) {
+    let pages = [
+        (
+            "ideas",
+            "Ideas.md",
+            "- Grow herbs #garden\n  - basil first\n- Unrelated\n",
+        ),
+        ("log", "Log.md", "- Pruned the roses #Garden ^b-roses\n"),
+    ];
+    let (ai, notebook) = notebook(&pages, "ideas", cx).await;
+    ai.answer("Herbs and roses.", &[], cx);
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.visit(
+                quire_core::workspace::Destination::Tag {
+                    tag: "#garden".into(),
+                },
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    wait_until(cx, "the tag page", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.shown_tag_page()
+                .is_some_and(|page| page.read(cx).blocks.value.len() == 2)
+        })
+    });
+    let page = read(&notebook, cx, |view, _| view.shown_tag_page().unwrap());
+    page.update(cx, |_, cx| {
+        cx.emit(crate::navigation::tag_page::TagPageEvent::Synthesize)
+    });
+    cx.run_until_parked();
+    draw(&notebook, cx);
+    let pane = pane(&notebook, cx);
+    assert_eq!(cx.read(|cx| pane.read(cx).title()), "Blocks tagged #garden");
+    assert!(cx.read(|cx| pane.read(cx).editing_synthesis));
+    cx.simulate_keystrokes(notebook.window.into(), &super::tests::key("enter"));
+    wait_done(&notebook, 0, cx);
+    assert_eq!(
+        ai.sent(),
+        [format!(
+            "{DEFAULT_SYNTHESIS}\n\nLinked references:\n<excerpt page=\"Ideas\">\nGrow herbs #garden\n  - basil first\n</excerpt>\n<excerpt page=\"Log\" id=\"b-roses\">\nPruned the roses #Garden\n</excerpt>"
+        )]
+    );
+    assert_eq!(
+        cx.read(|cx| pane.read(cx).turns[0].context.clone()),
+        ["Linked references: 2 blocks from 2 pages"]
+    );
+}
+
+#[gpui::test]
 async fn keeping_an_answer_marks_quoted_blocks_only_then(cx: &mut TestAppContext) {
     let (ai, notebook) = notebook(&FRUIT, "trees", cx).await;
     ai.answer("Pears [[Fruit]] \"are gritty\" and ((b-apple)).", &[], cx);

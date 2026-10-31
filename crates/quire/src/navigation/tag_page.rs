@@ -32,6 +32,8 @@ pub enum TagPageEvent {
         link: crate::rich_text::RowLink,
         beside: bool,
     },
+    /// Ask the AI to synthesize every block carrying the tag.
+    Synthesize,
 }
 
 /// Each tagged block with its outline, and its task when the block is one.
@@ -362,16 +364,30 @@ impl Render for TagPageView {
                 .child(Label::new(self.tag.clone())),
         )
         .child(
-            Label::new(format!(
-                "{} across {}",
-                blocks(total),
-                match pages {
-                    1 => "1 page".to_owned(),
-                    pages => format!("{pages} pages"),
-                }
-            ))
-            .size(LabelSize::Small)
-            .color(Color::Muted),
+            h_flex()
+                .gap_2()
+                .child(
+                    Label::new(format!(
+                        "{} across {}",
+                        blocks(total),
+                        match pages {
+                            1 => "1 page".to_owned(),
+                            pages => format!("{pages} pages"),
+                        }
+                    ))
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .when(total > 0 && crate::ai::settings::is_on(cx), |row| {
+                    row.child(
+                        Button::new("tag-synthesize", "Synthesize")
+                            .style(ButtonStyle::Subtle)
+                            .tooltip(ui::Tooltip::text(
+                                "Ask AI for the themes across these blocks",
+                            ))
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(TagPageEvent::Synthesize))),
+                    )
+                }),
         )
         .child(
             div()

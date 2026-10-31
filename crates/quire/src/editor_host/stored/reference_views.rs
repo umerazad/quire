@@ -156,7 +156,7 @@ impl StoredWindow {
                         };
                         let seed = crate::ai::answer::Seed {
                             title: Some(format!("Linked references to {title}")),
-                            references: Some(title),
+                            scope: Some(crate::ai::answer::Scope::References(title)),
                             ..Default::default()
                         };
                         this.open_answer(seed, window, cx);
