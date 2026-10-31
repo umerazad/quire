@@ -1,7 +1,10 @@
 use super::{CharBox, PageSize, PageText, Renderer, library, page_error, unreadable};
 use crate::{Bitmap, MediaError};
 use pdfium_render::prelude::*;
-use std::{path::Path, sync::OnceLock};
+use std::{
+    path::Path,
+    sync::{Mutex, MutexGuard, OnceLock, PoisonError},
+};
 
 static PDFIUM: OnceLock<Result<Pdfium, String>> = OnceLock::new();
 
@@ -25,24 +28,52 @@ fn pdfium() -> Result<&'static Pdfium, MediaError> {
         .map_err(|message| MediaError::Failed(message.clone()))
 }
 
+/// Held for each whole PDFium operation. `pdfium-render` locks single calls, but PDFium keeps
+/// process-wide state, so documents on different threads must not interleave a page load,
+/// render, text read, or close.
+static EXCLUSIVE: Mutex<()> = Mutex::new(());
+
+fn exclusive() -> MutexGuard<'static, ()> {
+    EXCLUSIVE.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 pub(super) struct PdfiumRenderer {
-    document: PdfDocument<'static>,
+    document: Option<PdfDocument<'static>>,
+}
+
+impl PdfiumRenderer {
+    fn page(&self, page: usize) -> Result<PdfPage<'_>, MediaError> {
+        let index = PdfPageIndex::try_from(page).map_err(|_| page_error(page))?;
+        self.document
+            .as_ref()
+            .and_then(|document| document.pages().get(index).ok())
+            .ok_or_else(|| page_error(page))
+    }
+}
+
+impl Drop for PdfiumRenderer {
+    fn drop(&mut self) {
+        let _exclusive = exclusive();
+        drop(self.document.take());
+    }
 }
 
 pub(super) fn open(path: &Path) -> Result<PdfiumRenderer, MediaError> {
+    let _exclusive = exclusive();
     let document = pdfium()?
         .load_pdf_from_file(path, None)
         .map_err(|_| unreadable())?;
-    Ok(PdfiumRenderer { document })
+    Ok(PdfiumRenderer {
+        document: Some(document),
+    })
 }
 
 impl Renderer for PdfiumRenderer {
     fn page_sizes(&self) -> Vec<PageSize> {
+        let _exclusive = exclusive();
         self.document
-            .pages()
-            .page_sizes()
-            .unwrap_or_default()
-            .into_iter()
+            .iter()
+            .flat_map(|document| document.pages().page_sizes().unwrap_or_default())
             .map(|rect| PageSize {
                 width: rect.width().value,
                 height: rect.height().value,
@@ -51,12 +82,8 @@ impl Renderer for PdfiumRenderer {
     }
 
     fn render(&mut self, page: usize, width: u32) -> Result<Bitmap, MediaError> {
-        let index = PdfPageIndex::try_from(page).map_err(|_| page_error(page))?;
-        let page_handle = self
-            .document
-            .pages()
-            .get(index)
-            .map_err(|_| page_error(page))?;
+        let _exclusive = exclusive();
+        let page_handle = self.page(page)?;
         let config = PdfRenderConfig::new()
             .set_target_width(width as Pixels)
             .render_form_data(true);
@@ -85,12 +112,8 @@ impl Renderer for PdfiumRenderer {
     }
 
     fn text(&mut self, page: usize) -> Result<Option<PageText>, MediaError> {
-        let index = PdfPageIndex::try_from(page).map_err(|_| page_error(page))?;
-        let page_handle = self
-            .document
-            .pages()
-            .get(index)
-            .map_err(|_| page_error(page))?;
+        let _exclusive = exclusive();
+        let page_handle = self.page(page)?;
         let height = page_handle.height().value;
         let text = page_handle.text().map_err(|_| page_error(page))?;
         let mut result = PageText::default();

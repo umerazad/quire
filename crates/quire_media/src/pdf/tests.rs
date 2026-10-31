@@ -116,6 +116,34 @@ fn abandoned_requests_are_skipped() {
 }
 
 #[test]
+fn stored_pdfs_on_many_threads_keep_their_pages_and_text() {
+    let root = tempfile::tempdir().unwrap();
+    let labels: Vec<String> = (0..12).map(|page| format!("Page {page}")).collect();
+    let pages: Vec<&str> = labels.iter().map(String::as_str).collect();
+    let path = root.path().join("many.pdf");
+    std::fs::write(&path, testing::simple_pdf(&pages)).unwrap();
+    let workers: Vec<_> = (0..6)
+        .map(|_| {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                for _ in 0..4 {
+                    let document = Document::open_stored(&path).unwrap();
+                    assert_eq!(document.info().pages.len(), 12);
+                    for page in 0..12 {
+                        let text = block_on(document.text(page)).unwrap().unwrap();
+                        assert_eq!(text.text(0..text.chars.len()), format!("Page {page}"));
+                        block_on(document.render(page, 120)).unwrap();
+                    }
+                }
+            })
+        })
+        .collect();
+    for worker in workers {
+        worker.join().unwrap();
+    }
+}
+
+#[test]
 fn page_text_finds_and_selects_by_character() {
     let text = PageText {
         chars: "Straße Ab".chars().collect(),
