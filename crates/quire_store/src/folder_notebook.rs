@@ -438,6 +438,13 @@ impl FolderNotebook {
         if disk.as_ref().map(|disk| &disk.revision) != expected {
             return Err(self.conflict(edit, disk, "This note changed on disk. Your edits are in recovery. Compare the versions or save a separate copy.").into());
         }
+        ensure!(
+            disk.is_none()
+                || !std::fs::metadata(&destination)
+                    .is_ok_and(|metadata| metadata.permissions().readonly()),
+            "{} is read-only. Make it writable in Finder or Explorer, then save again; your text is kept in recovery.",
+            edit.path
+        );
         let staged = files::stage(&destination, &edit.text)?;
         before_publish()?;
         let latest = files::read_at(&edit.path, &destination)?;

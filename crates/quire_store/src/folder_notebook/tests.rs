@@ -508,3 +508,27 @@ fn checked_multi_page_saves_write_all_or_report_the_changed_page() {
         "- b2"
     );
 }
+
+#[test]
+fn read_only_notes_are_never_replaced() {
+    let fixture = fixture(&[("Locked.md", "- locked")]);
+    let note = fixture.folder.join("Locked.md");
+    let mut permissions = fs::metadata(&note).unwrap().permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(&note, permissions).unwrap();
+    let error = fixture
+        .notebook
+        .save(&edit("Locked.md", "- changed", &[revision("- locked")]))
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("read-only"), "{error:#}");
+    assert_eq!(fs::read_to_string(&note).unwrap(), "- locked");
+    assert_eq!(
+        fixture
+            .notebook
+            .draft(&page_id_for_path("Locked.md"))
+            .unwrap()
+            .unwrap()
+            .text,
+        "- changed"
+    );
+}
