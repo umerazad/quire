@@ -1225,3 +1225,90 @@ fn tag_counts_follow_open_pages_and_saves_while_saved_tags_are_tallied_once() ->
     );
     Ok(())
 }
+
+#[test]
+fn a_saved_page_keeps_its_analyzed_rows_until_its_new_save_is_analyzed() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "a", "Ana.md", "a")?;
+    save(&store, "w", "Work.md", "- [ ] Book the venue [[Ana]] #plan")?;
+    let work = |state: &str| PageIndex {
+        tasks: vec![IndexedTask {
+            links: vec!["Ana".into()],
+            ..task("Book the venue", state, Default::default())
+        }],
+        links: vec![link("page", "Ana", 2)],
+        ..tagged(&["#plan"])
+    };
+    let index = QueryIndex::open(&database, config(1))?;
+    analyze_all(&index, &[("Work.md", work("next"))])?;
+    let states = |index: &QueryIndex| -> Result<Vec<String>> {
+        Ok(index
+            .linked_tasks("a")?
+            .into_iter()
+            .map(|task| format!("{:?}", task.state))
+            .collect())
+    };
+    let open = states(&index)?;
+    assert_eq!(open.len(), 1);
+    let listed = |index: &QueryIndex| -> Result<usize> {
+        Ok(index
+            .pages()?
+            .iter()
+            .filter(|listed| listed.page.path == "Work.md")
+            .count())
+    };
+
+    save(&store, "w", "Work.md", "- [x] Book the venue [[Ana]] #plan")?;
+    save(
+        &store,
+        "w",
+        "Work.md",
+        "- [x] Book the venue [[Ana]] #plan ",
+    )?;
+    assert_eq!(index.unanalyzed()?, 1, "only the newest save waits");
+    assert_eq!(
+        states(&index)?,
+        open,
+        "the last analysis answers until the new save is analyzed, never an empty list"
+    );
+    assert_eq!(index.backlinks(&JsString::from("a"))?.len(), 1);
+    assert_eq!(names(&index)?, [("#plan".to_owned(), 1)]);
+    assert_eq!(listed(&index)?, 1, "the page is listed once");
+    assert!(index.find_page("Work")?.is_some());
+    let unread = |index: &QueryIndex| -> Result<bool> {
+        Ok(index
+            .relocation(&JsString::from("a"))?
+            .unwrap()
+            .candidates
+            .iter()
+            .any(|page| page.path == "Work.md"))
+    };
+    assert!(
+        unread(&index)?,
+        "a page whose newest save is unread is still read in full"
+    );
+    assert_eq!(index.folder_link_candidates("nowhere")?.len(), 1);
+
+    analyze_all(&index, &[("Work.md", work("done"))])?;
+    let done = states(&index)?;
+    assert_eq!(done.len(), 1);
+    assert_ne!(done, open, "the new analysis replaced the old");
+    assert_eq!(index.backlinks(&JsString::from("a"))?.len(), 1);
+    assert_eq!(names(&index)?, [("#plan".to_owned(), 1)]);
+    assert_eq!(listed(&index)?, 1);
+    assert!(index.folder_link_candidates("nowhere")?.is_empty());
+
+    store.save(&Edit {
+        page: "w".into(),
+        path: "Work.md".into(),
+        text: "".into(),
+        base: store.heads("w")?,
+        deleted: true,
+        created: 1,
+        recovery: None,
+    })?;
+    assert!(states(&index)?.is_empty(), "a deleted page leaves at once");
+    assert_eq!(listed(&index)?, 0);
+    Ok(())
+}

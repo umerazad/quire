@@ -333,12 +333,6 @@ impl QueryIndex {
         }
         let changed = self.transaction(|| {
             let stale: Vec<String> = self.connection.select(schema::STALE_PAGES)?()?;
-            for revision in &stale {
-                self.connection
-                    .exec_bound("DELETE FROM pages WHERE revision=?")?(
-                    revision.as_str()
-                )?;
-            }
             let missing: Vec<String> = self.connection.select(schema::MISSING_PAGES)?()?;
             for revision in &missing {
                 let Some(metadata) = revision_metadata(&self.connection, revision)? else {
@@ -346,7 +340,7 @@ impl QueryIndex {
                 };
                 self.catalogue(&metadata)?;
             }
-            Ok(!stale.is_empty() || !missing.is_empty())
+            Ok(self.retire(&stale)? || !missing.is_empty())
         })?;
         self.seen_version.set(Some(version));
         if changed {
@@ -354,6 +348,26 @@ impl QueryIndex {
             self.settle_releases()?;
         }
         Ok(changed)
+    }
+
+    /// Drops revisions that are no longer selected heads, run after the new heads are
+    /// catalogued. A page's last analyzed revision stays while its new head waits for analysis,
+    /// so queries keep its previous rows instead of none; analyzing the head drops it. Returns
+    /// whether anything was dropped.
+    fn retire(&self, stale: &[String]) -> Result<bool> {
+        let mut dropped = false;
+        for delete in [
+            "DELETE FROM pages WHERE revision=? AND (analyzed=0 OR deleted=1) RETURNING 1",
+            "DELETE FROM pages WHERE revision=? AND NOT EXISTS (SELECT 1 FROM pages h
+               WHERE h.page=pages.page AND h.analyzed=0 AND h.deleted=0) RETURNING 1",
+        ] {
+            for revision in stale {
+                let gone: Option<i64> =
+                    self.connection.select_row_bound(delete)?(revision.as_str())?;
+                dropped |= gone.is_some();
+            }
+        }
+        Ok(dropped)
     }
 
     fn catalogue(&self, metadata: &PageMetadata) -> Result<()> {
@@ -424,13 +438,14 @@ impl QueryIndex {
             let titles = analyses
                 .iter()
                 .map(|&(revision, _)| {
-                    let row: Option<(bool, String)> =
-                        self.connection.select_row_bound(
-                            "SELECT analyzed,title FROM pages WHERE revision=?",
-                        )?(revision)?;
+                    let row: Option<(bool, String, bool)> = self.connection.select_row_bound(
+                        "SELECT analyzed,title,EXISTS (SELECT 1 FROM pages h
+                               WHERE h.page=p.page AND h.analyzed=0 AND h.deleted=0)
+                             FROM pages p WHERE revision=?",
+                    )?(revision)?;
                     Ok(match row {
-                        None => Err(false),
-                        Some((false, title)) if planned.insert(revision) => Ok(title),
+                        None | Some((true, _, true)) => Err(false),
+                        Some((false, title, _)) if planned.insert(revision) => Ok(title),
                         Some(_) => Err(true),
                     })
                 })
@@ -448,6 +463,10 @@ impl QueryIndex {
                             .exec_bound("UPDATE pages SET analyzed=1 WHERE revision=?")?(
                             revision
                         )?;
+                        self.connection.exec_bound(
+                            "DELETE FROM pages WHERE revision!=?1
+                               AND page=(SELECT page FROM pages WHERE revision=?1)",
+                        )?(revision)?;
                         Ok(true)
                     }
                     Err(stored) => Ok(stored),

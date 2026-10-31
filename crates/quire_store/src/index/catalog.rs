@@ -11,6 +11,11 @@ use std::collections::HashSet;
 /// The replicated page that carries notebook settings; navigation never lists it.
 pub const SETTINGS_PAGE: &str = "s-notebook";
 
+/// Closed pages whose newest save is not analyzed yet, which queries still answer from its
+/// previous analysis, if any. Bound to a dummy value for `pages_where`.
+const UNREAD: &str = "p.page IN (SELECT page FROM main.pages WHERE analyzed=0 AND deleted=0)
+   AND p.page NOT IN (SELECT page FROM temp.overlay_pages) AND ?";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ListedPage {
     pub page: PageRef,
@@ -69,9 +74,9 @@ impl QueryIndex {
             "p.revision IN (SELECT revision FROM live_blocks WHERE content LIKE ?)",
             "%.md%",
         )?;
-        // A page saved elsewhere and not analyzed yet has no links or blocks to look at, so it
+        // A page saved elsewhere and not analyzed yet may link in ways its last analysis lacks, so it
         // is read in full rather than missed.
-        let unread = self.pages_where("p.analyzed=0 AND ?", "1")?;
+        let unread = self.pages_where(UNREAD, "1")?;
         for candidate in linked.chain(marked).chain(unread) {
             if seen.insert(candidate.page.as_bytes().to_vec()) {
                 candidates.push(candidate);
@@ -92,7 +97,7 @@ impl QueryIndex {
         let name = folder.rsplit('/').next().unwrap_or(folder);
         let mut names = vec![name.to_owned(), name.replace(' ', "%20")];
         names.dedup();
-        let mut found = self.pages_where("p.analyzed=0 AND ?", "1")?;
+        let mut found = self.pages_where(UNREAD, "1")?;
         for name in names {
             found.extend(self.pages_where(
                 "p.revision IN (SELECT revision FROM live_blocks WHERE instr(content, ?) > 0)",

@@ -261,7 +261,18 @@ fn linked_tasks_filter_above_references_tick_and_open(cx: &mut TestAppContext) {
     wait_until(cx, "the ticked task", |_| {
         super::tags_tests::stored(&notebook, "work").contains("- [x] Book the venue")
     });
-    wait_until(cx, "Open to empty", |cx| texts(cx).is_empty());
+    wait_until(cx, "the ticked task listed as done", |cx| {
+        cx.read(|cx| {
+            list.read(cx).tasks.value.iter().any(|task| {
+                task.text == "Book the venue" && task.state == quire_core::tasks::TaskState::Done
+            })
+        })
+    });
+    assert_eq!(cx.read(|cx| list.read(cx).tasks.value.len()), 2);
+    assert!(
+        texts(cx).is_empty(),
+        "Open lists no task once both are done"
+    );
 
     list.update(cx, |list, cx| list.set_status(TaskStatus::Done, cx));
     notebook

@@ -95,7 +95,9 @@ impl QueryIndex {
                 .collect()
         } else {
             self.connection.select(
-                "SELECT p.page,r.created FROM pages p JOIN nb.revisions r ON r.id=p.revision WHERE p.deleted=0",
+                "SELECT p.page,r.created FROM pages p JOIN nb.revisions r ON r.id=p.revision WHERE p.deleted=0
+                   AND NOT (p.analyzed=1 AND EXISTS (SELECT 1 FROM pages h
+                     WHERE h.page=p.page AND h.analyzed=0 AND h.deleted=0))",
             )?()?
         };
         rows.into_iter()
