@@ -221,18 +221,19 @@ impl Host {
         if cancel.clone().now_or_never().is_some() {
             return Outcome::Canceled;
         }
-        let folder = std::env::temp_dir().join(format!("quire-ai-{}", uuid::Uuid::new_v4()));
-        if let Err(error) = std::fs::create_dir_all(&folder) {
+        let folder =
+            RunFolder(std::env::temp_dir().join(format!("quire-ai-{}", uuid::Uuid::new_v4())));
+        if let Err(error) = std::fs::create_dir_all(&folder.0) {
             return Outcome::failed(format!(
                 "Quire could not make a working folder for {} at {}: {error}. Check that the temporary folder is writable, then retry.",
                 backend.name(),
-                folder.display()
+                folder.0.display()
             ));
         }
         let (outcome, version) = self
-            .spawn_and_read(&request, &binary, &folder, cancel, &mut emit)
+            .spawn_and_read(&request, &binary, &folder.0, cancel, &mut emit)
             .await;
-        std::fs::remove_dir_all(&folder).ok();
+        drop(folder);
         if let Some(transcript) = &request.transcript {
             write_transcript(transcript, &request, version.as_deref(), &outcome, started).ok();
         }
@@ -262,7 +263,7 @@ impl Host {
             Stdio::piped(),
             Stdio::piped(),
         ) {
-            Ok(child) => child,
+            Ok(child) => Running(child),
             Err(error) => {
                 let missing = error.chain().any(|cause| {
                     cause
@@ -309,9 +310,7 @@ impl Host {
         }
         .shared();
         let reading = async {
-            let Some(stdout) = stdout else {
-                return None;
-            };
+            let stdout = stdout?;
             let mut lines = futures::io::BufReader::new(stdout).lines();
             let mut state = ParseState::default();
             while let Some(Ok(line)) = futures::StreamExt::next(&mut lines).await {
@@ -408,6 +407,41 @@ impl Host {
         };
         child.status().await.ok();
         (outcome, version)
+    }
+}
+
+/// A started CLI whose process tree ends when the run is dropped, even mid-await, as when the
+/// window that started it closes.
+struct Running(util::process::Child);
+
+impl std::ops::Deref for Running {
+    type Target = util::process::Child;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Running {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        if matches!(self.0.try_status(), Ok(None)) {
+            self.0.kill().ok();
+        }
+    }
+}
+
+/// The empty folder a run works in, removed with the run.
+struct RunFolder(PathBuf);
+
+impl Drop for RunFolder {
+    fn drop(&mut self) {
+        std::fs::remove_dir_all(&self.0).ok();
     }
 }
 

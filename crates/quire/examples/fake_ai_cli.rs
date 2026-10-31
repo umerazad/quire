@@ -41,11 +41,12 @@ fn main() {
         writeln!(file, "{line}").ok();
     }
     if let Some(pids) = var("FAKE_AI_PIDS") {
-        let child = std::process::Command::new(std::env::current_exe().unwrap())
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
             .arg("--sleep")
             .spawn()
             .expect("the fake CLI could not start its grandchild");
         std::fs::write(pids, format!("{} {}", std::process::id(), child.id())).ok();
+        std::thread::spawn(move || child.wait());
     }
     let delay = Duration::from_millis(
         var("FAKE_AI_DELAY_MS")

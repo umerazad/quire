@@ -329,6 +329,57 @@ fn dropping_the_cancel_handle_ends_the_run() {
 }
 
 #[test]
+fn dropping_the_run_ends_its_process_tree_and_removes_its_folder() {
+    let bench = Bench::new();
+    let pids = bench.folder.path().join("pids");
+    let host = bench.host(
+        "claude-drift.jsonl",
+        &[
+            ("FAKE_AI_HANG", "1"),
+            ("FAKE_AI_PIDS", &pids.to_string_lossy()),
+        ],
+    );
+    let started = async {
+        while !pids.exists() {
+            smol::Timer::after(Duration::from_millis(20)).await;
+        }
+    };
+    let run = host.run(request(Backend::Claude), futures::future::pending(), |_| {});
+    smol::block_on(async {
+        futures::pin_mut!(run, started);
+        assert!(matches!(
+            futures::future::select(run, started).await,
+            futures::future::Either::Right(_)
+        ));
+    });
+    for pid in std::fs::read_to_string(&pids).unwrap().split_whitespace() {
+        wait_until(&format!("process {pid} ended"), || !alive(pid));
+    }
+    let cwd = bench.calls()[0]["cwd"].as_str().unwrap().to_owned();
+    assert!(!Path::new(&cwd).exists(), "{cwd} outlived the run");
+}
+
+/// Installed CLIs only: finds `claude` and `codex` through the login shell's PATH and reads their
+/// versions. It never sends a prompt. Run with `cargo test ... -- --ignored installed_clis`.
+#[test]
+#[ignore = "uses the CLIs installed on this machine; run with --ignored"]
+fn installed_clis_are_found_on_the_login_path_and_report_versions() {
+    let host = Host::default();
+    for backend in [Backend::Claude, Backend::Codex] {
+        let binary =
+            smol::block_on(host.locate(backend, "")).unwrap_or_else(|error| panic!("{error}"));
+        let version = smol::block_on(host.version(backend, &binary))
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert!(
+            version.split('.').count() >= 3,
+            "{} reported {version}",
+            binary.display()
+        );
+        println!("{}: {} {version}", backend.name(), binary.display());
+    }
+}
+
+#[test]
 fn times_out_a_slow_run_and_offers_a_retry() {
     let bench = Bench::new();
     let (_, outcome) = run(
