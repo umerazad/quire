@@ -1,0 +1,26 @@
+:root {
+  --accent: #356b5b;
+  --font: "Inter", system-ui, -apple-system, sans-serif;
+}
+a[href^="http"]::after {
+  content: "\2197";
+  margin-left: 0.25em;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-areas: "head head" "side main";
+}
+@supports (backdrop-filter: blur(4px)) {
+  .panel {
+    backdrop-filter: blur(4px);
+  }
+}
+/* comment */ @keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

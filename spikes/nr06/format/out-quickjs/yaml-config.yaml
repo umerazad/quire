@@ -1,0 +1,13 @@
+name: quire
+version: 0.9.57
+targets: [macos, linux, windows]
+build:
+  release: true
+  flags:
+    - --locked
+    - --release
+env: { RUST_LOG: info, CARGO_HOME: /tmp/cargo }
+# trailing comment
+description: >
+  A folded
+  block scalar

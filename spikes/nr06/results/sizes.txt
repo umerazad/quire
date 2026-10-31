@@ -1,0 +1,13 @@
+# Release, stripped, macOS arm64 (Darwin 27.0.0, cargo 1.98.1), measured 2026-10-31.
+format/rust baseline (hello world)                                                      342,624 bytes
+format/rust fmt_quickjs (QuickJS-ng + Prettier 3.9.10 bundles, 2,275,401 bytes of JS)  3,743,008 bytes
+format/rust fmt_dprint (dprint ts/json/markdown + malva + markup_fmt + pretty_yaml)    8,502,336 bytes
+format/bin/prettier-helper (bun build --compile, bun 1.4.2)                           64,522,098 bytes
+@biomejs/cli-darwin-arm64 biome 2.6.4 CLI                                             77,530,480 bytes
+pdf libpdfium.dylib (bblanchon chromium/8125, mac-arm64, uncompressed)                 7,388,864 bytes
+pdf pdfium tgz download sizes: mac-arm64 3,540,999; mac-x64 3,749,070; linux-x64 3,828,800; linux-arm64 3,728,574; win-x64 3,904,987; win-arm64 3,654,486
+pdf bench_pdfium (pdfium-render 0.9.4 wrapper + png, dylib excluded)                   2,499,744 bytes
+pdf bench_hayro (hayro 0.8.0 default features: embedded fonts and CMaps, + png)        5,361,536 bytes
+pdf bench_mupdf (mupdf 0.8.0, default features off, base14-fonts, + png)               5,047,056 bytes
+pdf pdfkit-bench (system framework)                                                       80,112 bytes
+mupdf build from source: 25.5 s wall, 71 s user (cold, release)

@@ -1,0 +1,15 @@
+interface Page<T extends object = {}> {
+  id: string;
+  title?: string;
+  meta: T;
+  children: Array<Page<T>>;
+}
+type Result<T, E = Error> = { ok: true; value: T; } | { ok: false; error: E; };
+export function walk<T extends object>(
+  page: Page<T>,
+  visit: (p: Page<T>, depth: number) => void,
+  depth = 0,
+): void {
+  visit(page, depth);
+  for (const c of page.children) walk(c, visit, depth + 1);
+}

@@ -1,0 +1,7 @@
+{
+  "english": "A clear next step",
+  "urdu": "اگلا قدم",
+  "arabic": "الخطوة التالية",
+  "list": [1, 2, 3],
+  "nested": { "a": null, "b": true, "c": [{ "d": 1.50 }, { "e": "x" }] }
+}
