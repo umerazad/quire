@@ -5,7 +5,7 @@ use quire_store::{
     notebook::{Draft, DraftStamp, Edit, NotebookStore},
     worker::{QueueLimits, StorageClient, StorageWorker},
 };
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use text::ToOffset as _;
 
 fn initial(text: &str) -> Edit {
@@ -22,39 +22,36 @@ fn initial(text: &str) -> Edit {
 
 pub(crate) fn wait(model: &Entity<PagePersistence>, cx: &mut TestAppContext) {
     cx.executor().allow_parking();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        while cx.executor().tick() {}
-        if model.read_with(cx, |model, _| {
-            model.task.is_none() && model.merge.is_none() && model.debounce.is_none()
-        }) {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "native persistence did not finish"
-        );
-        if model.read_with(cx, |model, _| model.debounce.is_some()) {
-            cx.executor().advance_clock(Duration::from_millis(100));
-        }
-        std::thread::yield_now();
-    }
+    let mut first = true;
+    crate::test_wait::until(
+        cx,
+        Duration::ZERO,
+        |cx| {
+            if !std::mem::take(&mut first)
+                && model.read_with(cx, |model, _| model.debounce.is_some())
+            {
+                cx.executor().advance_clock(Duration::from_millis(100));
+            }
+            while cx.executor().tick() {}
+        },
+        |cx| {
+            model.read_with(cx, |model, _| {
+                model.task.is_none() && model.merge.is_none() && model.debounce.is_none()
+            })
+        },
+        |_| "native persistence to finish".into(),
+    );
 }
 
 /// Waits for storage work in flight without moving simulated time, so no new timer fires.
 fn settle(model: &Entity<PagePersistence>, cx: &mut TestAppContext) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        while cx.executor().tick() {}
-        if model.read_with(cx, |model, _| model.task.is_none() && model.merge.is_none()) {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "native persistence did not finish"
-        );
-        std::thread::yield_now();
-    }
+    crate::test_wait::until(
+        cx,
+        Duration::ZERO,
+        |cx| while cx.executor().tick() {},
+        |cx| model.read_with(cx, |model, _| model.task.is_none() && model.merge.is_none()),
+        |_| "native persistence to finish".into(),
+    );
 }
 
 pub(crate) fn stop_storage(model: &Entity<PagePersistence>, cx: &mut TestAppContext) {
@@ -490,11 +487,13 @@ fn busy_queue_retries_the_frozen_request_then_records_later_typing(cx: &mut Test
     let mut filler = initial("first");
     filler.page = "other".into();
     let first = worker.client.save(filler.clone()).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !worker.client.stats().active {
-        assert!(Instant::now() < deadline);
-        std::thread::yield_now();
-    }
+    crate::test_wait::until(
+        &mut (),
+        Duration::ZERO,
+        |_| {},
+        |_| worker.client.stats().active,
+        |_| "the storage thread to take the first save".into(),
+    );
     filler.text = "second".into();
     let second = worker.client.save(filler).unwrap();
     buffer.update(cx, |buffer, cx| {
@@ -510,10 +509,13 @@ fn busy_queue_retries_the_frozen_request_then_records_later_typing(cx: &mut Test
     lock.exec("ROLLBACK").unwrap()().unwrap();
     block_on(first).unwrap();
     block_on(second).unwrap();
-    while worker.client.stats().pending_requests != 0 {
-        assert!(Instant::now() < deadline);
-        std::thread::yield_now();
-    }
+    crate::test_wait::until(
+        &mut (),
+        Duration::ZERO,
+        |_| {},
+        |_| worker.client.stats().pending_requests == 0,
+        |_| "the storage thread to drain its queue".into(),
+    );
     buffer.update(cx, |buffer, cx| {
         buffer.edit([(4..4, " later")], None, cx);
     });

@@ -2,7 +2,7 @@ use super::*;
 use futures::executor::block_on;
 use gpui::TestAppContext;
 use quire_store::notebook::{Draft, DraftStamp, Edit, NotebookStore};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 fn edit(text: &str) -> Edit {
     Edit {
@@ -18,15 +18,13 @@ fn edit(text: &str) -> Edit {
 
 pub(crate) fn wait(page: &Entity<OpenPage>, cx: &mut TestAppContext) {
     cx.executor().allow_parking();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        cx.executor().run_until_parked();
-        if page.read_with(cx, |page, _| !page.is_loading()) {
-            break;
-        }
-        assert!(Instant::now() < deadline, "native page load did not finish");
-        std::thread::yield_now();
-    }
+    crate::test_wait::until(
+        cx,
+        Duration::ZERO,
+        crate::test_wait::park,
+        |cx| page.read_with(cx, |page, _| !page.is_loading()),
+        |_| "the native page load".into(),
+    );
 }
 
 #[gpui::test]

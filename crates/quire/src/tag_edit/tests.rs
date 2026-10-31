@@ -108,25 +108,21 @@ async fn run(
 ) -> Result<usize, String> {
     let work = cx.update(|cx| apply(plan, notebook.session.storage(), cx));
     let result = work.await;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        cx.run_until_parked();
-        let idle = cx.read(|cx| {
-            notebook.session.open_pages().iter().all(|page| {
-                page.read(cx)
-                    .persistence()
-                    .is_none_or(|persistence| persistence.read(cx).is_idle())
+    crate::test_wait::until(
+        cx,
+        std::time::Duration::ZERO,
+        crate::test_wait::park,
+        |cx| {
+            cx.read(|cx| {
+                notebook.session.open_pages().iter().all(|page| {
+                    page.read(cx)
+                        .persistence()
+                        .is_none_or(|persistence| persistence.read(cx).is_idle())
+                })
             })
-        });
-        if idle {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "open pages did not settle after the edit"
-        );
-        std::thread::yield_now();
-    }
+        },
+        |_| "open pages to settle after the edit".into(),
+    );
     result
 }
 
