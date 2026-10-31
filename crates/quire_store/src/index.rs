@@ -395,9 +395,38 @@ impl QueryIndex {
     /// [`Self::put`] returns for that revision.
     pub fn put_many(&self, analyses: &[(&str, &PageIndex)]) -> Result<Vec<bool>> {
         let stored = self.transaction(|| {
+            let mut planned = std::collections::HashSet::new();
+            let titles = analyses
+                .iter()
+                .map(|(revision, _)| {
+                    let row: Option<(bool, String)> =
+                        self.connection.select_row_bound(
+                            "SELECT analyzed,title FROM pages WHERE revision=?",
+                        )?(*revision)?;
+                    Ok(match row {
+                        None => Err(false),
+                        Some((false, title)) if planned.insert(*revision) => Ok(title),
+                        Some(_) => Err(true),
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            self.insert_search_rows(analyses.iter().zip(&titles).filter_map(
+                |((revision, analysis), title)| Some((*revision, title.as_ref().ok()?, *analysis)),
+            ))?;
             analyses
                 .iter()
-                .map(|(revision, analysis)| self.store(revision, analysis))
+                .zip(titles)
+                .map(|((revision, analysis), title)| match title {
+                    Ok(_) => {
+                        self.insert_rows("main.", revision, analysis)?;
+                        self.connection
+                            .exec_bound("UPDATE pages SET analyzed=1 WHERE revision=?")?(
+                            *revision,
+                        )?;
+                        Ok(true)
+                    }
+                    Err(stored) => Ok(stored),
+                })
                 .collect::<Result<Vec<_>>>()
         })?;
         if stored.contains(&true) {
@@ -407,33 +436,28 @@ impl QueryIndex {
         Ok(stored)
     }
 
-    fn store(&self, revision: &str, analysis: &PageIndex) -> Result<bool> {
-        let row: Option<(bool, String)> = self
-            .connection
-            .select_row_bound("SELECT analyzed,title FROM pages WHERE revision=?")?(
-            revision
-        )?;
-        let title = match row {
-            None => return Ok(false),
-            Some((true, _)) => return Ok(true),
-            Some((false, title)) => title,
-        };
-        let mut search = self
-            .connection
-            .exec_bound("INSERT INTO search_rows(revision,title,text,block_id) VALUES (?,?,?,?)")?;
-        search((revision, title.as_str(), "", None::<&str>))?;
-        for block in &analysis.blocks {
-            search((
-                revision,
-                title.as_str(),
-                block.text.as_str(),
-                block.id.as_deref(),
-            ))?;
+    /// Writes the title row and one row per block of each page in one statement: FTS5 flushes its
+    /// pending terms into a new index segment at every statement savepoint, so a statement per
+    /// block, or per page, made a rebuild write and merge thousands of segments.
+    fn insert_search_rows<'a>(
+        &self,
+        pages: impl Iterator<Item = (&'a str, &'a String, &'a PageIndex)>,
+    ) -> Result<()> {
+        let rows = pages
+            .flat_map(|(revision, title, analysis)| {
+                std::iter::once(serde_json::json!([revision, title, "", null])).chain(
+                    analysis.blocks.iter().map(move |block| {
+                        serde_json::json!([revision, title, block.text, block.id])
+                    }),
+                )
+            })
+            .collect::<Vec<_>>();
+        if !rows.is_empty() {
+            self.connection.exec_bound(
+                "INSERT INTO search_rows(revision,title,text,block_id) SELECT json_extract(value,'$[0]'), json_extract(value,'$[1]'), json_extract(value,'$[2]'), json_extract(value,'$[3]') FROM json_each(?) ORDER BY key",
+            )?(serde_json::to_string(&rows)?.as_str())?;
         }
-        self.insert_rows("main.", revision, analysis)?;
-        self.connection
-            .exec_bound("UPDATE pages SET analyzed=1 WHERE revision=?")?(revision)?;
-        Ok(true)
+        Ok(())
     }
 
     /// Writes block, link, and tag rows into `main.` tables or the `temp.overlay_` copies.
@@ -724,9 +748,14 @@ mod tests {
         let stored = index.put_many(&[
             (pending[0].revision.as_str(), &alpha),
             (pending[1].revision.as_str(), &beta),
+            (pending[0].revision.as_str(), &alpha),
             ("no-such-revision", &gone),
         ])?;
-        assert_eq!(stored, [true, true, false]);
+        assert_eq!(
+            stored,
+            [true, true, true, false],
+            "a repeat counts as stored once"
+        );
         assert_eq!(index.unanalyzed()?, 0);
         assert_eq!(index.search("alphaword")?.len(), 1);
         assert_eq!(index.search("betaword")?.len(), 1);
