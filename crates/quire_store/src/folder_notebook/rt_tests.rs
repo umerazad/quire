@@ -482,3 +482,255 @@ fn an_interrupted_rename_never_overwrites_a_note_changed_before_recovery() {
         "the journal stays for review"
     );
 }
+
+const DEVICE: &str = "6f1c2b3a-0d4e-4f5a-8b9c-0123456789ab";
+
+/// A reference device database as `VaultFiles` creates it (vault.ts and history-store.ts), kept
+/// open in WAL mode like a running reference app, so recent rows sit in its write-ahead log.
+struct ReferenceDevice {
+    connection: Connection,
+}
+
+impl ReferenceDevice {
+    fn create(root: &Path) -> Self {
+        let folder = root.join(".quire/devices").join(DEVICE);
+        fs::create_dir_all(&folder).unwrap();
+        let connection = crate::database::open_writable(&folder.join("durability.sqlite")).unwrap();
+        for sql in [
+            "CREATE TABLE IF NOT EXISTS pending (path TEXT PRIMARY KEY, text TEXT NOT NULL, expected_revision TEXT, saved_at INTEGER NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS imported_records (fingerprint TEXT PRIMARY KEY)",
+            "CREATE TABLE IF NOT EXISTS foreign_drafts (fingerprint TEXT PRIMARY KEY, device TEXT NOT NULL, path TEXT NOT NULL, text TEXT NOT NULL, expected_revision TEXT, saved_at INTEGER NOT NULL, recovered_path TEXT NOT NULL, recovered_text TEXT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS contents (hash TEXT PRIMARY KEY, codec TEXT NOT NULL, data BLOB NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS history (id INTEGER PRIMARY KEY, path TEXT NOT NULL, content TEXT NOT NULL, revision TEXT NOT NULL, saved_at INTEGER NOT NULL)",
+        ] {
+            connection.exec(sql).unwrap()().unwrap();
+        }
+        Self { connection }
+    }
+
+    fn pending(&self, path: &str, text: &str, expected: Option<&str>, saved_at: i64) {
+        self.connection
+            .exec_bound("INSERT OR REPLACE INTO pending(path,text,expected_revision,saved_at) VALUES (?,?,?,?)")
+            .unwrap()((path, text, expected.map(revision), saved_at))
+        .unwrap();
+    }
+
+    fn history(&self, path: &str, text: &str, codec: &str, saved_at: i64) {
+        let data = match codec {
+            "zstd" => zstd::stream::encode_all(text.as_bytes(), 0).unwrap(),
+            _ => text.as_bytes().to_vec(),
+        };
+        let hash = crate::sync::format::sha256(text);
+        self.connection
+            .exec_bound("INSERT OR IGNORE INTO contents(hash,codec,data) VALUES (?,?,?)")
+            .unwrap()((hash.as_str(), codec, data))
+        .unwrap();
+        self.connection
+            .exec_bound("INSERT INTO history(path,content,revision,saved_at) VALUES (?,?,?,?)")
+            .unwrap()((path, hash.as_str(), revision(text).as_str(), saved_at))
+        .unwrap();
+    }
+}
+
+/// Every file below `folder` with its bytes, to show nothing there changed.
+fn snapshot(folder: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut found = Vec::new();
+    let mut pending = vec![folder.to_owned()];
+    while let Some(next) = pending.pop() {
+        for entry in fs::read_dir(&next).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                found.push((path.clone(), fs::read(&path).unwrap()));
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+fn draft_text(notebook: &FolderNotebook, path: &str) -> Option<(String, Vec<String>)> {
+    notebook
+        .draft(&page_id_for_path(path))
+        .unwrap()
+        .map(|draft| (draft.text, draft.base))
+}
+
+#[test]
+fn reference_drafts_and_history_become_recoverable_without_touching_the_notebook() {
+    let opened = fixture(&[
+        ("A.md", "- a\n"),
+        ("B.md", "- b changed elsewhere\n"),
+        ("D.md", "- d saved\n"),
+        ("E.md", "---\ntitle: \"Eve\"\n---\n- e ^keep\n"),
+        ("G.md", "- g now\n"),
+    ]);
+    let quire_draft = Draft {
+        page: page_id_for_path("E.md"),
+        path: "E.md".into(),
+        text: "- typed in Quire\n".into(),
+        base: vec![revision("---\ntitle: \"Eve\"\n---\n- e ^keep\n")],
+        stamp: DraftStamp {
+            session: "editor".into(),
+            version: 1,
+        },
+        created: 1,
+    };
+    opened.notebook.put_draft(&quire_draft, None).unwrap();
+
+    let device = ReferenceDevice::create(&opened.folder);
+    device.pending("A.md", "- a typed in rt\n", Some("- a\n"), 10);
+    device.pending("B.md", "- b typed in rt\n", Some("- b\n"), 11);
+    device.pending("C.md", "- c never saved\n", None, 12);
+    device.pending("D.md", "- d saved\n", Some("- d\n"), 13);
+    device.pending(
+        "E.md",
+        "---\ntitle: \"Eve\"\n---\n- e typed in rt ^keep\n",
+        Some("---\ntitle: \"Eve\"\n---\n- e ^keep\n"),
+        14,
+    );
+    device.history("G.md", "- g first\n", "raw", 1_000);
+    device.history(
+        "G.md",
+        &"- g second, long enough to compress\n".repeat(20),
+        "zstd",
+        90_000_000,
+    );
+    let recovery = opened
+        .folder
+        .join(".quire/devices")
+        .join(DEVICE)
+        .join("recovery");
+    fs::create_dir_all(&recovery).unwrap();
+    fs::write(
+        recovery.join("legacy.json"),
+        serde_json::json!({
+            "path": "F.md",
+            "text": "- f from an older reference app\n",
+            "expectedRevision": null,
+            "savedAt": 9,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let before = snapshot(&opened.folder);
+
+    let reopened = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    assert_eq!(
+        snapshot(&opened.folder),
+        before,
+        "the notebook folder is unchanged"
+    );
+
+    let recovered: Vec<String> = reopened
+        .recovered_drafts()
+        .into_iter()
+        .map(|draft| draft.path)
+        .collect();
+    let copy = recovered
+        .iter()
+        .find(|path| path.starts_with("Recovered drafts/Draft 6f1c2b3a "))
+        .cloned()
+        .expect("a page with other unsaved work gets a separate recovered note");
+    assert_eq!(recovered, ["A.md", "B.md", "C.md", &copy, "F.md"]);
+    let notices = reopened.notices();
+    assert!(
+        notices[0]
+            .starts_with("Recovered 5 unsaved drafts from the reference app: A.md, B.md, C.md"),
+        "{notices:?}"
+    );
+
+    // The current file is the draft's base, so it settles when the page opens.
+    assert_eq!(
+        draft_text(&reopened, "A.md"),
+        Some(("- a typed in rt\n".into(), vec![revision("- a\n")]))
+    );
+    // The file moved on since the draft's base, so the page opens in conflict.
+    let b = reopened.checkout(&page_id_for_path("B.md"), None).unwrap();
+    assert_eq!(b.draft.unwrap().base, [revision("- b\n")]);
+    assert_eq!(b.heads, [revision("- b changed elsewhere\n")]);
+    assert_eq!(
+        draft_text(&reopened, "C.md"),
+        Some(("- c never saved\n".into(), vec![]))
+    );
+    assert_eq!(draft_text(&reopened, "D.md"), None, "already saved");
+    assert_eq!(
+        draft_text(&reopened, "E.md").unwrap().0,
+        "- typed in Quire\n",
+        "Quire's own unsaved work is never replaced"
+    );
+    let (copied, base) = draft_text(&reopened, &copy).unwrap();
+    assert!(base.is_empty());
+    assert!(
+        copied.starts_with("---\nrecovered-source-title-"),
+        "{copied}"
+    );
+    assert!(copied.contains("title: \"Recovered draft: Eve\"\n---\n\n- e typed in rt ^b-"));
+    assert!(!copied.contains("^keep"), "block IDs are fresh");
+    assert_eq!(
+        draft_text(&reopened, "F.md").unwrap().0,
+        "- f from an older reference app\n"
+    );
+    let history: Vec<(String, i64)> = reopened
+        .revisions("G.md")
+        .unwrap()
+        .into_iter()
+        .map(|kept| {
+            (
+                reopened.revision_text("G.md", kept.id).unwrap(),
+                kept.saved_at,
+            )
+        })
+        .collect();
+    assert_eq!(
+        history,
+        [
+            (
+                "- g second, long enough to compress\n".repeat(20),
+                90_000_000
+            ),
+            ("- g first\n".into(), 1_000),
+        ]
+    );
+
+    let again = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    assert!(
+        again.recovered_drafts().is_empty(),
+        "each record is imported once"
+    );
+    assert!(again.notices().is_empty());
+    assert_eq!(snapshot(&opened.folder), before);
+
+    // A newer draft from the same computer replaces the unedited import instead of piling up.
+    device.pending("A.md", "- a typed more in rt\n", Some("- a\n"), 20);
+    let later = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    assert_eq!(
+        later
+            .recovered_drafts()
+            .into_iter()
+            .map(|draft| draft.path)
+            .collect::<Vec<_>>(),
+        ["A.md"]
+    );
+    assert_eq!(
+        draft_text(&later, "A.md").unwrap().0,
+        "- a typed more in rt\n"
+    );
+}
+
+#[test]
+fn unreadable_reference_data_is_reported_and_left_alone() {
+    let opened = fixture(&[("A.md", "- a\n")]);
+    let folder = opened.folder.join(".quire/devices").join(DEVICE);
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join("durability.sqlite"), "not a database").unwrap();
+    let before = snapshot(&opened.folder);
+    let reopened = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    let notices = reopened.notices();
+    assert_eq!(notices.len(), 1);
+    assert!(notices[0].contains("could not be read"), "{notices:?}");
+    assert!(notices[0].contains("reopen the notebook to retry"));
+    assert_eq!(snapshot(&opened.folder), before);
+    assert!(reopened.recovered_drafts().is_empty());
+}

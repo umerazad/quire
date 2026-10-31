@@ -28,6 +28,16 @@ fn open_folder(files: &[(&str, &str)], first: &str, cx: &mut TestAppContext) -> 
     open_folder_with(files, &[], first, cx)
 }
 
+/// Opens a folder whose Quire state folder already holds `state_files`, as a crash leaves it.
+fn open_folder_with(
+    files: &[(&str, &str)],
+    state_files: &[(&str, &str)],
+    first: &str,
+    cx: &mut TestAppContext,
+) -> FolderNotebook {
+    open_prepared(files, first, |_, state| write_files(state, state_files), cx)
+}
+
 fn write_files(root: &std::path::Path, files: &[(&str, &str)]) {
     for (path, text) in files {
         let target = root.join(path);
@@ -36,18 +46,18 @@ fn write_files(root: &std::path::Path, files: &[(&str, &str)]) {
     }
 }
 
-/// Opens a folder whose Quire state folder already holds `state_files`, as a crash leaves it.
-fn open_folder_with(
+/// Opens a folder after `prepare` sets up the notebook folder and Quire's state folder.
+fn open_prepared(
     files: &[(&str, &str)],
-    state_files: &[(&str, &str)],
     first: &str,
+    prepare: impl FnOnce(&std::path::Path, &std::path::Path),
     cx: &mut TestAppContext,
 ) -> FolderNotebook {
     cx.update(|cx| init(cx).unwrap());
     let folder = tempfile::tempdir().unwrap();
     write_files(folder.path(), files);
     let state = tempfile::tempdir().unwrap();
-    write_files(state.path(), state_files);
+    prepare(folder.path(), state.path());
     let bin = tempfile::tempdir().unwrap();
     let into = bin.path().to_owned();
     let trash: quire_store::folder_notebook::Trash = std::sync::Arc::new(move |path| {
@@ -531,6 +541,74 @@ fn a_rename_interrupted_by_a_crash_finishes_on_open_and_says_so(cx: &mut TestApp
         "- old [[New]]\n"
     );
     assert!(!opened.file("Old.md").exists());
+}
+
+#[gpui::test]
+fn reference_drafts_are_offered_for_review_and_settle_only_on_their_base(cx: &mut TestAppContext) {
+    use quire_store::folder_notebook::revision;
+    let opened = open_prepared(
+        &[("A.md", "- a\n"), ("B.md", "- b changed\n")],
+        "A.md",
+        |folder, _| {
+            // The reference app's device database, as `VaultFiles` creates it.
+            let device = folder.join(".quire/devices/6f1c2b3a-0d4e-4f5a-8b9c-0123456789ab");
+            fs::create_dir_all(&device).unwrap();
+            let database =
+                quire_store::database::open_writable(&device.join("durability.sqlite")).unwrap();
+            database
+                .exec("CREATE TABLE pending (path TEXT PRIMARY KEY, text TEXT NOT NULL, expected_revision TEXT, saved_at INTEGER NOT NULL)")
+                .unwrap()()
+            .unwrap();
+            for (path, text, base) in [
+                ("A.md", "- a from rt\n", "- a\n"),
+                ("B.md", "- b from rt\n", "- b\n"),
+            ] {
+                database
+                    .exec_bound("INSERT INTO pending VALUES (?,?,?,?)")
+                    .unwrap()((path, text, revision(base), 5_i64))
+                .unwrap();
+            }
+        },
+        cx,
+    );
+    let notebook = &opened.notebook;
+    notebook
+        .window
+        .update(cx, |view, _, cx| view.load_folder_notices(cx))
+        .unwrap();
+    wait_until(cx, "the recovered drafts", |cx| {
+        read(notebook, cx, |view, _| view.folder.recovered.len() == 2)
+    });
+    let notices = read(notebook, cx, |view, _| view.folder.notices.clone());
+    assert!(
+        notices[0].starts_with("Recovered 2 unsaved drafts from the reference app: A.md, B.md")
+    );
+    draw(notebook, cx);
+
+    // The page shown at open settles its draft: its base is the file's current version.
+    wait_until(cx, "A's draft to be saved", |_| {
+        fs::read_to_string(opened.file("A.md")).unwrap() == "- a from rt\n"
+    });
+    let b = page_id_for_path("B.md");
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.open_page(b.clone(), false, window, cx)
+        })
+        .unwrap();
+    wait_until(cx, "B's conflict", |cx| {
+        read(notebook, cx, |view, cx| {
+            view.page.read(cx).id() == b && view.conflicted(cx).is_some()
+        })
+    });
+    assert_eq!(text(notebook, cx), "- b from rt\n");
+    cx.executor().advance_clock(Duration::from_secs(5));
+    cx.run_until_parked();
+    assert_eq!(
+        fs::read_to_string(opened.file("B.md")).unwrap(),
+        "- b changed\n",
+        "a draft made from another version never overwrites the file"
+    );
 }
 
 /// `.quire/notebook.json` as the reference `writeNotebookSettings` writes it.

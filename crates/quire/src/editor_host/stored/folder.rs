@@ -10,7 +10,7 @@ use futures::StreamExt as _;
 use gpui::{SharedString, Task};
 use quire_core::markdown::{copy_with_new_ids, page_name, page_title, safe_page_path};
 use quire_store::{
-    folder_notebook::{Trash, is_markdown, list, validate},
+    folder_notebook::{RecoveredDraft, Trash, is_markdown, list, validate},
     sync::format::{page_id_for_path, sha256},
 };
 use std::{
@@ -20,6 +20,8 @@ use std::{
 
 /// Coalesces bursts of file events, such as an editor's save, into one reread.
 const WATCH_LATENCY: Duration = Duration::from_millis(100);
+/// Recovered pages the notice offers to open.
+const LISTED_RECOVERED: usize = 10;
 /// Lines of the disk version the comparison shows.
 const COMPARED_LINES: usize = 400;
 
@@ -178,6 +180,8 @@ pub(super) struct FolderView {
     error: Option<SharedString>,
     /// What opening the folder found and did, such as finishing an interrupted rename.
     pub(super) notices: Vec<SharedString>,
+    /// Pages that gained a recovery draft from the reference app's records, to open for review.
+    pub(super) recovered: Vec<RecoveredDraft>,
 }
 
 impl StoredWindow {
@@ -362,12 +366,15 @@ impl StoredWindow {
         };
         cx.spawn(async move |this, cx| {
             let notices = crate::query_index::ask(folder.notices()).await;
+            let recovered = crate::query_index::ask(folder.recovered_drafts()).await;
             this.update(cx, |this, cx| {
-                match notices {
-                    Ok(notices) => this
-                        .folder
-                        .notices
-                        .extend(notices.into_iter().map(SharedString::from)),
+                match notices.and_then(|notices| Ok((notices, recovered?))) {
+                    Ok((notices, recovered)) => {
+                        this.folder
+                            .notices
+                            .extend(notices.into_iter().map(SharedString::from));
+                        this.folder.recovered = recovered;
+                    }
                     Err(error) => this.folder.error = Some(error.into()),
                 }
                 cx.notify();
@@ -385,6 +392,21 @@ impl StoredWindow {
         if error.is_none() && self.folder.notices.is_empty() {
             return None;
         }
+        let open = self
+            .folder
+            .recovered
+            .iter()
+            .take(LISTED_RECOVERED)
+            .enumerate()
+            .map(|(index, draft)| {
+                let page = draft.page.clone();
+                Button::new(("open-recovered", index), format!("Open {}", draft.path)).on_click(
+                    cx.listener(move |this, _, window, cx| {
+                        this.open_page(page.clone(), false, window, cx)
+                    }),
+                )
+            })
+            .collect::<Vec<_>>();
         Some(
             gpui::div()
                 .p_2()
@@ -393,10 +415,12 @@ impl StoredWindow {
                 .gap_1()
                 .when_some(error, |div, error| div.child(Label::new(error)))
                 .children(self.folder.notices.iter().cloned().map(Label::new))
+                .child(gpui::div().flex().flex_wrap().gap_2().children(open))
                 .when(!self.folder.notices.is_empty(), |div| {
                     div.child(Button::new("dismiss-folder-notices", "Dismiss").on_click(
                         cx.listener(|this, _, _, cx| {
                             this.folder.notices.clear();
+                            this.folder.recovered.clear();
                             cx.notify();
                         }),
                     ))

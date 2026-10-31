@@ -13,6 +13,7 @@ mod deletion;
 mod files;
 mod history;
 mod journal;
+mod reference;
 mod settings;
 
 pub use deletion::{NO_TRASH, Trash};
@@ -20,6 +21,7 @@ pub use files::{
     DiskDocument, ListedFile, Listing, MAX_NOTE_BYTES, is_markdown, list, read, revision, validate,
 };
 pub use history::FolderRevision;
+pub use reference::RecoveredDraft;
 
 use crate::{
     database,
@@ -94,6 +96,8 @@ pub struct FolderNotebook {
     warnings: RefCell<Vec<String>>,
     /// What opening found and did, such as finishing an interrupted rename, for the user to read.
     notices: RefCell<Vec<String>>,
+    /// Pages that gained a recovery draft from the reference app's records on opening.
+    recovered: RefCell<Vec<RecoveredDraft>>,
     /// Quire's state folder for this notebook.
     state: PathBuf,
     clock: Box<dyn Fn() -> i64>,
@@ -157,6 +161,7 @@ impl FolderNotebook {
             ]
             .iter()
             .chain(history::TABLES)
+            .chain(reference::TABLES)
             {
                 connection.exec(table)?()?;
             }
@@ -189,6 +194,7 @@ impl FolderNotebook {
             reported: RefCell::default(),
             warnings: RefCell::default(),
             notices: RefCell::default(),
+            recovered: RefCell::default(),
             state: state.to_owned(),
             clock,
             trash: None,
@@ -196,7 +202,11 @@ impl FolderNotebook {
             interrupt_at: std::cell::Cell::default(),
         };
         notebook.listing();
-        *notebook.notices.borrow_mut() = notebook.resume();
+        let mut notices = notebook.resume();
+        let (recovered, imported) = notebook.import_reference();
+        notices.extend(imported);
+        *notebook.notices.borrow_mut() = notices;
+        *notebook.recovered.borrow_mut() = recovered;
         notebook.listing();
         Ok(notebook)
     }
@@ -234,6 +244,11 @@ impl FolderNotebook {
     /// What opening found and did, such as finishing an interrupted rename.
     pub fn notices(&self) -> Vec<String> {
         self.notices.borrow().clone()
+    }
+
+    /// Pages that gained a recovery draft from the reference app's records on opening.
+    pub fn recovered_drafts(&self) -> Vec<RecoveredDraft> {
+        self.recovered.borrow().clone()
     }
 
     /// The path a page lives at, when the notebook has one.
@@ -704,6 +719,9 @@ impl Client<FolderNotebook> {
     }
     pub fn rescan(&self) -> Answer<Vec<FolderChange>> {
         self.request(128, FolderNotebook::rescan)
+    }
+    pub fn recovered_drafts(&self) -> Answer<Vec<RecoveredDraft>> {
+        self.request(128, |notebook| Ok(notebook.recovered_drafts()))
     }
     pub fn notices(&self) -> Answer<Vec<String>> {
         self.request(128, |notebook| Ok(notebook.notices()))

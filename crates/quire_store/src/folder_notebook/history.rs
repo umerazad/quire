@@ -36,7 +36,7 @@ fn encode(text: &str) -> Result<(&'static str, Vec<u8>)> {
     })
 }
 
-fn decode(codec: &str, data: &[u8]) -> Result<String> {
+pub(super) fn decode(codec: &str, data: &[u8]) -> Result<String> {
     let bytes = match codec {
         "raw" => data.to_vec(),
         "zstd" => compression::decompress(data, super::files::MAX_NOTE_BYTES as usize * 4)
@@ -57,6 +57,35 @@ pub(super) fn add(
     revision: &str,
     now: i64,
 ) -> Result<()> {
+    add_at(connection, path, text, revision, now, now)
+}
+
+/// Records another app's saved version of `path` once, keeping its own time.
+pub(super) fn import(
+    connection: &Connection,
+    path: &str,
+    text: &str,
+    revision: &str,
+    saved_at: i64,
+    now: i64,
+) -> Result<()> {
+    let known: Option<i64> = connection.select_row_bound(
+        "SELECT 1 FROM history WHERE path=? AND revision=? AND saved_at=? LIMIT 1",
+    )?((path, revision, saved_at))?;
+    if known.is_none() {
+        add_at(connection, path, text, revision, saved_at, now)?;
+    }
+    Ok(())
+}
+
+fn add_at(
+    connection: &Connection,
+    path: &str,
+    text: &str,
+    revision: &str,
+    saved_at: i64,
+    now: i64,
+) -> Result<()> {
     let hash = sha256(text);
     let known: Option<i64> =
         connection.select_row_bound("SELECT 1 FROM contents WHERE hash=?")?(hash.as_str())?;
@@ -73,7 +102,7 @@ pub(super) fn add(
         path,
         hash.as_str(),
         revision,
-        now,
+        saved_at,
     ))?;
     prune(connection, path, now)
 }
