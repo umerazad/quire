@@ -2493,6 +2493,12 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Vec<IndentGuideLayout>> {
+        if self
+            .host_indent_guides(visible_buffer_range.clone(), cx)
+            .is_some()
+        {
+            return None;
+        }
         let indent_guides = self.editor.update(cx, |editor, cx| {
             editor.indent_guides(visible_buffer_range, snapshot, cx)
         })?;
@@ -2543,6 +2549,73 @@ impl EditorElement {
                 })
                 .collect(),
         )
+    }
+
+    fn host_indent_guides(
+        &self,
+        visible_buffer_range: Range<MultiBufferRow>,
+        cx: &App,
+    ) -> Option<Vec<crate::HostIndentGuide>> {
+        self.editor
+            .read(cx)
+            .addons
+            .values()
+            .find_map(|addon| addon.indent_guides(&self.editor, visible_buffer_range.clone(), cx))
+    }
+
+    /// Lays out the guides an addon draws in place of the indent guides, each hanging from its
+    /// indentation column and spanning its rows' display rows.
+    fn layout_host_indent_guides(
+        &self,
+        content_origin: gpui::Point<Pixels>,
+        text_origin: gpui::Point<Pixels>,
+        visible_buffer_range: Range<MultiBufferRow>,
+        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
+        line_height: Pixels,
+        snapshot: &DisplaySnapshot,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<AnyElement> {
+        let Some(guides) = self.host_indent_guides(visible_buffer_range, cx) else {
+            return Vec::new();
+        };
+        guides
+            .into_iter()
+            .filter_map(|guide| {
+                let x = Pixels::from(
+                    ScrollOffset::from(
+                        content_origin.x
+                            + column_pixels(&self.style, guide.column as usize, window)
+                            + guide.offset,
+                    ) - scroll_pixel_position.x,
+                );
+                if x < text_origin.x {
+                    return None;
+                }
+                let (offset_y, length, display_rows) = Self::calculate_indent_guide_bounds(
+                    *guide.rows.start()..*guide.rows.end(),
+                    line_height,
+                    snapshot,
+                );
+                let inset = line_height / 2. + guide.start_below_center;
+                if display_rows.start >= display_rows.end || length <= inset {
+                    return None;
+                }
+                let y = Pixels::from(
+                    ScrollOffset::from(content_origin.y) + offset_y - scroll_pixel_position.y,
+                ) + inset;
+                let size = size(guide.width, length - inset);
+                let selector = guide.debug_selector;
+                let mut element = div()
+                    .debug_selector(move || selector)
+                    .w(size.width)
+                    .h(size.height)
+                    .bg(guide.color)
+                    .into_any_element();
+                element.prepaint_as_root(point(x, y), size.into(), window, cx);
+                Some(element)
+            })
+            .collect()
     }
 
     fn depth_zero_indent_guide_padding_for_row(
@@ -5353,6 +5426,9 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        for guide in &mut layout.host_indent_guides {
+            guide.paint(window, cx);
+        }
         let Some(indent_guides) = &layout.indent_guides else {
             return;
         };
@@ -9533,6 +9609,16 @@ impl Element for EditorElement {
                         } else {
                             indent_guides
                         };
+                    let host_indent_guides = self.layout_host_indent_guides(
+                        content_origin,
+                        text_hitbox.origin,
+                        start_buffer_row..end_buffer_row,
+                        scroll_pixel_position,
+                        line_height,
+                        &snapshot,
+                        window,
+                        cx,
+                    );
 
                     let crease_trailers =
                         window.with_element_namespace("crease_trailers", |window| {
@@ -10135,6 +10221,7 @@ impl Element for EditorElement {
                         visible_display_row_range: start_row..end_row,
                         wrap_guides,
                         indent_guides,
+                        host_indent_guides,
                         hitbox,
                         gutter_hitbox,
                         display_hunks,
@@ -10360,6 +10447,7 @@ pub struct EditorLayout {
     mode: EditorMode,
     wrap_guides: SmallVec<[(Pixels, bool); 2]>,
     indent_guides: Option<Vec<IndentGuideLayout>>,
+    host_indent_guides: Vec<AnyElement>,
     visible_display_row_range: Range<DisplayRow>,
     active_rows: BTreeMap<DisplayRow, LineHighlightSpec>,
     highlighted_rows: BTreeMap<DisplayRow, LineHighlight>,

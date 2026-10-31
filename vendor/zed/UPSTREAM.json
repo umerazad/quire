@@ -316,11 +316,11 @@
     },
     {
       "path": "crates/editor/src/editor.rs",
-      "change": "Let editor addons supply source-anchored interaction regions for the visible viewport, retaining native text layout and selection. Expose clipped fragment geometry to their renderers. Emit FoldsChanged when folds are added or removed, so hosts can follow fold state from any fold command."
+      "change": "Let editor addons supply source-anchored interaction regions for the visible viewport, retaining native text layout and selection. Expose clipped fragment geometry to their renderers. Emit FoldsChanged when folds are added or removed, so hosts can follow fold state from any fold command. Let an addon draw its own indent guides (Addon::indent_guides returning HostIndentGuide rows, indentation column, pixel offset, start inset, width, colour, and a test debug selector) in place of the editor's, so Write draws rt's child guides under each parent bullet."
     },
     {
       "path": "crates/editor/src/element.rs",
-      "change": "Lay out addon text regions over native shaped and wrapped source fragments, excluding folded text and clipping to the viewport. Reuse the navigation overlay lifecycle and element namespace; test resize, clipping, stateful elements, removal, and unchanged source text."
+      "change": "Lay out addon text regions over native shaped and wrapped source fragments, excluding folded text and clipping to the viewport. Reuse the navigation overlay lifecycle and element namespace; test resize, clipping, stateful elements, removal, and unchanged source text. When an addon supplies indent guides, skip the editor's own and lay each host guide out as a plain element at content origin + the column's space width + its offset, spanning its rows' display rows from the inset below the first row's middle; guides whose rows fold into one display row are not drawn. Covered by quire's child_guides_hang_under_each_parent_bullet_through_its_subtree."
     },
     {
       "path": "crates/editor/src/completions.rs",
@@ -369,6 +369,10 @@
     {
       "path": "crates/settings/src/vscode_import.rs",
       "change": "Leave the new quire section unset when importing VS Code settings."
+    },
+    {
+      "path": "crates/gpui/src/style.rs",
+      "change": "Add HighlightStyle::font_family (Option<&'static str>, keeping the style Copy): TextStyle::highlight replaces the run's family and keeps its fallbacks, highlight() lets the later style win, and Hash covers it. Quire sets Urdu lines' Arabic-script runs in Noto Nastaliq Urdu with it, as rt sets lang=ur lines in Quire Urdu; upstream highlights could not change a run's font. Covered by quire's write_style tests."
     }
   ]
 }
