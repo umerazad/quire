@@ -1736,7 +1736,50 @@ Constraints: A missing provider/OS/native-input result is unverified, not passed
 Write set: parity ledger, proof reports, product documentation, concrete gap fixes.
 Dependencies: NR01 through NR36.
 Verify: Complete protocol, semantic, durability, native UI, performance, package, and migration gates; fresh review of code/diff/proof; prose lint on final documentation. No required parity row has only a screenshot or source-test citation as native proof.
-Proof notes: pending.
-Status: pending
+Proof notes: review of 2026-11-01 at `7ffaf03b9781` against `rt` `5ea5c22310ff`. **Verdict: not ready.** Gate C stays closed and the build stays experimental: 37 of 68 parity rows are not Present, the performance gate fails 9 of its budget groups, and no row has a native desktop, Linux, or Windows result, which the cutover rule in the [architecture plan](native-rewrite.md) requires. Running Quire beside `rt` on a copy of a notebook, as that plan allows before cutover, remains the right next use.
+
+Method. Five read-only reviewers worked in parallel. Three took the ledger rows (S01 to S24, S25 to S47, E01 to E18), opened each cited test and the code behind it, and confirmed the assertions match the row rather than matching names. Two made a fresh pass over `rt`'s user-visible surface (README, `help-content.ts`, `App.tsx`, `Editor.tsx` keymaps and decorations, `vim-bindings.ts`, `main.ts` menus and IPC, `preload.ts`, the Settings panes, and every `src/ui` component) and searched quire for each label, key, and action. This session then reopened the code behind every new gap and bug before recording it. The per-row states, evidence, and open items are in the [ledger's readiness review](native-parity.md).
+
+Counts across 68 rows: 31 Present, 25 Partial, 7 Blocked, 2 Intentionally different (S29, S45), 3 Missing (E19 spellcheck in progress, E20, E21). Present means native tests prove the semantics on the headless GPUI platform on macOS; it does not mean the platform runs passed.
+
+Blocking list for Gate C. Each item names its owner.
+
+Engineering:
+- B1. Performance (E15, S01, S04, S24, S28). The NR34 final run fails 9 budget groups: warm startup ratio 1.47 against 1.25; first open editable at 1x 2,049 ms against 1,500; first open index 9.5 s and 49.6 s against 2.8 s and 15 s; typing work p95 16.6 ms (1x) against 4; search p95 125 ms (1x) and 480 ms (5x) against 100; tasks at 5x 259 ms against 50; tags at 5x 146 ms against 50; large-page typing 13.1 ms against 8; memory 327 and 870 MiB against 250, growth 542 against 50. The concurrent sync, index, and backup workload is unmeasured.
+- B2. Spellcheck (E19), in progress in another worktree.
+- B3. Pasted block references (S34). Quire leaves references inside pasted text pointing at the originals and has no cut marker, so a cut and paste can give a moved block a new ID and break references to it. This is a data integrity gap, not a cosmetic one.
+- B4. Folder-notebook New folder writes no directory (S17); there is no top-level New page or New folder button (S17, E17).
+- B5. Embeds: Vim `o` on an embed's last line, and no scroll into a tall embed (S36).
+- B6. Help and the README sample (E12): three Help sentences name controls quire lacks; the sample's references, embed, and tags likely do nothing.
+- B7. Small unverified defects to test and fix: Vim Insert keys in the Delete dialog (E03); concurrent creation of one title in a Quire notebook (S14); list styles dropped in embeds and zooms (E17).
+- B8. Windows and Linux engineering before their acceptance runs: single instance (S13), MCP transport (S44), file watchers (E18), font fallback (E04), packaging (E16).
+- B9. Missing application chrome (E21): About, the Window menu, a minimum window size, and startup failures shown to the user.
+
+Owner decisions:
+- O1. Heading sizes (E01) and the Urdu 2.5 line height (E04): fund variable row heights in the vendored Zed display map, or accept bold headings as an intentional difference. Zed's display map gives every row one height today.
+- O2. SQL and Clojure highlighting (E06): about 2.4 MB per build for SQL; Clojure's only buildable grammar is CC0.
+- O3. AVIF (E05): add a dav1d or rav1d dependency, or leave AVIF as a link.
+- O4. Real AI CLI tests (E09, E10, S42, S43, S44): consent to run the three ignored tests against the installed Claude Code and Codex, one of which edits `~/.claude` and `~/.codex`.
+- O5. Signing and notarization (E16): Developer ID credentials.
+- O6. Backup pruning (S38): NR26 already decided never to prune and to skip unchanged hourly backups, matching `rt`; the owner confirms the disk growth is acceptable. This is a two-way door.
+- O7. First launch (E20): build `rt`'s example notebook, or keep the demo window as a recorded difference.
+- O8. Real data checks: a dry run of `--migrate-from-rt` on the owner's real `rt` installation (S10) and a private-copy Roam import of the owner's export (S40).
+
+Platform runs:
+- P1. macOS desktop acceptance on a painting, unlocked screen: native input and IME, dialogs and pickers, menus, close and Cmd-Q, the title bar, Trash, Reveal, screenshots at several sizes and scales, and a fresh `bun run bench`.
+- P2. Linux smoke and P3. Windows acceptance: every row's input, dialogs, PDFium, `rquickjs-sys`, watchers, and packaging.
+- P4. Real providers: HTTPS and SSH Git remotes with credential helpers, and two-device OneDrive, Dropbox, iCloud Drive, and Google Drive handover (S39, S09); live sync beside the real `rt` desktop and Go apps (E14, E18).
+
+Newly found gaps, now in the ledger: E19 spellcheck, E20 first-launch example notebook, and E21 application chrome (new rows); pasted references and cut moves (S34); New folder on disk and FILES buttons (S17); Add attachment entry (S21); duplicate daily pages notice (S32); `adoptLegacyBackups` (S10); non-media file embeds (E05); Vim cursor shapes (E11); README sample links and Help overclaims (E12); Alt-Backspace and Shift-End or Mod-Right at hidden IDs untested (E02); the inline reference copy button (S35, low).
+
+Corrected in the ledger: S06 (Quire notebooks merge stale saves), S15 (case-only renames are refused, as in `rt`), S31 (unknown braces copy as written), S45 (transcripts live in the state folder), E06 (12 highlighted and seven formatted languages), E17 (Rename is a dialog), and two stale recorded gaps (Open as tab exists; folder moves carry attachments). Two items the brief listed as open are done: the per-card task state select (S28) and the answer pane's Open as tab.
+
+Stale task notes found but not edited here, because their owning tasks should close them: NR18 Remaining (capture into today's page is done), NR19 and NR17 Deviations (capture draft, filters, and rich rows are now saved or rendered; references reveal their block), NR16.2 (New folder here and Ask AI exist), NR09.4 Remaining (the overlap warning is shown), NR12.4 (search reads unsaved text), NR11.4 Remaining 2 and 4, NR21 Remaining (restore checks attachments in NR26), and NR01 line 34 (`sync-vectors` is copied). NR34 and NR35 write their status as "in progress" rather than `in_progress`.
+
+Gates for this review (documentation only, no Rust changed, so `cargo test` and clippy were not rerun): `cargo fmt --check` passed; the reference vitest suite passed 136 of 136 tests in 10 files; `bun tools/verify-upstream.ts /Users/umer/code/zed` verified 2,992 copied files with 46 documented fork modifications; prose lint on the edited plans.
+
+Open questions for the owner: the decisions O1 to O8; whether Gate C may open for macOS alone once B1 to B7, B9, and P1 pass, with Linux and Windows following as a separate gate, since the architecture plan today requires Windows acceptance and Linux smoke results before any cutover.
+Remaining: every item in the blocking list above.
+Status: in_progress
 
 Gate C: Daily-driver cutover begins only after NR37 passes. Keep the old app and a verified independent backup available. Any open gate keeps the build experimental.
