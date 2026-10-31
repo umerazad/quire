@@ -280,3 +280,61 @@ fn recovered_folder_drafts_save_when_current_and_open_in_conflict_otherwise(
     );
     session.storage().close().unwrap();
 }
+
+#[gpui::test]
+fn conflicts_follow_the_newest_disk_state(cx: &mut TestAppContext) {
+    cx.update(|cx| crate::editor_host::init(cx).unwrap());
+    let folder = Folder::new(&[("Note.md", "- one\n"), ("Gone.md", "- gone\n")]);
+    let mut session = folder.session();
+    let (_page, persistence) = open(&mut session, "Note.md", cx);
+    let disk = |text: &str| Some(DiskDocument::new("Note.md".into(), text.into()));
+
+    append(&persistence, "- mine\n", cx);
+    folder.write("Note.md", "- newest\n");
+    persistence.update(cx, |persistence, cx| {
+        persistence.save(cx);
+        persistence.external(disk("- older\n"), cx);
+    });
+    wait(&persistence, cx);
+    assert_eq!(
+        conflict_disk(&persistence, cx),
+        Some(Some("- newest\n".into())),
+        "a change queued during the save never replaces the refusal's newer disk text"
+    );
+
+    folder.write("Note.md", "- one\n");
+    persistence.update(cx, |persistence, cx| {
+        persistence.external(disk("- one\n"), cx)
+    });
+    wait(&persistence, cx);
+    assert_eq!(
+        conflict_disk(&persistence, cx),
+        None,
+        "a file restored to the edits' base ends the conflict"
+    );
+    save(&persistence, cx);
+    assert_eq!(folder.read("Note.md"), "- one\n- mine\n");
+
+    let (_gone, gone) = open(&mut session, "Gone.md", cx);
+    fs::remove_file(folder.root.path().join("Gone.md")).unwrap();
+    gone.update(cx, |gone, cx| gone.external(None, cx));
+    wait(&gone, cx);
+    gone.update(cx, |gone, cx| gone.use_disk(cx));
+    wait(&gone, cx);
+    folder.write("Gone.md", "- back\n");
+    gone.update(cx, |gone, cx| {
+        gone.external(
+            Some(DiskDocument::new("Gone.md".into(), "- back\n".into())),
+            cx,
+        )
+    });
+    wait(&gone, cx);
+    assert_eq!(text(&gone, cx), "- back\n");
+    assert!(gone.read_with(cx, |gone, cx| {
+        gone.buffer().read(cx).capability() == language::Capability::ReadWrite
+    }));
+    append(&gone, "- again\n", cx);
+    save(&gone, cx);
+    assert_eq!(folder.read("Gone.md"), "- back\n- again\n");
+    session.storage().close().unwrap();
+}

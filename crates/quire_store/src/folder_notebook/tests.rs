@@ -419,7 +419,7 @@ fn refresh_reports_external_edits_and_deletes_once() {
         "a.txt".to_owned(),
     ];
     let first = fixture.notebook.refresh(&paths).unwrap();
-    assert_eq!(first.len(), 1, "an unread note is reported once: {first:?}");
+    assert_eq!(first.len(), 2, "each note is reported once: {first:?}");
     assert!(fixture.notebook.refresh(&paths).unwrap().is_empty());
     fs::write(fixture.folder.join("Note.md"), "- edited").unwrap();
     let changes = fixture.notebook.refresh(&paths).unwrap();
@@ -450,10 +450,17 @@ fn refresh_reports_external_edits_and_deletes_once() {
     fs::remove_file(fixture.folder.join("Note.md")).unwrap();
     assert_eq!(
         fixture.notebook.rescan().unwrap(),
-        [FolderChange::Removed {
-            page: page.clone(),
-            path: "Note.md".into(),
-        }]
+        [
+            FolderChange::Changed {
+                page: page_id_for_path("Later.md"),
+                document: DiskDocument::new("Later.md".into(), "- created elsewhere".into()),
+            },
+            FolderChange::Removed {
+                page: page.clone(),
+                path: "Note.md".into(),
+            }
+        ],
+        "reading Later.md for its heads does not hide it from the editor"
     );
     assert_eq!(fixture.notebook.heads(&page).unwrap(), Vec::<String>::new());
 }
@@ -522,13 +529,90 @@ fn read_only_notes_are_never_replaced() {
         .unwrap_err();
     assert!(format!("{error:#}").contains("read-only"), "{error:#}");
     assert_eq!(fs::read_to_string(&note).unwrap(), "- locked");
+    let entries = entries(&fixture.folder);
+    assert_eq!(entries, ["Locked.md"], "nothing was staged");
+}
+
+#[test]
+fn writes_never_discard_unsaved_work_from_another_session() {
+    let fixture = fixture(&[("Note.md", "- one"), ("Other.md", "- other")]);
+    let page = page_id_for_path("Note.md");
+    let crashed = Draft {
+        page: page.clone(),
+        path: "Note.md".into(),
+        text: "- typed before a crash".into(),
+        base: vec![revision("- one")],
+        stamp: DraftStamp {
+            session: "crashed".into(),
+            version: 4,
+        },
+        created: 1,
+    };
+    fixture.notebook.put_draft(&crashed, None).unwrap();
+    let bulk = |path: &str, text: &str, base: &str| Edit {
+        recovery: None,
+        ..edit(path, text, &[revision(base)])
+    };
+    let error = fixture
+        .notebook
+        .save_many_if_heads(&[
+            bulk("Other.md", "- other #tag", "- other"),
+            bulk("Note.md", "- one #tag", "- one"),
+        ])
+        .unwrap_err();
+    assert!(refused(error).message.contains("earlier session"));
     assert_eq!(
+        fs::read_to_string(fixture.folder.join("Other.md")).unwrap(),
+        "- other",
+        "nothing is written"
+    );
+    assert!(
         fixture
             .notebook
-            .draft(&page_id_for_path("Locked.md"))
-            .unwrap()
-            .unwrap()
-            .text,
-        "- changed"
+            .save(&edit("Note.md", "- editor", &[revision("- one")]))
+            .is_err()
     );
+    assert_eq!(
+        fixture.notebook.draft(&page).unwrap(),
+        Some(crashed.clone())
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.folder.join("Note.md")).unwrap(),
+        "- one"
+    );
+    let mine = Draft {
+        text: "- resolved".into(),
+        stamp: DraftStamp {
+            session: "editor".into(),
+            version: 1,
+        },
+        ..crashed.clone()
+    };
+    fixture
+        .notebook
+        .put_draft(&mine, Some(&crashed.stamp))
+        .unwrap();
+    fixture
+        .notebook
+        .save(&edit("Note.md", "- resolved", &[revision("- one")]))
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(fixture.folder.join("Note.md")).unwrap(),
+        "- resolved"
+    );
+}
+
+#[test]
+fn reads_for_other_purposes_never_hide_a_change_from_refresh() {
+    let fixture = fixture(&[("Note.md", "- one")]);
+    let page = page_id_for_path("Note.md");
+    let paths = vec!["Note.md".to_owned()];
+    fixture.notebook.refresh(&paths).unwrap();
+    fs::write(fixture.folder.join("Note.md"), "- outside").unwrap();
+    assert_eq!(
+        fixture.notebook.heads(&page).unwrap(),
+        [revision("- outside")]
+    );
+    fixture.notebook.checkout(&page, None).unwrap();
+    assert_eq!(fixture.notebook.refresh(&paths).unwrap().len(), 1);
 }

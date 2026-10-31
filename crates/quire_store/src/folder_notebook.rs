@@ -84,6 +84,9 @@ pub struct FolderNotebook {
     pages: RefCell<BTreeMap<String, String>>,
     /// The revision last read or written for each path.
     known: RefCell<HashMap<String, String>>,
+    /// The revision last reported to the editor by `refresh`, or written here. Reads for other
+    /// purposes never update it, so a change they see is still reported.
+    reported: RefCell<HashMap<String, String>>,
     warnings: RefCell<Vec<String>>,
     clock: Box<dyn Fn() -> i64>,
 }
@@ -171,6 +174,7 @@ impl FolderNotebook {
             connection,
             pages: RefCell::default(),
             known: RefCell::default(),
+            reported: RefCell::default(),
             warnings: RefCell::default(),
             clock,
         };
@@ -410,6 +414,7 @@ impl FolderNotebook {
             "{} belongs to another page in this folder notebook. Keep the buffer and reopen the page.",
             edit.path
         );
+        self.preflight(edit)?;
         let now = (self.clock)();
         let stamp = edit.recovery.clone().unwrap_or_else(|| DraftStamp {
             session: "folder-save".into(),
@@ -438,13 +443,6 @@ impl FolderNotebook {
         if disk.as_ref().map(|disk| &disk.revision) != expected {
             return Err(self.conflict(edit, disk, "This note changed on disk. Your edits are in recovery. Compare the versions or save a separate copy.").into());
         }
-        ensure!(
-            disk.is_none()
-                || !std::fs::metadata(&destination)
-                    .is_ok_and(|metadata| metadata.permissions().readonly()),
-            "{} is read-only. Make it writable in Finder or Explorer, then save again; your text is kept in recovery.",
-            edit.path
-        );
         let staged = files::stage(&destination, &edit.text)?;
         before_publish()?;
         let latest = files::read_at(&edit.path, &destination)?;
@@ -468,11 +466,37 @@ impl FolderNotebook {
         self.known
             .borrow_mut()
             .insert(edit.path.clone(), document.revision.clone());
+        self.reported
+            .borrow_mut()
+            .insert(edit.path.clone(), document.revision.clone());
         self.pages
             .borrow_mut()
             .insert(edit.page.clone(), edit.path.clone());
         self.settle_draft(&edit.page, &edit.text, edit.recovery.as_ref())?;
         Ok(self.ack(edit, document, true))
+    }
+
+    /// Refuses a save before anything is written when the note holds unsaved work from another
+    /// editor session, such as a draft left by a crash that no editor has opened, or when the
+    /// note is read-only. A rename replaces a read-only file whenever its folder is writable.
+    fn preflight(&self, edit: &Edit) -> Result<()> {
+        if let Some(current) = self.draft(&edit.page)?
+            && current.text != edit.text
+            && edit
+                .recovery
+                .as_ref()
+                .is_none_or(|stamp| stamp.session != current.stamp.session)
+        {
+            let disk = self.read(&edit.path)?;
+            return Err(self.conflict(edit, disk, "This note has unsaved work recovered from an earlier session. Open the page and choose a version before changing it here.").into());
+        }
+        ensure!(
+            !std::fs::metadata(self.root.join(&edit.path))
+                .is_ok_and(|metadata| metadata.permissions().readonly()),
+            "{} is read-only. Make it writable in Finder or Explorer, then save again; your text is kept in recovery.",
+            edit.path
+        );
+        Ok(())
     }
 
     fn conflict(&self, edit: &Edit, disk: Option<DiskDocument>, message: &str) -> FolderConflict {
@@ -515,6 +539,7 @@ impl FolderNotebook {
                     heads,
                 });
             }
+            self.preflight(edit)?;
         }
         edits
             .iter()
@@ -532,16 +557,20 @@ impl FolderNotebook {
             if files::validate(path).is_err() {
                 continue;
             }
-            let before = self.known.borrow().get(path).cloned();
+            let before = self.reported.borrow().get(path).cloned();
             let page = page_id_for_path(path);
             match self.read(path) {
                 Ok(Some(document)) => {
                     if before.as_ref() != Some(&document.revision) {
+                        self.reported
+                            .borrow_mut()
+                            .insert(path.clone(), document.revision.clone());
                         changes.push(FolderChange::Changed { page, document });
                     }
                 }
                 Ok(None) => {
                     if before.is_some() || self.path_of(&page).as_deref() == Some(path.as_str()) {
+                        self.reported.borrow_mut().remove(path);
                         self.pages.borrow_mut().remove(&page);
                         changes.push(FolderChange::Removed {
                             page,
@@ -558,15 +587,16 @@ impl FolderNotebook {
     /// Lists the notebook and rereads every note this adapter has read, catching changes a
     /// watcher missed.
     pub fn rescan(&self) -> Result<Vec<FolderChange>> {
-        let listing = self.listing();
-        let mut paths: Vec<String> = self.known.borrow().keys().cloned().collect();
-        paths.extend(listing.files.into_iter().map(|file| file.path));
-        paths.sort();
-        paths.dedup();
-        let tracked: Vec<String> = paths
-            .into_iter()
-            .filter(|path| self.known.borrow().contains_key(path))
+        self.listing();
+        let mut tracked: Vec<String> = self
+            .known
+            .borrow()
+            .keys()
+            .chain(self.reported.borrow().keys())
+            .cloned()
             .collect();
+        tracked.sort();
+        tracked.dedup();
         self.refresh(&tracked)
     }
 

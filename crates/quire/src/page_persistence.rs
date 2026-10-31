@@ -463,6 +463,8 @@ impl PagePersistence {
             (Ok(Some(saved)), _) => self.saved(request, saved, cx),
             (Ok(None), _) => {}
             (Err(_), Some(refused)) => {
+                // The refusal read the disk after any change queued meanwhile.
+                self.deferred = None;
                 self.enter_conflict(refused.disk, refused.message.into(), cx)
             }
             (Err(error), None) => {
@@ -641,6 +643,13 @@ impl PagePersistence {
             .as_ref()
             .is_some_and(|disk| self.opened.base == [disk.revision.as_str()])
         {
+            // The file is back at the version these edits were made from, so saving can resume.
+            if self.conflict.take().is_some() {
+                if self.enabled && self.is_dirty(cx) {
+                    self.schedule_autosave(cx);
+                }
+                cx.notify();
+            }
             return;
         }
         if self.task.is_some() || self.merge.is_some() {
@@ -660,6 +669,12 @@ impl PagePersistence {
                 if *local == *disk.text || (self.conflict.is_none() && !self.is_dirty(cx)) =>
             {
                 self.conflict = None;
+                if self.warning.as_deref() == Some(ACCEPTED_REMOVAL) {
+                    self.warning = None;
+                    self.buffer.update(cx, |buffer, cx| {
+                        buffer.set_capability(language::Capability::ReadWrite, cx)
+                    });
+                }
                 self.show(disk, local, cx);
             }
             Some(disk) => self.enter_conflict(Some(disk), CHANGED_OUTSIDE.into(), cx),
