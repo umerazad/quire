@@ -8,7 +8,7 @@ use ::fs::Fs as _;
 use anyhow::Context as _;
 use futures::StreamExt as _;
 use gpui::{SharedString, Task};
-use quire_core::markdown::{copy_with_new_ids, page_name, page_title, safe_page_path};
+use quire_core::markdown::{Addresses, copy_with_new_ids, page_name, page_title, safe_page_path};
 use quire_store::{
     folder_notebook::{RecoveredDraft, Trash, is_markdown, list, validate},
     sync::format::{page_id_for_path, sha256},
@@ -321,9 +321,13 @@ impl StoredWindow {
                 return;
             }
         };
-        let copied = copy_with_new_ids(&text, &destination, &[page_name(&path), &source], || {
-            format!("b-{}", uuid::Uuid::new_v4().simple())
-        });
+        let copied = copy_with_new_ids(
+            &text,
+            &Addresses::scan(&text),
+            &destination,
+            &[page_name(&path), &source],
+            || format!("b-{}", uuid::Uuid::new_v4().simple()),
+        );
         let work = create_page_with(
             self.session.borrow().storage(),
             index,

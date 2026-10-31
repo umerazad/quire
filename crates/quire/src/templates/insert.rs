@@ -20,7 +20,7 @@ use project::{
     lsp_store::CompletionDocumentation,
 };
 use quire_core::{
-    markdown::{ReferenceKind, page_name},
+    markdown::{ReferenceKind, copy_with_new_ids, page_name},
     templates::{
         self as core, CANCELLED, Clock, Context as Fill, Definition, Question, Step, TagUse,
         is_templates_page,
@@ -331,7 +331,13 @@ async fn insert(
         .await
         .ok_or(SharedString::new_static(UNPARSED))?;
     let names = [page_name(&path), source.title.as_str()];
-    let copied = core::copy_with_new_ids(&template.body, &body, &trigger.path, &names, new_id);
+    let copied = copy_with_new_ids(
+        &template.body,
+        &body.addresses(&template.body),
+        &trigger.path,
+        &names,
+        new_id,
+    );
     let parsed = super::parse(&copied, cx)
         .await
         .ok_or(SharedString::new_static(UNPARSED))?;

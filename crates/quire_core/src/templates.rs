@@ -7,7 +7,7 @@
 //! answer for, so the caller can ask it, add the answer, and call again. Questions are asked in
 //! the order the reference asks them, each once.
 
-use crate::markdown::{Reference, ReferenceKind, js_space, page_name};
+use crate::markdown::{Addresses, Reference, ReferenceKind, block_id_range, js_space};
 use crate::tasks::{DailyNames, add_days};
 use regex::Regex;
 use std::{
@@ -199,81 +199,20 @@ fn unclear(phrase: &str) -> String {
     )
 }
 
-static ID_MARKER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:^|[ \t])\^([a-zA-Z0-9_-]+)[ \t]*\z").unwrap());
-
-struct Change {
-    from: usize,
-    to: usize,
-    insert: String,
-}
-
-fn apply(text: &str, mut changes: Vec<Change>) -> String {
-    changes.sort_by_key(|change| std::cmp::Reverse(change.from));
-    changes
-        .into_iter()
-        .fold(text.to_owned(), |mut current, change| {
-            current.replace_range(change.from..change.to, &change.insert);
-            current
-        })
-}
-
-fn split_target(target: &str) -> (Option<&str>, &str) {
-    match target.find("#^") {
-        Some(at) => (Some(&target[..at]), &target[at + 2..]),
-        None => (None, target),
-    }
-}
-
-/// The reference `copyWithNewIds`: every block ID in `text` gets a fresh one from `new_id`, and
-/// references to those blocks follow, including `Page#^id` forms that name a source page.
-pub fn copy_with_new_ids(
-    text: &str,
-    parsed: &Parsed,
-    destination: &str,
-    source_names: &[&str],
-    mut new_id: impl FnMut() -> String,
-) -> String {
-    let mut ids = HashMap::new();
-    for block in &parsed.blocks {
-        if let Some(id) = &block.id {
-            ids.insert(id.clone(), new_id());
+impl Parsed {
+    /// The block IDs and references of `text` as its parsed blocks place them, for
+    /// [`copy_with_new_ids`](crate::markdown::copy_with_new_ids).
+    pub fn addresses(&self, text: &str) -> Addresses {
+        Addresses {
+            ids: self
+                .blocks
+                .iter()
+                .filter(|block| block.id.is_some())
+                .filter_map(|block| block_id_range(text, block.content_from..block.content_to))
+                .collect(),
+            references: self.references.clone(),
         }
     }
-    let mut changes = Vec::new();
-    for block in &parsed.blocks {
-        let Some(id) = &block.id else { continue };
-        let content = &text[block.content_from..block.content_to];
-        let Some(marker) = ID_MARKER.find(content) else {
-            continue;
-        };
-        let from = block.content_from + marker.start() + marker.as_str().find('^').unwrap_or(0) + 1;
-        changes.push(Change {
-            from,
-            to: from + id.len(),
-            insert: ids[id].clone(),
-        });
-    }
-    for reference in &parsed.references {
-        if reference.kind == ReferenceKind::Page {
-            continue;
-        }
-        let (page, id) = split_target(&reference.target);
-        let Some(fresh) = ids.get(id) else { continue };
-        if page.is_some_and(|page| !source_names.contains(&page)) {
-            continue;
-        }
-        let target = match page {
-            Some(_) => format!("{}#^{fresh}", page_name(destination)),
-            None => fresh.clone(),
-        };
-        changes.push(Change {
-            from: reference.range.start,
-            to: reference.range.end,
-            insert: text[reference.range.clone()].replacen(&reference.target, &target, 1),
-        });
-    }
-    apply(text, changes)
 }
 
 /// A value the user supplies while a template expands.
