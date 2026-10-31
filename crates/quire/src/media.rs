@@ -406,7 +406,8 @@ pub(crate) fn headers(
     media
         .shown
         .iter()
-        .map(|shown| {
+        .enumerate()
+        .map(|(ordinal, shown)| {
             let label = shown.label.clone();
             let spot = shown.spot.clone();
             let host = host.clone();
@@ -415,32 +416,35 @@ pub(crate) fn headers(
                 constrain_width: false,
                 merge_adjacent: false,
                 type_tag: Some(type_tag),
-                render: Arc::new(move |id, _, cx| {
+                render: Arc::new(move |_, _, cx| {
                     use theme::ActiveTheme;
                     let host = host.clone();
                     let start = spot.range.start;
-                    crate::editor_projection::inline_control(id, host.clone())
-                        .debug_selector(|| "quire-media-header".into())
-                        .aria_label(label.clone())
-                        .cursor_text()
-                        .text_color(cx.theme().colors().text_muted)
-                        .child(label.clone())
-                        .on_click(move |_, window, cx| {
-                            cx.stop_propagation();
-                            host.update(cx, |editor, cx| {
-                                window.focus(&editor.focus_handle(cx), cx);
-                                editor.change_selections(
-                                    Default::default(),
-                                    window,
-                                    cx,
-                                    |selections| {
-                                        selections.select_anchor_ranges([start..start]);
-                                    },
-                                );
-                            })
-                            .ok();
+                    crate::editor_projection::inline_control(
+                        ("quire-media-header", ordinal),
+                        host.clone(),
+                    )
+                    .debug_selector(|| "quire-media-header".into())
+                    .aria_label(label.clone())
+                    .cursor_text()
+                    .text_color(cx.theme().colors().text_muted)
+                    .child(label.clone())
+                    .on_click(move |_, window, cx| {
+                        cx.stop_propagation();
+                        host.update(cx, |editor, cx| {
+                            window.focus(&editor.focus_handle(cx), cx);
+                            editor.change_selections(
+                                Default::default(),
+                                window,
+                                cx,
+                                |selections| {
+                                    selections.select_anchor_ranges([start..start]);
+                                },
+                            );
                         })
-                        .into_any_element()
+                        .ok();
+                    })
+                    .into_any_element()
                 }),
             };
             (shown.spot.clone(), placeholder)
