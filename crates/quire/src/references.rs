@@ -14,6 +14,7 @@ use quire_store::index::IndexClient;
 use std::rc::Rc;
 
 mod completion;
+pub(crate) mod preview;
 pub(crate) use completion::new_id as new_block_id;
 
 /// What a reference names.
@@ -81,6 +82,9 @@ pub trait Notebook {
         window: &mut Window,
         cx: &mut App,
     ) -> futures::channel::oneshot::Receiver<Option<String>>;
+
+    /// Opens the tag page of `tag`, written as in the text with its `#`.
+    fn show_tag(&self, _: &str, _: &mut Window, _: &mut App) {}
 
     /// Where pages' notebook-relative media paths resolve.
     fn media_files(&self) -> Option<quire_media::files::Files> {

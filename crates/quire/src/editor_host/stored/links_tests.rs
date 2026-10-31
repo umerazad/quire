@@ -170,3 +170,29 @@ fn a_newer_follow_replaces_an_unfinished_one(cx: &mut TestAppContext) {
     assert!(error.contains("((nowhere))"), "{error}");
     assert_eq!(active(&notebook, cx), "o");
 }
+
+#[gpui::test]
+fn a_heading_link_opens_its_page_and_says_when_the_heading_is_missing(cx: &mut TestAppContext) {
+    let pages = [
+        ("h", "Home.md", "- [[Target#goal]] or [[Target#Nope]]\n"),
+        ("t", "Target.md", "# Intro\n\n## Goal\n\n- target\n"),
+    ];
+    let notebook = open_notebook(&pages, "h", cx);
+    focus_home(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "f T g d");
+    wait_until(cx, "Target to open", |cx| active(&notebook, cx) == "t");
+    assert_eq!(read(&notebook, cx, |view, _| view.nav.error.clone()), None);
+
+    cx.simulate_keystrokes(notebook.window.into(), &key("["));
+    focus_home(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "f N g d");
+    wait_until(cx, "Target to open again", |cx| {
+        active(&notebook, cx) == "t"
+    });
+    assert_eq!(
+        read(&notebook, cx, |view, _| view.nav.error.clone()).as_deref(),
+        Some(
+            "Target has no heading “Nope”, so it opened at the top. Check the heading in the link."
+        )
+    );
+}
