@@ -235,6 +235,22 @@ impl NotebookSession {
             .iter()
             .any(|page| page.read(cx).has_error() && !page.read(cx).is_secured(cx))
     }
+    /// The path of a page in conflict with its file whose typing is not yet recorded, when no
+    /// page has a storage error.
+    pub fn unrecorded_conflict(&self, cx: &App) -> Option<String> {
+        let failing: Vec<_> = self
+            .controllers(cx)
+            .into_iter()
+            .filter(|page| page.read(cx).has_error() && !page.read(cx).is_secured(cx))
+            .collect();
+        if failing
+            .iter()
+            .any(|page| page.read(cx).conflict().is_none())
+        {
+            return None;
+        }
+        failing.first().map(|page| page.read(cx).path().to_owned())
+    }
     pub fn recover(&self, cx: &mut App) {
         for page in self.controllers(cx) {
             page.update(cx, |page, cx| page.recover(cx));

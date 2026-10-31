@@ -79,6 +79,20 @@
       "destination": "../fixtures/reference-filters.json",
       "sha256": "bbb34e5c4d47f2796a68672016da9dddd78de237e0c44faf8577f759a3b75561",
       "note": "Shared linked-reference filter cases, also run by the rt Go terminal app; copied unchanged."
+    },
+    {
+      "source": "tests/fixtures/sync-vectors/go-written/000000001-2aa83dac9353d7e9f130002bd2d78ad0c253190bfab9c65ee8673df053f5ee18.qlog.zst",
+      "source_revision": "5ea5c22310ff",
+      "destination": "../fixtures/sync-vectors/go-written/000000001-2aa83dac9353d7e9f130002bd2d78ad0c253190bfab9c65ee8673df053f5ee18.qlog.zst",
+      "sha256": "49faa474c5d370a60c9f21f8a9d56ffe968127d5d77d4569b3a680cb27e1af72",
+      "note": "A batch the rt Go terminal app writes (tui/internal/format/vectors_test.go with QUIRE_WRITE_GO_BATCH=1); copied unchanged and decoded by crates/quire_store/tests/format.rs."
+    },
+    {
+      "source": "tests/fixtures/sync-vectors/go-written/expected.json",
+      "source_revision": "5ea5c22310ff",
+      "destination": "../fixtures/sync-vectors/go-written/expected.json",
+      "sha256": "1a104e981d18f44bd833c07a3f98de2b55c1ce289ef7bb6bb736d4e2139caa1c",
+      "note": "The Go batch's file name and revision ID, as rt's tests/sync-go-batch.test.ts reads them; copied unchanged."
     }
   ],
   "merge_refresh": {

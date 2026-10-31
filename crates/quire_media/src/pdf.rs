@@ -1,7 +1,7 @@
 //! PDF documents behind one small interface. A notebook-stored PDF (an attachment the user added)
-//! renders through PDFium, which also gives text with character boxes for selection and find. A
-//! remote or `data:` PDF renders through hayro, which is memory-safe Rust and has no text API, so
-//! untrusted bytes never reach C++. Each open document lives on its own thread; callers await
+//! renders through PDFium. A remote or `data:` PDF renders through hayro, which is memory-safe
+//! Rust, so untrusted bytes never reach C++. Both give each page's text with character boxes for
+//! selection and find: PDFium through its text API, hayro from the glyphs it interprets. Each open document lives on its own thread; callers await
 //! replies, and a request whose caller stopped waiting is skipped.
 
 mod hayro_backend;
@@ -124,8 +124,6 @@ pub enum Engine {
 pub struct Info {
     pub engine: Engine,
     pub pages: Vec<PageSize>,
-    /// Whether text selection and find are available.
-    pub has_text: bool,
 }
 
 /// One open document, owned by the thread its renderer runs on.
@@ -188,14 +186,7 @@ impl Document {
                     }
                 };
                 let pages = renderer.page_sizes();
-                let has_text = engine == Engine::Pdfium;
-                opened
-                    .send(Ok(Info {
-                        engine,
-                        pages,
-                        has_text,
-                    }))
-                    .ok();
+                opened.send(Ok(Info { engine, pages })).ok();
                 for job in receiver {
                     job(renderer.as_mut());
                 }
