@@ -152,6 +152,37 @@ fn attachments(notebook: &Notebook) -> std::path::PathBuf {
 const GONE: &str = "attachments/gone.png";
 
 #[gpui::test]
+fn an_animated_gif_shows_every_frame(cx: &mut TestAppContext) {
+    let mut gif = Vec::new();
+    {
+        let mut encoder = image::codecs::gif::GifEncoder::new(&mut gif);
+        for color in [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]] {
+            encoder
+                .encode_frame(image::Frame::from_parts(
+                    image::RgbaImage::from_pixel(4, 2, image::Rgba(color)),
+                    0,
+                    0,
+                    image::Delay::from_numer_denom_ms(80, 1),
+                ))
+                .unwrap();
+        }
+    }
+    let (notebook, _) = open_with_attachments(
+        &[("spin.gif", gif)],
+        |local| format!("- ![Spin]({})\n", local[0]),
+        cx,
+    );
+    let editor = open_in_write(&notebook, 1, cx);
+    let image = cx.update(|cx| crate::media::images(editor.read(cx))[0].read(cx).image());
+    let image = image.expect("the animation loaded");
+    assert_eq!(image.frame_count(), 3);
+    assert_eq!(
+        std::time::Duration::from(image.delay(1)),
+        std::time::Duration::from_millis(80)
+    );
+}
+
+#[gpui::test]
 fn pictures_refit_their_blocks_when_the_window_narrows_and_widens(cx: &mut TestAppContext) {
     let (notebook, _) = open_with_attachments(
         &[("wide.png", png(1200, 400))],

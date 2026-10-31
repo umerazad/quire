@@ -72,7 +72,10 @@ impl MediaCache {
             cache.entries.remove(&key);
             return;
         };
-        let size = image.image.as_bytes(0).map_or(0, <[u8]>::len);
+        let size = (0..image.image.frame_count())
+            .filter_map(|frame| image.image.as_bytes(frame))
+            .map(<[u8]>::len)
+            .sum();
         cache.bytes += size;
         cache.ready.push_back(key.clone());
         cache.entries.insert(key, Entry::Ready(image, size));
@@ -139,7 +142,7 @@ pub(crate) fn image(source: &MediaSource, files: Option<&Files>, cx: &mut App) -
                         .background_spawn(async move { decode(&bytes, &Limits::default()) })
                         .await?;
                     Ok(Arc::new(LoadedImage {
-                        image: Arc::new(render_image(decoded.bitmap)?),
+                        image: Arc::new(render_frames(decoded.frames)?),
                         natural: decoded.natural,
                     }))
                 }
@@ -157,9 +160,29 @@ pub(crate) fn image(source: &MediaSource, files: Option<&Files>, cx: &mut App) -
 
 /// A GPUI image from a BGRA bitmap.
 pub(crate) fn render_image(bitmap: Bitmap) -> Result<RenderImage, MediaError> {
-    let (width, height) = (bitmap.width, bitmap.height);
-    image::RgbaImage::from_raw(width, height, bitmap.bgra)
-        .map(|buffer| RenderImage::new(vec![image::Frame::new(buffer)]))
+    render_frames(vec![quire_media::images::Frame {
+        bitmap,
+        delay: std::time::Duration::ZERO,
+    }])
+}
+
+/// A GPUI image from BGRA frames, which GPUI animates when there is more than one.
+fn render_frames(frames: Vec<quire_media::images::Frame>) -> Result<RenderImage, MediaError> {
+    frames
+        .into_iter()
+        .map(|frame| {
+            let (width, height) = (frame.bitmap.width, frame.bitmap.height);
+            image::RgbaImage::from_raw(width, height, frame.bitmap.bgra).map(|buffer| {
+                image::Frame::from_parts(
+                    buffer,
+                    0,
+                    0,
+                    image::Delay::from_saturating_duration(frame.delay),
+                )
+            })
+        })
+        .collect::<Option<Vec<_>>>()
+        .map(RenderImage::new)
         .ok_or_else(|| {
             MediaError::Failed(
                 "A decoded picture had the wrong size. Retry, or open it in the system viewer."
