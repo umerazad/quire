@@ -5,6 +5,9 @@ use crate::{
     sync::format::page_id_for_path,
 };
 use sqlez::connection::Connection;
+
+mod full_disk;
+mod queries;
 use std::{
     sync::{
         Arc,

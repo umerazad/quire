@@ -84,12 +84,7 @@ pub(super) fn copy_hashed(source: &Path, target: &Path) -> Result<(String, u64)>
             break;
         }
         hash.update(&buffer[..count]);
-        output.write_all(&buffer[..count]).with_context(|| {
-            format!(
-                "Cannot write {}. Check free space on that drive and retry.",
-                target.display()
-            )
-        })?;
+        write(&mut output, &buffer[..count], target)?;
         size += count as u64;
     }
     output.sync_all().with_context(|| {
@@ -99,6 +94,44 @@ pub(super) fn copy_hashed(source: &Path, target: &Path) -> Result<(String, u64)>
         )
     })?;
     Ok((format!("{:x}", hash.finalize()), size))
+}
+
+/// Writes `bytes` to the file at `target`, saying plainly when its drive is full.
+pub(super) fn write(output: &mut File, bytes: &[u8], target: &Path) -> Result<()> {
+    write_within_space(output, bytes).map_err(|error| {
+        let advice = if error.kind() == io::ErrorKind::StorageFull {
+            "The drive is full. Free space on it, or choose a folder on another drive, then retry."
+        } else {
+            "Check free space and write access on that drive, then retry."
+        };
+        anyhow::Error::new(error).context(format!("Cannot write {}. {advice}", target.display()))
+    })
+}
+
+#[cfg(not(test))]
+fn write_within_space(output: &mut File, bytes: &[u8]) -> io::Result<()> {
+    output.write_all(bytes)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Bytes this thread may still write before its drive reports itself full, in tests.
+    pub(super) static FREE_SPACE: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Writes as a drive with [`FREE_SPACE`] bytes left would: what fits, then a full-drive error.
+#[cfg(test)]
+fn write_within_space(output: &mut File, bytes: &[u8]) -> io::Result<()> {
+    let Some(free) = FREE_SPACE.get() else {
+        return output.write_all(bytes);
+    };
+    let fits = bytes.len().min(usize::try_from(free).unwrap_or(usize::MAX));
+    output.write_all(&bytes[..fits])?;
+    FREE_SPACE.set(Some(free - fits as u64));
+    if fits < bytes.len() {
+        return Err(io::Error::from(io::ErrorKind::StorageFull));
+    }
+    Ok(())
 }
 
 /// Creates `path` and any missing parents, syncing each new entry into its parent folder.
