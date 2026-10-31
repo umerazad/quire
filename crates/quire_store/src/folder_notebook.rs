@@ -108,8 +108,13 @@ pub struct FolderNotebook {
     clock: Box<dyn Fn() -> i64>,
     /// Where deletions go; None refuses them.
     trash: Option<Trash>,
+    /// Stops a change across notes before the step with this index, or after every step at the
+    /// step count.
     #[cfg(test)]
     interrupt_at: std::cell::Cell<Option<usize>>,
+    /// Stops a change across notes once every new text is staged, before history is recorded.
+    #[cfg(test)]
+    interrupt_staged: std::cell::Cell<bool>,
 }
 
 fn system_clock() -> i64 {
@@ -205,6 +210,8 @@ impl FolderNotebook {
             trash: None,
             #[cfg(test)]
             interrupt_at: std::cell::Cell::default(),
+            #[cfg(test)]
+            interrupt_staged: std::cell::Cell::default(),
         };
         notebook.listing();
         let mut notices = notebook.resume();

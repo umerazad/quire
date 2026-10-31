@@ -507,6 +507,117 @@ fn an_interrupted_rename_finishes_on_the_next_open_from_every_step() {
 }
 
 #[test]
+fn a_rename_interrupted_at_each_batch_boundary_finishes_once_with_history_kept_once() {
+    // Staged: every new text is durable beside its note, nothing renamed, no history yet.
+    // Step 0: history recorded, nothing renamed. Step 3 (the step count): every note renamed
+    // and archived, folders not yet synced and drafts not settled.
+    for (staged, step) in [(true, None), (false, Some(0)), (false, Some(3))] {
+        let opened = fixture(&[("Old.md", OLD), ("Links.md", LINKS)]);
+        opened.notebook.interrupt_staged.set(staged);
+        opened.notebook.interrupt_at.set(step);
+        let error = opened
+            .notebook
+            .save_many_if_heads(&rename_edits())
+            .unwrap_err();
+        assert!(error.to_string().contains("Injected interruption"));
+        assert_eq!(journals(&opened.state).len(), 1, "{step:?}");
+        let expected: &[&str] = if step == Some(3) {
+            &["Links.md", "New.md"]
+        } else {
+            &["Links.md", "Old.md"]
+        };
+        assert_eq!(
+            entries(&opened.folder),
+            expected,
+            "{step:?}: no staged file is left beside the notes"
+        );
+
+        let reopened = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+        assert_eq!(reopened.notices().len(), 1, "{step:?}");
+        assert!(reopened.notices()[0].starts_with("Finished an interrupted change"));
+        assert_renamed(&opened.folder, &opened.state, &reopened);
+        let links = reopened.revisions("Links.md").unwrap();
+        assert_eq!(links.len(), 1, "{step:?}: the replaced links are kept once");
+        assert_eq!(
+            reopened.revision_text("Links.md", links[0].id).unwrap(),
+            LINKS
+        );
+        let again = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+        assert!(again.notices().is_empty(), "{step:?}: not replayed");
+    }
+}
+
+/// Full syncs flush the drive's whole cache on macOS and cost milliseconds each, so a change
+/// across notes makes a fixed number of them however many notes it writes.
+#[cfg(target_vendor = "apple")]
+#[test]
+fn a_change_across_notes_makes_the_same_number_of_full_syncs_for_any_note_count() {
+    use crate::markdown_import::SourcePage;
+    let syncs = |count: usize| {
+        let opened = fixture(&[]);
+        let pages: Vec<SourcePage> = (0..count)
+            .map(|index| SourcePage {
+                path: format!("Folder {}/Note {index}.md", index % 2),
+                text: format!("- note {index}\n"),
+            })
+            .collect();
+        let before = files::FULL_SYNCS.with(std::cell::Cell::get);
+        opened.notebook.import_pages(&pages, 1).unwrap();
+        let imported = files::FULL_SYNCS.with(std::cell::Cell::get) - before;
+        let edits: Vec<Edit> = pages
+            .iter()
+            .map(|page| Edit {
+                recovery: None,
+                ..edit(
+                    &page.path,
+                    &format!("{}- edited\n", page.text),
+                    &[revision(&page.text)],
+                )
+            })
+            .collect();
+        let before = files::FULL_SYNCS.with(std::cell::Cell::get);
+        let saved = opened.notebook.save_many_if_heads(&edits).unwrap();
+        assert!(matches!(saved, CheckedSaves::Saved(acks) if acks.len() == count));
+        let edited = files::FULL_SYNCS.with(std::cell::Cell::get) - before;
+        (imported, edited)
+    };
+    let few = syncs(4);
+    assert_eq!(syncs(60), few, "full syncs do not grow with the note count");
+    assert!(
+        few.0 <= 6 && few.1 <= 4,
+        "journal file and folder, two new folders, and one barrier per phase: {few:?}"
+    );
+}
+
+#[test]
+fn recovery_applies_the_steps_before_one_that_changed_and_stops_there() {
+    let opened = fixture(&[("Old.md", OLD), ("Links.md", LINKS)]);
+    opened.notebook.interrupt_at.set(Some(0));
+    opened
+        .notebook
+        .save_many_if_heads(&rename_edits())
+        .unwrap_err();
+    fs::write(opened.folder.join("Links.md"), "- edited elsewhere\n").unwrap();
+
+    let reopened = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    assert!(reopened.notices()[0].contains("needs review"));
+    assert_eq!(
+        fs::read_to_string(opened.folder.join("New.md")).unwrap(),
+        RENAMED,
+        "the step before the changed note is applied"
+    );
+    assert_eq!(
+        fs::read_to_string(opened.folder.join("Links.md")).unwrap(),
+        "- edited elsewhere\n"
+    );
+    assert_eq!(
+        fs::read_to_string(opened.folder.join("Old.md")).unwrap(),
+        OLD
+    );
+    assert_eq!(journals(&opened.state).len(), 1);
+}
+
+#[test]
 fn an_interrupted_rename_never_overwrites_a_note_changed_before_recovery() {
     let opened = fixture(&[("Old.md", OLD), ("Links.md", LINKS)]);
     opened.notebook.interrupt_at.set(Some(1));
