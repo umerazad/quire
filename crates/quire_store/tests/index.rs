@@ -998,3 +998,126 @@ fn text_hits_find_substrings_in_unsaved_text_up_to_eight_per_page() -> Result<()
     );
     Ok(())
 }
+
+/// Breaks the `blocks` table's root page, which opening the index never reads.
+fn damage_blocks(file: &Path) -> Result<()> {
+    let connection = sqlez::connection::Connection::open_file(file.to_str().unwrap());
+    let root: i64 =
+        connection.select_row("SELECT rootpage FROM sqlite_schema WHERE name='blocks'")?()?
+            .unwrap();
+    drop(connection);
+    let mut bytes = std::fs::read(file)?;
+    let page_size = match u16::from_be_bytes([bytes[16], bytes[17]]) {
+        1 => 65536,
+        size => size as usize,
+    };
+    bytes[(root as usize - 1) * page_size] = 0x01;
+    std::fs::write(file, bytes)?;
+    Ok(())
+}
+
+/// Copies the index file's size and times into its seal, as unnoticed media damage would leave it.
+fn forge_seal(file: &Path) -> Result<()> {
+    let metadata = std::fs::metadata(file)?;
+    let nanos = |time: std::time::SystemTime| {
+        time.duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    };
+    use std::os::unix::fs::MetadataExt as _;
+    let changed = (metadata.ctime() as i128) * 1_000_000_000 + metadata.ctime_nsec() as i128;
+    std::fs::write(
+        file.with_file_name("query-index.sqlite-sealed"),
+        format!(
+            "{}:{}:{changed}",
+            metadata.len(),
+            nanos(metadata.modified()?)
+        ),
+    )?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_sealed_index_opens_without_a_full_scan_until_its_file_changes() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    let names: Vec<String> = (0..40).map(|n| format!("P{n}.md")).collect();
+    for (n, name) in names.iter().enumerate() {
+        save(&store, &format!("p{n}"), name, "text")?;
+    }
+    let analysis = PageIndex {
+        blocks: (0..50).map(|n| block(None, n * 10)).collect(),
+        ..Default::default()
+    };
+    let analyses: Vec<(&str, PageIndex)> = names
+        .iter()
+        .map(|name| (name.as_str(), analysis.clone()))
+        .collect();
+    let file = root.path().join("query-index.sqlite");
+    let seal = root.path().join("query-index.sqlite-sealed");
+
+    let index = QueryIndex::open(&database, config(1))?;
+    analyze_all(&index, &analyses)?;
+    assert!(index.seal()?);
+    assert!(
+        index.seal()?,
+        "sealing an unchanged index again is harmless"
+    );
+    drop(index);
+    assert!(seal.exists());
+    let index = QueryIndex::open(&database, config(1))?;
+    assert_eq!(index.unanalyzed()?, 0);
+    drop(index);
+
+    damage_blocks(&file)?;
+    let index = QueryIndex::open(&database, config(1))?;
+    assert_eq!(
+        index.unanalyzed()?,
+        40,
+        "a sealed file that changed is scanned, found damaged, and rebuilt"
+    );
+    analyze_all(&index, &analyses)?;
+    assert!(index.seal()?);
+    drop(index);
+
+    damage_blocks(&file)?;
+    forge_seal(&file)?;
+    let index = QueryIndex::open(&database, config(1))?;
+    assert_eq!(
+        index.unanalyzed()?,
+        0,
+        "a file matching its seal opens without the full-file scan"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_crash_after_unsealed_changes_brings_back_the_full_scan() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "a", "A.md", "text")?;
+    let analysis = PageIndex {
+        blocks: vec![block(None, 0)],
+        ..Default::default()
+    };
+    let file = root.path().join("query-index.sqlite");
+    let index = QueryIndex::open(&database, config(1))?;
+    analyze_all(&index, &[("A.md", analysis)])?;
+    assert!(index.seal()?);
+    save(&store, "b", "B.md", "text")?;
+    analyze_all(&index, &[])?;
+    // The process dies with the change only in the write-ahead log.
+    std::mem::forget(index);
+
+    damage_blocks(&file)?;
+    forge_seal(&file)?;
+    let index = QueryIndex::open(&database, config(1))?;
+    assert_eq!(
+        index.unanalyzed()?,
+        2,
+        "a seal with changes waiting in the log is not trusted, so the damage is found"
+    );
+    Ok(())
+}

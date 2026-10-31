@@ -180,6 +180,9 @@ impl IndexSync {
         }
         let (generation, remaining) =
             ask(client.with_generation(|index| index.unanalyzed())).await?;
+        if remaining == 0 {
+            ask(client.seal()).await?;
+        }
         Ok((remaining, generation))
     }
 
@@ -461,6 +464,31 @@ pub(crate) mod tests {
         );
         cx.run_until_parked();
         assert_eq!(told.get(), 2, "the first batch and the finished index");
+    }
+
+    #[gpui::test]
+    async fn an_idle_index_is_sealed_so_the_next_open_skips_its_full_scan(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("local.sqlite");
+        let store = NotebookStore::open(&database, "nb", "local").unwrap();
+        save(&store, "Page", "- text\n");
+        let sealed = root.path().join("query-index.sqlite-sealed");
+        let _sync = cx
+            .update(|cx| {
+                IndexSync::spawn(database.clone(), default_config(DailyCalendar::utc()), cx)
+            })
+            .unwrap();
+        crate::test_wait::until(
+            cx,
+            Duration::from_millis(2),
+            crate::test_wait::park,
+            |_| sealed.exists(),
+            |_| "the idle index to be sealed".into(),
+        );
+        let log = root.path().join("query-index.sqlite-wal");
+        assert_eq!(std::fs::metadata(log).map_or(0, |log| log.len()), 0);
     }
 }
 

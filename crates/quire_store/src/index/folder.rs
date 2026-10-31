@@ -28,7 +28,7 @@ fn key(document: &DiskDocument, page: &str) -> String {
 
 /// Size, modification time, and (on Unix) change time; a tool that restores a modification time
 /// cannot restore the change time.
-fn stamp(path: &Path) -> Option<String> {
+pub(super) fn stamp(path: &Path) -> Option<String> {
     let metadata = std::fs::metadata(path).ok()?;
     let nanos = |time: std::io::Result<std::time::SystemTime>| {
         time.ok()

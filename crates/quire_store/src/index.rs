@@ -138,6 +138,9 @@ pub struct IndexConfig {
 
 pub struct QueryIndex {
     connection: Connection,
+    path: PathBuf,
+    /// The index file stamp last recorded as consistent; see [`QueryIndex::seal`].
+    sealed: RefCell<Option<String>>,
     layout: DailyLayout,
     calendar: DailyCalendar,
     parser: DailyParser,
@@ -202,6 +205,8 @@ impl QueryIndex {
         };
         let index = Self {
             connection,
+            path: path.to_owned(),
+            sealed: RefCell::default(),
             collator: icu_collator::Collator::try_new(Default::default(), Default::default())
                 .context(
                     "Cannot load page sort order data. Rebuild Quire with its locked ICU data.",
@@ -218,6 +223,21 @@ impl QueryIndex {
         overlay::create(&index.connection)?;
         index.apply_layout()?;
         Ok(index)
+    }
+
+    /// Moves committed changes from the write-ahead log into the index file and records its
+    /// stamp, so the next open skips the full-file integrity scan, which reads every page of the file. Call it
+    /// when the index is idle; it costs a stat and an empty checkpoint when nothing changed.
+    /// Returns whether the index is now sealed.
+    pub fn seal(&self) -> Result<bool> {
+        let sealed = schema::seal(
+            &self.connection,
+            &self.path,
+            self.sealed.borrow().as_deref(),
+        )?;
+        let done = sealed.is_some();
+        *self.sealed.borrow_mut() = sealed;
+        Ok(done)
     }
 
     fn transaction<T>(&self, run: impl FnOnce() -> Result<T>) -> Result<T> {
@@ -545,6 +565,9 @@ impl Client<QueryIndex> {
     }
     pub fn unanalyzed(&self) -> Answer<usize> {
         self.request(64, QueryIndex::unanalyzed)
+    }
+    pub fn seal(&self) -> Answer<bool> {
+        self.request(64, QueryIndex::seal)
     }
     pub fn put(&self, revision: String, analysis: PageIndex) -> Answer<bool> {
         let bytes = 256 + serde_json::to_vec(&analysis).map_or(0, |data| data.len());
