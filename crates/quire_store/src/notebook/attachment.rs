@@ -11,15 +11,7 @@ use std::{
     path::Path,
 };
 
-pub(super) fn verify_file(path: &Path, name: &str) -> Result<(String, i64)> {
-    let expected = format::attachment_hash(name)
-        .context("Invalid attachment name. Use a content-hashed attachment filename.")?;
-    let metadata = fs::symlink_metadata(path)
-        .with_context(|| format!("Attachment {name} is missing. Download it before retrying."))?;
-    ensure!(
-        metadata.is_file(),
-        "Attachment {name} is not an ordinary file. Restore its original bytes before retrying."
-    );
+fn hash_file(path: &Path) -> Result<String> {
     let mut file = File::open(path)?;
     let mut hash = Sha256::new();
     let mut buffer = [0; 65536];
@@ -30,7 +22,19 @@ pub(super) fn verify_file(path: &Path, name: &str) -> Result<(String, i64)> {
         }
         hash.update(&buffer[..count]);
     }
-    let hash = format!("{:x}", hash.finalize());
+    Ok(format!("{:x}", hash.finalize()))
+}
+
+pub(super) fn verify_file(path: &Path, name: &str) -> Result<(String, i64)> {
+    let expected = format::attachment_hash(name)
+        .context("Invalid attachment name. Use a content-hashed attachment filename.")?;
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("Attachment {name} is missing. Download it before retrying."))?;
+    ensure!(
+        metadata.is_file(),
+        "Attachment {name} is not an ordinary file. Restore its original bytes before retrying."
+    );
+    let hash = hash_file(path)?;
     ensure!(
         hash == expected,
         "Attachment {name} failed its hash check. Preserve the damaged file and restore its original bytes before retrying."
@@ -44,6 +48,32 @@ impl NotebookStore {
     pub fn attach(&self, data: &[u8], original: &str) -> Result<String> {
         let name = format::attachment_file_name(data, original);
         self.cache_attachment(&name, data)?;
+        Ok(format!("attachments/{name}"))
+    }
+
+    /// Attaches an ordinary file by streaming it, so its size never sits in memory. Returns the
+    /// same Markdown reference as [`Self::attach`].
+    pub fn attach_file(&self, source: &Path, original: &str) -> Result<String> {
+        self.require_usable()?;
+        let source = &fs::canonicalize(source).with_context(|| {
+            format!(
+                "Cannot find {}. Check that the file still exists, then attach it again.",
+                source.display()
+            )
+        })?;
+        let metadata = fs::metadata(source).with_context(|| {
+            format!(
+                "Cannot read {}. Check that the file exists and is readable, then attach it again.",
+                source.display()
+            )
+        })?;
+        ensure!(
+            metadata.is_file(),
+            "{} is not an ordinary file. Choose a file, not a folder or device.",
+            source.display()
+        );
+        let name = format::attachment_name_for_hash(&hash_file(source)?, original);
+        self.cache_attachment_file(&name, source)?;
         Ok(format!("attachments/{name}"))
     }
 

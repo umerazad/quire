@@ -24,7 +24,7 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     }
     theme_settings::init(theme::LoadThemes::JustBase, cx);
     crate::markdown::init(cx)?;
-    crate::media::bind_keys(cx);
+    crate::media::init(cx);
     release_channel::init(semver::Version::new(0, 1, 0), cx);
     editor::init(cx);
     vim::init_with_register_retention(cx);
@@ -383,7 +383,14 @@ impl Render for NotebookWindow {
             .when(!self.source_search.read(cx).is_dismissed(), |div| {
                 div.child(self.source_search.clone())
             })
-            .child(gpui::div().flex_1().min_h_0().child(self.source.clone()));
+            .child(
+                gpui::div()
+                    .flex_1()
+                    .min_h_0()
+                    .relative()
+                    .child(self.source.clone())
+                    .children(crate::media::attach::drop_target(&self.source, cx)),
+            );
         let message = self
             .semantic_excerpt
             .as_ref()
@@ -404,7 +411,14 @@ impl Render for NotebookWindow {
             .when(!self.second_search.read(cx).is_dismissed(), |div| {
                 div.child(self.second_search.clone())
             })
-            .child(gpui::div().flex_1().min_h_0().child(self.second.clone()));
+            .child(
+                gpui::div()
+                    .flex_1()
+                    .min_h_0()
+                    .relative()
+                    .child(self.second.clone())
+                    .children(crate::media::attach::drop_target(&self.second, cx)),
+            );
         gpui::div()
             .size_full()
             .on_action(cx.listener(Self::search_submit))

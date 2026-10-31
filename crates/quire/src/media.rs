@@ -5,6 +5,7 @@
 //! load too. Loading and decoding never block editing, and a source that fails shows a
 //! placeholder saying what to do.
 
+pub(crate) mod attach;
 mod image_view;
 pub(crate) mod load;
 mod pdf_view;
@@ -21,7 +22,6 @@ use image_view::ImageView;
 use language::BufferSnapshot;
 use multi_buffer::{Anchor, ToOffset};
 pub(crate) use pdf_view::PdfView;
-pub(crate) use pdf_view::bind_keys;
 use quire_core::markdown::Reference;
 use quire_media::{
     MediaError,
@@ -29,6 +29,12 @@ use quire_media::{
     source::{MediaKind, MediaTarget, media_kind, media_target},
 };
 use std::{any::TypeId, collections::HashMap, ops::Range, sync::Arc};
+
+/// Binds the PDF viewer keys and the attachment commands.
+pub(crate) fn init(cx: &mut gpui::App) {
+    pdf_view::bind_keys(cx);
+    attach::init(cx);
+}
 
 /// A media reference in a page's text.
 #[derive(Clone, Debug, PartialEq, Eq)]
