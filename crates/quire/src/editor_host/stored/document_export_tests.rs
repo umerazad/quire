@@ -150,6 +150,16 @@ async fn cancel_ends_the_run_and_writes_nothing(cx: &mut TestAppContext) {
                 )
             })
     });
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(3));
+    cx.run_until_parked();
+    let shown = label(&notebook, cx);
+    let seconds: u64 = shown
+        .strip_prefix("Claude Code is formatting Plan as PDF… ")
+        .and_then(|rest| rest.strip_suffix(" s"))
+        .and_then(|seconds| seconds.parse().ok())
+        .unwrap_or_else(|| panic!("unexpected status line {shown:?}"));
+    assert!(seconds >= 3, "the clock moved 3 s but {shown:?}");
     dispatch(&notebook, CancelExchange, cx);
     assert_eq!(
         finished(&notebook, cx),

@@ -27,10 +27,7 @@ use quire_core::{
 };
 use quire_media::files::Files;
 use settings::Settings as _;
-use std::{
-    path::PathBuf,
-    time::{Duration, Instant},
-};
+use std::{path::PathBuf, time::Duration};
 
 /// What the status line says while the CLI works, as the reference panel words it.
 fn running_label(backend: &str, title: &str, format: Format, seconds: u64, steps: usize) -> String {
@@ -225,19 +222,30 @@ async fn export(
         })
         .await
     });
-    let began = Instant::now();
+    let began = cx.background_executor().now();
     let mut steps = 0;
+    let second = |cx: &mut AsyncWindowContext| {
+        cx.background_executor()
+            .timer(Duration::from_secs(1))
+            .fuse()
+    };
+    let mut tick = second(cx);
     loop {
-        let tick = cx.background_executor().timer(Duration::from_secs(1));
         futures::select_biased! {
             update = received.next() => match update {
                 Some(Update::Tool { .. }) => steps += 1,
                 Some(_) => continue,
                 None => break,
             },
-            _ = tick.fuse() => {}
+            _ = tick => tick = second(cx),
         }
-        let label = running_label(backend, &title, format, began.elapsed().as_secs(), steps);
+        let label = running_label(
+            backend,
+            &title,
+            format,
+            (cx.background_executor().now() - began).as_secs(),
+            steps,
+        );
         exchange.update(cx, |exchange, cx| exchange.progress(label, true, cx));
     }
     let bytes = match running.await {
