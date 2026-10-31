@@ -83,6 +83,8 @@ impl LineWrapper {
         let mut width = px(0.);
         let mut first_non_whitespace_ix = None;
         let mut base_indent = None;
+        let mut hanging = false;
+        let mut leading_width = px(0.);
         let mut last_candidate_ix = 0;
         let mut last_candidate_width = px(0.);
         let mut last_wrap_ix = 0;
@@ -140,6 +142,7 @@ impl LineWrapper {
                     last_candidate_ix = ix;
                     last_candidate_width = width;
                 }
+                let in_prefix = first_non_whitespace_ix.is_none();
                 let item_width = match candidate {
                     WrapBoundaryCandidate::Char { character: c } => {
                         if c == '\n' {
@@ -154,9 +157,14 @@ impl LineWrapper {
                     }
                     WrapBoundaryCandidate::Element {
                         width: element_width,
-                        ..
+                        len_utf8,
                     } => {
-                        if first_non_whitespace_ix.is_none() {
+                        // An element that replaces no text, such as a list bullet drawn over
+                        // hidden markup, starts a hanging prefix: it and the elements and spaces
+                        // after it indent continuation rows, which then start under the text.
+                        if len_utf8 == 0 && in_prefix {
+                            hanging = true;
+                        } else if in_prefix && !hanging {
                             first_non_whitespace_ix = Some(ix);
                         }
 
@@ -165,6 +173,9 @@ impl LineWrapper {
                 };
 
                 width += item_width;
+                if in_prefix && first_non_whitespace_ix.is_none() {
+                    leading_width += item_width;
+                }
                 if width > wrap_width && grapheme_index > last_wrap_ix {
                     let wrap_at_candidate = last_candidate_ix > last_wrap_ix
                         && width - last_candidate_width <= wrap_width;
@@ -182,10 +193,12 @@ impl LineWrapper {
                     // do not receive ExtraColumns indentation and degrade into cascading short rows.
                     if base_indent.is_none() {
                         if let Some(first_non_whitespace_ix) = first_non_whitespace_ix {
-                            base_indent =
-                                Some(Self::MAX_INDENT.min(
-                                    first_non_whitespace_ix.saturating_sub(last_wrap_ix) as u32,
-                                ));
+                            let columns = if hanging {
+                                (leading_width / width_for_char(' ')).round() as u32
+                            } else {
+                                first_non_whitespace_ix.saturating_sub(last_wrap_ix) as u32
+                            };
+                            base_indent = Some(Self::MAX_INDENT.min(columns));
                         }
                     }
 
@@ -2064,6 +2077,59 @@ mod tests {
                 )
                 .collect::<Vec<_>>(),
             &[Boundary::new(4, 0), Boundary::new(8, 0)]
+        );
+    }
+
+    #[test]
+    fn test_hanging_prefix_indents_continuation_rows() {
+        let mut wrapper = build_wrapper();
+        let space_width = wrapper.width_for_char(' ');
+        let wrap_width = space_width * 12.0;
+        let wrap = |wrapper: &mut LineWrapper, fragments: &[LineFragment]| {
+            wrapper
+                .wrap_line(fragments, wrap_width, IndentAdjustment::SameIndent)
+                .collect::<Vec<_>>()
+        };
+
+        // Two spaces, a 3.4-column element that replaces no text, then a space: rows after the
+        // first start under the text, at round(2 + 3.4 + 1) columns.
+        assert_eq!(
+            wrap(
+                &mut wrapper,
+                &[
+                    LineFragment::text("  "),
+                    LineFragment::element(space_width * 3.4, 0),
+                    LineFragment::text(" aaaa bb cc dd"),
+                ],
+            ),
+            &[Boundary::new(8, 6), Boundary::new(14, 6)]
+        );
+
+        // An element that stands for text, such as a checkbox, after the hanging element is part
+        // of the prefix too: 3.4 + 1.6 + 1 columns.
+        assert_eq!(
+            wrap(
+                &mut wrapper,
+                &[
+                    LineFragment::element(space_width * 3.4, 0),
+                    LineFragment::element(space_width * 1.6, 3),
+                    LineFragment::text(" aaaa bb cc"),
+                ],
+            ),
+            &[Boundary::new(9, 6)]
+        );
+
+        // Without a hanging element, an element that stands for text is content, as before.
+        assert_eq!(
+            wrap(
+                &mut wrapper,
+                &[
+                    LineFragment::text("  "),
+                    LineFragment::element(space_width * 3.0, 1),
+                    LineFragment::text(" aaaa bb"),
+                ],
+            ),
+            &[Boundary::new(9, 2)]
         );
     }
 }

@@ -311,6 +311,10 @@
       "change": "Keep a highlighted chunk with empty text and an element renderer instead of dropping it while splitting invisibles, so empty-text fold placeholders render their element."
     },
     {
+      "path": "crates/gpui/src/text_system/line_wrapper.rs",
+      "change": "An element that replaces no text (len_utf8 == 0) before a line's first character starts a hanging prefix: its width and the elements and spaces after it, rounded to space widths, indent soft-wrapped rows, so a list item's rows hang under its text instead of its drawn bullet or checkbox. Lines without such an element wrap as before; covered by test_hanging_prefix_indents_continuation_rows."
+    },
+    {
       "path": "crates/editor/src/editor.rs",
       "change": "Let editor addons supply source-anchored interaction regions for the visible viewport, retaining native text layout and selection. Expose clipped fragment geometry to their renderers. Emit FoldsChanged when folds are added or removed, so hosts can follow fold state from any fold command."
     },
