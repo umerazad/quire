@@ -1,0 +1,1 @@
+{"enabled":true,"tested":true,"backend":"codex","paths":{"codex":"/opt/bin/codex"},"model":"gpt-5","writes":"apply","terminal":{"claude":"2.1.312"}}
