@@ -40,6 +40,9 @@ impl StoredWindow {
                     this.pages_deleted(pages, folder.as_deref(), window, cx)
                 }
                 FileDialogEvent::Renamed(renamed) => {
+                    if renamed.previous != renamed.page {
+                        this.page_moved(&renamed.previous, &renamed.page, window, cx);
+                    }
                     this.nav.renamed = Some(renamed.clone());
                     this.follow_rename(cx);
                     this.update_title(window, cx);
@@ -182,6 +185,45 @@ impl StoredWindow {
         if let Some(target) = self.selected_file() {
             self.ask_delete(target, window, cx);
         }
+    }
+
+    /// A folder notebook page renamed to another path has a new identity: its tabs, favorites,
+    /// recents, and history follow it, and the old open page, whose text is saved at the new
+    /// path, gives way to the page there.
+    fn page_moved(
+        &mut self,
+        from: &str,
+        to: &str,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let shown = self.shown_page(cx).is_some_and(|page| page == from);
+        if self
+            .nav
+            .side
+            .as_ref()
+            .is_some_and(|side| side.page.read(cx).id() == from)
+        {
+            self.nav.side = None;
+        }
+        self.nav.workspace.rename_page(from, to);
+        self.nav.history.rename_page(from, to);
+        if let Some(open) = self.session.borrow_mut().forget(from) {
+            if let Some(persistence) = open.read(cx).persistence().cloned() {
+                persistence.update(cx, |persistence, cx| persistence.retire(cx));
+            }
+            if let Ok(index) = &self.index {
+                index.update(cx, |index, cx| index.forget(&open, cx));
+            }
+            self.nav.editors.remove(&open.entity_id());
+            self.nav.watched.remove(&open.entity_id());
+        }
+        self.nav.references.remove(from);
+        if shown {
+            self.show(&Destination::page(to), window, cx);
+        }
+        self.folder_changed(None, cx);
+        self.persist(cx);
     }
 
     /// Closes tabs and forgets favorites, recents, history, open editors, and expanded folders

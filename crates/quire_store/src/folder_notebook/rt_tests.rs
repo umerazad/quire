@@ -303,3 +303,182 @@ fn typing_not_yet_saved_goes_to_the_trash_with_the_note() {
     assert_eq!(kept, ["- typed\n", "- disk\n"]);
     assert_eq!(opened.notebook.draft(&page).unwrap(), None);
 }
+
+const OLD: &str = "---\ntitle: \"Old\"\n---\n- body\n";
+const LINKS: &str = "- see [[Old]]\n";
+const RENAMED: &str = "---\ntitle: \"New\"\n---\n- body\n";
+const RELINKED: &str = "- see [[New]]\n";
+
+/// The writes a rename of `Old.md` to `New.md` plans: the moved page under its old identity at
+/// its new path, then each page whose links follow it.
+fn rename_edits() -> Vec<Edit> {
+    let plain = |path: &str, text: &str, base: &str| Edit {
+        recovery: None,
+        ..edit(path, text, &[revision(base)])
+    };
+    vec![
+        Edit {
+            page: page_id_for_path("Old.md"),
+            ..plain("New.md", RENAMED, OLD)
+        },
+        plain("Links.md", RELINKED, LINKS),
+    ]
+}
+
+fn retired(state: &Path) -> Vec<String> {
+    let folder = state.join("retired");
+    if !folder.exists() {
+        return Vec::new();
+    }
+    entries(&folder)
+        .into_iter()
+        .map(|name| fs::read_to_string(folder.join(name)).unwrap())
+        .collect()
+}
+
+fn journals(state: &Path) -> Vec<String> {
+    let folder = state.join("transactions");
+    if folder.exists() {
+        entries(&folder)
+    } else {
+        Vec::new()
+    }
+}
+
+fn assert_renamed(folder: &Path, state: &Path, notebook: &FolderNotebook) {
+    assert_eq!(fs::read_to_string(folder.join("New.md")).unwrap(), RENAMED);
+    assert_eq!(
+        fs::read_to_string(folder.join("Links.md")).unwrap(),
+        RELINKED
+    );
+    assert!(!folder.join("Old.md").exists());
+    assert_eq!(
+        retired(state),
+        [OLD],
+        "the old file is archived, never lost"
+    );
+    assert!(journals(state).is_empty());
+    let history: Vec<String> = notebook
+        .revisions("New.md")
+        .unwrap()
+        .iter()
+        .map(|revision| notebook.revision_text("New.md", revision.id).unwrap())
+        .collect();
+    assert!(
+        history.contains(&OLD.to_owned()),
+        "the new path keeps the old history"
+    );
+    assert_eq!(
+        notebook.heads(&page_id_for_path("Old.md")).unwrap(),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn a_rename_moves_the_file_and_rewrites_links_through_the_journal() {
+    let opened = fixture(&[
+        ("Old.md", OLD),
+        ("Links.md", LINKS),
+        ("Keep.md", "- keep\n"),
+    ]);
+    let saved = opened.notebook.save_many_if_heads(&rename_edits()).unwrap();
+    let CheckedSaves::Saved(acks) = saved else {
+        panic!("the rename must be saved");
+    };
+    assert_eq!(acks.len(), 2);
+    assert_eq!(acks[0].heads, [revision(RENAMED)]);
+    assert_renamed(&opened.folder, &opened.state, &opened.notebook);
+    assert_eq!(
+        fs::read_to_string(opened.folder.join("Keep.md")).unwrap(),
+        "- keep\n"
+    );
+}
+
+#[test]
+fn a_rename_never_replaces_a_file_whose_name_differs_only_in_case() {
+    for taken in ["new.md", "NEW.MD"] {
+        let opened = fixture(&[("Old.md", OLD), ("Links.md", LINKS), (taken, "- mine\n")]);
+        let error = opened
+            .notebook
+            .save_many_if_heads(&rename_edits())
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("already exists"), "{error:#}");
+        assert_eq!(
+            fs::read_to_string(opened.folder.join(taken)).unwrap(),
+            "- mine\n"
+        );
+        assert_eq!(
+            fs::read_to_string(opened.folder.join("Old.md")).unwrap(),
+            OLD
+        );
+        assert_eq!(
+            fs::read_to_string(opened.folder.join("Links.md")).unwrap(),
+            LINKS
+        );
+        assert!(journals(&opened.state).is_empty());
+    }
+}
+
+#[test]
+fn an_interrupted_rename_finishes_on_the_next_open_from_every_step() {
+    // Steps: 0 create New.md, 1 rewrite Links.md, 2 archive Old.md.
+    for step in 0..3 {
+        let opened = fixture(&[("Old.md", OLD), ("Links.md", LINKS)]);
+        opened.notebook.interrupt_at.set(Some(step));
+        let error = opened
+            .notebook
+            .save_many_if_heads(&rename_edits())
+            .unwrap_err();
+        assert!(error.to_string().contains("Injected interruption"));
+        assert_eq!(journals(&opened.state).len(), 1, "step {step}");
+        assert!(opened.folder.join("Old.md").exists(), "step {step}");
+
+        let reopened = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+        assert_eq!(reopened.notices().len(), 1);
+        assert!(
+            reopened.notices()[0].starts_with("Finished an interrupted change"),
+            "step {step}: {:?}",
+            reopened.notices()
+        );
+        assert_renamed(&opened.folder, &opened.state, &reopened);
+        let again = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+        assert!(
+            again.notices().is_empty(),
+            "a finished journal is not replayed"
+        );
+    }
+}
+
+#[test]
+fn an_interrupted_rename_never_overwrites_a_note_changed_before_recovery() {
+    let opened = fixture(&[("Old.md", OLD), ("Links.md", LINKS)]);
+    opened.notebook.interrupt_at.set(Some(1));
+    opened
+        .notebook
+        .save_many_if_heads(&rename_edits())
+        .unwrap_err();
+    fs::write(opened.folder.join("Links.md"), "- edited elsewhere\n").unwrap();
+
+    let reopened = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    let notices = reopened.notices();
+    assert_eq!(notices.len(), 1);
+    assert!(notices[0].contains("needs review"), "{notices:?}");
+    assert!(notices[0].contains("Links.md"), "{notices:?}");
+    assert_eq!(
+        fs::read_to_string(opened.folder.join("Links.md")).unwrap(),
+        "- edited elsewhere\n"
+    );
+    assert_eq!(
+        fs::read_to_string(opened.folder.join("Old.md")).unwrap(),
+        OLD
+    );
+    assert_eq!(
+        fs::read_to_string(opened.folder.join("New.md")).unwrap(),
+        RENAMED
+    );
+    assert_eq!(
+        journals(&opened.state).len(),
+        1,
+        "the journal stays for review"
+    );
+}

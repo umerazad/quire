@@ -98,6 +98,7 @@ impl FolderOptions {
                     cx,
                 );
                 this.watch_folder(cx);
+                this.load_folder_notices(cx);
                 this
             })
         })
@@ -175,6 +176,8 @@ pub(super) struct FolderView {
     comparing: bool,
     copying: Option<Task<()>>,
     error: Option<SharedString>,
+    /// What opening the folder found and did, such as finishing an interrupted rename.
+    pub(super) notices: Vec<SharedString>,
 }
 
 impl StoredWindow {
@@ -352,6 +355,56 @@ impl StoredWindow {
         cx.notify();
     }
 
+    /// Shows what opening the folder found and did, such as an interrupted rename finished.
+    pub(super) fn load_folder_notices(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(folder) = self.session.borrow().storage().folder().cloned() else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let notices = crate::query_index::ask(folder.notices()).await;
+            this.update(cx, |this, cx| {
+                match notices {
+                    Ok(notices) => this
+                        .folder
+                        .notices
+                        .extend(notices.into_iter().map(SharedString::from)),
+                    Err(error) => this.folder.error = Some(error.into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn render_folder_notices(
+        &self,
+        error: Option<SharedString>,
+        cx: &mut gpui::Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        if error.is_none() && self.folder.notices.is_empty() {
+            return None;
+        }
+        Some(
+            gpui::div()
+                .p_2()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .when_some(error, |div, error| div.child(Label::new(error)))
+                .children(self.folder.notices.iter().cloned().map(Label::new))
+                .when(!self.folder.notices.is_empty(), |div| {
+                    div.child(Button::new("dismiss-folder-notices", "Dismiss").on_click(
+                        cx.listener(|this, _, _, cx| {
+                            this.folder.notices.clear();
+                            cx.notify();
+                        }),
+                    ))
+                })
+                .into_any_element(),
+        )
+    }
+
     /// The banner shown while the active page's edits conflict with its file.
     pub(super) fn render_folder_conflict(
         &mut self,
@@ -360,7 +413,7 @@ impl StoredWindow {
         let persistence = self.conflicted(cx);
         let error = self.folder.error.clone();
         if persistence.is_none() {
-            return error.map(|error| gpui::div().p_2().child(error).into_any_element());
+            return self.render_folder_notices(error, cx);
         }
         let persistence = persistence?;
         let conflict = persistence.read(cx).conflict()?.clone();

@@ -12,6 +12,7 @@
 mod deletion;
 mod files;
 mod history;
+mod journal;
 mod settings;
 
 pub use deletion::{NO_TRASH, Trash};
@@ -91,9 +92,15 @@ pub struct FolderNotebook {
     /// purposes never update it, so a change they see is still reported.
     reported: RefCell<HashMap<String, String>>,
     warnings: RefCell<Vec<String>>,
+    /// What opening found and did, such as finishing an interrupted rename, for the user to read.
+    notices: RefCell<Vec<String>>,
+    /// Quire's state folder for this notebook.
+    state: PathBuf,
     clock: Box<dyn Fn() -> i64>,
     /// Where deletions go; None refuses them.
     trash: Option<Trash>,
+    #[cfg(test)]
+    interrupt_at: std::cell::Cell<Option<usize>>,
 }
 
 fn system_clock() -> i64 {
@@ -181,9 +188,15 @@ impl FolderNotebook {
             known: RefCell::default(),
             reported: RefCell::default(),
             warnings: RefCell::default(),
+            notices: RefCell::default(),
+            state: state.to_owned(),
             clock,
             trash: None,
+            #[cfg(test)]
+            interrupt_at: std::cell::Cell::default(),
         };
+        notebook.listing();
+        *notebook.notices.borrow_mut() = notebook.resume();
         notebook.listing();
         Ok(notebook)
     }
@@ -216,6 +229,11 @@ impl FolderNotebook {
 
     pub fn warnings(&self) -> Vec<String> {
         self.warnings.borrow().clone()
+    }
+
+    /// What opening found and did, such as finishing an interrupted rename.
+    pub fn notices(&self) -> Vec<String> {
+        self.notices.borrow().clone()
     }
 
     /// The path a page lives at, when the notebook has one.
@@ -527,33 +545,6 @@ impl FolderNotebook {
         }
     }
 
-    /// Saves every edit when each page's file still holds its edit's base, or reports the first
-    /// page that changed and writes nothing. Each file is replaced atomically; a crash part way
-    /// leaves some notes saved and the rest unchanged, never a partial note.
-    pub fn save_many_if_heads(&self, edits: &[Edit]) -> Result<CheckedSaves> {
-        let mut pages: Vec<&str> = edits.iter().map(|edit| edit.page.as_str()).collect();
-        pages.sort_unstable();
-        ensure!(
-            pages.windows(2).all(|pair| pair[0] != pair[1]),
-            "A change across pages must name each page once. Retry the change."
-        );
-        for edit in edits {
-            let heads = self.heads(&edit.page)?;
-            if heads != edit.base {
-                return Ok(CheckedSaves::HeadsChanged {
-                    page: edit.page.clone(),
-                    heads,
-                });
-            }
-            self.preflight(edit)?;
-        }
-        edits
-            .iter()
-            .map(|edit| self.save(edit))
-            .collect::<Result<_>>()
-            .map(CheckedSaves::Saved)
-    }
-
     /// Rereads `paths` and reports each note whose contents differ from what was last read or
     /// written here, including notes that disappeared. Paths outside the notebook's Markdown
     /// files are ignored.
@@ -713,6 +704,9 @@ impl Client<FolderNotebook> {
     }
     pub fn rescan(&self) -> Answer<Vec<FolderChange>> {
         self.request(128, FolderNotebook::rescan)
+    }
+    pub fn notices(&self) -> Answer<Vec<String>> {
+        self.request(128, |notebook| Ok(notebook.notices()))
     }
     pub fn listing(&self) -> Answer<Listing> {
         self.request(128, |notebook| Ok(notebook.listing()))

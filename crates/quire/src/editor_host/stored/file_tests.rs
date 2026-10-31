@@ -235,7 +235,7 @@ fn stored_text(store: &NotebookStore, page: &str) -> (String, String) {
     (path, text)
 }
 
-fn buffer_text(notebook: &Notebook, page: &str, cx: &mut TestAppContext) -> String {
+pub(super) fn buffer_text(notebook: &Notebook, page: &str, cx: &mut TestAppContext) -> String {
     read(notebook, cx, |view, cx| {
         let open = view.session.borrow().open_pages();
         let open = open.iter().find(|open| open.read(cx).id() == page).unwrap();
@@ -244,7 +244,7 @@ fn buffer_text(notebook: &Notebook, page: &str, cx: &mut TestAppContext) -> Stri
     })
 }
 
-fn rename_to(notebook: &Notebook, name: &str, cx: &mut TestAppContext) {
+pub(super) fn rename_to(notebook: &Notebook, name: &str, cx: &mut TestAppContext) {
     wait_until(cx, "the rename dialog", |cx| {
         read(notebook, cx, |view, _| view.nav.dialog.is_some())
     });
@@ -430,6 +430,7 @@ fn a_rename_is_followed_until_the_page_list_shows_its_new_title(cx: &mut TestApp
         date: None,
     };
     let renamed = crate::file_actions::Renamed {
+        previous: "o".into(),
         page: "o".into(),
         path: "New.md".into(),
         title: "New".into(),

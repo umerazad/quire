@@ -230,3 +230,31 @@ fn deleting_a_folder_forgets_it_and_the_folders_inside_it() {
     workspace.forget_folder("Projects");
     assert_eq!(workspace.expanded, ["Projects2", "Other/Projects"]);
 }
+
+#[test]
+fn a_page_whose_identity_changed_keeps_its_tabs_favorites_and_history() {
+    let mut workspace = Workspace::default();
+    workspace.visit(page("new"));
+    workspace.visit(page("old"));
+    workspace.visit(page("keep"));
+    workspace.visit(page("old"));
+    workspace.toggle_favorite(page("old"));
+    workspace.side = Some("old".into());
+    workspace.set_oldest_first("old", true);
+    workspace.rename_page("old", "new");
+    assert_eq!(workspace.tabs, [page("new"), page("keep")]);
+    assert_eq!(workspace.recent, [page("new"), page("keep")]);
+    assert_eq!(workspace.favorites, [page("new")]);
+    assert_eq!(workspace.active, Some(page("new")));
+    assert_eq!(workspace.side.as_deref(), Some("new"));
+    assert!(workspace.is_oldest_first("new"));
+
+    let mut history = History::default();
+    for id in ["old", "keep", "old"] {
+        history.push(page(id));
+    }
+    history.rename_page("old", "new");
+    assert_eq!(history.current(), Some(&page("new")));
+    assert_eq!(history.back(), Some(page("keep")));
+    assert_eq!(history.back(), Some(page("new")));
+}

@@ -1,6 +1,7 @@
 //! Deleting and renaming pages. A deletion plans what goes and how many links break, then
-//! writes every tombstone or none; a rename rewrites every link that follows the page and writes
-//! every page or none. Both go through `page_writes`.
+//! writes every tombstone or none, or in a folder notebook moves the files to the system Trash; a
+//! rename rewrites every link that follows the page and writes every page or none, journaled in a
+//! folder notebook. Both go through `page_writes`.
 
 use crate::{
     notebook_backend::NotebookBackend,
@@ -14,7 +15,10 @@ use quire_core::{
     relocate::{MISSING_SOURCE, Relocation, relocate_page, rename_target},
     source_text::SourceText,
 };
-use quire_store::index::{DeletionTarget, IndexClient};
+use quire_store::{
+    index::{DeletionTarget, IndexClient},
+    sync::format::page_id_for_path,
+};
 use std::collections::{BTreeSet, HashMap};
 
 pub const STALE_DELETION: &str =
@@ -103,8 +107,6 @@ impl DeletionPlan {
     }
 }
 
-pub const FOLDER_RENAME: &str = "Renaming pages is not available in folder notebooks yet. Rename the file in Finder or Explorer; Quire picks up the change.";
-
 /// Reads what a deletion takes from the index and each page's current text, open or stored.
 pub fn plan_deletion(
     target: Target,
@@ -187,6 +189,9 @@ pub const STALE_RENAME: &str =
 /// Where a renamed page now lives and the title the page list will show for it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Renamed {
+    /// The page's identity before the rename. A folder notebook's page identity follows its
+    /// path, so there it differs from `page`.
+    pub previous: String,
     pub page: String,
     pub path: String,
     pub title: String,
@@ -209,9 +214,6 @@ pub fn plan_rename(
     storage: NotebookBackend,
     cx: &mut App,
 ) -> Task<Result<Option<RenamePlan>, String>> {
-    if storage.folder().is_some() {
-        return Task::ready(Err(FOLDER_RENAME.into()));
-    }
     cx.spawn(async move |cx| {
         let Some(source) = page_writes::read(page.clone(), &open_pages, &storage, cx).await? else {
             return Err(MISSING_SOURCE.into());
@@ -286,9 +288,14 @@ pub fn plan_rename(
         let Some(title) = title else {
             return Err(MISSING_SOURCE.into());
         };
+        let renamed_page = match storage.folder() {
+            Some(_) => page_id_for_path(&relocation.target),
+            None => page.clone(),
+        };
         Ok(Some(RenamePlan {
             renamed: Renamed {
-                page,
+                previous: page,
+                page: renamed_page,
                 path: relocation.target,
                 title,
             },

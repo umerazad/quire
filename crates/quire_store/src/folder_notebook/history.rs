@@ -124,6 +124,25 @@ pub(super) fn text(connection: &Connection, path: &str, id: i64) -> Result<Optio
     row.map(|(codec, data)| decode(&codec, &data)).transpose()
 }
 
+/// Whether `path` has a saved version with `revision`.
+pub(super) fn has(connection: &Connection, path: &str, revision: &str) -> Result<bool> {
+    let found: Option<i64> = connection
+        .select_row_bound("SELECT 1 FROM history WHERE path=? AND revision=? LIMIT 1")?(
+        (
+        path, revision,
+    )
+    )?;
+    Ok(found.is_some())
+}
+
+/// Gives a moved note the history of its old path, skipping rows it already has, as the
+/// reference `copyHistory` does.
+pub(super) fn copy(connection: &Connection, from: &str, to: &str) -> Result<()> {
+    connection.exec_bound(
+        "INSERT INTO history(path,content,revision,saved_at) SELECT ?,content,revision,saved_at FROM history AS old WHERE path=? AND NOT EXISTS(SELECT 1 FROM history AS dest WHERE dest.path=? AND dest.revision=old.revision AND dest.saved_at=old.saved_at)",
+    )?((to, from, to))
+}
+
 /// The newest saved text with `revision`, from any path, for reading an older base version.
 pub(super) fn by_revision(
     connection: &Connection,

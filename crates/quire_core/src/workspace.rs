@@ -282,6 +282,39 @@ impl Workspace {
         }
     }
 
+    /// Points every destination for page `from` at page `to`, for a page whose identity changed
+    /// with its path, as a renamed note in a folder notebook does.
+    pub fn rename_page(&mut self, from: &str, to: &str) {
+        let renamed = Destination::page(to);
+        let follow = |items: &mut Vec<Destination>| {
+            let mut seen = false;
+            items.retain_mut(|item| {
+                if item.page_id() == Some(from) || item == &renamed {
+                    let keep = !seen;
+                    seen = true;
+                    *item = renamed.clone();
+                    keep
+                } else {
+                    true
+                }
+            });
+        };
+        follow(&mut self.favorites);
+        follow(&mut self.recent);
+        follow(&mut self.tabs);
+        if self.active.as_ref().and_then(Destination::page_id) == Some(from) {
+            self.active = Some(renamed.clone());
+        }
+        for page in self.side.iter_mut().chain(&mut self.oldest_first) {
+            if page == from {
+                *page = to.to_owned();
+            }
+        }
+        if self.tasks.project.as_deref() == Some(from) {
+            self.tasks.project = Some(to.to_owned());
+        }
+    }
+
     pub fn is_oldest_first(&self, page: &str) -> bool {
         self.oldest_first.iter().any(|item| item == page)
     }
@@ -357,6 +390,15 @@ impl History {
             self.position += 1;
             self.entries[self.position].clone()
         })
+    }
+
+    /// Points entries for page `from` at page `to`, keeping the position.
+    pub fn rename_page(&mut self, from: &str, to: &str) {
+        for entry in &mut self.entries {
+            if entry.page_id() == Some(from) {
+                *entry = Destination::page(to);
+            }
+        }
     }
 
     /// Removes destinations that no longer exist, keeping the position on the same entry or
