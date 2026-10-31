@@ -211,3 +211,95 @@ fn folder_notebooks_refuse_delete_and_rename_before_touching_files(cx: &mut Test
     );
     assert!(!folder.file("Renamed.md").exists());
 }
+
+/// `.quire/notebook.json` as the reference `writeNotebookSettings` writes it.
+const RT_SETTINGS: &str = "{\n  \"version\": 1,\n  \"daily\": {\n    \"folder\": \"Journal\",\n    \"title\": \"{DD}.{MM}.{YYYY}\"\n  }\n}\n";
+
+fn save_layout(notebook: &Notebook, folder: &str, title: &str, cx: &mut TestAppContext) {
+    let (folder, title) = (folder.to_owned(), title.to_owned());
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.edit_layout(window, cx);
+            let [folder_field, title_field] = view.nav.daily.editing.clone().unwrap();
+            folder_field.update(cx, |editor, cx| editor.set_text(folder, window, cx));
+            title_field.update(cx, |editor, cx| editor.set_text(title, window, cx));
+            view.save_layout(cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn folder_notebooks_use_and_save_the_reference_daily_layout(cx: &mut TestAppContext) {
+    let opened = open_folder(
+        &[("Note.md", "- a\n"), (".quire/notebook.json", RT_SETTINGS)],
+        "Note.md",
+        cx,
+    );
+    let notebook = &opened.notebook;
+    let layout = read(notebook, cx, |view, _| {
+        assert!(view.nav.daily.read_only.is_none());
+        view.nav.daily.layout.clone()
+    });
+    assert_eq!(
+        layout,
+        quire_core::daily::DailyLayout {
+            folder: "Journal".into(),
+            title: "{DD}.{MM}.{YYYY}".into(),
+        }
+    );
+
+    save_layout(notebook, "Daily/{YYYY}", "{YYYY}-{MM}-{DD}", cx);
+    wait_until(cx, "the saved layout", |cx| {
+        read(notebook, cx, |view, _| view.nav.daily.editing.is_none())
+    });
+    let saved = RT_SETTINGS
+        .replace("Journal", "Daily/{YYYY}")
+        .replace("{DD}.{MM}.{YYYY}", "{YYYY}-{MM}-{DD}");
+    assert_eq!(
+        fs::read_to_string(opened.file(".quire/notebook.json")).unwrap(),
+        saved
+    );
+
+    fs::write(opened.file(".quire/notebook.json"), RT_SETTINGS).unwrap();
+    save_layout(notebook, "Elsewhere", "{YYYY}-{MM}-{DD}", cx);
+    wait_until(cx, "the refusal", |cx| {
+        read(notebook, cx, |view, _| view.nav.error.clone())
+            .is_some_and(|error| error.contains("changed in another application"))
+    });
+    assert_eq!(
+        fs::read_to_string(opened.file(".quire/notebook.json")).unwrap(),
+        RT_SETTINGS,
+        "a layout saved elsewhere is never overwritten"
+    );
+}
+
+#[gpui::test]
+fn newer_reference_settings_stay_read_only_and_unchanged(cx: &mut TestAppContext) {
+    let newer = "{\"version\":2,\"daily\":{\"folder\":\"X\"}}";
+    let opened = open_folder(
+        &[("Note.md", "- a\n"), (".quire/notebook.json", newer)],
+        "Note.md",
+        cx,
+    );
+    read(&opened.notebook, cx, |view, _| {
+        assert_eq!(
+            view.nav.daily.layout,
+            quire_core::daily::DailyLayout::default()
+        );
+        assert!(
+            view.nav
+                .daily
+                .read_only
+                .as_ref()
+                .unwrap()
+                .contains("newer Quire")
+        );
+    });
+    save_layout(&opened.notebook, "Daily", "{YYYY}-{MM}-{DD}", cx);
+    assert_eq!(
+        fs::read_to_string(opened.file(".quire/notebook.json")).unwrap(),
+        newer
+    );
+}

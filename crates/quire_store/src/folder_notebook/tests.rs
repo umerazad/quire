@@ -1,15 +1,15 @@
 use super::*;
 use std::fs;
 
-struct Fixture {
-    _root: tempfile::TempDir,
-    _state: tempfile::TempDir,
-    notebook: FolderNotebook,
-    folder: PathBuf,
-    state: PathBuf,
+pub(super) struct Fixture {
+    pub(super) _root: tempfile::TempDir,
+    pub(super) _state: tempfile::TempDir,
+    pub(super) notebook: FolderNotebook,
+    pub(super) folder: PathBuf,
+    pub(super) state: PathBuf,
 }
 
-fn fixture(files: &[(&str, &str)]) -> Fixture {
+pub(super) fn fixture(files: &[(&str, &str)]) -> Fixture {
     let root = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     for (path, text) in files {
@@ -27,7 +27,7 @@ fn fixture(files: &[(&str, &str)]) -> Fixture {
     }
 }
 
-fn edit(path: &str, text: &str, base: &[String]) -> Edit {
+pub(super) fn edit(path: &str, text: &str, base: &[String]) -> Edit {
     Edit {
         page: page_id_for_path(path),
         base: base.to_vec(),
@@ -42,7 +42,7 @@ fn edit(path: &str, text: &str, base: &[String]) -> Edit {
     }
 }
 
-fn entries(folder: &Path) -> Vec<String> {
+pub(super) fn entries(folder: &Path) -> Vec<String> {
     let mut names: Vec<String> = fs::read_dir(folder)
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())

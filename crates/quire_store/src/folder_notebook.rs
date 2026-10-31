@@ -11,6 +11,7 @@
 
 mod files;
 mod history;
+mod settings;
 
 pub use files::{
     DiskDocument, ListedFile, Listing, MAX_NOTE_BYTES, is_markdown, list, read, revision, validate,
@@ -600,6 +601,16 @@ impl FolderNotebook {
         self.refresh(&tracked)
     }
 
+    /// The reference app's notebook settings, `.quire/notebook.json`, with its revision.
+    pub fn settings(&self) -> Result<Option<DiskDocument>> {
+        settings::read(&self.root)
+    }
+
+    /// Replaces `.quire/notebook.json` when it still has revision `base`. Returns the new revision.
+    pub fn save_settings(&self, text: &str, base: Option<&str>) -> Result<String> {
+        settings::write(&self.root, text, base)
+    }
+
     /// Saved versions of `path`, newest first.
     pub fn revisions(&self, path: &str) -> Result<Vec<FolderRevision>> {
         history::list(&self.connection, path)
@@ -678,6 +689,14 @@ impl Client<FolderNotebook> {
     pub fn listing(&self) -> Answer<Listing> {
         self.request(128, |notebook| Ok(notebook.listing()))
     }
+    pub fn settings(&self) -> Answer<Option<DiskDocument>> {
+        self.request(128, FolderNotebook::settings)
+    }
+    pub fn save_settings(&self, text: String, base: Option<String>) -> Answer<String> {
+        self.request(128 + text.len(), move |notebook| {
+            notebook.save_settings(&text, base.as_deref())
+        })
+    }
     pub fn revisions(&self, path: String) -> Answer<Vec<FolderRevision>> {
         self.request(128 + path.len(), move |notebook| notebook.revisions(&path))
     }
@@ -688,5 +707,7 @@ impl Client<FolderNotebook> {
     }
 }
 
+#[cfg(test)]
+mod rt_tests;
 #[cfg(test)]
 mod tests;

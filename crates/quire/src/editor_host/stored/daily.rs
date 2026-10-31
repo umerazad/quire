@@ -1,8 +1,9 @@
 //! Daily notes in the window: today's page, the notebook's daily layout read from the replicated
-//! settings page, and the layout editor in the Daily notes browser.
+//! settings page (or a folder's `.quire/notebook.json`), and the layout editor in the Daily notes
+//! browser.
 
 use super::*;
-use crate::navigation::now_millis;
+use crate::{navigation::now_millis, notebook_backend::NotebookBackend, query_index::ask};
 use editor::Editor;
 use quire_core::daily::{
     DailyCalendar, DailyLayout, detect_layout, format_daily, read_settings, write_settings,
@@ -37,6 +38,48 @@ impl DailyState {
     }
 }
 
+/// The notebook's settings text and the version it was read at: the replicated settings page in
+/// a Quire notebook, or the reference app's `.quire/notebook.json` in a folder notebook.
+async fn read_stored_settings(
+    storage: &NotebookBackend,
+) -> Result<(Option<String>, Vec<String>), String> {
+    if let NotebookBackend::Folder(folder) = storage {
+        return Ok(match ask(folder.settings()).await? {
+            Some(document) => (Some(document.text), vec![document.revision]),
+            None => (None, Vec::new()),
+        });
+    }
+    let checkout = ask(storage.checkout(SETTINGS_PAGE.into(), None)).await?;
+    let text = checkout
+        .selected
+        .as_ref()
+        .and_then(|record| record.root().field("text").as_str().map(str::to_owned));
+    Ok((text, checkout.heads))
+}
+
+/// Writes settings made from the version `base`, returning the new version.
+async fn save_stored_settings(
+    storage: &NotebookBackend,
+    text: String,
+    base: Option<String>,
+) -> Result<Vec<String>, String> {
+    if let NotebookBackend::Folder(folder) = storage {
+        return ask(folder.save_settings(text, base))
+            .await
+            .map(|revision| vec![revision]);
+    }
+    let edit = Edit {
+        page: SETTINGS_PAGE.into(),
+        base: base.into_iter().collect(),
+        path: SETTINGS_PATH.into(),
+        text,
+        deleted: false,
+        created: now_millis() as u64,
+        recovery: None,
+    };
+    ask(storage.save(edit)).await.map(|ack| ack.heads)
+}
+
 fn text_field(text: &str, window: &mut Window, cx: &mut App) -> Entity<Editor> {
     cx.new(|cx| {
         let mut editor = Editor::single_line(window, cx);
@@ -56,21 +99,14 @@ impl StoredWindow {
     pub(in crate::editor_host::stored) fn load_settings(&mut self, cx: &mut gpui::Context<Self>) {
         let storage = self.session.borrow().storage();
         self.nav.daily.task = Some(cx.spawn(async move |this, cx| {
-            let checkout = match storage.checkout(SETTINGS_PAGE.into(), None) {
-                Ok(reply) => reply.await.map_err(|error| format!("{error:#}")),
-                Err(error) => Err(error.to_string()),
-            };
+            let stored = read_stored_settings(&storage).await;
             this.update(cx, |this, cx| {
-                match checkout {
-                    Ok(checkout) => {
-                        let text = checkout
-                            .selected
-                            .as_ref()
-                            .and_then(|record| record.root().field("text").as_str().map(str::to_owned));
+                match stored {
+                    Ok((text, heads)) => {
                         let settings = read_settings(text.as_deref());
                         this.nav.daily.layout = settings.layout;
                         this.nav.daily.read_only = settings.read_only.map(SharedString::from);
-                        this.nav.daily.heads = checkout.heads;
+                        this.nav.daily.heads = heads;
                     }
                     Err(error) => {
                         this.nav.daily.read_only = Some(
@@ -258,36 +294,24 @@ impl StoredWindow {
             return;
         }
         let storage = self.session.borrow().storage();
-        let edit = Edit {
-            page: SETTINGS_PAGE.into(),
-            base: self.nav.daily.heads.iter().take(1).cloned().collect(),
-            path: SETTINGS_PATH.into(),
-            text: write_settings(&layout),
-            deleted: false,
-            created: now_millis() as u64,
-            recovery: None,
-        };
+        let text = write_settings(&layout);
+        let base = self.nav.daily.heads.first().cloned();
         self.nav.daily.task = Some(cx.spawn(async move |this, cx| {
-            let saved = match storage.save(edit) {
-                Ok(reply) => reply.await.map_err(|error| format!("{error:#}")),
-                Err(error) => Err(error.to_string()),
-            };
+            let saved = save_stored_settings(&storage, text, base).await;
             this.update(cx, |this, cx| {
                 this.nav.daily.task = None;
                 match saved {
-                    Ok(ack) => {
-                        this.nav.daily.heads = ack.heads;
+                    Ok(heads) => {
+                        this.nav.daily.heads = heads;
                         this.nav.daily.layout = layout;
                         this.nav.daily.editing = None;
                         this.nav.error = None;
                         this.start_index(cx);
                     }
-                    Err(error) => this.nav.error = Some(
-                        format!(
-                            "Cannot save the daily layout: {error}. Check free space, then retry."
-                        )
-                        .into(),
-                    ),
+                    Err(error) => {
+                        this.nav.error =
+                            Some(format!("Cannot save the daily layout: {error}").into())
+                    }
                 }
                 cx.notify();
             })
