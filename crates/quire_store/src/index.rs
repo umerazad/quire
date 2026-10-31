@@ -540,6 +540,14 @@ impl QueryIndex {
     }
 }
 
+/// Closing the index, as closing its notebook window does, seals it; a failed seal only means the
+/// next open scans the file.
+impl Drop for QueryIndex {
+    fn drop(&mut self) {
+        self.seal().ok();
+    }
+}
+
 pub type IndexClient = Client<QueryIndex>;
 pub type IndexWorker = Worker<QueryIndex>;
 

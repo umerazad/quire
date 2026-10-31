@@ -29,6 +29,7 @@ pub struct IndexSync {
     error: Option<SharedString>,
     tracked: HashMap<EntityId, Tracked>,
     _task: Task<()>,
+    _seal_on_quit: Subscription,
 }
 
 /// The index answers queries differently than before: saved pages were analyzed or removed, or
@@ -154,6 +155,16 @@ impl IndexSync {
                 error: None,
                 tracked: HashMap::new(),
                 _task: task,
+                // Quitting skips the idle seal, so the last changes would make the next open
+                // scan the whole index. A seal that misses the quit deadline only costs that scan.
+                _seal_on_quit: cx.on_app_quit(|this, _| {
+                    let seal = this.client.seal();
+                    async move {
+                        if let Ok(reply) = seal {
+                            reply.await.ok();
+                        }
+                    }
+                }),
             }
         })
     }
@@ -475,7 +486,7 @@ pub(crate) mod tests {
         let store = NotebookStore::open(&database, "nb", "local").unwrap();
         save(&store, "Page", "- text\n");
         let sealed = root.path().join("query-index.sqlite-sealed");
-        let _sync = cx
+        let sync = cx
             .update(|cx| {
                 IndexSync::spawn(database.clone(), default_config(DailyCalendar::utc()), cx)
             })
@@ -488,7 +499,31 @@ pub(crate) mod tests {
             |_| "the idle index to be sealed".into(),
         );
         let log = root.path().join("query-index.sqlite-wal");
-        assert_eq!(std::fs::metadata(log).map_or(0, |log| log.len()), 0);
+        assert_eq!(std::fs::metadata(&log).map_or(0, |log| log.len()), 0);
+
+        // The clock stands still, so no idle step seals this change; quitting does.
+        save(&store, "Later", "- more\n");
+        let client = cx.read(|cx| sync.read(cx).client().clone());
+        let (_, changed) = client
+            .with_generation(|index| index.refresh())
+            .unwrap()
+            .await
+            .unwrap();
+        assert!(changed);
+        assert!(std::fs::metadata(&log).unwrap().len() > 0);
+        cx.quit();
+        crate::test_wait::until(
+            cx,
+            Duration::from_millis(2),
+            |_| {},
+            |_| std::fs::metadata(&log).map_or(0, |log| log.len()) == 0,
+            |_| "the seal on quit".into(),
+        );
+        let file = root.path().join("query-index.sqlite");
+        assert_eq!(
+            std::fs::read_to_string(&sealed).unwrap().split(':').next(),
+            Some(std::fs::metadata(file).unwrap().len().to_string().as_str())
+        );
     }
 }
 

@@ -1121,3 +1121,20 @@ fn a_crash_after_unsealed_changes_brings_back_the_full_scan() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn closing_an_index_seals_its_last_changes() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "a", "A.md", "text")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    analyze_all(&index, &[])?;
+    drop(index);
+    let file = root.path().join("query-index.sqlite");
+    let sealed = std::fs::read_to_string(file.with_file_name("query-index.sqlite-sealed"))?;
+    assert_eq!(
+        sealed.split(':').next(),
+        Some(std::fs::metadata(&file)?.len().to_string().as_str())
+    );
+    Ok(())
+}
