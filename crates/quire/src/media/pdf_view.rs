@@ -46,8 +46,8 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new(copy, editor::actions::Copy, Some(CONTEXT)),
         KeyBinding::new(zoom_in, ZoomIn, Some(CONTEXT)),
         KeyBinding::new(zoom_out, ZoomOut, Some(CONTEXT)),
-        KeyBinding::new("enter", NextMatch, Some("QuirePdfFind")),
-        KeyBinding::new("shift-enter", PreviousMatch, Some("QuirePdfFind")),
+        KeyBinding::new("enter", NextMatch, Some("QuirePdfFind > Editor")),
+        KeyBinding::new("shift-enter", PreviousMatch, Some("QuirePdfFind > Editor")),
     ]);
 }
 

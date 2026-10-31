@@ -30,10 +30,16 @@ use quire_media::{
 };
 use std::{any::TypeId, collections::HashMap, ops::Range, sync::Arc};
 
-/// Binds the PDF viewer keys and the attachment commands.
+/// Registers attach handlers on every editor. Runs before Vim so a pasted image is attached
+/// rather than pasted as text.
 pub(crate) fn init(cx: &mut gpui::App) {
-    pdf_view::bind_keys(cx);
     attach::init(cx);
+}
+
+/// Binds the PDF view keys. Runs after the editor bindings so Enter in Find in PDF moves to
+/// the next match instead of inserting a newline.
+pub(crate) fn bind_keys(cx: &mut gpui::App) {
+    pdf_view::bind_keys(cx);
 }
 
 /// A media reference in a page's text.

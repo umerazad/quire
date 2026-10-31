@@ -154,6 +154,20 @@ fn find_and_selection_read_the_stored_pdf_text(cx: &mut TestAppContext) {
     view.update(cx, |view, cx| view.next_match(false, cx));
     assert_eq!(view.read_with(cx, |view, _| view.matches()), (11, Some(10)));
     assert_eq!(view.read_with(cx, |view, _| view.top_page()), 28);
+    notebook
+        .window
+        .update(cx, |_, window, cx| window.focus(&find.focus_handle(cx), cx))
+        .unwrap();
+    draw(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    assert_eq!(
+        view.read_with(cx, |view, _| view.matches()),
+        (11, Some(0)),
+        "Enter in the find field moves to the next match"
+    );
+    cx.simulate_keystrokes(notebook.window.into(), "shift-enter");
+    assert_eq!(view.read_with(cx, |view, _| view.matches()), (11, Some(10)));
+    assert_eq!(find.read_with(cx, |find, cx| find.text(cx)), "page 2");
 
     view.update(cx, |view, cx| view.scroll_to_page(0, cx));
     draw(&notebook, cx);

@@ -118,6 +118,7 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     crate::references::init(cx);
     stored::bind_keys(cx);
     crate::navigation::bind_keys(cx);
+    crate::media::bind_keys(cx);
     if !cx.has_global::<db::AppDatabase>() {
         let name = format!("quire-interface-{}", uuid::Uuid::new_v4());
         let connection = futures::executor::block_on(
