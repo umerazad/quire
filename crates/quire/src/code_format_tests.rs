@@ -330,3 +330,288 @@ fn a_block_that_takes_too_long_reports_the_limit(cx: &mut TestAppContext) {
         )
     );
 }
+
+fn toolbars(window: WindowHandle<Editor>, cx: &mut TestAppContext) -> Vec<String> {
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |editor, _, cx| {
+            toolbar::toolbars(editor, cx)
+                .iter()
+                .map(toolbar::Toolbar::text)
+                .collect()
+        })
+        .unwrap()
+}
+
+fn draw(window: WindowHandle<Editor>, cx: &mut TestAppContext) -> gpui::VisualTestContext {
+    cx.executor().run_until_parked();
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual
+}
+
+fn click(window: WindowHandle<Editor>, selector: &'static str, cx: &mut TestAppContext) {
+    let mut visual = draw(window, cx);
+    let bounds = visual
+        .debug_bounds(selector)
+        .unwrap_or_else(|| panic!("{selector} is not drawn"));
+    visual.simulate_click(bounds.center(), Default::default());
+    cx.executor().run_until_parked();
+}
+
+fn clipboard(cx: &mut TestAppContext) -> Option<String> {
+    cx.update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+}
+
+fn dispatch_copy(window: WindowHandle<Editor>, cx: &mut TestAppContext) {
+    window
+        .update(cx, |_, window, cx| {
+            window.dispatch_action(Box::new(CopyCode), cx)
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+}
+
+#[gpui::test]
+fn toolbars_name_the_language_and_offer_what_applies(cx: &mut TestAppContext) {
+    init(false, cx);
+    let page = "|Intro\n\n```js\nlet a=1\n```\n\n- Item\n  ```\n  plain\n  ```\n\n> ```py\n> print(1)\n> ```\n\n```TS title\nlet b\n```\n\n```js\nopen\n";
+    let window = view(page, true, cx);
+    assert_eq!(
+        toolbars(window, cx),
+        [
+            "js · Format code · Copy code",
+            "Plain text · Copy code",
+            "py · Copy code",
+            "TS · Format code · Copy code",
+        ],
+        "an unclosed block has no toolbar"
+    );
+    let mut visual = draw(window, cx);
+    for ordinal in 0..4 {
+        assert!(
+            visual
+                .debug_bounds(Box::leak(
+                    format!("quire-code-toolbar-{ordinal}").into_boxed_str()
+                ))
+                .is_some(),
+            "toolbar {ordinal} is drawn"
+        );
+    }
+    let text = page.replace('|', "");
+    place(window, text.find("plain").unwrap(), cx);
+    let mut visual = draw(window, cx);
+    assert!(
+        visual.debug_bounds("quire-code-copy-1").is_none(),
+        "the caret in a block shows its fence as written"
+    );
+    assert!(visual.debug_bounds("quire-code-copy-0").is_some());
+    window
+        .update(cx, |editor, _, _| editor.set_read_only(true))
+        .unwrap();
+    window
+        .update(cx, |editor, window, cx| {
+            crate::editor_projection::refold(editor, window, cx)
+        })
+        .unwrap();
+    assert_eq!(toolbars(window, cx)[0], "js · Copy code");
+}
+
+#[gpui::test]
+fn copy_code_copies_the_body_without_fences_or_container_prefixes(cx: &mut TestAppContext) {
+    for vim in [false, true] {
+        init(vim, cx);
+        let page = "|Intro\n\n- Item\n  ```js\n  const x={a:1}\n\n  y()\n  ```\n\n> ```css\n> a{color:red}\n>\n> ```\n";
+        let window = view(page, true, cx);
+        click(window, "quire-code-copy-0", cx);
+        assert_eq!(
+            clipboard(cx).as_deref(),
+            Some("const x={a:1}\n\ny()\n"),
+            "vim {vim}"
+        );
+        assert_eq!(
+            toolbars(window, cx),
+            ["js · Format code · Copied", "css · Format code · Copy code"]
+        );
+        click(window, "quire-code-copy-1", cx);
+        assert_eq!(clipboard(cx).as_deref(), Some("a{color:red}\n\n"));
+        assert_eq!(state(window, cx), page, "copying leaves the page and caret");
+
+        let text = page.replace('|', "");
+        let at = text.find("y()").unwrap();
+        place(window, at, cx);
+        dispatch_copy(window, cx);
+        assert_eq!(clipboard(cx).as_deref(), Some("const x={a:1}\n\ny()\n"));
+        assert_eq!(toolbars(window, cx)[0], "js · Format code · Copied");
+        window
+            .update(cx, |editor, window, cx| {
+                editor.buffer().update(cx, |buffer, cx| {
+                    buffer.edit(
+                        [(MultiBufferOffset(at)..MultiBufferOffset(at), "z")],
+                        None,
+                        cx,
+                    )
+                });
+                crate::editor_projection::refold(editor, window, cx);
+            })
+            .unwrap();
+        place(window, 0, cx);
+        assert_eq!(
+            toolbars(window, cx),
+            [
+                "js · Format code · Copy code",
+                "css · Format code · Copy code"
+            ],
+            "a changed block is no longer marked copied"
+        );
+        dispatch_copy(window, cx);
+        assert_eq!(notice(cx).as_deref(), Some(COPY_NOT_IN_CODE));
+    }
+}
+
+#[gpui::test]
+fn the_format_button_shows_progress_and_survives_a_refold(cx: &mut TestAppContext) {
+    init(false, cx);
+    let large: String = (0..1500)
+        .map(|i| format!("function f{i}(a,b){{return a+b*{i}}}\n"))
+        .collect();
+    let page = format!("|Intro\n\n```js\n{large}```\n\nAfter\n");
+    let window = view(&page, true, cx);
+    let mut visual = draw(window, cx);
+    let button = visual
+        .debug_bounds("quire-code-format-0")
+        .expect("a drawn Format code button");
+    visual.simulate_mouse_down(button.center(), gpui::MouseButton::Left, Default::default());
+    window
+        .update(cx, |editor, window, cx| {
+            crate::editor_projection::refold(editor, window, cx)
+        })
+        .unwrap();
+    let mut visual = draw(window, cx);
+    visual.simulate_mouse_up(button.center(), gpui::MouseButton::Left, Default::default());
+    assert!(
+        window
+            .update(cx, |editor, _, _| formatting(editor))
+            .unwrap()
+    );
+    assert_eq!(toolbars(window, cx), ["js · Formatting… · Copy code"]);
+    assert_eq!(notice(cx).as_deref(), Some(FORMATTING));
+    assert_eq!(state(window, cx), page, "the click leaves the caret");
+    let text = page.replace('|', "");
+    place(window, text.find("After").unwrap(), cx);
+    assert_eq!(
+        notice(cx).as_deref(),
+        Some(FORMATTING),
+        "a caret move keeps the progress notice"
+    );
+    settle(window, cx);
+    assert_eq!(notice(cx), None);
+    assert_eq!(toolbars(window, cx), ["js · Format code · Copy code"]);
+    assert!(
+        state(window, cx).contains("function f0(a, b) {\n  return a + b * 0;\n}\n"),
+        "the block is formatted"
+    );
+}
+
+#[gpui::test]
+fn format_and_copy_work_in_an_excerpt_that_shows_the_whole_block(cx: &mut TestAppContext) {
+    init(false, cx);
+    let page = "# Page\n\n- Parent\n  ```js\n  let  a=1\n  ```\n- Next\n";
+    let source = cx.update(|cx| crate::markdown::buffer(page, cx));
+    cx.executor().run_until_parked();
+    let excerpt = |range: Range<usize>, cx: &mut TestAppContext| {
+        let source = source.clone();
+        let window = cx.add_window(|window, cx| {
+            let buffer = crate::editor_excerpt::buffer(source, range, cx).unwrap();
+            let editor = Editor::for_multibuffer(buffer, None, window, cx);
+            window.focus(&editor.focus_handle(cx), cx);
+            editor
+        });
+        cx.executor().run_until_parked();
+        window
+    };
+    let start = page.find("- Parent").unwrap();
+    let whole = excerpt(start..page.find("- Next").unwrap(), cx);
+    let text = whole.update(cx, |editor, _, cx| editor.text(cx)).unwrap();
+    place(whole, text.find("a=1").unwrap(), cx);
+    dispatch_copy(whole, cx);
+    assert_eq!(clipboard(cx).as_deref(), Some("let  a=1\n"));
+    format(whole, cx);
+    assert_eq!(notice(cx), None);
+    let formatted = "# Page\n\n- Parent\n  ```js\n  let a = 1;\n  ```\n- Next\n";
+    assert_eq!(source.read_with(cx, |source, _| source.text()), formatted);
+
+    let partial = excerpt(start..formatted.find("1;").unwrap(), cx);
+    let text = partial.update(cx, |editor, _, cx| editor.text(cx)).unwrap();
+    place(partial, text.find("a =").unwrap(), cx);
+    format(partial, cx);
+    assert_eq!(notice(cx).as_deref(), Some(PARTLY_SHOWN));
+    dispatch_copy(partial, cx);
+    assert_eq!(notice(cx).as_deref(), Some(COPY_PARTLY_SHOWN));
+    assert_eq!(source.read_with(cx, |source, _| source.text()), formatted);
+}
+
+#[gpui::test]
+fn toolbar_buttons_work_from_the_keyboard(cx: &mut TestAppContext) {
+    for (vim, key) in [(false, "enter"), (true, "space")] {
+        init(vim, cx);
+        let page = "|Intro\n\n```js\nlet  a=1\n```\n";
+        let window = view(page, true, cx);
+        draw(window, cx);
+        // Tab order in the toolbar: the language, Format code, then Copy code.
+        let press = |tabs: usize, cx: &mut TestAppContext| {
+            place(window, 0, cx);
+            draw(window, cx);
+            window
+                .update(cx, |_, window, cx| {
+                    window.blur(cx);
+                    for _ in 0..tabs {
+                        window.focus_next(cx);
+                    }
+                })
+                .unwrap();
+            draw(window, cx);
+            activate(window, key, cx);
+        };
+        press(1, cx);
+        assert_eq!(
+            state(window, cx),
+            "Intro\n\n|```js\nlet  a=1\n```\n",
+            "the language puts the caret in the block, vim {vim}"
+        );
+        press(3, cx);
+        assert_eq!(
+            clipboard(cx).as_deref(),
+            Some("let  a=1\n"),
+            "Copy code, vim {vim}"
+        );
+        press(2, cx);
+        settle(window, cx);
+        assert_eq!(
+            state(window, cx).replace('|', ""),
+            "Intro\n\n```js\nlet a = 1;\n```\n",
+            "Format code, vim {vim}"
+        );
+    }
+}
+
+/// Presses and releases `key` on the focused element, as a keyboard activates a control.
+fn activate(window: WindowHandle<Editor>, key: &str, cx: &mut TestAppContext) {
+    cx.update_window(window.into(), |_, window, cx| {
+        let keystroke = gpui::Keystroke::parse_with_os(key, cx.platform_info().os).unwrap();
+        window.dispatch_event(
+            gpui::PlatformInput::KeyDown(gpui::KeyDownEvent {
+                keystroke: keystroke.clone(),
+                is_held: false,
+                prefer_character_input: false,
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            gpui::PlatformInput::KeyUp(gpui::KeyUpEvent { keystroke }),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.executor().run_until_parked();
+}

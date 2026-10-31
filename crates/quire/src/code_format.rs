@@ -1,15 +1,18 @@
-//! Format code: formats the fenced code block at the caret with the bundled Prettier
-//! (`quire_format`), as rt's "Format code" button does. The fence lines stay as they are, the
-//! formatted lines keep the closing fence's container prefix (list indentation or quote markers),
-//! and the change is one undo step. Formatting runs on the formatter thread; a result for a block
-//! that changed in the meantime is discarded, and a newer request in the same view cancels an
-//! older one.
+//! Format code and Copy code for the fenced code block at the caret or under a Write toolbar
+//! (`toolbar`), as rt's code-block buttons do. Format code runs the bundled Prettier
+//! (`quire_format`): the fence lines stay as they are, the formatted lines keep the closing
+//! fence's container prefix (list indentation or quote markers), and the change is one undo step.
+//! Formatting runs on the formatter thread; a result for a block that changed in the meantime is
+//! discarded, and a newer request in the same view cancels an older one. Both commands work in a
+//! page's own view and in excerpt views that show the whole block.
+
+pub(crate) mod toolbar;
 
 use editor::{Addon, Editor};
-use gpui::{App, Context, Entity, Global, KeyBinding, Task, Window, actions};
+use gpui::{App, ClipboardItem, Context, Entity, Global, KeyBinding, Task, Window, actions};
 use language::ToOffset as _;
 use language::{Buffer, BufferSnapshot};
-use multi_buffer::ToOffset as _;
+use multi_buffer::{MultiBufferOffset, MultiBufferSnapshot, ToOffset as _};
 use quire_format::{FormatError, Formatter, Parser};
 use std::{any::Any, ops::Range, sync::Arc};
 
@@ -17,7 +20,9 @@ actions!(
     quire_code,
     [
         /// Formats the fenced code block at the caret with the bundled Prettier.
-        FormatCode
+        FormatCode,
+        /// Copies the code in the fenced code block at the caret, without its fences.
+        CopyCode
     ]
 );
 
@@ -28,8 +33,13 @@ pub const UNCLOSED: &str =
 pub const CHANGED: &str = "The code block changed while it was being formatted, so the result was discarded. Run Format code again on its current text.";
 pub const READ_ONLY: &str =
     "This page is read-only, so its code cannot be formatted. Resolve or reopen the page first.";
-pub const SINGLE_PAGE: &str =
-    "Format code works in a page's own view. Open the page, then run Format code.";
+pub const PARTLY_SHOWN: &str =
+    "Only part of this code block is shown here. Open its page, then run Format code.";
+pub const COPY_NOT_IN_CODE: &str = "Place the caret in a fenced code block, then run Copy code.";
+pub const COPY_UNCLOSED: &str =
+    "Close the fenced code block with a matching fence line, then run Copy code again.";
+pub const COPY_PARTLY_SHOWN: &str =
+    "Only part of this code block is shown here. Open its page, then run Copy code.";
 
 struct CodeFormatter(Arc<Formatter>);
 impl Global for CodeFormatter {}
@@ -37,20 +47,31 @@ impl Global for CodeFormatter {}
 /// The view's pending request; replacing or dropping it cancels the request.
 struct PendingFormat {
     _task: Task<()>,
+    /// Where the block being formatted starts in this view.
+    start: multi_buffer::Anchor,
+    running: bool,
 }
 
 impl Addon for PendingFormat {
     fn to_any(&self) -> &dyn Any {
         self
     }
+    fn to_any_mut(&mut self) -> Option<&mut dyn Any> {
+        Some(self)
+    }
 }
 
 /// Whether the view is waiting for a formatter result.
-#[cfg(test)]
-fn formatting(editor: &Editor) -> bool {
+pub(crate) fn formatting(editor: &Editor) -> bool {
+    formatting_start(editor).is_some()
+}
+
+/// Where the block being formatted in this view starts, while it is being formatted.
+fn formatting_start(editor: &Editor) -> Option<multi_buffer::Anchor> {
     editor
         .addon::<PendingFormat>()
-        .is_some_and(|pending| !pending._task.is_ready())
+        .filter(|pending| pending.running)
+        .map(|pending| pending.start)
 }
 
 pub fn init(cx: &mut App) {
@@ -60,6 +81,17 @@ pub fn init(cx: &mut App) {
             .register_action(move |_: &FormatCode, window, cx| {
                 if let Some(editor) = handle.upgrade() {
                     editor.update(cx, |editor, cx| format_code(editor, window, cx));
+                }
+            })
+            .detach();
+        let handle = cx.entity().downgrade();
+        editor
+            .register_action(move |_: &CopyCode, _, cx| {
+                if let Some(editor) = handle.upgrade() {
+                    editor.update(cx, |editor, cx| {
+                        let head = caret(editor, cx);
+                        copy_code_at(editor, head, cx)
+                    });
                 }
             })
             .detach();
@@ -97,7 +129,7 @@ pub(crate) struct Fence {
     pub tag: String,
     /// The closing fence line's text before its fence characters.
     pub prefix: String,
-    /// The body without its container prefix: what Prettier formats.
+    /// The body without its container prefix: what Prettier formats and Copy code copies.
     pub code: String,
 }
 
@@ -114,7 +146,32 @@ pub(crate) fn fence_at(snapshot: &BufferSnapshot, offset: usize) -> Result<Fence
         }
         node = current.parent();
     }
-    let node = node.ok_or(NOT_IN_CODE)?;
+    fence(snapshot, node.ok_or(NOT_IN_CODE)?)
+}
+
+/// Every closed fenced code block in the page, in text order.
+pub(crate) fn fences(snapshot: &BufferSnapshot) -> Vec<Fence> {
+    let Some(layer) = snapshot
+        .syntax_layers()
+        .find(|layer| layer.language.name().as_ref() == "Markdown")
+    else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    let mut stack = vec![layer.node()];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "fenced_code_block" {
+            found.extend(fence(snapshot, node).ok());
+            continue;
+        }
+        let mut cursor = node.walk();
+        let children: Vec<_> = node.named_children(&mut cursor).collect();
+        stack.extend(children.into_iter().rev());
+    }
+    found
+}
+
+fn fence(snapshot: &BufferSnapshot, node: tree_sitter::Node) -> Result<Fence, &'static str> {
     let mut cursor = node.walk();
     let children: Vec<_> = node.named_children(&mut cursor).collect();
     let delimiters: Vec<_> = children
@@ -182,23 +239,132 @@ pub(crate) fn formatted_body(prefix: &str, formatted: &str) -> String {
         .collect()
 }
 
-fn format_code(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
-    let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
-        return crate::outline::set_notice(Some(SINGLE_PAGE), cx);
-    };
-    if editor.read_only(cx) {
-        return crate::outline::set_notice(Some(READ_ONLY), cx);
-    }
-    let head = editor
+fn caret(editor: &Editor, cx: &App) -> MultiBufferOffset {
+    editor
         .selections
         .newest_anchor()
         .head()
         .to_offset(&editor.buffer().read(cx).snapshot(cx))
-        .0;
-    let snapshot = buffer.read(cx).snapshot();
-    let fence = match fence_at(&snapshot, head) {
-        Ok(fence) => fence,
-        Err(message) => return crate::outline::set_notice(Some(message), cx),
+}
+
+/// Where `range` of `buffer` shows in `view`, when the view shows all of it in one piece.
+fn shown_range(
+    view: &MultiBufferSnapshot,
+    buffer: &BufferSnapshot,
+    range: &Range<usize>,
+) -> Option<Range<MultiBufferOffset>> {
+    let offset = |at: usize| {
+        view.anchor_in_buffer(buffer.anchor_before(at))
+            .map(|anchor| anchor.to_offset(view))
+    };
+    let shown = offset(range.start)?..offset(range.end)?;
+    let whole = shown.end.0.checked_sub(shown.start.0) == Some(range.len())
+        && view.contains_str_at(
+            shown.start,
+            &buffer.text_for_range(range.clone()).collect::<String>(),
+        );
+    whole.then_some(shown)
+}
+
+/// The block around `at` in the view, its page, and where it starts in the view.
+struct Located {
+    buffer: Entity<Buffer>,
+    snapshot: BufferSnapshot,
+    fence: Fence,
+    start: MultiBufferOffset,
+}
+
+enum Missing {
+    NotInCode,
+    Unclosed,
+    PartlyShown,
+}
+
+fn locate(editor: &Editor, at: MultiBufferOffset, cx: &App) -> Result<Located, Missing> {
+    let multi = editor.buffer().read(cx);
+    let view = multi.snapshot(cx);
+    let (snapshot, offset) = view.point_to_buffer_offset(at).ok_or(Missing::NotInCode)?;
+    let buffer = multi
+        .buffer(snapshot.remote_id())
+        .ok_or(Missing::NotInCode)?;
+    let snapshot = snapshot.clone();
+    let fence = fence_at(&snapshot, offset.0).map_err(|message| {
+        if message == UNCLOSED {
+            Missing::Unclosed
+        } else {
+            Missing::NotInCode
+        }
+    })?;
+    let start = shown_range(&view, &snapshot, &fence.range)
+        .ok_or(Missing::PartlyShown)?
+        .start;
+    Ok(Located {
+        buffer,
+        snapshot,
+        fence,
+        start,
+    })
+}
+
+/// The block at the caret, for menus that offer Format code and Copy code.
+pub(crate) fn fence_at_caret(editor: &Editor, cx: &App) -> Option<Fence> {
+    locate(editor, caret(editor, cx), cx)
+        .ok()
+        .map(|located| located.fence)
+}
+
+/// Copies the code of the block around `at`: its body without fences or container prefixes,
+/// as rt's Copy code button copies it.
+pub(crate) fn copy_code_at(editor: &mut Editor, at: MultiBufferOffset, cx: &mut Context<Editor>) {
+    match locate(editor, at, cx) {
+        Ok(located) => {
+            cx.write_to_clipboard(ClipboardItem::new_string(located.fence.code));
+            toolbar::copied(editor, located.start, cx);
+        }
+        Err(missing) => crate::outline::set_notice(
+            Some(match missing {
+                Missing::NotInCode => COPY_NOT_IN_CODE,
+                Missing::Unclosed => COPY_UNCLOSED,
+                Missing::PartlyShown => COPY_PARTLY_SHOWN,
+            }),
+            cx,
+        ),
+    }
+}
+
+/// Formats the block at the caret.
+fn format_code(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
+    let head = caret(editor, cx);
+    format_code_at(editor, head, window, cx)
+}
+
+/// Formats the block around `at` in the view.
+pub(crate) fn format_code_at(
+    editor: &mut Editor,
+    at: MultiBufferOffset,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    if editor.read_only(cx) {
+        return crate::outline::set_notice(Some(READ_ONLY), cx);
+    }
+    let Located {
+        buffer,
+        snapshot,
+        fence,
+        start,
+    } = match locate(editor, at, cx) {
+        Ok(located) => located,
+        Err(missing) => {
+            return crate::outline::set_notice(
+                Some(match missing {
+                    Missing::NotInCode => NOT_IN_CODE,
+                    Missing::Unclosed => UNCLOSED,
+                    Missing::PartlyShown => PARTLY_SHOWN,
+                }),
+                cx,
+            );
+        }
     };
     let Some(parser) = Parser::for_tag(&fence.tag) else {
         let error = FormatError::Unsupported(fence.tag);
@@ -210,22 +376,32 @@ fn format_code(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor
     let anchors = snapshot.anchor_before(fence.range.start)..snapshot.anchor_after(fence.range.end);
     let original: String = snapshot.text_for_range(fence.range.clone()).collect();
     let request = formatter(cx).format(fence.code.clone(), parser);
-    crate::outline::set_notice(Some(FORMATTING), cx);
+    let start = editor.buffer().read(cx).snapshot(cx).anchor_before(start);
     let task = cx.spawn_in(window, async move |editor, cx| {
         let result = request.await;
         editor
             .update_in(cx, |editor, window, cx| {
+                if let Some(pending) = editor.addon_mut::<PendingFormat>() {
+                    pending.running = false;
+                }
                 let pending = Pending {
                     buffer,
                     anchors,
                     original,
                     fence,
                 };
-                finish(editor, pending, result, window, cx)
+                finish(editor, pending, result, window, cx);
+                crate::editor_projection::refold(editor, window, cx);
             })
             .ok();
     });
-    editor.register_addon(PendingFormat { _task: task });
+    editor.register_addon(PendingFormat {
+        _task: task,
+        start,
+        running: true,
+    });
+    crate::outline::set_notice(Some(FORMATTING), cx);
+    crate::editor_projection::refold(editor, window, cx);
 }
 
 struct Pending {
@@ -256,6 +432,10 @@ fn finish(
     if editor.read_only(cx) {
         return crate::outline::set_notice(Some(READ_ONLY), cx);
     }
+    let view = editor.buffer().read(cx).snapshot(cx);
+    let Some(shown) = shown_range(&view, &snapshot, &range) else {
+        return crate::outline::set_notice(Some(PARTLY_SHOWN), cx);
+    };
     if crate::outline::notice(cx).as_deref() == Some(FORMATTING) {
         crate::outline::set_notice(None, cx);
     }
@@ -263,7 +443,7 @@ fn finish(
     let body = fence.body.start - fence.range.start..fence.body.end - fence.range.start;
     let old = &pending.original[body.clone()];
     let new = formatted_body(&fence.prefix, &formatted);
-    let start = range.start + body.start;
+    let start = shown.start.0 + body.start;
     let edits: Vec<_> = language::text_diff(old, &new)
         .into_iter()
         .map(|(range, text)| (range.start + start..range.end + start, text.to_string()))

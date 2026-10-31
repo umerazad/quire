@@ -301,6 +301,22 @@ fn refresh(
             tasks.push(Crease::simple(range, placeholder));
         }
     }
+    let toolbars =
+        crate::code_format::toolbar::headers(editor, cx.entity().downgrade(), type_tag, cx);
+    for (spot, placeholder) in toolbars {
+        if shown(
+            editor,
+            &spot.range,
+            &spot.block,
+            &spot.source,
+            &snapshot,
+            window,
+            cx,
+        ) {
+            let range = spot.range.start.to_offset(&snapshot)..spot.range.end.to_offset(&snapshot);
+            tasks.push(Crease::simple(range, placeholder));
+        }
+    }
     for (spot, placeholder) in crate::embeds::headers(editor, cx.entity().downgrade(), type_tag) {
         if shown(
             editor,
@@ -1096,6 +1112,20 @@ fn apply_blocks(
         })
         .collect();
     crate::media::sync(editor, media, window, cx);
+    let toolbars = crate::code_format::toolbar::found(snapshot)
+        .into_iter()
+        .filter(|found| shown(&found.block_range))
+        .filter_map(|found| {
+            Some(crate::code_format::toolbar::Spot {
+                range: anchor(found.range.start)?..anchor(found.range.end)?,
+                block: anchor(found.block_range.start)?..anchor(found.block_range.end)?,
+                source: page_text[found.range].to_owned(),
+                tag: found.tag,
+                text: found.text,
+            })
+        })
+        .collect();
+    crate::code_format::toolbar::sync(editor, toolbars);
     let lists = queries
         .into_iter()
         .filter(|(braces, ..)| shown(braces))
@@ -1260,6 +1290,7 @@ pub fn unbind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
         crate::embeds::clear(editor, cx);
         crate::media::clear(editor, cx);
         crate::task_lists::clear(editor, cx);
+        crate::code_format::toolbar::clear(editor);
         editor
             .buffer()
             .update(cx, |buffer, _| buffer.set_edit_filter(None));
