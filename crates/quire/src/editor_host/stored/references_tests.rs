@@ -1,5 +1,5 @@
 use super::super::*;
-use super::tests::{Notebook, active, key, open_notebook, read, save, wait_until};
+use super::tests::{Notebook, active, caret_text, key, open_notebook, read, save, wait_until};
 use crate::navigation::{context_rows::ContextRow, references::ReferencesView};
 use gpui::TestAppContext;
 use quire_core::reference_filter::UNCLOSED_QUOTE;
@@ -63,11 +63,11 @@ fn linked_references_filter_by_typed_terms_and_chips(cx: &mut TestAppContext) {
     let panel = panel(&notebook, cx);
     let rows = cx.read(|cx| panel.read(cx).rows());
     assert!(
-        rows.contains(&ContextRow::Child {
-            page: "notes".into(),
-            depth: 1,
-            text: "she asked about pricing #question".into()
-        }),
+        rows.iter().any(|row| matches!(
+            row,
+            ContextRow::Child { page, depth: 1, text, .. }
+                if page == "notes" && text == "she asked about pricing #question"
+        )),
         "nested blocks show under their reference: {rows:?}"
     );
 
@@ -188,4 +188,30 @@ fn linked_references_order_daily_pages_follow_saves_and_open_sources(cx: &mut Te
         .unwrap();
     cx.simulate_keystrokes(notebook.window.into(), "enter");
     assert_eq!(active(&notebook, cx), "early");
+}
+
+#[gpui::test]
+fn opening_a_reference_reveals_its_block(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&PEOPLE, "ana", cx);
+    let panel = panel(&notebook, cx);
+    let rows = cx.read(|cx| panel.read(cx).rows());
+    let index = rows
+        .iter()
+        .position(
+            |row| matches!(row, ContextRow::Block { text, .. } if text == "[[Ana]] sent the deck"),
+        )
+        .unwrap();
+    notebook
+        .window
+        .update(cx, |view, window, cx| view.focus_references(window, cx))
+        .unwrap();
+    let keys = vec!["down"; index].join(" ");
+    cx.simulate_keystrokes(notebook.window.into(), &keys);
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the source page's editor", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.page.read(cx).id() == "notes" && view.editor.is_some() && view.nav.jump.is_none()
+        })
+    });
+    assert_eq!(caret_text(&notebook, false, cx), "[[Ana]] sent the deck");
 }

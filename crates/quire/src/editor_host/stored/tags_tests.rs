@@ -1,5 +1,5 @@
 use super::super::*;
-use super::tests::{Notebook, active, open_notebook, read, save, wait_until};
+use super::tests::{Notebook, active, caret_text, open_notebook, read, save, wait_until};
 use crate::navigation::{
     ShowTags,
     context_rows::ContextRow,
@@ -170,9 +170,14 @@ fn tag_pages_group_by_page_follow_saves_and_open_sources(cx: &mut TestAppContext
             view.nav
                 .side
                 .as_ref()
-                .is_some_and(|side| side.page.read(cx).id() == "b")
+                .is_some_and(|side| side.editor.is_some() && side.page.read(cx).id() == "b")
         })
     });
+    assert_eq!(
+        caret_text(&notebook, true, cx),
+        "fourth #Plan too",
+        "the source block is revealed beside"
+    );
     notebook
         .window
         .update(cx, |view, window, cx| {
@@ -182,6 +187,10 @@ fn tag_pages_group_by_page_follow_saves_and_open_sources(cx: &mut TestAppContext
         .unwrap();
     cx.simulate_keystrokes(notebook.window.into(), "enter");
     assert_eq!(active(&notebook, cx), "b");
+    wait_until(cx, "the revealed block", |cx| {
+        read(&notebook, cx, |view, _| view.editor.is_some())
+    });
+    assert_eq!(caret_text(&notebook, false, cx), "fourth #Plan too");
 }
 
 #[test]

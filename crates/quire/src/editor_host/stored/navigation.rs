@@ -26,10 +26,14 @@ mod daily;
 mod file_views;
 #[path = "history_views.rs"]
 mod history_views;
+#[path = "insert_anywhere.rs"]
+mod insert_anywhere;
 #[path = "menu_views.rs"]
 mod menu_views;
 #[path = "reference_views.rs"]
 mod reference_views;
+#[path = "reveal.rs"]
+mod reveal;
 #[path = "tag_views.rs"]
 mod tag_views;
 #[path = "task_views.rs"]
@@ -60,6 +64,10 @@ pub(super) struct Navigation {
     creating: Option<Task<()>>,
     pub(super) error: Option<SharedString>,
     pub(super) side: Option<SidePane>,
+    /// Where the caret goes once the page just opened can show it.
+    pub(super) jump: Option<reveal::PendingJump>,
+    /// The page editor that took focus last, where Vim's Insert keys typed elsewhere go.
+    pub(super) last_editor: Option<gpui::WeakEntity<editor::Editor>>,
     /// The answer pane beside the main page.
     pub(super) answer: answer_views::AnswerState,
     pub(super) view: Option<BrowserView>,
@@ -105,6 +113,8 @@ impl Navigation {
             creating: None,
             error: None,
             side: None,
+            jump: None,
+            last_editor: None,
             answer: answer_views::AnswerState::default(),
             view: None,
             browsers: chrome::Browsers::default(),
@@ -270,6 +280,7 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        self.nav.jump = None;
         self.nav.view = match destination {
             Destination::Browser { view } => Some(*view),
             Destination::Page { .. } | Destination::Tag { .. } => None,
@@ -374,7 +385,13 @@ impl StoredWindow {
         cx: &mut gpui::Context<Self>,
     ) {
         match choice {
-            PaletteChoice::Open { page, .. } => self.open_page(page, beside, window, cx),
+            PaletteChoice::Open { page, block } => self.open_page_at(
+                page,
+                block.map(crate::navigation::Jump::block),
+                beside,
+                window,
+                cx,
+            ),
             PaletteChoice::Create { title } => self.create(title, folder, beside, window, cx),
         }
     }
@@ -426,6 +443,9 @@ impl StoredWindow {
 
     pub(super) fn register_navigation(div: gpui::Div, cx: &mut gpui::Context<Self>) -> gpui::Div {
         div.key_context(crate::navigation::NAVIGATION_CONTEXT)
+            .on_key_down(
+                cx.listener(|this, event, window, cx| this.insert_anywhere(event, window, cx)),
+            )
             .on_action(cx.listener(|this, _: &FindPage, window, cx| {
                 this.open_palette(PaletteMode::Find, window, cx)
             }))
@@ -642,6 +662,7 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        self.nav.jump = None;
         let page = self.session.borrow_mut().open_page(id.clone(), cx);
         self.watch(&page, window, cx);
         self.nav.side = Some(SidePane {
@@ -689,6 +710,7 @@ impl StoredWindow {
             editor
         });
         self.link_editors(&editor, window, cx);
+        self.track_editor_focus(&editor, window, cx);
         match (focus, previous) {
             (true, _) => window.focus(&editor.read(cx).source.focus_handle(cx), cx),
             (false, Some(previous)) => window.focus(&previous, cx),
@@ -697,6 +719,7 @@ impl StoredWindow {
         if let Some(side) = &mut self.nav.side {
             side.editor = Some(editor);
         }
+        self.apply_jump(window, cx);
     }
 }
 

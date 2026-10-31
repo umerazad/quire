@@ -16,7 +16,11 @@ use quire_store::index::{IndexClient, Outline, TaggedBlock};
 use ui::{Color, Icon, IconName, Label, LabelCommon, LabelSize, prelude::*, v_flex};
 
 pub enum TagPageEvent {
-    Open { page: String, beside: bool },
+    Open {
+        page: String,
+        jump: Option<super::Jump>,
+        beside: bool,
+    },
 }
 
 pub type Tagged = Vec<(TaggedBlock, Outline)>;
@@ -38,6 +42,7 @@ pub fn tagged_rows(blocks: &[(TaggedBlock, Outline)], filter: &str) -> Vec<Conte
                 title: &block.source.title,
                 text: &block.tag.snippet,
                 outline,
+                jump: super::Jump::at(block.tag.block_id.clone(), block.tag.from),
             }),
     )
 }
@@ -131,6 +136,7 @@ impl TagPageView {
             self.highlighted = index;
             cx.emit(TagPageEvent::Open {
                 page: row.page().to_owned(),
+                jump: row.jump().cloned(),
                 beside,
             });
         }
@@ -276,6 +282,7 @@ mod tests {
                 },
                 ContextRow::Block {
                     page: "b".into(),
+                    jump: crate::navigation::Jump::at(None, 0),
                     text: "third #plan".into()
                 },
             ],

@@ -64,8 +64,8 @@ impl StoredWindow {
                     &page,
                     window,
                     |this, _, event: &TagPageEvent, window, cx| match event {
-                        TagPageEvent::Open { page, beside } => {
-                            this.open_page(page.clone(), *beside, window, cx)
+                        TagPageEvent::Open { page, jump, beside } => {
+                            this.open_page_at(page.clone(), jump.clone(), *beside, window, cx)
                         }
                     },
                 )

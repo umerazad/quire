@@ -79,6 +79,30 @@ gpui::actions!(
     ]
 );
 
+/// Where an opened page puts its caret: the block with `block` as its ID, else the UTF-16
+/// offset `from` in the page's text, as the index reports both.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Jump {
+    pub block: Option<String>,
+    pub from: Option<u32>,
+}
+
+impl Jump {
+    pub fn block(id: impl Into<String>) -> Self {
+        Self {
+            block: Some(id.into()),
+            from: None,
+        }
+    }
+
+    pub fn at(block: Option<String>, from: u32) -> Self {
+        Self {
+            block,
+            from: Some(from),
+        }
+    }
+}
+
 /// The Files tree's own keys, beside the list keys it shares.
 pub const FILES_CONTEXT: &str = "QuireFiles";
 

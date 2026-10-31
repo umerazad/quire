@@ -64,6 +64,7 @@ const LIST_KEYS: &str = if cfg!(target_os = "macos") {
 pub enum TasksEvent {
     Open {
         page: String,
+        jump: Option<super::Jump>,
         beside: bool,
     },
     /// The list, project filter, or status filter changed and should be remembered.
@@ -360,18 +361,20 @@ impl TasksView {
 
     fn open(&mut self, index: usize, beside: bool, cx: &mut Context<Self>) {
         self.highlighted = index;
-        let page = match self.choices.view {
+        let target = match self.choices.view {
             TaskView::Projects => self
                 .shown_projects(cx)
                 .get(index)
-                .map(|project| project.page.page.to_lossy_string()),
-            _ => self
-                .rows()
-                .get(index)
-                .map(|task| task.source.page.to_lossy_string()),
+                .map(|project| (project.page.page.to_lossy_string(), None)),
+            _ => self.rows().get(index).map(|task| {
+                (
+                    task.source.page.to_lossy_string(),
+                    Some(super::Jump::at(task.id.clone(), task.from)),
+                )
+            }),
         };
-        if let Some(page) = page {
-            cx.emit(TasksEvent::Open { page, beside });
+        if let Some((page, jump)) = target {
+            cx.emit(TasksEvent::Open { page, jump, beside });
         }
     }
 
@@ -718,6 +721,7 @@ impl TasksView {
                         this.error = None;
                         cx.emit(TasksEvent::Open {
                             page,
+                            jump: None,
                             beside: false,
                         });
                     }

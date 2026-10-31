@@ -29,6 +29,7 @@ const FACETS: usize = 8;
 pub enum ReferencesEvent {
     Open {
         page: String,
+        jump: Option<super::Jump>,
         beside: bool,
     },
     Order {
@@ -195,6 +196,7 @@ impl ReferencesView {
                     title: &reference.source.title,
                     text: &reference.snippet,
                     outline: &reference.outline,
+                    jump: super::Jump::at(reference.block_id.clone(), reference.from),
                 }),
         )
     }
@@ -235,6 +237,7 @@ impl ReferencesView {
             self.highlighted = index;
             cx.emit(ReferencesEvent::Open {
                 page: row.page().to_owned(),
+                jump: row.jump().cloned(),
                 beside,
             });
         }

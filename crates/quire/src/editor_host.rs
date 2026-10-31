@@ -679,7 +679,7 @@ pub fn run() {
         if !harness
             && let Some(notebook) = crate::profiles::get(crate::profiles::active(cx), cx).notebook
         {
-            match stored::open_location(&notebook, cx) {
+            match stored::launch_location(&notebook, cx) {
                 Ok(()) => return,
                 Err(error) => crate::outline::show_notice(
                     format!("Quire could not reopen the {} notebook: {error}", crate::profiles::active(cx).label()),

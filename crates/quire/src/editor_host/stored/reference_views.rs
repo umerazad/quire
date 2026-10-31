@@ -30,8 +30,8 @@ impl StoredWindow {
                 &view,
                 window,
                 move |this, view, event: &ReferencesEvent, window, cx| match event {
-                    ReferencesEvent::Open { page, beside } => {
-                        this.open_page(page.clone(), *beside, window, cx)
+                    ReferencesEvent::Open { page, jump, beside } => {
+                        this.open_page_at(page.clone(), jump.clone(), *beside, window, cx)
                     }
                     ReferencesEvent::Order { oldest } => {
                         this.nav.workspace.set_oldest_first(&page, *oldest);
