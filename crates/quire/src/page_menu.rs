@@ -132,6 +132,15 @@ pub fn init(cx: &mut App) {
             editor::actions::OpenContextMenu,
             Some("Editor && !QuireControl"),
         ),
+        KeyBinding::new(
+            if cfg!(target_os = "macos") {
+                "cmd-shift-c"
+            } else {
+                "ctrl-shift-c"
+            },
+            CopyBlockReference,
+            Some("Editor && !QuireControl"),
+        ),
     ]);
 }
 
