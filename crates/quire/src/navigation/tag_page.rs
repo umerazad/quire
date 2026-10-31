@@ -13,8 +13,11 @@ use gpui::{
     Subscription, UniformListScrollHandle, Window, uniform_list,
 };
 use quire_core::workspace::{TagChoices, TaskStatus};
-use quire_store::index::{IndexClient, Outline, TaggedBlock};
-use ui::{Color, Icon, IconName, Label, LabelCommon, LabelSize, prelude::*, v_flex};
+use quire_store::index::{IndexClient, Outline, TaggedBlock, TaskItem};
+use ui::{
+    Button, ButtonStyle, Color, Icon, IconName, Label, LabelCommon, LabelSize, Toggleable,
+    prelude::*, v_flex,
+};
 
 pub enum TagPageEvent {
     Open {
@@ -26,21 +29,33 @@ pub enum TagPageEvent {
     Remember,
 }
 
-pub type Tagged = Vec<(TaggedBlock, Outline)>;
+/// Each tagged block with its outline, and its task when the block is one.
+pub type Tagged = Vec<(TaggedBlock, Outline, Option<TaskItem>)>;
 
-/// The reference tag page filter: blocks whose page title or text contains the filter, laid
-/// out by page.
-pub fn tagged_rows(blocks: &[(TaggedBlock, Outline)], filter: &str) -> Vec<ContextRow> {
+/// The reference `statusMatches`: All keeps every block; the others keep tasks in that state.
+fn has_status(task: Option<&TaskItem>, status: TaskStatus, today: &str) -> bool {
+    status == TaskStatus::All || task.is_some_and(|task| task.has_status(status, today))
+}
+
+/// The reference tag page filter: blocks whose page title or text contains the filter and whose
+/// task matches `status`, laid out by page.
+pub fn tagged_rows(
+    blocks: &[(TaggedBlock, Outline, Option<TaskItem>)],
+    filter: &str,
+    status: TaskStatus,
+    today: &str,
+) -> Vec<ContextRow> {
     let needle = filter.trim().to_lowercase();
     context_rows(
         blocks
             .iter()
-            .filter(|(block, _)| {
-                format!("{}\n{}", block.source.title, block.tag.snippet)
-                    .to_lowercase()
-                    .contains(&needle)
+            .filter(|(block, _, task)| {
+                has_status(task.as_ref(), status, today)
+                    && format!("{}\n{}", block.source.title, block.tag.snippet)
+                        .to_lowercase()
+                        .contains(&needle)
             })
-            .map(|(block, outline)| ContextItem {
+            .map(|(block, outline, _)| ContextItem {
                 page: block.source.page.to_lossy_string(),
                 title: &block.source.title,
                 text: &block.tag.snippet,
@@ -55,6 +70,7 @@ pub struct TagPageView {
     pub(crate) blocks: Live<Tagged>,
     filter: Entity<Editor>,
     status: TaskStatus,
+    today: String,
     highlighted: usize,
     focus: FocusHandle,
     pub(crate) scroll: UniformListScrollHandle,
@@ -96,6 +112,7 @@ impl TagPageView {
             blocks: Live::default(),
             filter,
             status: choices.status,
+            today: String::new(),
             highlighted: 0,
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
@@ -104,8 +121,10 @@ impl TagPageView {
         }
     }
 
-    /// Asks for the tagged blocks and their outlines in one index step.
-    pub fn refresh(&mut self, client: &IndexClient, cx: &mut Context<Self>) {
+    /// Asks for the tagged blocks, their outlines, and their tasks in one index step; `today`
+    /// decides which tasks are due.
+    pub fn refresh(&mut self, client: &IndexClient, today: String, cx: &mut Context<Self>) {
+        self.today = today;
         let tag = self.tag.clone();
         let answer = client.with_generation(move |index| {
             let blocks = index.tagged_blocks(&tag)?;
@@ -114,7 +133,15 @@ impl TagPageView {
                 .map(|block| (block.source.revision.clone(), block.tag.from))
                 .collect();
             let outlines = index.outlines(&at)?;
-            Ok(blocks.into_iter().zip(outlines).collect())
+            let mut tasks = index.tagged_tasks(&tag)?;
+            Ok(blocks
+                .into_iter()
+                .zip(outlines)
+                .map(|(block, outline)| {
+                    let task = tasks.remove(&(block.source.revision.clone(), block.tag.from));
+                    (block, outline, task)
+                })
+                .collect())
         });
         self.blocks.request(
             answer,
@@ -141,7 +168,40 @@ impl TagPageView {
     }
 
     pub fn rows(&self, cx: &App) -> Vec<ContextRow> {
-        tagged_rows(&self.blocks.value, &self.filter.read(cx).text(cx))
+        tagged_rows(
+            &self.blocks.value,
+            &self.filter.read(cx).text(cx),
+            self.shown_status(),
+            &self.today,
+        )
+    }
+
+    fn has_tasks(&self) -> bool {
+        self.blocks.value.iter().any(|(_, _, task)| task.is_some())
+    }
+
+    /// The chosen status, or All while no tagged block is a task, as the reference shows it.
+    pub fn shown_status(&self) -> TaskStatus {
+        if self.has_tasks() {
+            self.status
+        } else {
+            TaskStatus::All
+        }
+    }
+
+    pub fn set_status(&mut self, status: TaskStatus, cx: &mut Context<Self>) {
+        self.status = status;
+        self.highlighted = 0;
+        cx.emit(TagPageEvent::Remember);
+        cx.notify();
+    }
+
+    fn status_count(&self, status: TaskStatus) -> usize {
+        self.blocks
+            .value
+            .iter()
+            .filter(|(_, _, task)| has_status(task.as_ref(), status, &self.today))
+            .count()
     }
 
     fn move_highlight(&mut self, delta: isize, cx: &mut Context<Self>) {
@@ -184,7 +244,7 @@ impl Render for TagPageView {
             .blocks
             .value
             .iter()
-            .map(|(block, _)| &block.source.revision)
+            .map(|(block, _, _)| &block.source.revision)
             .collect::<std::collections::HashSet<_>>()
             .len();
         let empty = rows.is_empty().then_some(if total == 0 {
@@ -256,6 +316,18 @@ impl Render for TagPageView {
                 .p_1()
                 .child(self.filter.clone()),
         )
+        .when(self.has_tasks(), |div| {
+            let shown = self.shown_status();
+            div.child(h_flex().gap_1().children(TaskStatus::ALL.map(|status| {
+                Button::new(
+                    SharedString::from(format!("tag-status-{status:?}")),
+                    format!("{} {}", status.label(), self.status_count(status)),
+                )
+                .style(ButtonStyle::Subtle)
+                .toggle_state(shown == status)
+                .on_click(cx.listener(move |this, _, _, cx| this.set_status(status, cx)))
+            })))
+        })
         .when_some(self.blocks.error.clone(), |div, error| {
             div.child(Label::new(error).color(Color::Error))
         })
@@ -279,7 +351,7 @@ mod tests {
         sync::json::JsString,
     };
 
-    fn block(page: &str, title: &str, snippet: &str) -> (TaggedBlock, Outline) {
+    fn block(page: &str, title: &str, snippet: &str) -> (TaggedBlock, Outline, Option<TaskItem>) {
         let block = TaggedBlock {
             source: PageRef {
                 page: JsString::from(page),
@@ -294,7 +366,7 @@ mod tests {
                 snippet: snippet.into(),
             },
         };
-        (block, Outline::default())
+        (block, Outline::default(), None)
     }
 
     #[test]
@@ -304,9 +376,10 @@ mod tests {
             block("a", "Alpha", "second #plan"),
             block("b", "Beta", "third #plan"),
         ];
-        assert_eq!(tagged_rows(&blocks, "").len(), 5);
+        let rows = |filter: &str| tagged_rows(&blocks, filter, TaskStatus::All, "2026-10-31");
+        assert_eq!(rows("").len(), 5);
         assert_eq!(
-            tagged_rows(&blocks, " BETA "),
+            rows(" BETA "),
             [
                 ContextRow::Page {
                     page: "b".into(),
@@ -321,7 +394,7 @@ mod tests {
             ],
             "the page title matches"
         );
-        assert_eq!(tagged_rows(&blocks, "second").len(), 2);
-        assert!(tagged_rows(&blocks, "missing").is_empty());
+        assert_eq!(rows("second").len(), 2);
+        assert!(rows("missing").is_empty());
     }
 }

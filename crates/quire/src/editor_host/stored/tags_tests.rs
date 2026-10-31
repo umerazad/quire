@@ -438,3 +438,55 @@ fn long_previews_list_twenty_changes_until_asked_for_more(cx: &mut TestAppContex
     edits.update(cx, |edits, cx| edits.show_more(cx));
     assert_eq!(shown(cx), (25, 0));
 }
+
+#[gpui::test]
+fn tag_pages_filter_tasks_by_status_and_remember_it(cx: &mut TestAppContext) {
+    use quire_core::workspace::TaskStatus;
+    let notebook = open_notebook(
+        &[(
+            "w",
+            "Work.md",
+            "- [ ] Book the venue #plan\n- [x] Sent the deck #plan\n- Plain note #plan\n",
+        )],
+        "w",
+        cx,
+    );
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.visit(
+                Destination::Tag {
+                    tag: "#plan".into(),
+                },
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    wait_until(cx, "the tag page", |cx| page_rows(&notebook, cx).len() == 4);
+    let page = read(&notebook, cx, |view, _| view.shown_tag_page().unwrap());
+    let blocks = |status: TaskStatus, cx: &mut TestAppContext| {
+        page.update(cx, |page, cx| page.set_status(status, cx));
+        texts(&page_rows(&notebook, cx))
+    };
+    assert_eq!(
+        blocks(TaskStatus::Open, cx),
+        ["Work (1)", "  [ ] Book the venue #plan"]
+    );
+    assert_eq!(
+        blocks(TaskStatus::Done, cx),
+        ["Work (1)", "  [x] Sent the deck #plan"]
+    );
+    assert_eq!(blocks(TaskStatus::Due, cx), Vec::<String>::new());
+    assert_eq!(blocks(TaskStatus::All, cx).len(), 4);
+    blocks(TaskStatus::Done, cx);
+    wait_until(cx, "the remembered status", |cx| {
+        read(&notebook, cx, |view, _| {
+            view.nav
+                .workspace
+                .tag_pages
+                .get("plan")
+                .is_some_and(|choices| choices.status == TaskStatus::Done)
+        })
+    });
+}

@@ -114,7 +114,8 @@ impl StoredWindow {
             list.update(cx, |list, cx| list.refresh(&client, cx));
         }
         if let Some(page) = self.shown_tag_page() {
-            page.update(cx, |page, cx| page.refresh(&client, cx));
+            let today = self.today().unwrap_or_default();
+            page.update(cx, |page, cx| page.refresh(&client, today, cx));
         }
     }
 

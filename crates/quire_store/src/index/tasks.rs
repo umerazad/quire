@@ -212,6 +212,28 @@ impl QueryIndex {
         Ok(tasks)
     }
 
+    /// The tasks among `tag`'s tagged blocks, by the revision and offset its tagged block reports,
+    /// for the tag page's task status filter.
+    pub fn tagged_tasks(&self, tag: &str) -> Result<HashMap<(String, u32), TaskItem>> {
+        let tasks = self.tasks()?;
+        let starts: Vec<(String, u32, u32)> = self.connection.select_bound(
+            "SELECT g.revision,g.start,b.start FROM live_tagged g
+             JOIN live_blocks b ON b.revision=g.revision AND b.content_from=g.start
+             WHERE g.tag_key=?",
+        )?(super::tag_key(tag))?;
+        let mut tagged: HashMap<(String, u32), u32> = starts
+            .into_iter()
+            .map(|(revision, from, block)| ((revision, block), from))
+            .collect();
+        Ok(tasks
+            .into_iter()
+            .filter_map(|task| {
+                let from = tagged.remove(&(task.source.revision.clone(), task.from))?;
+                Some(((task.source.revision.clone(), from), task))
+            })
+            .collect())
+    }
+
     /// The reference `linkedTasks`: tasks on other pages that link to `page`, directly or through
     /// a parent block, such as action items written under a [[Meeting]] line.
     pub fn linked_tasks(&self, page: &str) -> Result<Vec<TaskItem>> {

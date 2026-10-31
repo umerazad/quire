@@ -716,3 +716,46 @@ fn search_reads_unsaved_text_of_open_pages_instead_of_their_last_save() -> Resul
     assert_eq!(hits("wombat")?.len(), 2);
     Ok(())
 }
+
+#[test]
+fn tagged_tasks_pair_each_tagged_task_block_with_its_task() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "a", "A.md", "")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    let block_at = |from: u32| IndexedBlock {
+        content_from: from + 2,
+        ..block(None, from)
+    };
+    let tagged = |from: u32| quire_store::index::IndexedTag {
+        tag: "#plan".into(),
+        from: from + 2,
+        block_id: None,
+        snippet: "s".into(),
+    };
+    let task_at = |from: u32, text: &str| IndexedTask {
+        from,
+        ..task(text, "next", Default::default())
+    };
+    analyze_all(
+        &index,
+        &[(
+            "A.md",
+            PageIndex {
+                blocks: vec![block_at(0), block_at(20), block_at(40)],
+                tagged: vec![tagged(0), tagged(20)],
+                tasks: vec![task_at(0, "Tagged task"), task_at(40, "Untagged task")],
+                ..Default::default()
+            },
+        )],
+    )?;
+    let tasks = index.tagged_tasks("plan")?;
+    assert_eq!(
+        tasks.len(),
+        1,
+        "the tagged plain block and the untagged task are left out"
+    );
+    let ((_, from), task) = tasks.into_iter().next().unwrap();
+    assert_eq!((from, task.text.as_str()), (2, "Tagged task"));
+    Ok(())
+}
