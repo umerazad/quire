@@ -759,3 +759,7 @@ mod media_pdf_tests;
 #[cfg(test)]
 #[path = "media_attach_tests.rs"]
 mod media_attach_tests;
+
+#[cfg(test)]
+#[path = "media_folder_tests.rs"]
+mod media_folder_tests;

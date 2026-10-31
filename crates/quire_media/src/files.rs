@@ -32,7 +32,8 @@ impl Files {
         }
     }
 
-    /// The ordinary file a notebook-relative path names.
+    /// The ordinary file a notebook-relative path names. In a Quire notebook any page folder's
+    /// `attachments/<name>` names the one cache entry, since names are content hashes.
     pub fn locate(&self, relative: &str) -> Result<PathBuf, MediaError> {
         let parts: Vec<&str> = relative.split('/').collect();
         if parts.iter().any(|part| {
@@ -42,7 +43,7 @@ impl Files {
         }
         let (root, path) = match self {
             Self::Store { attachments } => match parts.as_slice() {
-                ["attachments", name] => (attachments.clone(), attachments.join(name)),
+                [.., "attachments", name] => (attachments.clone(), attachments.join(name)),
                 _ => {
                     return Err(MediaError::Missing(format!(
                         "{relative} is not a Quire attachment. Attach the file with Attach file, which stores it under attachments/."
@@ -169,6 +170,7 @@ mod tests {
         fs::write(root.path().join("attachments/abc.png"), b"png").unwrap();
         fs::write(root.path().join("page.png"), b"png").unwrap();
         assert!(files.locate("attachments/abc.png").is_ok());
+        assert!(files.locate("Folder/attachments/abc.png").is_ok());
         assert!(matches!(
             files.locate("page.png"),
             Err(MediaError::Missing(_))
