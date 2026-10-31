@@ -6,8 +6,38 @@ use crate::navigation::{
     linked_tasks::{LinkedTasksEvent, LinkedTasksView},
     references::{ReferencesEvent, ReferencesView},
 };
+use crate::rich_text::RowLink;
 
 impl StoredWindow {
+    /// Opens what a link in a result row names: the page or block it links, the tag's page, or
+    /// a web address in the browser. This is `RowLink::open` for views the window owns, which
+    /// cannot reach the window through its notebook while it handles their events.
+    pub(in crate::editor_host::stored) fn open_row_link(
+        &mut self,
+        link: &RowLink,
+        beside: bool,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        match link {
+            RowLink::Reference(target) => self.follow(
+                crate::references::Follow {
+                    target: target.clone(),
+                    beside,
+                    backlinks: false,
+                },
+                window,
+                cx,
+            ),
+            RowLink::Tag(tag) => self.visit(
+                quire_core::workspace::Destination::Tag { tag: tag.clone() },
+                window,
+                cx,
+            ),
+            RowLink::Url(url) => cx.open_url(url),
+        }
+    }
+
     /// The panel for the page in the main pane, while a page (not a browser) is shown.
     pub(in crate::editor_host::stored) fn shown_references(
         &self,
@@ -61,6 +91,9 @@ impl StoredWindow {
                         };
                         this.open_answer(seed, window, cx);
                     }
+                    ReferencesEvent::Link { link, beside } => {
+                        this.open_row_link(link, *beside, window, cx)
+                    }
                 },
             )
             .detach();
@@ -79,6 +112,9 @@ impl StoredWindow {
                 |this, _, event: &LinkedTasksEvent, window, cx| match event {
                     LinkedTasksEvent::Open { page, jump, beside } => {
                         this.open_page_at(page.clone(), Some(jump.clone()), *beside, window, cx)
+                    }
+                    LinkedTasksEvent::Link { link, beside } => {
+                        this.open_row_link(link, *beside, window, cx)
                     }
                 },
             )

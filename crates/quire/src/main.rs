@@ -123,6 +123,9 @@ mod media;
 mod task_lists;
 
 #[cfg(feature = "full-editor")]
+mod rich_text;
+
+#[cfg(feature = "full-editor")]
 mod templates;
 
 #[cfg(feature = "full-editor")]

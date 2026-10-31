@@ -28,6 +28,11 @@ pub enum LinkedTasksEvent {
         jump: Jump,
         beside: bool,
     },
+    /// A link in a task's text was clicked.
+    Link {
+        link: crate::rich_text::RowLink,
+        beside: bool,
+    },
 }
 
 pub struct LinkedTasksView {
@@ -42,6 +47,7 @@ pub struct LinkedTasksView {
     error: Option<SharedString>,
     focus: FocusHandle,
     scroll: UniformListScrollHandle,
+    rich: crate::rich_text::RichCache,
 }
 
 impl EventEmitter<LinkedTasksEvent> for LinkedTasksView {}
@@ -66,6 +72,7 @@ impl LinkedTasksView {
             error: None,
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
+            rich: Default::default(),
         }
     }
 
@@ -185,12 +192,17 @@ impl LinkedTasksView {
             )
             .child(
                 h_flex()
+                    .min_w_0()
                     .gap_2()
-                    .child(Label::new(task.text.clone()).truncate().color(if done {
-                        Color::Muted
-                    } else {
-                        Color::Default
-                    }))
+                    .child(crate::rich_text::line(
+                        ("linked-task-text", index),
+                        &self.rich.get(&task.text),
+                        done,
+                        Some(crate::rich_text::emitter(cx, |link, beside| {
+                            LinkedTasksEvent::Link { link, beside }
+                        })),
+                        cx,
+                    ))
                     .child(
                         Label::new(task.source.title.clone())
                             .size(LabelSize::Small)

@@ -69,6 +69,11 @@ pub enum TasksEvent {
     },
     /// The list, a filter, the rows shown, or the capture draft changed and should be remembered.
     Remember(TaskChoices),
+    /// A link in a task's text was clicked.
+    Link {
+        link: crate::rich_text::RowLink,
+        beside: bool,
+    },
 }
 
 /// The empty-list text for each list, from the reference Tasks page.
@@ -150,6 +155,7 @@ pub struct TasksView {
     destination: Destination,
     focus: FocusHandle,
     scroll: UniformListScrollHandle,
+    rich: crate::rich_text::RichCache,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -222,6 +228,7 @@ impl TasksView {
             destination: std::rc::Rc::new(|_| Ok(CaptureTo::Inbox)),
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
+            rich: Default::default(),
             _subscriptions: vec![filtered, drafted],
         }
     }
@@ -890,7 +897,16 @@ impl TasksView {
             )
             .child(
                 v_flex()
-                    .child(Label::new(task.text.clone()).truncate())
+                    .min_w_0()
+                    .child(crate::rich_text::line(
+                        ("task-text", index),
+                        &self.rich.get(&task.text),
+                        done,
+                        Some(crate::rich_text::emitter(cx, |link, beside| {
+                            TasksEvent::Link { link, beside }
+                        })),
+                        cx,
+                    ))
                     .child(
                         h_flex()
                             .gap_2()

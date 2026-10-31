@@ -3,9 +3,8 @@
 //! and `orderReferences`, `src/core/reference-filter.ts`, `src/core/projects.ts`).
 
 use super::{
-    PageRef, QueryIndex,
-    query::{PAGE_COLUMNS, PageRow, page_ref},
-    strip_markdown,
+    query::{page_ref, PageRow, PAGE_COLUMNS},
+    strip_markdown, PageRef, QueryIndex,
 };
 use crate::sync::json::JsString;
 use anyhow::Result;
@@ -96,7 +95,7 @@ fn page_names(page: &PageRef) -> [String; 2] {
 
 /// A block's parents (nearest four, outermost first) and its first nested blocks with their
 /// depth below it, plus how many nested blocks are left out.
-fn outline(page: &Page, block: &Block) -> Outline {
+fn outline(page: &Page, block: &Block, shown: usize) -> Outline {
     let parent = |item: &Block| Some(&page.blocks[*page.by_key.get(item.parent.as_deref()?)?]);
     let mut ancestors = Vec::new();
     let mut up = parent(block);
@@ -120,13 +119,13 @@ fn outline(page: &Page, block: &Block) -> Outline {
         .collect();
     let children = nested
         .iter()
-        .take(SHOWN_CHILDREN)
+        .take(shown)
         .map(|item| (depth(item), item.content.clone()))
         .collect();
     Outline {
         ancestors,
         children,
-        more_children: nested.len().saturating_sub(SHOWN_CHILDREN),
+        more_children: nested.len().saturating_sub(shown),
     }
 }
 
@@ -234,15 +233,25 @@ impl QueryIndex {
 
     /// The outline of the block holding each `(revision, position)`, empty where no block does.
     pub fn outlines(&self, at: &[(String, u32)]) -> Result<Vec<Outline>> {
+        let at: Vec<_> = at
+            .iter()
+            .map(|(revision, position)| (revision.clone(), *position, SHOWN_CHILDREN))
+            .collect();
+        self.outlines_with(&at)
+    }
+
+    /// The outline of the block holding each `(revision, position, shown)`, listing up to
+    /// `shown` nested blocks, so a row can load more of them in place.
+    pub fn outlines_with(&self, at: &[(String, u32, usize)]) -> Result<Vec<Outline>> {
         let mut pages: HashMap<String, Page> = HashMap::new();
         at.iter()
-            .map(|(revision, position)| {
+            .map(|(revision, position, shown)| {
                 if !pages.contains_key(revision) {
                     pages.insert(revision.clone(), self.page_rows(revision)?);
                 }
                 let rows = &pages[revision];
                 Ok(block_at(&rows.blocks, *position)
-                    .map(|block| outline(rows, block))
+                    .map(|block| outline(rows, block, *shown))
                     .unwrap_or_default())
             })
             .collect()
@@ -272,7 +281,9 @@ impl QueryIndex {
             }
             blocks.push(ReferenceBlock {
                 context: Self::context(&link.source, rows, from),
-                outline: block.map(|block| outline(rows, block)).unwrap_or_default(),
+                outline: block
+                    .map(|block| outline(rows, block, SHOWN_CHILDREN))
+                    .unwrap_or_default(),
                 block_id: block.and_then(|block| block.id.clone()),
                 snippet: link.link.text,
                 source: link.source,

@@ -193,6 +193,84 @@ fn tag_pages_group_by_page_follow_saves_and_open_sources(cx: &mut TestAppContext
     assert_eq!(caret_text(&notebook, false, cx), "fourth #Plan too");
 }
 
+/// Clicks the middle of the element drawn with `selector` once the window is quiet.
+pub(super) fn click_at(notebook: &Notebook, selector: String, cx: &mut TestAppContext) {
+    super::template_tests::click(notebook, selector.leak(), cx);
+}
+
+#[gpui::test]
+fn tag_page_groups_fold_load_nested_blocks_in_place_and_row_tags_open(cx: &mut TestAppContext) {
+    let children: String = (1..=10)
+        .map(|n| match n {
+            1 => "  - #other\n".to_owned(),
+            n => format!("  - child {n}\n"),
+        })
+        .collect();
+    let alpha = format!("- **Plan** with [[Beta]] #plan\n{children}");
+    let notebook = open_notebook(
+        &[("a", "Alpha.md", &alpha), ("b", "Beta.md", "- #plan\n")],
+        "b",
+        cx,
+    );
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.visit(
+                Destination::Tag {
+                    tag: "#plan".into(),
+                },
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    wait_until(cx, "the tag page", |cx| {
+        page_rows(&notebook, cx).len() == 13
+    });
+    let rows = texts(&page_rows(&notebook, cx));
+    assert_eq!(rows[1], "  **Plan** with [[Beta]] #plan");
+    assert_eq!(rows[10], "    +2");
+    let window = notebook.window.into();
+    cx.simulate_keystrokes(window, "escape");
+    cx.simulate_keystrokes(window, &["down"; 10].join(" "));
+    cx.simulate_keystrokes(window, "enter");
+    wait_until(cx, "the nested blocks loaded in place", |cx| {
+        page_rows(&notebook, cx).len() == 14
+    });
+    assert_eq!(
+        texts(&page_rows(&notebook, cx))[2..12],
+        ["    #other".to_owned()]
+            .into_iter()
+            .chain((2..=10).map(|n| format!("    child {n}")))
+            .collect::<Vec<_>>(),
+        "Enter on the count lists the rest, and the page stays shown"
+    );
+    assert_eq!(active(&notebook, cx), "b");
+    cx.simulate_keystrokes(window, "left");
+    assert_eq!(
+        texts(&page_rows(&notebook, cx)),
+        ["Alpha (1)", "Beta (1)", "  #plan"],
+        "Left folds the highlighted row's page"
+    );
+    cx.simulate_keystrokes(window, "right");
+    assert_eq!(page_rows(&notebook, cx).len(), 14, "Right unfolds it");
+    cx.simulate_keystrokes(window, "/");
+    cx.simulate_input(window, "zzz");
+    assert!(
+        page_rows(&notebook, cx).is_empty(),
+        "/ returns to the filter"
+    );
+    cx.simulate_keystrokes(window, "backspace backspace backspace");
+    assert_eq!(page_rows(&notebook, cx).len(), 14);
+    click_at(&notebook, "context-text-2".into(), cx);
+    wait_until(cx, "the clicked tag's page", |cx| {
+        read(&notebook, cx, |view, _| view.nav.workspace.active.clone())
+            == Some(Destination::Tag {
+                tag: "#other".into(),
+            })
+    });
+}
+
 #[test]
 fn tag_sorts_order_by_count_with_ties_by_name() {
     let tags = [

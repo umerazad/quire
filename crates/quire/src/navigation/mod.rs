@@ -49,6 +49,8 @@ gpui::actions!(
         FocusFiles,
         /// Moves focus to the linked references under the page.
         FocusReferences,
+        /// Moves focus from the rows of a tag page or linked references to their filter.
+        FocusRowFilter,
         /// Lists tasks by state, due date, and project.
         ShowTasks,
         /// Opens Tasks with the capture field focused.
@@ -235,6 +237,8 @@ pub fn bind_keys(cx: &mut App) {
         ),
         KeyBinding::new("enter", menu::Confirm, Some("QuireTagEdit > Editor")),
         KeyBinding::new("escape", menu::Cancel, Some("QuireReferences > Editor")),
+        KeyBinding::new("escape", menu::Cancel, Some("QuireContextRows > Editor")),
+        KeyBinding::new("/", FocusRowFilter, Some("QuireContextRows")),
         KeyBinding::new(primary!("shift-t"), CaptureTask, context),
         KeyBinding::new("enter", menu::Confirm, Some("QuireTaskField > Editor")),
         KeyBinding::new("escape", menu::Cancel, Some("QuireTaskField > Editor")),

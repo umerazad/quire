@@ -293,6 +293,7 @@ pub(crate) struct TaskListView {
     list: Live<Option<TaskList>>,
     notice: Option<SharedString>,
     work: Option<gpui::Task<()>>,
+    rich: crate::rich_text::RichCache,
 }
 
 const NO_INDEX: &str =
@@ -314,6 +315,7 @@ impl TaskListView {
             list: Live::default(),
             notice: None,
             work: None,
+            rich: Default::default(),
         }
     }
 
@@ -427,6 +429,20 @@ impl TaskListView {
         }
     }
 
+    /// Opens what a link in a task's text names through the page editor's notebook.
+    fn on_link(&self, cx: &App) -> crate::rich_text::OnLink {
+        let notebook = self
+            .editor
+            .upgrade()
+            .and_then(|editor| crate::references::host(editor.read(cx)))
+            .map(|host| host.read(cx).notebook().clone());
+        std::rc::Rc::new(move |link, beside, window, cx| {
+            if let Some(notebook) = &notebook {
+                link.open(beside, notebook.as_ref(), window, cx)
+            }
+        })
+    }
+
     /// Ticks or moves a listed task: through this page's editor when the task is here, as one
     /// undo step, otherwise by writing its page.
     fn change(
@@ -522,11 +538,13 @@ impl TaskListView {
                     .id(("task-list-text", index))
                     .cursor_pointer()
                     .overflow_hidden()
-                    .child(Label::new(task.text.clone()).truncate().color(if done {
-                        Color::Muted
-                    } else {
-                        Color::Default
-                    }))
+                    .child(crate::rich_text::line(
+                        ("task-list-line", index),
+                        &self.rich.get(&task.text),
+                        done,
+                        Some(self.on_link(cx)),
+                        cx,
+                    ))
                     .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                         this.open(
                             &page,
