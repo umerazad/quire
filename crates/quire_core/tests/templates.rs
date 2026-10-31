@@ -14,6 +14,11 @@ use quire_core::templates::{
 use serde_json::{Value, json};
 use std::{collections::HashMap, sync::LazyLock};
 
+/// A placeholder the reference test says no starter or example may leave behind.
+static LEFT_OVER: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"\{(cursor|ask|today|date|time|page|weekday)(?-u:\b)").unwrap()
+});
+
 static VECTORS: LazyLock<Value> = LazyLock::new(|| {
     serde_json::from_str(include_str!(
         "../../../tests/fixtures/template-vectors.json"
@@ -159,6 +164,10 @@ fn only_the_root_templates_page_holds_templates() {
 #[test]
 fn templates_parse_copy_and_expand_as_the_reference_does() {
     let mut checked = 0;
+    let examples: String = guide::EXAMPLES.iter().map(guide::definition).collect();
+    let starters = guide::starter_templates();
+    let offered = [starters.as_str(), examples.as_str()];
+    let mut offered_checked = 0;
     for page in VECTORS["pages"].as_array().unwrap() {
         let name = page["name"].as_str().unwrap();
         let text = page["text"].as_str().unwrap();
@@ -235,6 +244,13 @@ fn templates_parse_copy_and_expand_as_the_reference_does() {
             assert_eq!(json!(asked), expansion["asked"], "{context} questions");
             match result {
                 Ok(expanded) => {
+                    if offered.contains(&text) {
+                        assert!(
+                            !LEFT_OVER.is_match(&expanded.text),
+                            "{context} left a placeholder"
+                        );
+                        offered_checked += 1;
+                    }
                     let offsets = Offsets::new(&expanded.text);
                     assert_eq!(
                         json!({"text": expanded.text, "cursor": offsets.unit(expanded.cursor)}),
@@ -255,6 +271,10 @@ fn templates_parse_copy_and_expand_as_the_reference_does() {
         }
     }
     assert!(checked > 800, "only {checked} expansions were checked");
+    assert!(
+        offered_checked >= 18,
+        "only {offered_checked} starter and example expansions were checked"
+    );
 }
 
 #[test]
@@ -427,5 +447,45 @@ fn placement_keeps_the_caret_and_indents_the_trigger_line() {
     assert_eq!(
         placement(&replaced, Some("- One ^trigger\n- ((trigger))\n"), "  "),
         ("  - One ^trigger\n  - ((trigger))".into(), 32)
+    );
+}
+
+/// Regression: the reference trims the space after a final `{cursor}` bullet, leaving `  -`
+/// with the caret after the dash, so typed text no longer belonged to the bullet.
+#[test]
+fn a_cursor_on_the_last_bullet_keeps_its_space() {
+    let expanded = Expanded {
+        text: "- Meeting\n  - \n".into(),
+        cursor: 14,
+    };
+    assert_eq!(
+        placement(&expanded, None, "\t"),
+        ("\t- Meeting\n\t  - ".into(), 16)
+    );
+    let trailing = Expanded {
+        text: "- Note  \n".into(),
+        cursor: 6,
+    };
+    assert_eq!(placement(&trailing, None, ""), ("- Note".into(), 6));
+}
+
+#[test]
+fn the_template_clock_reads_local_wall_time() {
+    let now = 1_793_361_600_000;
+    assert_eq!(
+        DailyCalendar::utc().clock_at(now),
+        Ok(("2026-10-30".into(), 12, 0))
+    );
+    assert_eq!(
+        DailyCalendar::named("America/New_York")
+            .unwrap()
+            .clock_at(now),
+        Ok(("2026-10-30".into(), 8, 0))
+    );
+    assert_eq!(
+        DailyCalendar::named("Pacific/Kiritimati")
+            .unwrap()
+            .clock_at(now),
+        Ok(("2026-10-31".into(), 2, 0))
     );
 }

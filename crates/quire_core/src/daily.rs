@@ -150,6 +150,17 @@ impl DailyCalendar {
         Ok(date_string(instant.to_zoned(self.timezone.clone()).date()))
     }
 
+    /// The local date, hour, and minute at a clock instant, for template placeholders.
+    pub fn clock_at(&self, unix_milliseconds: i64) -> Result<(String, u8, u8), String> {
+        let instant = Timestamp::from_millisecond(unix_milliseconds).map_err(|error| format!("Cannot read this clock value: {error}. Supply an instant in the supported calendar range."))?;
+        let local = instant.to_zoned(self.timezone.clone()).datetime();
+        Ok((
+            date_string(local.date()),
+            local.hour() as u8,
+            local.minute() as u8,
+        ))
+    }
+
     fn local_date(&self, year: i32, month: u32, day: u32, hour: i8) -> Option<Date> {
         if !(1..=31).contains(&day) {
             return None;

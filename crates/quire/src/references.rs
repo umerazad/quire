@@ -67,6 +67,13 @@ pub trait Notebook {
     fn show_page(&self, page: &str, beside: bool, window: &mut Window, cx: &mut App);
     /// The open pages and the store, for task changes written to other pages.
     fn writers(&self, cx: &App) -> Option<(Vec<Entity<OpenPage>>, StorageClient)>;
+    /// Asks for a value a template needs. The answer is None when the question is dismissed.
+    fn prompt(
+        &self,
+        prompt: crate::templates::prompt::Prompt,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> futures::channel::oneshot::Receiver<Option<String>>;
 }
 
 /// Shares one notebook among a window's page editors and tells them when indexed answers may

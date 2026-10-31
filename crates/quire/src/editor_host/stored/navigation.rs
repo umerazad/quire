@@ -56,6 +56,8 @@ pub(super) struct Navigation {
     pub(super) references: HashMap<String, Entity<crate::navigation::references::ReferencesView>>,
     /// The guide beside the Templates page, with the ID of the page it belongs to.
     pub(super) templates_guide: Option<(String, Entity<crate::templates::guide::TemplatesGuide>)>,
+    /// A question a template asks while it is inserted.
+    pub(super) template_prompt: Option<Entity<Picker<crate::templates::prompt::TemplatePrompt>>>,
 }
 
 impl Navigation {
@@ -89,6 +91,7 @@ impl Navigation {
             tasks: task_views::TaskViews::default(),
             references: HashMap::new(),
             templates_guide: None,
+            template_prompt: None,
         }
     }
 
@@ -768,3 +771,7 @@ mod task_lists_tests;
 #[cfg(test)]
 #[path = "template_tests.rs"]
 mod template_tests;
+
+#[cfg(test)]
+#[path = "template_insert_tests.rs"]
+mod template_insert_tests;

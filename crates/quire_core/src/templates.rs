@@ -576,7 +576,9 @@ fn map_position(before: &str, after: &str, position: usize) -> usize {
 
 /// The text that replaces the trigger line and the caret offset within it: the expansion with
 /// the trigger block's ID kept (`preserved`, when the trigger block had one), indented like the
-/// trigger line, without trailing whitespace.
+/// trigger line, without trailing whitespace. Unlike the reference, which trims the space after a
+/// final empty bullet and leaves the caret on `-`, whitespace up to the caret stays, so typing at
+/// a `{cursor}` on the last line writes into that bullet.
 pub fn placement(expanded: &Expanded, preserved: Option<&str>, indent: &str) -> (String, usize) {
     let text = preserved.unwrap_or(&expanded.text);
     let mapped = map_position(&expanded.text, text, expanded.cursor);
@@ -587,9 +589,14 @@ pub fn placement(expanded: &Expanded, preserved: Option<&str>, indent: &str) -> 
             .collect::<Vec<_>>()
             .join("\n")
     };
-    let cursor = indented(&text[..mapped]).len();
-    let out = indented(text.trim_end_matches(js_space));
-    let cursor = cursor.min(out.len());
+    let trimmed = text.trim_end_matches(js_space).len();
+    let kept = if mapped > trimmed && !text[trimmed..mapped].contains('\n') {
+        mapped
+    } else {
+        trimmed
+    };
+    let out = indented(&text[..kept]);
+    let cursor = indented(&text[..mapped]).len().min(out.len());
     (out, cursor)
 }
 

@@ -96,3 +96,32 @@ impl StoredWindow {
         Some(guide)
     }
 }
+
+impl StoredWindow {
+    /// Shows a template question over the window. Answering or dismissing it returns focus to
+    /// whatever had it, normally the editor the template is being inserted into.
+    pub(in crate::editor_host::stored) fn show_template_prompt(
+        &mut self,
+        picker: Entity<picker::Picker<crate::templates::prompt::TemplatePrompt>>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let previous = window.focused(cx);
+        cx.subscribe_in(
+            &picker,
+            window,
+            move |this, _, _: &DismissEvent, window, cx| {
+                this.nav.template_prompt = None;
+                match &previous {
+                    Some(previous) => window.focus(previous, cx),
+                    None => this.focus_active(window, cx),
+                }
+                cx.notify();
+            },
+        )
+        .detach();
+        picker.update(cx, |picker, cx| picker.focus(window, cx));
+        self.nav.template_prompt = Some(picker);
+        cx.notify();
+    }
+}

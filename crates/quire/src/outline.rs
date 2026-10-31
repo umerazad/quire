@@ -74,6 +74,13 @@ pub fn notice(cx: &App) -> Option<SharedString> {
         .and_then(|notice| notice.0.clone())
 }
 
+/// Shows a notice composed at run time, such as a template error naming its input.
+pub(crate) fn show_notice(message: SharedString, cx: &mut App) {
+    if notice(cx).as_ref() != Some(&message) {
+        cx.set_global(Notice(Some(message)));
+    }
+}
+
 pub(crate) fn set_notice(message: Option<&'static str>, cx: &mut App) {
     if notice(cx).as_deref() != message {
         cx.set_global(Notice(message.map(SharedString::new_static)));
