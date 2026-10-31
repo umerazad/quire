@@ -8,17 +8,24 @@ use crate::{
         ImportMarkdownFolder, flatten_page, now,
     },
     notebook_backend::NotebookBackend,
+    page_writes,
     query_index::ask,
 };
 use futures::{StreamExt as _, channel::mpsc};
 use gpui::{AppContext as _, AsyncApp, Entity, PathPromptOptions, WeakEntity, Window};
 use quire_core::exchange::{
+    file_links::{attachment_name, rewrite_file_links, root_attachment_target},
     import::import_summary,
     notebook_export::{ExportReport, export_target, replace_question},
     page_export::{export_name, localize_attachments},
 };
-use quire_store::markdown_import::{CANCELED, copy_files, read_source, remove_files};
+use quire_media::files::Files;
+use quire_store::{
+    markdown_import::{CANCELED, copy_files, read_source, remove_files},
+    notebook::SourceFiles,
+};
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -45,11 +52,18 @@ fn describe(error: anyhow::Error) -> String {
     format!("{error:#}")
 }
 
-/// The notebook file a `quire-vault:` link names, when it is an ordinary file inside `root`.
-fn notebook_file(root: &Path, relative: &str) -> Option<String> {
-    let base = fs::canonicalize(root).ok()?;
-    let file = fs::canonicalize(base.join(relative)).ok()?;
-    (file.starts_with(&base) && file.is_file()).then(|| file.to_string_lossy().into_owned())
+/// The notebook file a `quire-vault:` link names: an ordinary file inside a folder notebook, or
+/// a Quire notebook's stored attachment, as the reference resolves files under its root.
+fn notebook_file(files: &Files, relative: &str) -> Option<String> {
+    let file = match files {
+        Files::Folder { root } => {
+            let base = fs::canonicalize(root).ok()?;
+            let file = fs::canonicalize(base.join(relative)).ok()?;
+            (file.starts_with(&base) && file.is_file()).then_some(file)?
+        }
+        Files::Store { .. } => files.locate(relative).ok()?,
+    };
+    Some(file.to_string_lossy().into_owned())
 }
 
 impl StoredWindow {
@@ -125,13 +139,13 @@ impl StoredWindow {
         };
         let storage = self.session.borrow().storage();
         let open = self.session.borrow().open_pages();
-        let root = self.notebook_root();
+        let files = self.session.borrow().media_files();
         let exchange = self.exchange.clone();
         exchange.update(cx, |exchange, cx| {
             exchange.start("Exporting the page…", None, cx)
         });
         cx.spawn(async move |_, cx| {
-            let result = export_page(page, open, storage, index, root, cx).await;
+            let result = export_page(page, open, storage, index, files, cx).await;
             exchange.update(cx, |exchange, cx| match result {
                 Ok(None) => *exchange = Exchange::Idle,
                 Ok(Some(done)) => exchange.finish(Ok(done), cx),
@@ -155,7 +169,7 @@ impl StoredWindow {
             return;
         };
         let storage = self.session.borrow().storage();
-        let root = self.notebook_root();
+        let files = self.session.borrow().media_files();
         let exchange = self.exchange.clone();
         let chosen = cx.prompt_for_paths(folder_prompt("Export"));
         cx.spawn_in(window, async move |this, cx| {
@@ -165,7 +179,7 @@ impl StoredWindow {
             else {
                 return;
             };
-            let result = export_all(folder, storage, index, root, &exchange, this, cx).await;
+            let result = export_all(folder, storage, index, files, &exchange, this, cx).await;
             exchange.update(cx, |exchange, cx| {
                 exchange.finish(result.map(|message| (message, None)), cx)
             });
@@ -289,12 +303,21 @@ async fn import(
             }
         }
         NotebookBackend::Store(client) => {
-            let imported = ask(client.import_pages(folder.pages, now())).await?;
-            let summary = import_summary(imported.saved.len(), 0, imported.skipped.len());
-            Ok(match files {
+            let source = SourceFiles {
+                root: source,
+                files: folder.files,
+            };
+            let imported = ask(client.import_folder(folder.pages, source, now())).await?;
+            let attached = imported.attached.len();
+            let summary = import_summary(
+                imported.pages.saved.len(),
+                attached,
+                imported.pages.skipped.len(),
+            );
+            Ok(match files - attached {
                 0 => summary,
-                files => format!(
-                    "{summary} {files} other files were not copied: Quire notebooks cannot import attachments yet. Keep the source folder; links to those files stay as written."
+                unlinked => format!(
+                    "{summary} {unlinked} other files no imported page links to stayed in the source folder: a Quire notebook keeps only the files its pages link to."
                 ),
             })
         }
@@ -306,7 +329,7 @@ async fn export_page(
     open: Vec<Entity<crate::notebook_session::OpenPage>>,
     storage: NotebookBackend,
     index: quire_store::index::IndexClient,
-    root: Option<PathBuf>,
+    files: Option<Files>,
     cx: &mut AsyncApp,
 ) -> Result<Option<(String, Option<PathBuf>)>, String> {
     let (title, text) = flatten_page(page, open, storage, index, cx).await?;
@@ -322,8 +345,9 @@ async fn export_page(
     let written = target.clone();
     cx.background_spawn(async move {
         let text = localize_attachments(&text, |relative| {
-            root.as_deref()
-                .and_then(|root| notebook_file(root, relative))
+            files
+                .as_ref()
+                .and_then(|files| notebook_file(files, relative))
         });
         fs::write(&written, text).map_err(|error| {
             format!(
@@ -349,7 +373,7 @@ async fn export_all(
     folder: PathBuf,
     storage: NotebookBackend,
     index: quire_store::index::IndexClient,
-    root: Option<PathBuf>,
+    files: Option<Files>,
     exchange: &Entity<Exchange>,
     window: WeakEntity<StoredWindow>,
     cx: &mut gpui::AsyncWindowContext,
@@ -369,35 +393,28 @@ async fn export_all(
         ..ExportReport::default()
     };
     let total = pages.len();
+    let open = window
+        .update(cx, |this, _| this.session.borrow().open_pages())
+        .map_err(|_| EXPORT_CANCELED.to_owned())?;
     for (count, listed) in pages.into_iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             return Err(EXPORT_CANCELED.into());
         }
         let page = listed.page.page.to_lossy_string();
-        let checkout = ask(storage.checkout(page.clone(), None)).await?;
-        let Some(head) = checkout.selected else {
+        let Some(source) = page_writes::read(page.clone(), &open, &storage, cx).await? else {
             continue;
         };
-        let root_field = head.root();
-        let (Some(path), Some(text)) = (
-            root_field.field("path").as_str(),
-            root_field.field("text").as_str(),
-        ) else {
-            return Err(format!(
-                "Page {page} has an unreadable stored version. Open it, save it again, and export again; nothing was written."
-            ));
-        };
-        if checkout.heads.len() > 1 {
-            report.competing.push(path.to_owned());
+        if source.competing() {
+            report.competing.push(source.path.clone());
         }
         let draft = match &storage {
             NotebookBackend::Store(client) => ask(client.draft(page)).await?,
             NotebookBackend::Folder(client) => ask(client.draft(page)).await?,
         };
         if draft.is_some() {
-            report.drafts.push(path.to_owned());
+            report.drafts.push(source.path.clone());
         }
-        outputs.push((export_target(path)?, Exported::Page(text.to_owned())));
+        outputs.push((export_target(&source.path)?, Exported::Page(source.stored)));
         exchange.update(cx, |exchange, cx| {
             exchange.progress(
                 format!(
@@ -410,15 +427,20 @@ async fn export_all(
         });
     }
     report.pages = outputs.len();
-    match (&storage, &root) {
-        (NotebookBackend::Folder(client), Some(root)) => {
+    match (&storage, files) {
+        (NotebookBackend::Folder(client), Some(Files::Folder { root })) => {
             for file in ask(client.listing()).await?.others {
                 outputs.push((export_target(&file)?, Exported::File(root.join(&file))));
                 report.files += 1;
             }
         }
-        _ => {
-            report.uncopied = linked_attachments(&outputs);
+        (_, files) => {
+            let (with_attachments, copied, uncopied) = cx
+                .background_spawn(async move { gather_attachments(outputs, files.as_ref()) })
+                .await;
+            outputs = with_attachments;
+            report.files = copied;
+            report.uncopied = uncopied;
         }
     }
     let targets: Vec<String> = outputs.iter().map(|(target, _)| target.clone()).collect();
@@ -461,31 +483,45 @@ async fn export_all(
     Ok(report.summary())
 }
 
-/// Attachment links (`attachments/…`) in exported pages, which a Quire notebook export cannot
-/// copy yet.
-fn linked_attachments(outputs: &[(String, Exported)]) -> Vec<String> {
-    let mut linked: Vec<String> = outputs
-        .iter()
-        .filter_map(|(_, output)| match output {
-            Exported::Page(text) => Some(text),
-            Exported::File(_) => None,
+/// A Quire notebook's attachments for an export: each page link to a stored `attachments/<name>`
+/// is pointed at `attachments/<name>` in the export folder's root, which gets a copy of the file.
+/// Returns the outputs with those files added, how many were copied, and the linked attachments
+/// this computer does not have.
+fn gather_attachments(
+    outputs: Vec<(String, Exported)>,
+    files: Option<&Files>,
+) -> (Vec<(String, Exported)>, usize, Vec<String>) {
+    let mut copied = BTreeMap::new();
+    let mut uncopied = BTreeSet::new();
+    let mut gathered: Vec<(String, Exported)> = outputs
+        .into_iter()
+        .map(|(target, output)| match output {
+            Exported::Page(text) => {
+                let text = rewrite_file_links(&text, &target, |path| {
+                    let name = attachment_name(path)?;
+                    match files.map(|files| files.locate(&format!("attachments/{name}"))) {
+                        Some(Ok(file)) => {
+                            copied.insert(name.to_owned(), file);
+                            Some(root_attachment_target(&target, name))
+                        }
+                        _ => {
+                            uncopied.insert(path.to_owned());
+                            None
+                        }
+                    }
+                });
+                (target, Exported::Page(text))
+            }
+            file => (target, file),
         })
-        .flat_map(|text| {
-            text.match_indices("attachments/").map(|(start, _)| {
-                text[start..]
-                    .split(|character: char| {
-                        character.is_whitespace() || ")]>\"'".contains(character)
-                    })
-                    .next()
-                    .unwrap_or_default()
-                    .to_owned()
-            })
-        })
-        .filter(|link| link.len() > "attachments/".len())
         .collect();
-    linked.sort();
-    linked.dedup();
-    linked
+    let count = copied.len();
+    gathered.extend(
+        copied
+            .into_iter()
+            .map(|(name, file)| (format!("attachments/{name}"), Exported::File(file))),
+    );
+    (gathered, count, uncopied.into_iter().collect())
 }
 
 /// Writes every output into a hidden folder inside `folder`, then moves each into place, so a

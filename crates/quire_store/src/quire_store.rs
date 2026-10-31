@@ -1,6 +1,7 @@
 mod compression;
 pub mod database;
 mod durable_files;
+pub mod folder_attachment;
 pub mod folder_notebook;
 pub mod index;
 pub mod markdown_import;

@@ -12,7 +12,7 @@ static ID: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Byte ranges of fenced code blocks, where markers and references are literal text.
-fn fenced_code(text: &str) -> Vec<Range<usize>> {
+pub(crate) fn fenced_code(text: &str) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
     let mut open: Option<(usize, &str)> = None;
     let mut offset = 0;

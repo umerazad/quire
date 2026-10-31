@@ -1,17 +1,25 @@
 //! Adding attachments to a page: the Attach file command, pasting an image, and dropping files.
-//! Each file is streamed into the notebook store's durable attachment cache under its content
-//! name, as the reference replica does, and the page gets one link per file in a single edit, so
-//! one undo removes them. The links follow the reference: `![[...]]` for PDFs, `![](<...>)` for
+//! In a Quire notebook each file is streamed into the store's durable attachment cache under its
+//! content name, as the reference replica does; in a folder notebook it is copied into the
+//! notebook's `attachments` folder as `<8 hex>-<name>`, as the reference vault does, and linked by
+//! a path from the page's folder. The page gets one link per file in a single edit, so one undo
+//! removes them. The links follow the reference: `![[...]]` for PDFs, `![](<...>)` for
 //! images, and `[name](<...>)` for anything else.
 
 use crate::notebook_backend::NotebookBackend;
 use editor::Editor;
+use futures::{FutureExt as _, future::LocalBoxFuture};
 use gpui::{
-    App, ClipboardEntry, Context, Entity, ExternalPaths, KeyBinding, PathPromptOptions,
-    PromptLevel, Task, WeakEntity, Window, actions,
+    App, AppContext as _, ClipboardEntry, Context, Entity, ExternalPaths, KeyBinding,
+    PathPromptOptions, PromptLevel, Task, WeakEntity, Window, actions,
 };
-use quire_media::source::{MediaKind, media_kind};
-use std::path::PathBuf;
+use quire_core::exchange::file_links::root_attachment_target;
+use quire_media::{
+    files::Files,
+    source::{MediaKind, media_kind},
+};
+use quire_store::folder_attachment::{self, AttachData};
+use std::path::{Path, PathBuf};
 
 actions!(
     quire,
@@ -73,21 +81,60 @@ enum Source {
     Bytes { data: Vec<u8>, name: String },
 }
 
-/// The store page editors write to, when the editor belongs to a Quire notebook.
-fn store(editor: &Editor, cx: &App) -> Result<quire_store::worker::StorageClient, String> {
+/// Where attached files go.
+enum Destination {
+    /// A Quire notebook's store, which keeps them under content names.
+    Store(quire_store::worker::StorageClient),
+    /// A folder notebook's `attachments` folder, linked from the page at `page`.
+    Folder { root: PathBuf, page: String },
+}
+
+fn destination(editor: &Editor, cx: &App) -> Result<Destination, String> {
     let host = crate::references::host(editor).ok_or_else(|| {
         "Attachments need a notebook. Open this page from its notebook, then retry.".to_owned()
     })?;
-    let (_, backend) = host.read(cx).notebook().writers(cx).ok_or_else(|| {
+    let notebook = host.read(cx).notebook().clone();
+    let (_, backend) = notebook.writers(cx).ok_or_else(|| {
         "The notebook is closing. Reopen it, then attach the file again.".to_owned()
     })?;
     match backend {
-        NotebookBackend::Store(client) => Ok(client),
-        NotebookBackend::Folder(_) => Err(
-            "Attaching files to a folder notebook is not available yet. Copy the file into the notebook folder and link it with ![](relative/path)."
-                .into(),
-        ),
+        NotebookBackend::Store(client) => Ok(Destination::Store(client)),
+        NotebookBackend::Folder(_) => {
+            let page = editor
+                .buffer()
+                .read(cx)
+                .all_buffers_iter()
+                .next()
+                .and_then(|buffer| notebook.page_path(&buffer, cx));
+            match (notebook.media_files(), page) {
+                (Some(Files::Folder { root }), Some(page)) => Ok(Destination::Folder { root, page }),
+                _ => Err(
+                    "This page is not open from its notebook folder. Reopen the page, then attach the file again."
+                        .into(),
+                ),
+            }
+        }
     }
+}
+
+/// Copies one file into a folder notebook and returns the link target from `page`.
+fn attach_to_folder(root: &Path, page: &str, file: Source) -> Result<String, String> {
+    let prefix = uuid::Uuid::new_v4().simple().to_string()[..8].to_owned();
+    let stored = match &file {
+        Source::File(path) => {
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            folder_attachment::attach_to_folder(root, AttachData::File(path), &name, &prefix)
+        }
+        Source::Bytes { data, name } => {
+            folder_attachment::attach_to_folder(root, AttachData::Bytes(data), name, &prefix)
+        }
+    }
+    .map_err(|error| format!("{error:#}"))?;
+    let name = stored.trim_start_matches("attachments/");
+    Ok(root_attachment_target(page, name))
 }
 
 fn choose(editor: WeakEntity<Editor>, window: &mut Window, cx: &mut App) -> bool {
@@ -259,24 +306,34 @@ fn attach(
     window: &mut Window,
     cx: &mut App,
 ) -> Task<()> {
-    let client = match store(editor.read(cx), cx) {
-        Ok(client) => client,
+    let destination = match destination(editor.read(cx), cx) {
+        Ok(destination) => destination,
         Err(message) => {
             report(message, window, cx);
             return Task::ready(());
         }
     };
-    let requests: Vec<_> = files
+    let requests: Vec<LocalBoxFuture<'static, Result<String, String>>> = files
         .into_iter()
-        .map(|file| match file {
-            Source::File(path) => {
-                let name = path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                client.attach_file(path, name)
+        .map(|file| match &destination {
+            Destination::Store(client) => {
+                let request = match file {
+                    Source::File(path) => {
+                        let name = path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        client.attach_file(path, name)
+                    }
+                    Source::Bytes { data, name } => client.attach(data, name),
+                };
+                crate::query_index::ask(request).boxed_local()
             }
-            Source::Bytes { data, name } => client.attach(data, name),
+            Destination::Folder { root, page } => {
+                let (root, page) = (root.clone(), page.clone());
+                cx.background_spawn(async move { attach_to_folder(&root, &page, file) })
+                    .boxed_local()
+            }
         })
         .collect();
     let editor = editor.downgrade();
@@ -284,7 +341,7 @@ fn attach(
         let mut links = Vec::new();
         let mut failure = None;
         for request in requests {
-            match crate::query_index::ask(request).await {
+            match request.await {
                 Ok(reference) => links.push(link_for(&reference)),
                 Err(error) => {
                     failure = Some(format!("Could not attach the file: {error}"));
