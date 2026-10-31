@@ -328,3 +328,28 @@ fn migrating_from_rt_waits_until_no_notebook_window_holds_a_notebook(cx: &mut Te
         "nothing is written to Quire's data folder"
     );
 }
+
+#[gpui::test]
+fn reveal_shows_a_read_only_copy_of_a_quire_notebook_page(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&[("p-a", "Projects/Plan.md", "- alpha\r\n")], "p-a", cx);
+    let copies = tempfile::tempdir().unwrap();
+    let revealed = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let recorder = revealed.clone();
+    let folder = copies.path().to_owned();
+    cx.update(|cx| {
+        cx.set_global(super::menu_views::RevealCopies(folder));
+        cx.set_global(super::menu_views::RevealFiles(std::rc::Rc::new(
+            move |path| recorder.borrow_mut().push(path.to_owned()),
+        )));
+    });
+    cx.dispatch_action(
+        notebook.window.into(),
+        crate::navigation::RevealInFileManager,
+    );
+    wait_until(cx, "the revealed copy", |_| !revealed.borrow().is_empty());
+    let copy = copies.path().join("Plan.md");
+    assert_eq!(*revealed.borrow(), [copy.clone()]);
+    assert_eq!(fs::read_to_string(&copy).unwrap(), "- alpha\r\n");
+    assert!(fs::metadata(&copy).unwrap().permissions().readonly());
+    assert_eq!(read(&notebook, cx, |view, _| view.nav.error.clone()), None);
+}
