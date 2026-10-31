@@ -78,6 +78,7 @@ impl Bench {
 fn request(backend: Backend) -> Request {
     Request {
         backend,
+        mode: Mode::Transform,
         binary: fake_cli().to_string_lossy().into_owned(),
         model: String::new(),
         prompt: "Tighten: apples".into(),
@@ -467,4 +468,67 @@ fn tests_a_backend_by_its_version_and_a_one_word_answer() {
         smol::block_on(test(&host, Backend::Claude, &fake, "")),
         Err("Claude Code answered with nothing. Run `claude` in a terminal and sign in with /login, then retry.".into())
     );
+}
+
+#[test]
+fn runs_a_question_with_the_ask_rules_and_reports_tool_activity() {
+    let bench = Bench::new();
+    let folder = bench.folder.path().join("transcripts");
+    let (updates, outcome) = run(
+        &bench.host("claude-ask.jsonl", &[]),
+        Request {
+            mode: Mode::Ask {
+                today: "2026-10-31".into(),
+            },
+            prompt: "What fruit ideas do I have?".into(),
+            timeout: ASK_TIMEOUT,
+            transcript: Some(Transcript {
+                folder: folder.clone(),
+                id: "ask-1".into(),
+                page: String::new(),
+            }),
+            ..request(Backend::Claude)
+        },
+    );
+    let Outcome::Done(answer) = outcome else {
+        panic!("the question failed: {outcome:?}");
+    };
+    assert!(answer.contains("[[Fruit]]"));
+    let tools: Vec<&Update> = updates
+        .iter()
+        .filter(|update| !matches!(update, Update::Token(_)))
+        .collect();
+    assert!(matches!(
+        tools.first(),
+        Some(Update::Tool { name, .. }) if name == "Grep"
+    ));
+    assert!(
+        tools
+            .iter()
+            .any(|update| matches!(update, Update::ToolDone { failed: false, .. })),
+        "{tools:?}"
+    );
+    let argv: Vec<String> = serde_json::from_value(bench.calls()[0]["argv"].clone()).unwrap();
+    let system = argv
+        .iter()
+        .position(|arg| arg == "--append-system-prompt")
+        .map(|at| argv[at + 1].clone())
+        .unwrap();
+    assert_eq!(
+        system,
+        Mode::Ask {
+            today: "2026-10-31".into()
+        }
+        .system_prompt()
+    );
+    assert!(!argv.iter().any(|arg| arg.contains("fruit ideas")));
+    let day = std::fs::read_dir(&folder).unwrap().next().unwrap().unwrap();
+    let file = std::fs::read_dir(day.path())
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap();
+    let text = std::fs::read_to_string(file.path()).unwrap();
+    assert!(text.starts_with("# AI ask\n"), "{text}");
+    assert!(text.contains("Today is 2026-10-31."));
 }

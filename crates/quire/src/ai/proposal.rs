@@ -449,6 +449,7 @@ fn begin(
     };
     let request = Request {
         backend: settings.backend,
+        mode: process::Mode::Transform,
         binary: settings.binary(settings.backend).to_owned(),
         model: settings.model.clone(),
         prompt: request_prompt,
@@ -625,9 +626,10 @@ impl ProposalView {
         if let Phase::Writing { text, activity } = &mut self.phase {
             match update {
                 Update::Token(token) => text.push_str(&token),
-                Update::Tool { name, detail } => {
+                Update::Tool { name, detail, .. } => {
                     *activity = format!("{name} {detail}").trim().to_owned()
                 }
+                Update::ToolDone { .. } => {}
             }
             cx.notify();
         }
