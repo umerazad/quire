@@ -513,6 +513,13 @@ impl Render for SyncStatus {
                         }),
                 )
             })
+            .when(!self.shown, |div| {
+                div.children(
+                    self.warnings
+                        .iter()
+                        .map(|warning| gpui::div().p_2().child(Label::new(warning.clone()))),
+                )
+            })
             .when_some(panel, |div, panel| div.child(panel))
     }
 }

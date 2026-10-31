@@ -278,3 +278,31 @@ fn a_failed_push_shows_its_reason_until_a_later_sync_succeeds(cx: &mut TestAppCo
     );
     assert_eq!(git(Path::new(&remote), &["show", "main:A.md"]), "- kept");
 }
+
+#[gpui::test]
+fn a_repository_notebook_keeps_live_data_out_of_git_and_reports_tracked_databases(
+    cx: &mut TestAppContext,
+) {
+    let opened = open_folder(
+        &[
+            ("A.md", "- a\n"),
+            (".quire/devices/rt/durability.sqlite", "live"),
+        ],
+        "A.md",
+        cx,
+    );
+    let root = opened.folder.path();
+    git(root, &["init", "-q", "-b", "main"]);
+    git(root, &["add", "-f", ".quire/devices/rt/durability.sqlite"]);
+    dispatch(&opened.notebook, crate::sync_status::CheckSyncFolder, cx);
+    wait_for_line(
+        &opened.notebook,
+        "git rm -r --cached .quire/devices .quire/ai",
+        cx,
+    );
+    let exclude = fs::read_to_string(root.join(".git/info/exclude")).unwrap();
+    assert!(
+        exclude.ends_with("/.quire/devices/\n/.quire/ai/\n"),
+        "{exclude}"
+    );
+}
