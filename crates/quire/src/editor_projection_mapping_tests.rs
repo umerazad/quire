@@ -326,3 +326,186 @@ fn complete_excerpt_replacement_stays_bounded_with_clipboard_typing_and_deletion
             .unwrap();
     }
 }
+
+/// Reads every display row and summarizes every wrap row, which maps each soft wrap's start back
+/// through folds and fails if a wrap lands inside a fold placeholder.
+fn walk_rows(window: gpui::WindowHandle<NotebookWindow>, cx: &mut TestAppContext) -> Vec<String> {
+    window
+        .update(cx, |view, window, cx| {
+            view.second.update(cx, |editor, cx| {
+                let display = editor.snapshot(window, cx).display_snapshot;
+                let wraps = display.wrap_snapshot();
+                use editor::display_map::WrapRow;
+                for row in 0..wraps.max_point().row().0 {
+                    wraps.text_summary_for_range(WrapRow(row)..WrapRow(row + 1));
+                }
+                (0..=display.max_point().row().0)
+                    .map(|row| display.line(editor::display_map::DisplayRow(row)))
+                    .collect()
+            })
+        })
+        .unwrap()
+}
+
+fn resize_and_draw(
+    window: gpui::WindowHandle<NotebookWindow>,
+    width: f32,
+    cx: &mut TestAppContext,
+) {
+    cx.simulate_window_resize(window.into(), gpui::size(px(width), px(600.)));
+    cx.update_window(window.into(), |_, window, cx| {
+        window.draw(cx).clear(cx);
+    })
+    .unwrap();
+    cx.executor().run_until_parked();
+}
+
+#[gpui::test]
+fn code_toolbar_stays_whole_when_a_narrow_pane_wraps_before_layout(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).unwrap());
+    let note = "| a | b |\n| -- | -- |\n| 1 | 2 |\n\n```typescript\nconst a = 1;\n```\n\nafter\n";
+    let window = cx.add_window(|window, cx| {
+        let view = NotebookWindow::new(note, window, cx);
+        view.second.update(cx, |editor, cx| {
+            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+            editor.display_map.update(cx, |map, cx| {
+                map.set_wrap_width(Some(px(96.)), cx);
+            });
+        });
+        crate::editor_projection::bind(&view.second, window, cx).unwrap();
+        view
+    });
+    cx.executor().run_until_parked();
+    let toolbar = "typescript · Format code · Copy code";
+    assert!(
+        walk_rows(window, cx)
+            .iter()
+            .any(|row| row.contains(toolbar)),
+        "the code toolbar is one unbroken display row before layout measures it"
+    );
+    resize_and_draw(window, 160., cx);
+    walk_rows(window, cx);
+}
+
+const FRAGMENTS: &[&str] = &[
+    "plain words that run long enough to wrap ",
+    "**bold** ",
+    "_italic_ ",
+    "`code` ",
+    "~~gone~~ ",
+    "\\* ",
+    "[[README]] ",
+    "[label](https://example.com/a/long/path) ",
+    "https://example.com/bare ",
+    "((one)) ",
+    "اردو العربية ",
+    "🙂 ",
+    "\t",
+];
+
+const LINES: &[&str] = &[
+    "---",
+    "| Type | **Bold** |\n| :-- | --: |\n| `x` | [[README]] |",
+    "```typescript\nconst next = 1;\n```",
+    "```json\n{ \"a\": 1 }\n```",
+    "{{embed: ((one))}}",
+    "> quoted **text**",
+    "## Heading **bold**",
+    "- [ ] task ",
+    "- [x] done ",
+    "1. ordered ",
+    "  - child ",
+    "- item ",
+    "",
+];
+
+fn random_note(rng: &mut rand::rngs::StdRng) -> String {
+    use rand::Rng as _;
+    let mut note = String::from("- One shared block. ^one\n\n");
+    for _ in 0..rng.random_range(3..14) {
+        let line = LINES[rng.random_range(0..LINES.len())];
+        note.push_str(line);
+        if !line.contains('\n') && !line.starts_with("---") && !line.starts_with("{{") {
+            for _ in 0..rng.random_range(0..6) {
+                note.push_str(FRAGMENTS[rng.random_range(0..FRAGMENTS.len())]);
+            }
+            if rng.random_bool(0.3) {
+                note.push_str(&format!("^id{}", rng.random_range(0..1000)));
+            }
+        }
+        note.push_str("\n\n");
+    }
+    note
+}
+
+fn char_boundary(text: &str, rng: &mut rand::rngs::StdRng) -> usize {
+    use rand::Rng as _;
+    let mut offset = rng.random_range(0..=text.len());
+    while !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
+}
+
+/// Random Write pages with marks, rules, tables, code toolbars, IDs, links and embeds, drawn at
+/// several widths while the caret reveals syntax and edits land, must never panic.
+#[gpui::test(iterations = 12)]
+fn random_write_pages_wrap_without_panicking(cx: &mut TestAppContext, mut rng: rand::rngs::StdRng) {
+    use rand::Rng as _;
+    cx.update(|cx| init(cx).unwrap());
+    let note = random_note(&mut rng);
+    let window = cx.add_window(|window, cx| {
+        let view = NotebookWindow::new(&note, window, cx);
+        view.second.update(cx, |editor, cx| {
+            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+            editor.display_map.update(cx, |map, cx| {
+                map.set_wrap_width(Some(px(rng.random_range(30.0..200.0))), cx);
+            });
+        });
+        crate::editor_projection::bind(&view.second, window, cx).unwrap();
+        window.focus(&view.second.focus_handle(cx), cx);
+        view
+    });
+    cx.executor().run_until_parked();
+    walk_rows(window, cx);
+    for _ in 0..8 {
+        let text = window
+            .update(cx, |view, _, cx| view.source.read(cx).text(cx))
+            .unwrap();
+        let at = char_boundary(&text, &mut rng);
+        let edit = rng.random_bool(0.4).then(|| {
+            if rng.random_bool(0.5) {
+                FRAGMENTS[rng.random_range(0..FRAGMENTS.len())].to_owned()
+            } else {
+                format!("\n{}\n", LINES[rng.random_range(0..LINES.len())])
+            }
+        });
+        window
+            .update(cx, |view, window, cx| {
+                view.second.update(cx, |editor, cx| {
+                    if let Some(edit) = &edit {
+                        let at = MultiBufferOffset(at);
+                        editor.buffer().update(cx, |buffer, cx| {
+                            buffer.edit([(at..at, edit.as_str())], None, cx)
+                        });
+                    }
+                    let caret = editor
+                        .buffer()
+                        .read(cx)
+                        .snapshot(cx)
+                        .clip_offset(MultiBufferOffset(at), Bias::Left);
+                    editor.change_selections(
+                        editor::SelectionEffects::no_scroll(),
+                        window,
+                        cx,
+                        |selections| selections.select_ranges([caret..caret]),
+                    );
+                });
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        walk_rows(window, cx);
+        resize_and_draw(window, rng.random_range(80.0..520.0), cx);
+        walk_rows(window, cx);
+    }
+}
