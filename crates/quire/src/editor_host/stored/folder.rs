@@ -162,14 +162,7 @@ pub(super) fn show_folder_window(
     let mut session =
         NotebookSession::open_folder(root.clone(), state.clone(), Some(system_trash(cx)))?;
     let page = session.open_page(page, cx);
-    let options = gpui::WindowOptions {
-        window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
-            None,
-            gpui::size(gpui::px(1100.), gpui::px(760.)),
-            cx,
-        ))),
-        ..Default::default()
-    };
+    let options = crate::title_bar::options(1100., 760., cx);
     let notebook = format!("folder:{}", root.display());
     cx.open_window(options, move |window, cx| {
         window.set_window_title("Quire Native");

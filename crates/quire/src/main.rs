@@ -141,6 +141,9 @@ mod tag_labels;
 mod script_fonts;
 
 #[cfg(feature = "full-editor")]
+mod title_bar;
+
+#[cfg(feature = "full-editor")]
 mod quire_assets;
 
 #[cfg(feature = "full-editor")]

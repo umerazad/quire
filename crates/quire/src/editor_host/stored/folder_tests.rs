@@ -1160,3 +1160,15 @@ fn the_hourly_backup_of_a_folder_notebook_waits_for_a_change_such_as_an_external
     assert_eq!(count, 2, "{message}");
     assert_eq!(after(hour, cx), (2, UNCHANGED.to_owned()));
 }
+
+#[cfg(target_os = "macos")]
+#[gpui::test]
+fn notebook_windows_draw_the_hidden_inset_title_bar_at_the_top(cx: &mut TestAppContext) {
+    let opened = open_folder(&[("A.md", "- alpha\n")], "A.md", cx);
+    draw(&opened.notebook, cx);
+    let bounds = gpui::VisualTestContext::from_window(opened.notebook.window.into(), cx)
+        .debug_bounds("quire-title-bar")
+        .expect("the title bar is drawn");
+    assert_eq!(bounds.origin.y, gpui::px(0.));
+    assert_eq!(bounds.size.height, crate::title_bar::HEIGHT);
+}

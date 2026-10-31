@@ -186,14 +186,7 @@ impl OpenOptions {
         )?;
         let mut session = NotebookSession::open(self.database, self.notebook, self.writer)?;
         let page = session.open_page(self.page, cx);
-        let options = gpui::WindowOptions {
-            window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
-                None,
-                gpui::size(gpui::px(1100.), gpui::px(760.)),
-                cx,
-            ))),
-            ..Default::default()
-        };
+        let options = crate::title_bar::options(1100., 760., cx);
         cx.open_window(options, move |window, cx| {
             window.set_window_title("Quire Native");
             cx.new(|cx| StoredWindow::new(session, page, database, notebook, window, cx))
@@ -698,6 +691,11 @@ impl Render for StoredWindow {
         .flex()
         .flex_col()
         .bg(cx.theme().colors().editor_background)
+        .children(crate::title_bar::render(
+            crate::title_bar::notebook_title(self.location.as_ref()),
+            window,
+            cx,
+        ))
         .child(header)
         .child(profile)
         .child(self.exchange.clone())
