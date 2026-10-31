@@ -5,13 +5,13 @@
 //! pages save first and hold further saves, every page is written in one checked save, and open
 //! pages then take in their new version.
 
-use crate::{notebook_session::OpenPage, page_persistence::PagePersistence, query_index::ask};
+use crate::{
+    notebook_backend::NotebookBackend, notebook_session::OpenPage,
+    page_persistence::PagePersistence, query_index::ask,
+};
 use futures::{StreamExt as _, channel::mpsc};
 use gpui::{App, AsyncApp, Entity, Task, WeakEntity};
-use quire_store::{
-    notebook::{CheckedSaves, Edit},
-    worker::StorageClient,
-};
+use quire_store::notebook::{CheckedSaves, Edit};
 use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -79,7 +79,7 @@ fn open_source(page: &Entity<OpenPage>, cx: &App) -> Option<Result<PageSource, S
 }
 
 async fn stored_source(
-    storage: &StorageClient,
+    storage: &NotebookBackend,
     page: String,
 ) -> Result<Option<PageSource>, String> {
     let checkout = ask(storage.checkout(page.clone(), None)).await?;
@@ -109,7 +109,7 @@ async fn stored_source(
 pub async fn read(
     page: String,
     open_pages: &[Entity<OpenPage>],
-    storage: &StorageClient,
+    storage: &NotebookBackend,
     cx: &mut AsyncApp,
 ) -> Result<Option<PageSource>, String> {
     let open = cx.update(|cx| {
@@ -169,12 +169,14 @@ async fn idle(open: &[Entity<PagePersistence>], cx: &mut AsyncApp) {
 /// how many pages were written.
 pub fn apply(
     writes: Vec<PageWrite>,
-    storage: StorageClient,
+    storage: NotebookBackend,
     stale: &'static str,
     cx: &mut App,
 ) -> Task<Result<usize, String>> {
     write(writes, None, storage, stale, cx)
 }
+
+pub const FOLDER_DELETION: &str = "Deleting pages is not available in folder notebooks yet. Delete the file in Finder or Explorer; Quire picks up the change.";
 
 /// Deletes every page or none, as `apply` writes them. With `folder`, also refuses when a page
 /// appeared inside it after the pages were chosen. Open pages stop saving, so nothing typed later
@@ -182,7 +184,7 @@ pub fn apply(
 pub fn delete(
     writes: Vec<PageWrite>,
     folder: Option<String>,
-    storage: StorageClient,
+    storage: NotebookBackend,
     stale: &'static str,
     cx: &mut App,
 ) -> Task<Result<usize, String>> {
@@ -192,7 +194,7 @@ pub fn delete(
 fn write(
     writes: Vec<PageWrite>,
     deletion: Option<Option<String>>,
-    storage: StorageClient,
+    storage: NotebookBackend,
     stale: &'static str,
     cx: &mut App,
 ) -> Task<Result<usize, String>> {
@@ -215,11 +217,14 @@ fn write(
         idle(&open, cx).await;
         let saved = match cx.update(|cx| edits(&writes, deletion.is_some(), cx)) {
             Some(edits) => {
-                let request = match &deletion {
-                    None => storage.save_many_if_heads(edits),
-                    Some(folder) => storage.delete_if_heads(edits, folder.clone()),
+                let answer = match (&deletion, &storage) {
+                    (None, _) => ask(storage.save_many_if_heads(edits)).await,
+                    (Some(folder), NotebookBackend::Store(client)) => {
+                        ask(client.delete_if_heads(edits, folder.clone())).await
+                    }
+                    (Some(_), NotebookBackend::Folder(_)) => Err(FOLDER_DELETION.to_owned()),
                 };
-                match ask(request).await {
+                match answer {
                     Ok(CheckedSaves::Saved(acks)) => Ok(acks),
                     Ok(CheckedSaves::HeadsChanged { .. }) => Err(stale.to_owned()),
                     Ok(CheckedSaves::Appeared { path }) => Err(appeared(&path, &deletion)),

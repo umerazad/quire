@@ -81,7 +81,22 @@ impl IndexSync {
         cx: &mut App,
     ) -> Result<Entity<Self>, String> {
         let worker = IndexWorker::spawn(database, config).map_err(describe)?;
-        Ok(cx.new(|cx| {
+        Ok(Self::run(worker, cx))
+    }
+
+    /// Starts the index of the folder notebook at `root`, kept in `state` outside it.
+    pub fn spawn_folder(
+        root: PathBuf,
+        state: PathBuf,
+        config: IndexConfig,
+        cx: &mut App,
+    ) -> Result<Entity<Self>, String> {
+        let worker = IndexWorker::spawn_folder(root, state, config).map_err(describe)?;
+        Ok(Self::run(worker, cx))
+    }
+
+    fn run(worker: IndexWorker, cx: &mut App) -> Entity<Self> {
+        cx.new(|cx| {
             let task = cx.spawn(async move |this: gpui::WeakEntity<Self>, cx| {
                 let Ok(client) = this.read_with(cx, |this, _| this.client.clone()) else {
                     return;
@@ -126,7 +141,7 @@ impl IndexSync {
                 tracked: HashMap::new(),
                 _task: task,
             }
-        }))
+        })
     }
 
     /// Analyzes one batch and returns how many pages still need analysis, with the index

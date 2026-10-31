@@ -40,6 +40,8 @@ db = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 project = { workspace = true, optional = true }
 anyhow = { workspace = true, optional = true }
+fs = { workspace = true, optional = true }
+paths = { workspace = true, optional = true }
 
 [dev-dependencies]
 sqlez.workspace = true
@@ -50,4 +52,4 @@ tree-sitter-md.workspace = true
 [features]
 default = ["full-editor"]
 test-support = ["gpui/test-support", "gpui_platform/test-support"]
-full-editor = ["dep:quire_core", "dep:quire_store", "dep:futures", "dep:rope", "dep:uuid", "dep:editor", "dep:ui", "dep:http_client", "dep:search", "dep:workspace", "dep:language", "dep:multi_buffer", "dep:grammars", "dep:tree-sitter-quire-markdown", "dep:tree-sitter", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:assets", "dep:util", "dep:zed_actions", "dep:picker", "dep:menu", "dep:db", "dep:serde_json", "dep:project", "dep:anyhow"]
+full-editor = ["dep:quire_core", "dep:quire_store", "dep:futures", "dep:rope", "dep:uuid", "dep:editor", "dep:ui", "dep:http_client", "dep:search", "dep:workspace", "dep:language", "dep:multi_buffer", "dep:grammars", "dep:tree-sitter-quire-markdown", "dep:tree-sitter", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:assets", "dep:util", "dep:zed_actions", "dep:picker", "dep:menu", "dep:db", "dep:serde_json", "dep:project", "dep:anyhow", "dep:fs", "dep:paths"]
