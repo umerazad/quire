@@ -140,6 +140,9 @@ mod tag_labels;
 #[cfg(feature = "full-editor")]
 mod ai;
 
+#[cfg(feature = "full-editor")]
+mod rt_migration;
+
 #[cfg(all(feature = "full-editor", unix))]
 mod notebook_tools;
 

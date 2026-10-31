@@ -597,6 +597,10 @@ fn serve_launches(listener: crate::single_instance::Listener, cx: &mut App) {
 }
 
 pub fn run() {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) = crate::rt_migration::run_from_arguments(&arguments, paths::data_dir()) {
+        std::process::exit(code);
+    }
     let stored = match stored::OpenOptions::parse(std::env::args().skip(1).collect()) {
         Ok(options) => options,
         Err(error) => {

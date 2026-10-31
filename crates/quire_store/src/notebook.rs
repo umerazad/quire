@@ -7,6 +7,7 @@ use std::{
 };
 
 mod attachment;
+mod census;
 mod checkout;
 mod delivery;
 mod folder;
@@ -21,6 +22,7 @@ mod publisher;
 mod recovery;
 mod restored;
 mod revision;
+pub use census::StoreCensus;
 pub use checkout::PageCheckout;
 pub use folder::{RescanCursor, RescanLimits, RescanProblem, RescanReport, RescanWait};
 pub use history::{SavedVersion, VERSION_UNAVAILABLE};

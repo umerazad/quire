@@ -10,7 +10,7 @@ use futures::StreamExt as _;
 use gpui::{SharedString, Task};
 use quire_store::{
     folder_notebook::{RecoveredDraft, StuckChange, Trash, is_markdown, list, validate},
-    sync::format::{page_id_for_path, sha256},
+    sync::format::page_id_for_path,
 };
 use std::{
     path::{Component, Path},
@@ -211,9 +211,7 @@ pub(super) fn show_folder_window(
 /// Quire's recovery, history, index, and workspace for the folder at `root`, kept in application
 /// data so opening a folder never writes inside it.
 pub(super) fn state_folder(root: &Path) -> PathBuf {
-    paths::data_dir()
-        .join("folder-notebooks")
-        .join(&sha256(root.to_string_lossy().as_bytes())[..16])
+    quire_store::folder_notebook::state_folder_in(paths::data_dir(), root)
 }
 
 /// Moves deleted notes and folders to the system Trash through Zed's file system, where the user

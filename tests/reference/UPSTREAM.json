@@ -380,5 +380,116 @@
       "bun": "1.4.2",
       "source": "JSON imports (rt's import.test.ts inputs, malformed graphs, depth limits, macros, list markers and fences, titles, attribute order, number forms, duplicate keys, escapes, JavaScript replacement patterns, and 30 seeded graphs); EDN imports (rt's roam-edn, roam-files and roam-worker inputs, invalid databases, ordering, recovery, aliases and users, and 20 seeded databases); EDN reads; and JSON exports (rt's cases, front matter, gaps, CRLF and links, invalid metadata, and round trips of the imports with and without edits)."
     }
+  },
+  "rt_state_extractions": {
+    "repository": "rt",
+    "revision": "5ea5c22310fff0c3d97f069930500fd85067fa96",
+    "purpose": "rt's own persistence writers for the synthetic installation in tests/fixtures/rt-state (NR36). tools/rt-state-vectors.ts runs them under Bun; tests/reference/rt-state.test.ts reads the result back under Node.",
+    "files": [
+      {
+        "source": "src/desktop/profiles.ts",
+        "source_sha256": "64278a737f9777750334cddeb83168a222b09b89837036a9927d6a2add073f6a",
+        "destination": "desktop/profiles.ts",
+        "sha256": "64278a737f9777750334cddeb83168a222b09b89837036a9927d6a2add073f6a",
+        "change": "Copied unchanged."
+      },
+      {
+        "source": "src/desktop/notebook-storage.ts",
+        "source_sha256": "7116611c81927c20fcfd710af2dafdd79d465fab49e76e93173a0bbfb62f0508",
+        "destination": "desktop/notebook-storage.ts",
+        "sha256": "7116611c81927c20fcfd710af2dafdd79d465fab49e76e93173a0bbfb62f0508",
+        "change": "Copied unchanged."
+      },
+      {
+        "source": "src/desktop/legacy-names.ts",
+        "source_sha256": "46bcf552e961529d05a864b45f1c64bbf30413ea6e14d021bf42af1da7358c63",
+        "destination": "desktop/legacy-names.ts",
+        "sha256": "46bcf552e961529d05a864b45f1c64bbf30413ea6e14d021bf42af1da7358c63",
+        "change": "Copied unchanged."
+      },
+      {
+        "source": "src/desktop/durable-files.ts",
+        "source_sha256": "6ed3e4af47125990292ee3bc68381573a785ab2da3756ed321039a35c94d4871",
+        "destination": "desktop/durable-files.ts",
+        "sha256": "6ed3e4af47125990292ee3bc68381573a785ab2da3756ed321039a35c94d4871",
+        "change": "Copied unchanged."
+      },
+      {
+        "source": "src/desktop/history-store.ts",
+        "source_sha256": "61e623d6d0fc17a78927a1e7b767b2f5b974d8f09d080841976a3fe4984d73b5",
+        "destination": "desktop/history-store.ts",
+        "sha256": "61e623d6d0fc17a78927a1e7b767b2f5b974d8f09d080841976a3fe4984d73b5",
+        "change": "Copied unchanged."
+      },
+      {
+        "source": "src/desktop/notebook-files.ts",
+        "source_sha256": "f22f59edbd27cca4c939fc9a4d43082c379d9eefd7b6d4a40737ddc0893b1216",
+        "destination": "desktop/notebook-files.ts",
+        "sha256": "f22f59edbd27cca4c939fc9a4d43082c379d9eefd7b6d4a40737ddc0893b1216",
+        "change": "Copied unchanged."
+      },
+      {
+        "source": "src/desktop/backups.ts",
+        "source_sha256": "0347bd7fc9c7e0e1435015ca2a4f590069f5ac483845fb8b703a97e989505b16",
+        "destination": "desktop/backups.ts",
+        "sha256": "0347bd7fc9c7e0e1435015ca2a4f590069f5ac483845fb8b703a97e989505b16",
+        "change": "Copied unchanged."
+      },
+      {
+        "source": "src/desktop/vault.ts",
+        "source_sha256": "290bf04d2bdff4b1c4ab35855200b579c5e993e6c878f52e36e3a653c3f2389f",
+        "destination": "desktop/vault.ts",
+        "sha256": "d44546e2793d989d11fd5690f96aef781799ed7769449e79fe5fd585e7582a09",
+        "change": "Copied unchanged except the import path ../markdown/markdown for the frozen core/markdown.ts."
+      },
+      {
+        "source": "src/desktop/engine/engine.ts",
+        "source_sha256": "ec7a673fab7cfd52675ee433431351c8219a027e008b8d35388922457c4a1376",
+        "destination": "desktop/engine/engine.ts",
+        "sha256": "ff5d845f8923f779bb1149a43ef8d86221d725b53f48ad9a295c65e7d4a41de7",
+        "change": "Copied unchanged except the import paths ../../sync/format and ../../sync/replica for the frozen sync modules."
+      },
+      {
+        "source": "src/desktop/engine/engine-files.ts",
+        "source_sha256": "99a88013df3dcd2d9f0aebaaec475cdb6160a0a7e5f60f4669bfd9bfc456edc0",
+        "destination": "desktop/engine/engine-files.ts",
+        "sha256": "99a88013df3dcd2d9f0aebaaec475cdb6160a0a7e5f60f4669bfd9bfc456edc0",
+        "change": "Copied unchanged."
+      },
+      {
+        "source": "src/desktop/engine/backup.ts",
+        "source_sha256": "d21b41d859d0c41edf075ba2162f4fea62d70d9d29d9f542ca48185fde6f3e59",
+        "destination": "desktop/engine/backup.ts",
+        "sha256": "fa4fa6e5fe45eee91f648f48be4260468eae9d8e1372c10c83887791fd0de57c",
+        "change": "Copied unchanged except the import path ../../sync/format."
+      },
+      {
+        "source": "src/desktop/engine/disk-folder.ts",
+        "source_sha256": "3f0b1d915b49d444efd4b518914d6b71c9395bcc916d0f6ba3f26cbc00bc108a",
+        "destination": "desktop/engine/disk-folder.ts",
+        "sha256": "952fbe1a521ec0a79c75abe5a8629da00d7f080ed092d946c768cc3208ae1f5e",
+        "change": "Copied unchanged except the import path ../../sync/replica."
+      },
+      {
+        "source": "src/desktop/engine/sqlite-store.ts",
+        "source_sha256": "5dfd413464eec4af12b7fdb3874487cdebc44406b4758c7e1dc5addcac682aee",
+        "destination": "desktop/engine/sqlite-store.ts",
+        "sha256": "a587bf82df5016a31191dc2cc5e4a18e77b40af2475f473d340b1b9057f8dba2",
+        "change": "Copied unchanged except the import paths ../../sync/format and ../../sync/replica."
+      },
+      {
+        "source": "src/core/types.ts",
+        "source_sha256": "a1f7c794d9cc30c01e44ef9e036aa25c2a1d846514cd34c7a60ec2ca5421936e",
+        "destination": "core/types.ts",
+        "sha256": "a1f7c794d9cc30c01e44ef9e036aa25c2a1d846514cd34c7a60ec2ca5421936e",
+        "change": "Copied unchanged; its own imports are type-only."
+      }
+    ],
+    "generator_adaptations": [
+      "ai-settings.json is written as JSON.stringify of an object in rt's AiSettings shape (ai-runner.ts save), since ai-runner.ts pulls in the AI process runner; its fields and defaults come from defaultAiSettings.",
+      "Profile roots and backup folders use the placeholder prefix /rt-fixture through Profiles.setRoot and setBackupDirectory, which store paths without resolving them; tests point the prefix at their copy.",
+      "The pending notebook's last save is made with no await before its store closes, so rt's publication timer cannot publish it.",
+      "SQLite WAL and shared-memory files are kept as Bun's node:sqlite leaves them, as a running rt would."
+    ]
   }
 }
