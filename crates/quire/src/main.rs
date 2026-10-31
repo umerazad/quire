@@ -48,6 +48,9 @@ mod page_writes;
 mod exchange;
 
 #[cfg(feature = "full-editor")]
+mod document_export;
+
+#[cfg(feature = "full-editor")]
 mod backups;
 
 #[cfg(feature = "full-editor")]

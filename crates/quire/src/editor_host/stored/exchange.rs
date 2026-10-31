@@ -54,7 +54,7 @@ fn describe(error: anyhow::Error) -> String {
 
 /// The notebook file a `quire-vault:` link names: an ordinary file inside a folder notebook, or
 /// a Quire notebook's stored attachment, as the reference resolves files under its root.
-fn notebook_file(files: &Files, relative: &str) -> Option<String> {
+pub(super) fn notebook_file(files: &Files, relative: &str) -> Option<String> {
     let file = match files {
         Files::Folder { root } => {
             let base = fs::canonicalize(root).ok()?;
@@ -67,7 +67,7 @@ fn notebook_file(files: &Files, relative: &str) -> Option<String> {
 }
 
 impl StoredWindow {
-    fn exchange_busy(&mut self, cx: &mut gpui::Context<Self>) -> bool {
+    pub(super) fn exchange_busy(&mut self, cx: &mut gpui::Context<Self>) -> bool {
         let busy = self.exchange.read(cx).is_running();
         if busy {
             self.nav.error = Some(BUSY.into());
@@ -339,6 +339,7 @@ impl StoredWindow {
                     Button::new("export-page-markdown", "Export as Markdown…")
                         .on_click(cx.listener(|this, _, _, cx| this.export_shown_page(cx))),
                 )
+                .children(self.render_document_export_buttons(cx))
             })
             .child(
                 Button::new("import-markdown-folder", "Import a Markdown folder…")

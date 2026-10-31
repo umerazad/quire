@@ -4,7 +4,12 @@
 //! FAKE_AI_DELAY_MS waits between lines, FAKE_AI_STDERR and FAKE_AI_EXIT end the run,
 //! FAKE_AI_HANG keeps running after the stream, FAKE_AI_VERSION answers `--version`, and
 //! FAKE_AI_PIDS starts a grandchild and records both process IDs, so tests can check that a
-//! cancel ends the whole process tree.
+//! cancel ends the whole process tree. FAKE_AI_WRITE ("name=content") writes a file in the working
+//! folder, and FAKE_AI_RENDER names a Word or PDF file to make from its page.md, as an export
+//! run's document tools would.
+
+#[path = "fake_ai_cli/documents.rs"]
+mod documents;
 
 use std::{
     io::{Read, Write},
@@ -47,6 +52,15 @@ fn main() {
             .expect("the fake CLI could not start its grandchild");
         std::fs::write(pids, format!("{} {}", std::process::id(), child.id())).ok();
         std::thread::spawn(move || child.wait());
+    }
+    if let Some((name, content)) = var("FAKE_AI_WRITE")
+        .as_deref()
+        .and_then(|write| write.split_once('='))
+    {
+        std::fs::write(name, content).expect("FAKE_AI_WRITE could not write its file");
+    }
+    if let Some(name) = var("FAKE_AI_RENDER") {
+        documents::render(&name);
     }
     let delay = Duration::from_millis(
         var("FAKE_AI_DELAY_MS")
