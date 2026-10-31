@@ -57,6 +57,10 @@ gpui::actions!(
         DeletePage,
         /// Deletes the highlighted page or folder in Files after naming what goes.
         DeleteFile,
+        /// Renames the shown page; its title and every link to it follow.
+        RenamePage,
+        /// Renames the highlighted page in Files.
+        RenameFile,
     ]
 );
 
@@ -183,6 +187,9 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(primary!("backspace"), DeleteFile, Some(FILES_CONTEXT)),
         KeyBinding::new("enter", menu::Confirm, Some(file_dialog::DIALOG_CONTEXT)),
         KeyBinding::new("escape", menu::Cancel, Some(file_dialog::DIALOG_CONTEXT)),
+        KeyBinding::new("enter", menu::Confirm, Some("QuireDialog > Editor")),
+        KeyBinding::new("escape", menu::Cancel, Some("QuireDialog > Editor")),
+        KeyBinding::new("f2", RenameFile, Some(FILES_CONTEXT)),
         KeyBinding::new(
             primary!("enter"),
             ToggleTagSelected,

@@ -211,3 +211,205 @@ fn a_page_saved_elsewhere_after_the_choice_is_not_deleted(cx: &mut TestAppContex
     assert_eq!(dialog_error(&notebook, cx).unwrap(), STALE_DELETION);
     assert!(!head(&store, "k").0);
 }
+const RENAMED: [(&str, &str, &str); 4] = [
+    (
+        "o",
+        "Old name.md",
+        "---\ntags: [x]\ntitle: \"Old name\"\n---\n- Body ^stable [[Old name]]\n",
+    ),
+    (
+        "l",
+        "Links.md",
+        "- [[Old name]] and [[Old name#Part|alias]] and ![[Old name#^stable]]\r\n- `[[Old name]]` [x](Old%20name.md) [[Keep]]\r\n",
+    ),
+    ("p", "Notes/Plan.md", "- see [[Old name]]\n"),
+    ("k", "Keep.md", "- keep\n"),
+];
+
+fn stored_text(store: &NotebookStore, page: &str) -> (String, String) {
+    let (deleted, path, text) = head(store, page);
+    assert!(!deleted);
+    (path, text)
+}
+
+fn buffer_text(notebook: &Notebook, page: &str, cx: &mut TestAppContext) -> String {
+    read(notebook, cx, |view, cx| {
+        let open = view.session.borrow().open_pages();
+        let open = open.iter().find(|open| open.read(cx).id() == page).unwrap();
+        let analysis = open.read(cx).loaded().unwrap().analysis.clone();
+        analysis.read(cx).source.read(cx).text()
+    })
+}
+
+fn rename_to(notebook: &Notebook, name: &str, cx: &mut TestAppContext) {
+    wait_until(cx, "the rename dialog", |cx| {
+        read(notebook, cx, |view, _| view.nav.dialog.is_some())
+    });
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            let dialog = view.nav.dialog.clone().unwrap();
+            dialog.update(cx, |dialog, cx| dialog.select_name(window, cx));
+        })
+        .unwrap();
+    draw(notebook, cx);
+    cx.simulate_input(notebook.window.into(), name);
+    assert_eq!(
+        read(notebook, cx, |view, cx| view
+            .nav
+            .dialog
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .name(cx)),
+        Some(name.to_owned())
+    );
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+}
+
+#[gpui::test]
+fn renaming_rewrites_links_in_open_and_closed_pages_and_keeps_unsaved_typing(
+    cx: &mut TestAppContext,
+) {
+    let notebook = open_notebook(&RENAMED, "p", cx);
+    wait_until(cx, "Plan's editor", |cx| {
+        read(&notebook, cx, |view, _| view.editor.is_some())
+    });
+    draw(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "i y escape");
+    visit(&notebook, Destination::page("o"), cx);
+    wait_until(cx, "Old name's editor", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.editor.is_some() && view.page.read(cx).id() == "o"
+        })
+    });
+    cx.dispatch_action(notebook.window.into(), crate::navigation::RenamePage);
+    rename_to(&notebook, "New name", cx);
+    wait_until(cx, "the rename", |cx| {
+        read(&notebook, cx, |view, _| view.nav.dialog.is_none())
+    });
+    let store = NotebookStore::open(&notebook.path, "nb", "local").unwrap();
+    assert_eq!(
+        stored_text(&store, "o"),
+        (
+            "New name.md".into(),
+            "---\ntags: [x]\ntitle: \"New name\"\n---\n- Body ^stable [[New name]]\n".into()
+        )
+    );
+    assert_eq!(
+        stored_text(&store, "l"),
+        (
+            "Links.md".into(),
+            "- [[New name]] and [[New name#Part|alias]] and ![[New name#^stable]]\r\n- `[[Old name]]` [x](New%20name.md) [[Keep]]\r\n".into()
+        )
+    );
+    assert_eq!(
+        stored_text(&store, "p"),
+        ("Notes/Plan.md".into(), "y- see [[New name]]\n".into())
+    );
+    wait_until(cx, "the open pages to take in the rename", |cx| {
+        buffer_text(&notebook, "p", cx) == "y- see [[New name]]\n"
+            && buffer_text(&notebook, "o", cx).contains("[[New name]]")
+    });
+    // Later saves of the open page keep its new name instead of moving it back.
+    draw(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "i z escape");
+    cx.simulate_keystrokes(notebook.window.into(), &key("s"));
+    wait_until(cx, "the save after renaming", |cx| {
+        let (_, text) = stored_text(&store, "o");
+        let _ = cx;
+        text.starts_with('z')
+    });
+    assert_eq!(stored_text(&store, "o").0, "New name.md");
+    wait_until(cx, "the catalogue with the new name", |cx| {
+        read(&notebook, cx, |view, _| {
+            view.nav.title("o") == Some("New name")
+        })
+    });
+    read(&notebook, cx, |view, cx| {
+        assert_eq!(view.page.read(cx).path(cx).as_deref(), Some("New name.md"));
+        assert!(view.file_rows().iter().any(|row| row.path == "New name.md"));
+    });
+}
+
+#[gpui::test]
+fn renaming_refuses_taken_invalid_and_case_only_names_and_stale_pages(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&RENAMED, "k", cx);
+    cx.simulate_keystrokes(notebook.window.into(), &key("shift-e"));
+    let old = read(&notebook, cx, |view, _| {
+        view.file_rows()
+            .iter()
+            .position(|row| row.path == "Old name.md")
+            .unwrap()
+    });
+    notebook
+        .window
+        .update(cx, |view, _, _| view.nav.browsers.files_selected = old)
+        .unwrap();
+    cx.simulate_keystrokes(notebook.window.into(), "f2");
+    let store = NotebookStore::open(&notebook.path, "nb", "local").unwrap();
+    let before = store.heads("o").unwrap();
+    for (name, error) in [
+        ("keep", quire_core::relocate::TAKEN),
+        ("a/b", quire_core::relocate::NAME_HAS_SLASH),
+        ("con", quire_core::relocate::INVALID_NAME),
+        ("old NAME", quire_core::relocate::CASE_ONLY),
+    ] {
+        rename_to(&notebook, name, cx);
+        wait_until(cx, "the refusal", |cx| {
+            dialog_error(&notebook, cx).is_some()
+        });
+        assert_eq!(dialog_error(&notebook, cx).unwrap(), error, "{name}");
+    }
+    // Typing clears the error; the dialog stays open to correct the name.
+    cx.simulate_input(notebook.window.into(), "s");
+    assert!(dialog_error(&notebook, cx).is_none());
+    assert_eq!(store.heads("o").unwrap(), before);
+    cx.simulate_keystrokes(notebook.window.into(), "escape");
+    assert!(read(&notebook, cx, |view, _| view.nav.dialog.is_none()));
+
+    // A page saved by another writer between planning and writing refuses the whole rename.
+    let (open, storage, index) = read(&notebook, cx, |view, cx| {
+        let session = view.session.borrow();
+        (
+            session.open_pages(),
+            session.storage(),
+            view.index_client(cx).unwrap(),
+        )
+    });
+    let slot = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let filled = slot.clone();
+    let planning = storage.clone();
+    cx.update(|cx| {
+        let plan = crate::file_actions::plan_rename(
+            "o".into(),
+            "Renamed".into(),
+            open,
+            index,
+            planning,
+            cx,
+        );
+        cx.spawn(async move |_| *filled.borrow_mut() = Some(plan.await))
+            .detach();
+    });
+    wait_until(cx, "the rename plan", |_| slot.borrow().is_some());
+    let plan = slot.borrow_mut().take().unwrap().unwrap().unwrap();
+    save(&store, "l", "Links.md", "- [[Old name]] edited elsewhere\n");
+    let written = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let result = written.clone();
+    cx.update(|cx| {
+        let write = crate::file_actions::rename(plan, storage, cx);
+        cx.spawn(async move |_| *result.borrow_mut() = Some(write.await))
+            .detach();
+    });
+    wait_until(cx, "the refused rename", |_| written.borrow().is_some());
+    assert_eq!(
+        written.borrow_mut().take().unwrap(),
+        Err(crate::file_actions::STALE_RENAME.to_owned())
+    );
+    assert_eq!(stored_text(&store, "o").0, "Old name.md");
+    assert_eq!(
+        stored_text(&store, "l").1,
+        "- [[Old name]] edited elsewhere\n"
+    );
+}

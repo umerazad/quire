@@ -83,6 +83,7 @@ impl StoredWindow {
         self.refresh_tags(cx);
         self.refresh_references(cx);
         self.refresh_tasks(cx);
+        self.follow_rename(cx);
     }
 
     /// Re-runs the queries of the tag views on screen.

@@ -4,8 +4,8 @@
 use super::*;
 use crate::navigation::{
     CaptureTask, CloseTab, DeleteFile, DeletePage, FindPage, FocusFiles, FocusReferences, GoBack,
-    GoForward, NewPage, NextTab, OpenToday, PreviousTab, ShowDaily, ShowPages, ShowTags, ShowTasks,
-    ToggleFavorite, ToggleSidePane, WorkspaceFile, create_page,
+    GoForward, NewPage, NextTab, OpenToday, PreviousTab, RenameFile, RenamePage, ShowDaily,
+    ShowPages, ShowTags, ShowTasks, ToggleFavorite, ToggleSidePane, WorkspaceFile, create_page,
     palette::{PagePalette, PaletteChoice, PaletteMode},
 };
 use gpui::{DismissEvent, EntityId, SharedString, Task};
@@ -35,6 +35,8 @@ pub(super) struct Navigation {
     watched: HashSet<EntityId>,
     pub(super) palette: Option<Entity<Picker<PagePalette>>>,
     pub(super) dialog: Option<Entity<crate::navigation::file_dialog::FileDialog>>,
+    /// A renamed page and its new path, until the page list shows it there.
+    pub(super) renamed: Option<(String, String)>,
     pub(super) pages: Vec<ListedPage>,
     catalogue: Option<Task<()>>,
     saving: Option<Task<()>>,
@@ -67,6 +69,7 @@ impl Navigation {
             watched: HashSet::new(),
             palette: None,
             dialog: None,
+            renamed: None,
             pages: Vec::new(),
             catalogue: None,
             saving: None,
@@ -266,11 +269,11 @@ impl StoredWindow {
     }
 
     pub(super) fn update_title(&self, window: &mut Window, cx: &App) {
-        let page = self.page.read(cx);
-        let title = page
-            .loaded()
-            .and_then(|loaded| loaded.path.as_deref())
-            .unwrap_or("Unsaved page");
+        let title = self
+            .page
+            .read(cx)
+            .path(cx)
+            .unwrap_or_else(|| "Unsaved page".into());
         window.set_window_title(&format!("{title} · Quire Native"));
     }
 
@@ -459,6 +462,14 @@ impl StoredWindow {
             .on_action(
                 cx.listener(|this, _: &DeleteFile, window, cx| {
                     this.delete_selected_file(window, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &RenamePage, window, cx| this.rename_shown_page(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &RenameFile, window, cx| {
+                    this.rename_selected_file(window, cx)
                 }),
             )
     }

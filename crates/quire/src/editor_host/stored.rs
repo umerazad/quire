@@ -370,9 +370,14 @@ impl Render for StoredWindow {
             .when(
                 page.persistence().is_some() && self.shown_page(cx).is_some(),
                 |div| {
-                    div.child(Button::new("delete-page", "Delete page…").on_click(
-                        cx.listener(|this, _, window, cx| this.delete_shown_page(window, cx)),
+                    div.child(Button::new("rename-page", "Rename…").on_click(
+                        cx.listener(|this, _, window, cx| this.rename_shown_page(window, cx)),
                     ))
+                    .child(
+                        Button::new("delete-page", "Delete page…").on_click(
+                            cx.listener(|this, _, window, cx| this.delete_shown_page(window, cx)),
+                        ),
+                    )
                 },
             )
             .when(page.can_retry(), |div| {

@@ -49,6 +49,38 @@ impl QueryIndex {
         Ok(!self.pages_where("p.name_key=?", &name)?.is_empty())
     }
 
+    pub fn relocation(&self, page: &JsString) -> Result<Option<RelocationFacts>> {
+        self.refresh()?;
+        let Some(this) = self
+            .pages_where("p.page=?", &page.to_json())?
+            .into_iter()
+            .next()
+        else {
+            return Ok(None);
+        };
+        let unique_title = self
+            .pages_where("p.title_key=?", &this.title.to_lowercase())?
+            .len()
+            == 1;
+        let mut seen: HashSet<Vec<u8>> = HashSet::from([this.page.as_bytes().to_vec()]);
+        let mut candidates = vec![this.clone()];
+        let linked = self.backlinks(page)?.into_iter().map(|link| link.source);
+        let marked = self.pages_where(
+            "p.revision IN (SELECT revision FROM live_blocks WHERE content LIKE ?)",
+            "%.md%",
+        )?;
+        for candidate in linked.chain(marked) {
+            if seen.insert(candidate.page.as_bytes().to_vec()) {
+                candidates.push(candidate);
+            }
+        }
+        Ok(Some(RelocationFacts {
+            page: this,
+            unique_title,
+            candidates,
+        }))
+    }
+
     /// What deleting a page or a folder takes: the pages that go, ordered by path, and how many
     /// links from the pages that stay will stop resolving.
     pub fn deletion(&self, target: &DeletionTarget) -> Result<Deletion> {
@@ -82,6 +114,17 @@ impl QueryIndex {
     }
 }
 
+/// What a rename or move of one page needs from the index: its title, whether any other page
+/// shares it, and the pages whose links may follow it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RelocationFacts {
+    pub page: PageRef,
+    pub unique_title: bool,
+    /// Pages linking to it by name, title, or block, and pages with Markdown links to `.md`
+    /// files, which may point at it by relative path. The page itself comes first.
+    pub candidates: Vec<PageRef>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DeletionTarget {
     Page(JsString),
@@ -100,6 +143,11 @@ impl super::IndexClient {
     }
     pub fn path_taken(&self, path: String) -> super::Answer<bool> {
         self.request(128 + path.len(), move |index| index.path_taken(&path))
+    }
+    pub fn relocation(&self, page: JsString) -> super::Answer<Option<RelocationFacts>> {
+        self.request(128 + page.as_bytes().len(), move |index| {
+            index.relocation(&page)
+        })
     }
     pub fn deletion(&self, target: DeletionTarget) -> super::Answer<Deletion> {
         self.request(256, move |index| index.deletion(&target))

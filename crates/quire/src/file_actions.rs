@@ -1,16 +1,22 @@
-//! Deleting pages and folders: plan what goes and how many links break, then write every
-//! tombstone or none through `page_writes`.
+//! Deleting and renaming pages. A deletion plans what goes and how many links break, then
+//! writes every tombstone or none; a rename rewrites every link that follows the page and writes
+//! every page or none. Both go through `page_writes`.
 
 use crate::{
     notebook_session::OpenPage,
-    page_writes::{self, PageSource},
+    page_writes::{self, PageSource, PageWrite},
     query_index::ask,
 };
-use gpui::{App, Entity, Task};
+use gpui::{App, AppContext as _, Entity, Task};
+use quire_core::{
+    relocate::{MISSING_SOURCE, Relocation, relocate_page, rename_target},
+    source_text::SourceText,
+};
 use quire_store::{
     index::{DeletionTarget, IndexClient},
     worker::StorageClient,
 };
+use std::collections::{BTreeSet, HashMap};
 
 pub const STALE_DELETION: &str =
     "A page changed after you chose to delete it. Nothing was deleted; try again.";
@@ -151,4 +157,107 @@ pub fn delete(
     let ids: Vec<String> = plan.pages.into_iter().map(|(id, _)| id).collect();
     let work = page_writes::delete(writes, folder, storage, STALE_DELETION, cx);
     cx.spawn(async move |_| work.await.map(|_| ids))
+}
+
+pub const STALE_RENAME: &str =
+    "A page changed while it was being renamed. Nothing was renamed; rename it again.";
+
+/// A planned rename: the writes of the renamed page and every page whose links follow it.
+pub struct RenamePlan {
+    pub target: String,
+    writes: Vec<PageWrite>,
+}
+
+/// Plans renaming `page` to `name` in its folder, as the reference `renamePage` does: the file
+/// name and title change together, every link to the page follows, and a front matter `title`
+/// takes the new name. None when the name is unchanged or empty.
+pub fn plan_rename(
+    page: String,
+    name: String,
+    open_pages: Vec<Entity<OpenPage>>,
+    index: IndexClient,
+    storage: StorageClient,
+    cx: &mut App,
+) -> Task<Result<Option<RenamePlan>, String>> {
+    cx.spawn(async move |cx| {
+        let Some(source) = page_writes::read(page.clone(), &open_pages, &storage, cx).await? else {
+            return Err(MISSING_SOURCE.into());
+        };
+        let Some(target) = rename_target(&source.path, &name)? else {
+            return Ok(None);
+        };
+        let Some(facts) = ask(index.relocation(page.as_str().into())).await? else {
+            return Err(MISSING_SOURCE.into());
+        };
+        let taken = ask(index.path_taken(target.clone())).await?;
+        let relocation = Relocation::new(
+            &source.path,
+            &target,
+            true,
+            &facts.page.title,
+            facts.unique_title,
+            true,
+            |_| taken,
+        )?;
+        let mut sources = vec![source];
+        for candidate in facts.candidates.iter().skip(1) {
+            let id = candidate.page.to_lossy_string();
+            if let Some(source) = page_writes::read(id, &open_pages, &storage, cx).await? {
+                sources.push(source);
+            }
+        }
+        let mut analyzed = Vec::new();
+        for source in sources {
+            let (original, normalized) = SourceText::prepare(source.stored.clone());
+            let work = cx.update(|cx| crate::page_index::relocation_links(normalized.clone(), cx));
+            let Some((references, urls)) = cx.background_spawn(work).await else {
+                return Err("Cannot read links because the Markdown grammar is unavailable. Rebuild Quire with its bundled grammars.".into());
+            };
+            analyzed.push((source, original, normalized, references, urls));
+        }
+        let bases: Vec<String> = analyzed
+            .iter()
+            .flat_map(|(_, _, _, references, _)| references.iter())
+            .map(|reference| reference.target.split('#').next().unwrap_or_default().to_owned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let (_, resolved) = ask(index.with_generation(move |index| {
+            bases
+                .into_iter()
+                .map(|base| Ok((base.clone(), index.find_page(&base)?.map(|page| page.path))))
+                .collect::<Result<HashMap<_, _>, _>>()
+        }))
+        .await?;
+        let mut writes = Vec::new();
+        for (source, original, normalized, references, urls) in analyzed {
+            let Some(planned) = relocate_page(
+                &relocation,
+                &source.path,
+                &normalized,
+                &references,
+                &urls,
+                |base| resolved.get(base).cloned().flatten(),
+            ) else {
+                continue;
+            };
+            let text = original.apply(planned.edits).map_err(|error| {
+                format!("Could not rewrite links in {}: {error}. Rename again.", source.path)
+            })?;
+            writes.push(source.write_at(planned.path, text));
+        }
+        Ok(Some(RenamePlan {
+            target: relocation.target,
+            writes,
+        }))
+    })
+}
+
+/// Writes the rename and every link change or none. Returns how many pages were written.
+pub fn rename(
+    plan: RenamePlan,
+    storage: StorageClient,
+    cx: &mut App,
+) -> Task<Result<usize, String>> {
+    page_writes::apply(plan.writes, storage, STALE_RENAME, cx)
 }

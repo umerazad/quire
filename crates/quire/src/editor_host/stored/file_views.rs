@@ -1,5 +1,5 @@
-//! Deleting the shown page or a Files item: the confirmation dialog, then closing everything the
-//! deleted pages leave behind.
+//! Deleting and renaming the shown page or a Files item: the dialog, then closing everything the
+//! deleted pages leave behind, or showing the renamed page's new name.
 
 use super::*;
 use crate::{
@@ -39,6 +39,12 @@ impl StoredWindow {
                 FileDialogEvent::Deleted { pages, folder } => {
                     this.pages_deleted(pages, folder.as_deref(), window, cx)
                 }
+                FileDialogEvent::Renamed { page, path } => {
+                    this.nav.renamed = Some((page.clone(), path.clone()));
+                    this.follow_rename(cx);
+                    this.update_title(window, cx);
+                    cx.notify();
+                }
             },
         )
         .detach();
@@ -64,6 +70,77 @@ impl StoredWindow {
         let writers = self.writers();
         let dialog = cx.new(|cx| FileDialog::delete(target, writers, index, cx));
         self.show_dialog(dialog, window, cx);
+    }
+
+    pub(in crate::editor_host::stored) fn ask_rename(
+        &mut self,
+        page: String,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(index) = self.index_client(cx) else {
+            self.nav.error = Some(
+                "Renaming needs the notebook index, which did not start. Reopen the notebook to retry."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        };
+        let open = self.session.borrow().open_pages();
+        let path = open
+            .iter()
+            .find(|open| open.read(cx).id() == page)
+            .and_then(|open| open.read(cx).path(cx))
+            .or_else(|| {
+                self.nav
+                    .pages
+                    .iter()
+                    .find(|listed| listed.page.page.as_str() == Some(page.as_str()))
+                    .map(|listed| listed.page.path.clone())
+            });
+        let Some(path) = path else {
+            return;
+        };
+        let writers = self.writers();
+        let dialog = cx.new(|cx| FileDialog::rename(page, path, writers, index, window, cx));
+        self.show_dialog(dialog, window, cx);
+    }
+
+    pub(in crate::editor_host::stored) fn rename_shown_page(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if let Some(page) = self.shown_page(cx) {
+            self.ask_rename(page, window, cx);
+        }
+    }
+
+    /// F2 in Files renames the highlighted page; folders are not renamed.
+    pub(in crate::editor_host::stored) fn rename_selected_file(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if let Some(Target::Page(page)) = self.selected_file() {
+            self.ask_rename(page, window, cx);
+        }
+    }
+
+    /// Refreshes the page list until it shows a renamed page at its new path. An open page's new
+    /// path reaches the index with its next overlay, which can land after the rename is written.
+    pub(in crate::editor_host::stored) fn follow_rename(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some((page, path)) = &self.nav.renamed else {
+            return;
+        };
+        let listed = self.nav.pages.iter().any(|listed| {
+            listed.page.page.as_str() == Some(page.as_str()) && listed.page.path == *path
+        });
+        if listed {
+            self.nav.renamed = None;
+        } else {
+            self.refresh_catalogue(cx);
+        }
     }
 
     /// The page in the main pane, when a page rather than a browser or tag page is shown.
