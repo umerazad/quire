@@ -194,6 +194,8 @@ pub(crate) struct NotebookWindow {
     commands: Entity<crate::editor_command::CommandPrompt>,
     presentation_error: Option<String>,
     semantic_excerpt: Option<Entity<crate::semantic_excerpt::SemanticExcerpt>>,
+    /// A zoom into one list item, per pane: the page editor first, then the second.
+    zooms: [Option<crate::outline::zoom::Zoom>; 2],
 }
 
 impl NotebookWindow {
@@ -217,6 +219,7 @@ impl NotebookWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        self.zooms[usize::from(editor == &self.second)] = None;
         self.presentation_error = if crate::editor_projection::enabled(editor.read(cx)) {
             crate::editor_projection::unbind(editor, window, cx);
             None
@@ -243,15 +246,117 @@ impl NotebookWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let editor = if self.source.focus_handle(cx).contains_focused(window, cx) {
-            self.source.clone()
-        } else if self.second.focus_handle(cx).contains_focused(window, cx) {
-            self.second.clone()
-        } else {
+        let Some(pane) = self.focused_pane(window, cx) else {
             cx.propagate();
             return;
         };
+        let editor = self.pane(pane).clone();
         self.change_presentation(&editor, window, cx);
+    }
+
+    fn pane(&self, pane: usize) -> &Entity<Editor> {
+        if pane == 0 {
+            &self.source
+        } else {
+            &self.second
+        }
+    }
+
+    /// The pane holding focus, in its page editor or its zoom.
+    fn focused_pane(&self, window: &Window, cx: &App) -> Option<usize> {
+        (0..2).find(|&pane| {
+            std::iter::once(self.pane(pane))
+                .chain(self.zooms[pane].as_ref().map(|zoom| &zoom.editor))
+                .any(|editor| editor.focus_handle(cx).contains_focused(window, cx))
+        })
+    }
+
+    /// The editor a pane shows: its zoom, or the page.
+    fn shown(&self, pane: usize) -> Entity<Editor> {
+        self.zooms[pane]
+            .as_ref()
+            .map_or_else(|| self.pane(pane).clone(), |zoom| zoom.editor.clone())
+    }
+
+    fn zoom_in(
+        &mut self,
+        _: &crate::outline::ZoomIn,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(pane) = self.focused_pane(window, cx) else {
+            cx.propagate();
+            return;
+        };
+        let from = self.shown(pane);
+        match crate::outline::zoom::Zoom::open(&from, &self.analysis, window, cx) {
+            Ok(zoom) => {
+                window.focus(&zoom.editor.focus_handle(cx), cx);
+                self.zooms[pane] = Some(zoom);
+                crate::outline::set_notice(None, cx);
+                self.refresh_tags(cx);
+            }
+            Err(message) => crate::outline::set_notice(Some(message), cx),
+        }
+        cx.notify();
+    }
+
+    fn zoom_out(
+        &mut self,
+        _: &crate::outline::ZoomOut,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(pane) = self
+            .focused_pane(window, cx)
+            .filter(|&pane| self.zooms[pane].is_some())
+        else {
+            cx.propagate();
+            return;
+        };
+        self.close_zoom(pane, window, cx);
+    }
+
+    /// Shows the whole page again with the caret where it was in the zoom.
+    fn close_zoom(&mut self, pane: usize, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        let Some(zoom) = self.zooms[pane].take() else {
+            return;
+        };
+        let editor = self.pane(pane).clone();
+        if let Some(caret) = zoom.caret(cx) {
+            editor.update(cx, |editor, cx| {
+                editor.change_selections(editor::SelectionEffects::default(), window, cx, |s| {
+                    s.select_ranges([multi_buffer::MultiBufferOffset(caret)
+                        ..multi_buffer::MultiBufferOffset(caret)])
+                });
+            });
+        }
+        window.focus(&editor.focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    /// The bar above a zoomed pane, with the way back to the whole page.
+    fn zoom_bar(&self, pane: usize, cx: &mut gpui::Context<Self>) -> Option<gpui::Div> {
+        let zoom = self.zooms[pane].as_ref()?;
+        let message = zoom.message(cx);
+        Some(
+            gpui::div()
+                .p_1()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    Button::new(("zoom-out", pane), "All blocks")
+                        .aria_label("Zoom out to all blocks")
+                        .tab_index(0_isize)
+                        .tooltip(Tooltip::text("Show the whole page"))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.close_zoom(pane, window, cx)
+                        })),
+                )
+                .child(Label::new("Focused block"))
+                .when_some(message, |div, message| div.child(Label::new(message))),
+        )
     }
 
     fn presentation_button(
@@ -347,7 +452,8 @@ impl NotebookWindow {
     }
 
     fn refresh_tags(&mut self, cx: &mut gpui::Context<Self>) {
-        for editor in [&self.source, &self.second] {
+        let zooms = self.zooms.iter().flatten().map(|zoom| &zoom.editor);
+        for editor in [&self.source, &self.second].into_iter().chain(zooms) {
             crate::tag_labels::refresh(editor, &self.analysis, cx);
         }
     }
@@ -406,6 +512,7 @@ impl NotebookWindow {
             mode,
             presentation_error: None,
             semantic_excerpt: None,
+            zooms: [None, None],
         }
     }
 
@@ -438,6 +545,7 @@ impl Render for NotebookWindow {
             .flex_1()
             .min_w_0()
             .child(self.presentation_button("source-presentation", &self.source, cx))
+            .children(self.zoom_bar(0, cx))
             .when(!self.source_search.read(cx).is_dismissed(), |div| {
                 div.child(self.source_search.clone())
             })
@@ -446,7 +554,7 @@ impl Render for NotebookWindow {
                     .flex_1()
                     .min_h_0()
                     .relative()
-                    .child(self.source.clone())
+                    .child(self.shown(0))
                     .children(crate::media::attach::drop_target(&self.source, cx)),
             );
         let message = self
@@ -463,6 +571,7 @@ impl Render for NotebookWindow {
             .flex_1()
             .min_w_0()
             .child(self.presentation_button("second-presentation", &self.second, cx))
+            .children(self.zoom_bar(1, cx))
             .when_some(message, |div, message| {
                 div.child(gpui::div().p_2().child(message))
             })
@@ -474,7 +583,7 @@ impl Render for NotebookWindow {
                     .flex_1()
                     .min_h_0()
                     .relative()
-                    .child(self.second.clone())
+                    .child(self.shown(1))
                     .children(crate::media::attach::drop_target(&self.second, cx)),
             );
         gpui::div()
@@ -482,6 +591,8 @@ impl Render for NotebookWindow {
             .on_action(cx.listener(Self::search_submit))
             .on_action(cx.listener(Self::open_command))
             .on_action(cx.listener(Self::toggle_presentation))
+            .on_action(cx.listener(Self::zoom_in))
+            .on_action(cx.listener(Self::zoom_out))
             .flex()
             .flex_col()
             .child(
@@ -1013,3 +1124,7 @@ mod projection_mapping_tests;
 #[cfg(test)]
 #[path = "semantic_excerpt_tests.rs"]
 mod semantic_excerpt_tests;
+
+#[cfg(test)]
+#[path = "outline/zoom_tests.rs"]
+mod zoom_tests;

@@ -11,6 +11,7 @@ use std::{any::TypeId, ops::Range};
 
 mod lists;
 mod model;
+pub mod zoom;
 
 pub use lists::Style;
 use model::{Edit, Outcome, Plan};
@@ -55,7 +56,13 @@ actions!(
         /// Numbers the list items at the cursor or in the selection.
         NumberList,
         /// Turns the list items at the cursor or in the selection into bullets.
-        BulletList
+        BulletList,
+        /// Selects the text of the block a zoom or an embed shows, with its children.
+        SelectBlock,
+        /// Shows only the list item at the caret and its children.
+        ZoomIn,
+        /// Shows the whole page again after a zoom.
+        ZoomOut
     ]
 );
 
@@ -94,7 +101,7 @@ struct OutlineFold;
 enum Handled {
     Done,
     Record,
-    Insert(Plan),
+    Insert(Page, Plan),
 }
 
 pub fn init(cx: &mut App) {
@@ -170,6 +177,9 @@ pub fn init(cx: &mut App) {
         register(editor, cx, |editor, _: &BulletList, window, cx| {
             number_list(editor, Some(Style::Bullet), window, cx)
         });
+        register(editor, cx, |editor, _: &SelectBlock, window, cx| {
+            select_block(editor, window, cx)
+        });
     })
     .detach();
     bind_keys(cx);
@@ -185,6 +195,16 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("backspace", DeleteBackward, Some(WRITE_INPUT)),
         KeyBinding::new("delete", DeleteForward, Some(WRITE_INPUT)),
         KeyBinding::new(platform("cmd-v", "ctrl-v"), PasteBlocks, Some(WRITE_INPUT)),
+        KeyBinding::new(
+            platform("cmd-a", "ctrl-a"),
+            SelectBlock,
+            Some(platform(
+                "Editor && QuireWrite && QuireExcerpt && !QuireControl",
+                "Editor && QuireWrite && QuireExcerpt && !QuireControl && !VimControl",
+            )),
+        ),
+        KeyBinding::new(platform("cmd-.", "ctrl-."), ZoomIn, Some(WRITE)),
+        KeyBinding::new(platform("cmd-shift-.", "ctrl-shift-."), ZoomOut, None),
         KeyBinding::new("alt-up", MoveBlockUp, Some(WRITE)),
         KeyBinding::new("alt-down", MoveBlockDown, Some(WRITE)),
         KeyBinding::new("alt-shift-up", MoveBlockUp, Some(WRITE)),
@@ -251,15 +271,17 @@ fn register<A: Action>(
                 None => cx.propagate(),
                 Some(Handled::Done) => {}
                 Some(Handled::Record) => vim::record_host_command(&editor, cx),
-                Some(Handled::Insert(plan)) => {
+                Some(Handled::Insert(page, plan)) => {
                     vim::begin_host_insert(&editor, window, cx);
-                    editor.update(cx, |editor, cx| apply(editor, plan, window, cx));
+                    editor.update(cx, |editor, cx| apply(editor, &page, plan, window, cx));
                 }
             }
         })
         .detach();
 }
 
+/// The page a Write view shows, in source offsets. A view of one block's subtree, a zoom or a
+/// block embed, names that block as `zoom` and may change only the source it `shown`.
 struct Page {
     buffer: Entity<language::Buffer>,
     text: String,
@@ -267,33 +289,112 @@ struct Page {
     head: usize,
     selection: Range<usize>,
     single: bool,
+    zoom: Option<String>,
+    shown: Range<usize>,
 }
+
+pub const OUTSIDE_VIEW: &str =
+    "That edit reaches outside the shown block. Zoom out or open its page to change the rest.";
 
 impl Page {
     fn caret(&self) -> Option<usize> {
         (self.single && self.selection.is_empty()).then_some(self.head)
     }
+
+    fn contains(&self, edits: &[Edit]) -> bool {
+        edits
+            .iter()
+            .all(|(range, _)| self.shown.start <= range.start && range.end <= self.shown.end)
+    }
+
+    fn zoom(&self) -> Option<&str> {
+        self.zoom.as_deref()
+    }
 }
 
-/// The page in a Write view of one whole page. Embedded excerpts keep ordinary editing.
+/// The source buffer a Write view edits: its only buffer, whether the view shows the whole page
+/// or one excerpt of it.
+pub(crate) fn source_buffer(editor: &Editor, cx: &App) -> Option<Entity<language::Buffer>> {
+    let multi = editor.buffer().read(cx);
+    multi.as_singleton().or_else(|| {
+        let mut buffers = multi.all_buffers_iter();
+        buffers.next().filter(|_| buffers.next().is_none())
+    })
+}
+
+/// A view offset as an offset in the source buffer.
+fn to_source(editor: &Editor, offset: MultiBufferOffset, cx: &App) -> Option<usize> {
+    let multi = editor.buffer().read(cx).snapshot(cx);
+    multi
+        .point_to_buffer_offset(offset)
+        .map(|(_, offset)| offset.0)
+}
+
+/// A source offset as an anchor in the editor's view, if the view shows it.
+fn view_anchor(
+    editor: &Editor,
+    buffer: &Entity<language::Buffer>,
+    offset: usize,
+    cx: &App,
+) -> Option<multi_buffer::Anchor> {
+    let anchor = buffer.read(cx).snapshot().anchor_before(offset);
+    editor
+        .buffer()
+        .read(cx)
+        .snapshot(cx)
+        .anchor_in_excerpt(anchor)
+}
+
+fn view_range(
+    editor: &Editor,
+    buffer: &Entity<language::Buffer>,
+    range: Range<usize>,
+    cx: &App,
+) -> Option<Range<MultiBufferOffset>> {
+    let multi = editor.buffer().read(cx).snapshot(cx);
+    let start = view_anchor(editor, buffer, range.start, cx)?.to_offset(&multi);
+    let end = view_anchor(editor, buffer, range.end, cx)?.to_offset(&multi);
+    Some(start..end)
+}
+
+/// The page under a Write view: a whole page, or one block's subtree in a zoom or an embed.
 fn page(editor: &mut Editor, cx: &mut Context<Editor>) -> Option<Page> {
     if !crate::editor_projection::enabled(editor) {
         return None;
     }
-    let buffer = editor.buffer().read(cx).as_singleton()?;
+    let buffer = source_buffer(editor, cx)?;
     let snapshot = buffer.read(cx).snapshot();
+    let whole = editor.buffer().read(cx).as_singleton().is_some();
+    let zoom = if whole {
+        None
+    } else {
+        Some(crate::semantic_excerpt::root(editor, cx)?)
+    };
+    let text = snapshot.text();
+    let shown = if whole {
+        0..snapshot.len()
+    } else {
+        let multi = editor.buffer().read(cx).snapshot(cx);
+        let excerpt = multi.excerpts().next()?;
+        let start = text::ToOffset::to_offset(&excerpt.context.start, &snapshot);
+        model::line_start(&text, start)..text::ToOffset::to_offset(&excerpt.context.end, &snapshot)
+    };
     let blocks = crate::markdown_blocks::current_blocks(&snapshot)?;
-    let newest = editor
-        .selections
-        .newest_anchor()
-        .map(|anchor| anchor.to_offset(&editor.buffer().read(cx).snapshot(cx)));
+    let multi = editor.buffer().read(cx).snapshot(cx);
+    let newest = *editor.selections.newest_anchor();
+    let offset = |anchor: multi_buffer::Anchor| to_source(editor, anchor.to_offset(&multi), cx);
+    let start = offset(newest.start)?;
+    let end = offset(newest.end)?;
+    let head = offset(newest.head())?;
     Some(Page {
-        text: snapshot.text(),
+        text,
         blocks,
-        head: newest.head().0,
-        selection: newest.start.0..newest.end.0,
+        head,
+        selection: start..end,
         single: editor.selections.count() == 1,
         buffer,
+        zoom,
+        shown,
     })
 }
 
@@ -324,14 +425,39 @@ fn literal(buffer: &Entity<language::Buffer>, position: usize, cx: &App) -> bool
     })
 }
 
+/// The collapsed block children in the view, as source ranges.
 fn outline_folds(editor: &mut Editor, cx: &mut Context<Editor>) -> Vec<Range<usize>> {
     let snapshot = editor.display_snapshot(cx);
     let buffer = snapshot.buffer_snapshot();
+    let source =
+        |offset: MultiBufferOffset| buffer.point_to_buffer_offset(offset).map(|(_, at)| at.0);
     snapshot
         .folds_in_range(MultiBufferOffset(0)..buffer.len())
         .filter(|fold| fold.placeholder.type_tag == Some(TypeId::of::<OutlineFold>()))
-        .map(|fold| fold.range.start.to_offset(buffer).0..fold.range.end.to_offset(buffer).0)
+        .filter_map(|fold| {
+            Some(
+                source(fold.range.start.to_offset(buffer))?
+                    ..source(fold.range.end.to_offset(buffer))?,
+            )
+        })
         .collect()
+}
+
+/// Edits the source buffer directly. Every view of the page shares its history, so the edit
+/// joins the running editor transaction and no view's Write filter rewrites it.
+fn source_edit(buffer: &Entity<language::Buffer>, edits: &[Edit], cx: &mut App) {
+    if edits.is_empty() {
+        return;
+    }
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(
+            edits
+                .iter()
+                .map(|(range, text)| (range.clone(), text.as_str())),
+            None,
+            cx,
+        )
+    });
 }
 
 pub(crate) fn structural_edit(buffer: &Entity<MultiBuffer>, edits: &[Edit], cx: &mut App) {
@@ -367,24 +493,33 @@ fn changed_ranges(edits: &[Edit]) -> Vec<Range<usize>> {
         .collect()
 }
 
-fn apply(editor: &mut Editor, plan: Plan, window: &mut Window, cx: &mut Context<Editor>) {
-    apply_then(editor, plan, |_, _, _| None, window, cx)
+fn apply(
+    editor: &mut Editor,
+    page: &Page,
+    plan: Plan,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    apply_then(editor, page, plan, |_, _, _| None, window, cx)
 }
 
 /// Applies the plan, then the plan `then` computes from the edited page and the caret, as one
-/// undo step. Numbered runs the edits touched keep counting.
+/// undo step. Numbered runs the edits touched keep counting. A plan reaching outside the block
+/// a zoom or an embed shows is refused.
 fn apply_then(
     editor: &mut Editor,
+    page: &Page,
     plan: Plan,
     then: impl FnOnce(&str, &[Block], usize) -> Option<Plan>,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    set_notice(None, cx);
-    let buffer = editor.buffer().clone();
-    let Some(source) = buffer.read(cx).as_singleton() else {
+    if !page.contains(&plan.edits) {
+        set_notice(Some(OUTSIDE_VIEW), cx);
         return;
-    };
+    }
+    set_notice(None, cx);
+    let source = page.buffer.clone();
     let edited = |source: &Entity<language::Buffer>, cx: &App| {
         let snapshot = source.read(cx).snapshot();
         let blocks = crate::markdown_blocks::current_blocks(&snapshot);
@@ -394,9 +529,18 @@ fn apply_then(
     editor.transact(window, cx, |editor, window, cx| {
         let mut touched = changed_ranges(&plan.edits);
         let mut cursor = plan.cursor;
-        structural_edit(&buffer, &plan.edits, cx);
+        source_edit(&source, &plan.edits, cx);
         let (text, blocks) = edited(&source, cx);
-        if let Some(next) = blocks.and_then(|blocks| then(&text, &blocks, cursor)) {
+        let next = blocks
+            .and_then(|blocks| then(&text, &blocks, cursor))
+            .filter(|next| {
+                let shown =
+                    page.shown.start..model::map_position(&plan.edits, page.shown.end, true);
+                next.edits
+                    .iter()
+                    .all(|(range, _)| shown.start <= range.start && range.end <= shown.end)
+            });
+        if let Some(next) = next {
             touched = touched
                 .into_iter()
                 .map(|range| {
@@ -405,37 +549,50 @@ fn apply_then(
                 })
                 .chain(changed_ranges(&next.edits))
                 .collect();
-            structural_edit(&buffer, &next.edits, cx);
+            source_edit(&source, &next.edits, cx);
             cursor = next.cursor;
         }
-        let (text, blocks) = edited(&source, cx);
-        let renumbered = blocks
-            .filter(|_| !touched.is_empty())
-            .map(|blocks| {
-                lists::renumber_changes(&text, &blocks, |from, to| {
-                    touched
-                        .iter()
-                        .any(|range| range.start <= to && range.end >= from)
-                })
-            })
-            .unwrap_or_default();
+        let renumbered = renumber_touched(&source, &touched, cx);
         let cursor = model::map_position(&renumbered, cursor, true);
-        structural_edit(&buffer, &renumbered, cx);
-        editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
-            selections.select_ranges([MultiBufferOffset(cursor)..MultiBufferOffset(cursor)])
-        });
+        source_edit(&source, &renumbered, cx);
+        if let Some(caret) = view_anchor(editor, &source, cursor, cx) {
+            editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
+                selections.select_anchor_ranges([caret..caret])
+            });
+        }
     });
     editor.finalize_last_transaction(cx);
 }
 
+/// The renumbering that keeps the numbered runs overlapping `touched` counting.
+fn renumber_touched(
+    source: &Entity<language::Buffer>,
+    touched: &[Range<usize>],
+    cx: &App,
+) -> Vec<Edit> {
+    if touched.is_empty() {
+        return Vec::new();
+    }
+    let snapshot = source.read(cx).snapshot();
+    let Some(blocks) = crate::markdown_blocks::current_blocks(&snapshot) else {
+        return Vec::new();
+    };
+    lists::renumber_changes(&snapshot.text(), &blocks, |from, to| {
+        touched
+            .iter()
+            .any(|range| range.start <= to && range.end >= from)
+    })
+}
+
 fn finish(
     editor: &mut Editor,
+    page: &Page,
     outcome: Option<Outcome>,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Option<Handled> {
     match outcome? {
-        Outcome::Apply(plan) => apply(editor, plan, window, cx),
+        Outcome::Apply(plan) => apply(editor, page, plan, window, cx),
         Outcome::Refuse(message) => set_notice(Some(message), cx),
     }
     Some(Handled::Done)
@@ -448,11 +605,11 @@ fn split(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) -> 
         return None;
     }
     let folds = outline_folds(editor, cx);
-    let outcome = model::split(&page.text, &page.blocks, head, None, |at| {
+    let outcome = model::split(&page.text, &page.blocks, head, page.zoom(), |at| {
         folds.iter().any(|fold| fold.start == at)
     })
     .or_else(|| model::newline_after_id(&page.text, &page.blocks, head));
-    finish(editor, outcome, window, cx)
+    finish(editor, &page, outcome, window, cx)
 }
 
 fn indent(
@@ -479,18 +636,24 @@ fn indent(
     if literal(&page.buffer, head, cx) {
         return None;
     }
+    let zoom = page.zoom.clone();
     if !line && let Some(bullet) = model::bare_bullet(&page.text, head) {
         let then = |text: &str, blocks: &[Block], cursor| match model::indent(
-            text, blocks, cursor, outdent, None,
+            text,
+            blocks,
+            cursor,
+            outdent,
+            zoom.as_deref(),
         ) {
             Some(Outcome::Apply(next)) => Some(next),
             _ => None,
         };
-        apply_then(editor, bullet, then, window, cx);
+        apply_then(editor, &page, bullet, then, window, cx);
         return Some(Handled::Done);
     }
-    let outcome = model::indent(&page.text, &page.blocks, head, outdent, None);
-    finish(editor, outcome, window, cx).map(|handled| if line { Handled::Record } else { handled })
+    let outcome = model::indent(&page.text, &page.blocks, head, outdent, page.zoom());
+    finish(editor, &page, outcome, window, cx)
+        .map(|handled| if line { Handled::Record } else { handled })
 }
 
 fn move_block(
@@ -501,7 +664,7 @@ fn move_block(
 ) -> Option<Handled> {
     let page = page(editor, cx)?;
     let outcome = model::move_block(&page.text, &page.blocks, page.head, up);
-    finish(editor, outcome, window, cx)
+    finish(editor, &page, outcome, window, cx)
 }
 
 fn merge(
@@ -531,22 +694,39 @@ fn merge(
     if hidden {
         return Some(Handled::Done);
     }
-    finish(editor, Some(outcome), window, cx)
+    finish(editor, &page, Some(outcome), window, cx)
 }
 
 fn join(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) -> Option<Handled> {
     let page = page(editor, cx)?;
     let outcome = model::join(&page.text, &page.blocks, page.head);
-    finish(editor, outcome, window, cx).map(|_| Handled::Record)
+    finish(editor, &page, outcome, window, cx).map(|_| Handled::Record)
 }
 
 fn open_line(editor: &mut Editor, below: bool, cx: &mut Context<Editor>) -> Option<Handled> {
     let page = page(editor, cx)?;
     let folds = outline_folds(editor, cx);
-    model::open_line(&page.text, &page.blocks, page.head, below, None, |at| {
-        folds.iter().any(|fold| fold.start == at)
-    })
-    .map(Handled::Insert)
+    let above_root = !below
+        && page.zoom.is_some()
+        && model::list_line(&page.text, &page.blocks, page.head)
+            .is_some_and(|(block, _)| block.id == page.zoom);
+    if above_root {
+        set_notice(Some(OUTSIDE_VIEW), cx);
+        return Some(Handled::Done);
+    }
+    let plan = model::open_line(
+        &page.text,
+        &page.blocks,
+        page.head,
+        below,
+        page.zoom(),
+        |at| folds.iter().any(|fold| fold.start == at),
+    )?;
+    if !page.contains(&plan.edits) {
+        set_notice(Some(OUTSIDE_VIEW), cx);
+        return Some(Handled::Done);
+    }
+    Some(Handled::Insert(page, plan))
 }
 
 fn paste(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) -> Option<Handled> {
@@ -554,7 +734,7 @@ fn paste(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) -> 
     let head = page.caret()?;
     let pasted = cx.read_from_clipboard()?.text()?;
     let plan = model::paste(&page.text, &page.blocks, head, &pasted)?;
-    apply(editor, plan, window, cx);
+    apply(editor, &page, plan, window, cx);
     Some(Handled::Done)
 }
 
@@ -587,21 +767,22 @@ fn fold(
     let target = fold_target(&page);
     match (collapse, folded, target) {
         (Some(false) | None, Some(block), _) => {
-            let range = MultiBufferOffset(block.content_to)..MultiBufferOffset(block.subtree_to);
+            let range = view_range(editor, &page.buffer, block.content_to..block.subtree_to, cx)?;
             editor.remove_folds_with_type(&[range], TypeId::of::<OutlineFold>(), true, cx);
         }
         (Some(true) | None, _, Some(block)) => {
-            let range = MultiBufferOffset(block.content_to)..MultiBufferOffset(block.subtree_to);
+            let range = view_range(editor, &page.buffer, block.content_to..block.subtree_to, cx)?;
             let placeholder = FoldPlaceholder {
                 type_tag: Some(TypeId::of::<OutlineFold>()),
                 merge_adjacent: false,
                 ..editor.default_fold_placeholder(cx)
             };
             let end = model::bounds(&page.text, block).text_end;
+            let end = view_anchor(editor, &page.buffer, end, cx);
             editor.fold_creases(vec![Crease::simple(range, placeholder)], true, window, cx);
-            if page.head > block.content_to {
+            if let Some(end) = end.filter(|_| page.head > block.content_to) {
                 editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
-                    selections.select_ranges([MultiBufferOffset(end)..MultiBufferOffset(end)])
+                    selections.select_anchor_ranges([end..end])
                 });
             }
         }
@@ -628,7 +809,29 @@ fn number_list(
         return Some(Handled::Done);
     };
     let cursor = model::map_position(&edits, page.head, true);
-    apply(editor, Plan { edits, cursor }, window, cx);
+    apply(editor, &page, Plan { edits, cursor }, window, cx);
+    Some(Handled::Done)
+}
+
+/// Select all in a zoom or a block embed: the shown block's text and its children, past its
+/// marker and checkbox.
+fn select_block(
+    editor: &mut Editor,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> Option<Handled> {
+    let page = page(editor, cx)?;
+    let zoom = page.zoom()?;
+    let block = page
+        .blocks
+        .iter()
+        .find(|block| block.id.as_deref() == Some(zoom))?;
+    let text_start = model::bounds(&page.text, block).text_start;
+    let start = view_anchor(editor, &page.buffer, text_start, cx)?;
+    let end = view_anchor(editor, &page.buffer, block.subtree_to, cx)?;
+    editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
+        selections.select_anchor_ranges([start..end])
+    });
     Some(Handled::Done)
 }
 
