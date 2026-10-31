@@ -920,4 +920,34 @@ mod tests {
         }
         Ok(())
     }
+
+    /// Block lookups run once per block link in a backlinks query; a plan that copies the live
+    /// page view into a temporary index made each one cost a full pass over every page.
+    #[test]
+    fn block_lookups_search_indexes_instead_of_copying_the_page_view() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let database = root.path().join("local.sqlite");
+        crate::notebook::NotebookStore::open(&database, "nb", "local")?;
+        let index = QueryIndex::open(
+            &database,
+            IndexConfig {
+                analyzer: 1,
+                layout: DailyLayout::default(),
+                calendar: DailyCalendar::utc(),
+            },
+        )?;
+        let plan: Vec<(i64, i64, i64, String)> = index
+            .connection
+            .select_bound(&format!("EXPLAIN QUERY PLAN {}", query::block_pages()))?(
+            "id"
+        )?;
+        let steps: Vec<&str> = plan.iter().map(|(.., step)| step.as_str()).collect();
+        assert!(
+            steps
+                .iter()
+                .all(|step| !step.contains("MATERIALIZE") && !step.contains("AUTOMATIC")),
+            "{steps:#?}"
+        );
+        Ok(())
+    }
 }

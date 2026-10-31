@@ -47,6 +47,13 @@ type LinkRow = (
 );
 const LINK_SELECT: &str = "SELECT p.revision,p.page,p.path,p.title,l.kind,l.syntax,l.target,l.label,l.media,l.start,l.finish,l.text FROM live_links l JOIN live_pages p ON p.revision=l.revision WHERE p.deleted=0 AND ";
 
+/// The live, undeleted page of every block with an ID, one row per block.
+pub(super) fn block_pages() -> String {
+    format!(
+        "SELECT {PAGE_COLUMNS} FROM live_blocks b JOIN live_pages p ON p.revision=b.revision WHERE p.deleted=0 AND b.id=?"
+    )
+}
+
 pub(super) fn page_ref((revision, page, path, title): PageRow) -> Result<PageRef> {
     let page = Json::parse(page.as_bytes())
         .ok()
@@ -207,23 +214,22 @@ impl QueryIndex {
             Some(index) => Some(self.resolve_page(&target[..index])?),
             None => None,
         };
-        let rows: Vec<(PageRow, i64)> = self.connection.select_bound(&format!(
-            "SELECT {PAGE_COLUMNS},count(*) FROM live_blocks b JOIN live_pages p ON p.revision=b.revision WHERE p.deleted=0 AND b.id=? GROUP BY p.revision"
-        ))?(block_key(target))?;
-        let mut matches: Vec<(PageRow, i64)> = rows
+        // One row per block: grouping here stops SQLite from flattening the live views, so it
+        // copied every page into a temporary index on each call (2 s per backlinks query at 5x).
+        let rows: Vec<PageRow> = self.connection.select_bound(&block_pages())?(block_key(target))?;
+        let mut matches: Vec<PageRow> = rows
             .into_iter()
-            .filter(|((revision, ..), _)| match &scope {
+            .filter(|(revision, ..)| match &scope {
                 Some(scope) => scope
                     .as_ref()
                     .is_some_and(|page| &page.revision == revision),
                 None => true,
             })
             .collect();
-        let total: i64 = matches.iter().map(|(_, count)| count).sum();
-        if total != 1 {
-            return Ok(None);
+        match (matches.pop(), matches.is_empty()) {
+            (Some(only), true) => page_ref(only).map(Some),
+            _ => Ok(None),
         }
-        page_ref(matches.remove(0).0).map(Some)
     }
 
     /// The reference `backlinks`: links naming the page by path or title, date links it owns as
