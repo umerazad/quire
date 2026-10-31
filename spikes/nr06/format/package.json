@@ -1,0 +1,9 @@
+{
+  "name": "nr06-format-spike",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "prettier": "3.9.10",
+    "@biomejs/biome": "2.6.4"
+  }
+}

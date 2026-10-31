@@ -1,0 +1,23 @@
+.pdf-embed {
+  display: block;
+  width: 100%;
+  margin: 12px 0;
+  border: 1px solid var(--line);
+  background: var(--paper);
+}
+.pdf-embed iframe,
+.image-embed img {
+  display: block;
+  width: 100%;
+  height: 650px;
+  max-height: 80vh;
+  border: 0;
+}
+@media (max-width: 600px) {
+  .toolbar > button:hover:not(.active) {
+    color: #fff;
+    transition:
+      color 0.2s ease-in-out,
+      background-color 0.2s ease-in-out;
+  }
+}

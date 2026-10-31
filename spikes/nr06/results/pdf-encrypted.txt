@@ -1,0 +1,9 @@
+== pdfium
+{"renderer":"pdfium","file":"fixtures/pdf/irs-f1040-aes256-empty-user.pdf","width":1600,"page_count":2,"bind_ms":2.5,"open_ms":3.7,"pages":2,"total_ms":105.4,"mean_ms":52.69,"p50_ms":97.34,"p95_ms":97.34,"max_ms":97.34,"cache_pages":1,"cache_peak_mb":12.6,"text_chars":10508,"search":"tax","search_hits":30,"text_and_search_ms":5.1}
+== hayro
+{"renderer":"hayro","file":"fixtures/pdf/irs-f1040-aes256-empty-user.pdf","width":1600,"page_count":2,"open_ms":8.4,"pages":2,"total_ms":24.0,"mean_ms":11.99,"p50_ms":13.62,"p95_ms":13.62,"max_ms":13.62,"cache_pages":1,"cache_peak_mb":12.6,"text_extraction":"unsupported"}
+== mupdf
+{"renderer":"mupdf","file":"fixtures/pdf/irs-f1040-aes256-empty-user.pdf","width":1600,"page_count":2,"open_ms":12.2,"pages":2,"total_ms":42.2,"mean_ms":21.08,"p50_ms":26.25,"p95_ms":26.25,"max_ms":26.25,"cache_pages":1,"cache_peak_mb":12.6,"text_chars":10597,"search":"tax","search_hits":30,"text_and_search_ms":29.4}
+== pdfkit
+{"renderer":"pdfkit","file":"fixtures/pdf/irs-f1040-aes256-empty-user.pdf","width":1600,"page_count":2,"open_ms":31.8,"pages":2,"total_ms":43.8,"mean_ms":21.90,"p50_ms":30.35,"p95_ms":30.35,"max_ms":30.35,"cache_pages":6,"cache_peak_mb":25.3,"text_chars":10155,"search":"tax","search_hits_case_insensitive":30,"text_and_search_ms":9.7}
+{"a":"hayro-irs-f1040-p1.png","b":"hayro-irs-f1040-aes256-empty-user-p1.png","size_a":[1600,2070],"size_b":[1600,2070],"mean_abs_error":0.000,"pixels_over_64_pct":0.000}

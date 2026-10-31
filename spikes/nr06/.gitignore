@@ -1,0 +1,13 @@
+target/
+node_modules/
+vendor-bin/
+fixtures/pdf/
+out/
+format/bin/
+format/corpus/
+format/corpus-large/
+format/out-large-*/
+*.dylib
+*.so
+*.dll
+*.tgz
