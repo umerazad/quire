@@ -452,3 +452,38 @@ fn a_rename_is_followed_until_the_page_list_shows_its_new_title(cx: &mut TestApp
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn the_files_tree_is_rebuilt_only_when_its_pages_or_folders_change(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&PAGES, "o", cx);
+    let listed = |path: &str| quire_store::index::ListedPage {
+        page: quire_store::index::PageRef {
+            page: path.into(),
+            revision: String::new(),
+            path: path.into(),
+            title: path.into(),
+        },
+        date: None,
+    };
+    let paths = |rows: &[quire_core::workspace::TreeRow]| -> Vec<String> {
+        rows.iter().map(|row| row.path.clone()).collect()
+    };
+    notebook
+        .window
+        .update(cx, |view, _, _| {
+            view.nav.pages = vec![listed("Work/A.md"), listed("B.md")];
+            let first = view.file_rows();
+            assert!(
+                std::rc::Rc::ptr_eq(&first, &view.file_rows()),
+                "a second look in the same frame reuses the rows"
+            );
+            assert_eq!(paths(&first), ["Work", "B.md"]);
+
+            view.nav.workspace.toggle_expanded("Work");
+            assert_eq!(paths(&view.file_rows()), ["Work", "Work/A.md", "B.md"]);
+
+            view.nav.pages = vec![listed("Work/A.md"), listed("C.md")];
+            assert_eq!(paths(&view.file_rows()), ["Work", "Work/A.md", "C.md"]);
+        })
+        .unwrap();
+}

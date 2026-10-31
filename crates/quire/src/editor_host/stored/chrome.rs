@@ -24,6 +24,18 @@ pub(in crate::editor_host::stored) struct Browsers {
     pub(in crate::editor_host::stored) files_selected: usize,
     pub(in crate::editor_host::stored) files_focus: Option<FocusHandle>,
     pub(in crate::editor_host::stored) files_scroll: UniformListScrollHandle,
+    file_rows: FileRows,
+}
+
+/// The Files tree for the page paths and expanded folders it was built from. Rendering asks for
+/// the rows twice a frame, and rebuilding them sorts every path.
+#[derive(Default)]
+struct FileRows(std::cell::RefCell<Option<BuiltRows>>);
+
+struct BuiltRows {
+    paths: Vec<String>,
+    expanded: Vec<String>,
+    rows: Rc<[TreeRow]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -230,19 +242,36 @@ impl StoredWindow {
         }
     }
 
-    pub(in crate::editor_host::stored) fn file_rows(&self) -> Vec<TreeRow> {
-        let paths: Vec<String> = self
-            .nav
-            .pages
+    pub(in crate::editor_host::stored) fn file_rows(&self) -> Rc<[TreeRow]> {
+        let pages = &self.nav.pages;
+        let expanded = &self.nav.workspace.expanded;
+        let mut cached = self.nav.browsers.file_rows.0.borrow_mut();
+        if let Some(built) = cached.as_ref()
+            && built.expanded == *expanded
+            && built
+                .paths
+                .iter()
+                .eq(pages.iter().map(|listed| &listed.page.path))
+        {
+            return built.rows.clone();
+        }
+        let paths: Vec<String> = pages
             .iter()
             .map(|listed| listed.page.path.clone())
             .collect();
-        let expanded: BTreeSet<String> = self.nav.workspace.expanded.iter().cloned().collect();
-        folder_rows(&paths, &[], &expanded, |a, b| {
+        let open: BTreeSet<String> = expanded.iter().cloned().collect();
+        let rows: Rc<[TreeRow]> = folder_rows(&paths, &[], &open, |a, b| {
             a.to_lowercase()
                 .cmp(&b.to_lowercase())
                 .then_with(|| a.cmp(b))
         })
+        .into();
+        *cached = Some(BuiltRows {
+            paths,
+            expanded: expanded.clone(),
+            rows: rows.clone(),
+        });
+        rows
     }
 
     pub(in crate::editor_host::stored) fn page_at_path(&self, path: &str) -> Option<String> {
@@ -275,7 +304,7 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let Some(row) = self.file_rows().into_iter().nth(index) else {
+        let Some(row) = self.file_rows().get(index).cloned() else {
             return;
         };
         self.nav.browsers.files_selected = index;
