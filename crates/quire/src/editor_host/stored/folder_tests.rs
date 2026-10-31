@@ -1121,3 +1121,38 @@ fn renaming_a_folder_page_from_the_files_menu_writes_what_f2_writes(cx: &mut Tes
     choose(notebook, "Reveal in Finder / Explorer", cx);
     assert_eq!(*revealed.borrow(), [opened.file("New name.md")]);
 }
+
+#[gpui::test]
+fn the_hourly_backup_of_a_folder_notebook_waits_for_a_change_such_as_an_external_edit(
+    cx: &mut TestAppContext,
+) {
+    use crate::backups::{INTERVAL, UNCHANGED};
+    use quire_store::backup::{self, Source};
+    let opened = open_folder(&[("A.md", "- alpha\n")], "A.md", cx);
+    let notebook = &opened.notebook;
+    let backups = read(notebook, cx, |view, _| view.backups.clone());
+    let destination = tempfile::tempdir().unwrap();
+    backups.update(cx, |backups, cx| {
+        backups.set_destination(destination.path(), cx)
+    });
+    let source = Source::Folder {
+        root: opened.folder.path().to_owned(),
+        state: notebook.path.parent().unwrap().to_owned(),
+    };
+    let after = |wait: Duration, cx: &mut TestAppContext| {
+        cx.executor().advance_clock(wait);
+        wait_until(cx, "backup work to finish", |cx| {
+            backups.read_with(cx, |backups, _| !backups.is_running())
+        });
+        let message = backups.read_with(cx, |backups, _| backups.message().unwrap_or_default());
+        let count = backup::list(&source, destination.path()).unwrap().len();
+        (count, message.to_string())
+    };
+    let hour = INTERVAL + Duration::from_secs(61);
+    assert_eq!(after(Duration::from_secs(61), cx).0, 1);
+    assert_eq!(after(hour, cx), (1, UNCHANGED.to_owned()));
+    fs::write(opened.file("A.md"), "- changed elsewhere\n").unwrap();
+    let (count, message) = after(hour, cx);
+    assert_eq!(count, 2, "{message}");
+    assert_eq!(after(hour, cx), (2, UNCHANGED.to_owned()));
+}

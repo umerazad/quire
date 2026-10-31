@@ -828,3 +828,117 @@ fn stamps_are_utc_dates_that_sort_by_time() {
     assert_eq!(stamp(1_793_455_385_123), "2026-10-31T14-03-05-123Z");
     assert_eq!(stamp(951_782_400_000), "2000-02-29T00-00-00-000Z");
 }
+
+/// Whether a scheduled backup at `created` made one, and the number of completed backups after.
+fn scheduled(source: &Source, destination: &Path, created: u64) -> (bool, usize) {
+    let made = create_if_changed(source, destination, created).unwrap();
+    if let Some(made) = &made {
+        verify(&made.path).unwrap();
+    }
+    (made.is_some(), list(source, destination).unwrap().len())
+}
+
+#[test]
+fn scheduled_store_backups_skip_an_unchanged_notebook_and_follow_saves_and_attachments() {
+    let fixture = StoreFixture::new();
+    let live = fixture.open();
+    let (source, destination) = (fixture.source(), fixture.destination.path());
+    assert_eq!(scheduled(&source, destination, 1), (true, 1));
+    assert_eq!(scheduled(&source, destination, 2), (false, 1), "unchanged");
+    save(&live, "p-b", "B.md", "- other, edited");
+    assert_eq!(
+        scheduled(&source, destination, 3),
+        (true, 2),
+        "after a save"
+    );
+    assert_eq!(scheduled(&source, destination, 4), (false, 2));
+    live.attach(b"new bytes", "added.png").unwrap();
+    assert_eq!(
+        scheduled(&source, destination, 5),
+        (true, 3),
+        "after an attachment"
+    );
+    live.put_draft(&draft("p-b", "B.md", "- typing", vec![]), None)
+        .unwrap();
+    assert_eq!(
+        scheduled(&source, destination, 6),
+        (true, 4),
+        "after a draft"
+    );
+    assert_eq!(scheduled(&source, destination, 7), (false, 4));
+    create(&source, destination, 8).unwrap();
+    assert_eq!(
+        list(&source, destination).unwrap().len(),
+        5,
+        "back up now always backs up"
+    );
+    let newest = list(&source, destination).unwrap().remove(0);
+    fs::remove_file(newest.path.join(&fixture.attachment)).unwrap();
+    assert_eq!(
+        scheduled(&source, destination, 9),
+        (true, 6),
+        "a newest backup missing a file is not trusted"
+    );
+    assert_eq!(scheduled(&source, destination, 10), (false, 6));
+}
+
+#[test]
+fn scheduled_folder_backups_follow_external_edits_new_files_and_state_changes() {
+    let fixture = FolderFixture::new();
+    let notebook = fixture.open();
+    let (source, destination) = (fixture.source(), fixture.destination.path());
+    assert_eq!(scheduled(&source, destination, 1), (true, 1));
+    assert_eq!(scheduled(&source, destination, 2), (false, 1), "unchanged");
+    fs::write(fixture.root.path().join("A.md"), "- secoND").unwrap();
+    assert_eq!(
+        scheduled(&source, destination, 3),
+        (true, 2),
+        "after another application rewrites a note in place at the same size"
+    );
+    let newest = list(&source, destination).unwrap().remove(0);
+    assert_eq!(
+        fs::read(newest.path.join("notebook/A.md")).unwrap(),
+        b"- secoND"
+    );
+    fs::write(fixture.root.path().join("People/C.md"), "- new").unwrap();
+    assert_eq!(
+        scheduled(&source, destination, 4),
+        (true, 3),
+        "after a new note"
+    );
+    fs::write(
+        fixture.root.path().join(".git").join("HEAD"),
+        "ref: refs/heads/other",
+    )
+    .unwrap();
+    assert_eq!(
+        scheduled(&source, destination, 5),
+        (false, 3),
+        "repository data is not backed up"
+    );
+    let base = notebook.heads(&page_id_for_path("A.md")).unwrap();
+    notebook
+        .put_draft(
+            &Draft {
+                stamp: DraftStamp {
+                    session: "editor".into(),
+                    version: 2,
+                },
+                ..draft(&page_id_for_path("A.md"), "A.md", "- typed again", base)
+            },
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        scheduled(&source, destination, 6),
+        (true, 4),
+        "after a recovery draft"
+    );
+    assert_eq!(scheduled(&source, destination, 7), (false, 4));
+    create(&source, destination, 8).unwrap();
+    assert_eq!(
+        list(&source, destination).unwrap().len(),
+        5,
+        "back up now always backs up"
+    );
+}

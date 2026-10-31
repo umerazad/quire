@@ -1,7 +1,7 @@
 use super::super::*;
 use super::tests::{Notebook, open_notebook, read, save, wait_until};
 use crate::backups::{
-    BackUpNow, Backups, ChooseBackupFolder, INTERVAL, NO_FOLDER, RETRY, ShowBackups,
+    BackUpNow, Backups, ChooseBackupFolder, INTERVAL, NO_FOLDER, RETRY, ShowBackups, UNCHANGED,
 };
 use gpui::TestAppContext;
 use quire_store::{
@@ -141,12 +141,14 @@ fn backups_run_every_hour_while_open_and_wait_fifteen_minutes_after_a_failure(
     };
     cx.executor().advance_clock(Duration::from_secs(61));
     assert_eq!(count(cx), 1, "the first backup runs within a minute");
+    edit(&notebook, "- edited once");
     cx.executor().advance_clock(INTERVAL / 2);
     assert_eq!(count(cx), 1, "no second backup within the hour");
     cx.executor()
         .advance_clock(INTERVAL / 2 + Duration::from_secs(61));
     assert_eq!(count(cx), 2, "the next backup runs an hour later");
 
+    edit(&notebook, "- edited twice");
     fs::rename(&folder, destination.path().join("unplugged")).unwrap();
     cx.executor()
         .advance_clock(INTERVAL + Duration::from_secs(61));
@@ -161,6 +163,56 @@ fn backups_run_every_hour_while_open_and_wait_fifteen_minutes_after_a_failure(
     assert_eq!(count(cx), 2, "a failed backup is not retried at once");
     cx.executor().advance_clock(RETRY);
     assert_eq!(count(cx), 3, "it is retried fifteen minutes later");
+}
+
+/// Saves `text` as page A through a second connection, as another window or device would.
+fn edit(notebook: &Notebook, text: &str) {
+    let live = NotebookStore::open(&notebook.path, "nb", "local").unwrap();
+    save(&live, "p-a", "A.md", text);
+}
+
+#[gpui::test]
+fn the_hourly_backup_skips_an_unchanged_notebook_but_back_up_now_does_not(cx: &mut TestAppContext) {
+    let notebook = open(&[page("p-a", "A.md", "- alpha")], cx);
+    let destination = tempfile::tempdir().unwrap();
+    use_folder(&notebook, destination.path(), cx);
+    let count = || completed(&notebook, destination.path()).len();
+    let hour = |cx: &mut TestAppContext| {
+        cx.executor()
+            .advance_clock(INTERVAL + Duration::from_secs(61));
+        settled_message(&notebook, cx)
+    };
+    cx.executor().advance_clock(Duration::from_secs(61));
+    settled_message(&notebook, cx);
+    assert_eq!(count(), 1, "the first backup runs within a minute");
+    assert_eq!(hour(cx), UNCHANGED);
+    assert_eq!(count(), 1, "an unchanged notebook is not backed up again");
+
+    edit(&notebook, "- one edit");
+    assert!(hour(cx).starts_with("Backed up at "));
+    assert_eq!(count(), 2, "one edit is backed up on the next hour");
+    assert_eq!(hour(cx), UNCHANGED);
+
+    let live = NotebookStore::open(&notebook.path, "nb", "local").unwrap();
+    live.attach(b"new image bytes", "photo.png").unwrap();
+    drop(live);
+    assert!(hour(cx).starts_with("Backed up at "));
+    assert_eq!(count(), 3, "an added attachment is backed up");
+    let newest = completed(&notebook, destination.path()).remove(0);
+    assert!(
+        backup::verify(&newest.path)
+            .unwrap()
+            .files
+            .iter()
+            .any(|file| file.path.starts_with("attachments/") && file.path.ends_with(".png")),
+        "the backup holds the attachment"
+    );
+    assert_eq!(hour(cx), UNCHANGED);
+    assert_eq!(count(), 3);
+
+    dispatch(&notebook, BackUpNow, cx);
+    assert!(settled_message(&notebook, cx).starts_with("Backed up at "));
+    assert_eq!(count(), 4, "Back up now backs up an unchanged notebook");
 }
 
 fn restore_newest(notebook: &Notebook, cx: &mut TestAppContext) -> BackupInfo {

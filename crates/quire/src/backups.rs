@@ -36,6 +36,7 @@ const TICK: Duration = Duration::from_secs(60);
 
 pub const BUSY: &str = "A backup or restore is already running. Wait for it to finish.";
 pub const NO_FOLDER: &str = "Choose a backup folder before backing up this notebook.";
+pub const UNCHANGED: &str = "Nothing changed since the last backup, so the hourly backup was skipped. Back up now makes one anyway.";
 
 fn now_millis() -> u64 {
     SystemTime::now()
@@ -120,7 +121,8 @@ pub struct Backups {
     message: Option<SharedString>,
     /// Completed backups, newest first, while the panel is shown.
     listed: Option<Vec<BackupInfo>>,
-    /// When the newest backup completed, on the executor's clock.
+    /// When the newest backup completed, or an hourly check found nothing changed since it, on
+    /// the executor's clock.
     completed: Option<Instant>,
     attempted: Option<Instant>,
     _schedule: Task<()>,
@@ -307,7 +309,8 @@ impl Backups {
         cx.notify();
     }
 
-    /// Backs up the notebook. An automatic backup that fails waits [`RETRY`] before trying again.
+    /// Backs up the notebook. An automatic backup is skipped when nothing changed since the newest
+    /// backup ([`backup::create_if_changed`]), and one that fails waits [`RETRY`] before trying again.
     pub fn back_up(&mut self, automatic: bool, cx: &mut Context<Self>) {
         if self.busy(cx) {
             return;
@@ -321,13 +324,22 @@ impl Backups {
         self.start("Backing up the notebook…", cx);
         let source = self.source.clone();
         let created = now_millis();
-        let work =
-            cx.background_spawn(async move { backup::create(&source, &destination, created) });
+        let work = cx.background_spawn(async move {
+            if automatic {
+                backup::create_if_changed(&source, &destination, created)
+            } else {
+                backup::create(&source, &destination, created).map(Some)
+            }
+        });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             this.update(cx, |this, cx| {
                 let message = match result {
-                    Ok(backup) => {
+                    Ok(None) => {
+                        this.completed = Some(cx.background_executor().now());
+                        UNCHANGED.to_owned()
+                    }
+                    Ok(Some(backup)) => {
                         this.completed = Some(cx.background_executor().now());
                         this.load_list(false, cx);
                         format!(
