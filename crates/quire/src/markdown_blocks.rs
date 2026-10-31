@@ -1,4 +1,4 @@
-use language::{BufferSnapshot, ToTreeSitterPoint};
+use language::BufferSnapshot;
 use std::ops::Range;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -44,95 +44,21 @@ pub fn syntax_spans(snapshot: &BufferSnapshot, blocks: &[Block]) -> Vec<SyntaxSp
         .collect()
 }
 
-fn needs_eof_terminator(snapshot: &BufferSnapshot) -> bool {
-    let point = snapshot.text.max_point();
-    if point.column == 0 {
-        return false;
-    }
-    let mut offset = snapshot
-        .text
-        .point_to_offset(language::Point::new(point.row, 0));
-    let mut chars = snapshot.chars_at(offset).peekable();
-    while matches!(chars.peek(), Some(' ' | '\t')) {
-        chars.next();
-        offset += 1;
-    }
-    match chars.next() {
-        Some('-' | '+' | '*') => offset += 1,
-        Some(c) if c.is_ascii_digit() => {
-            offset += 1;
-            let mut digits = 1;
-            while chars.peek().is_some_and(char::is_ascii_digit) {
-                chars.next();
-                offset += 1;
-                digits += 1;
-            }
-            if digits > 9 || !matches!(chars.next(), Some('.' | ')')) {
-                return false;
-            }
-            offset += 1;
-        }
-        _ => return false,
-    }
-    if chars.peek().is_some_and(|c| !matches!(c, ' ' | '\t')) {
-        return false;
-    }
-    while matches!(chars.peek(), Some(' ' | '\t')) {
-        chars.next();
-        offset += 1;
-    }
-    if chars.peek().is_none() {
-        return true;
-    }
-    if !matches!(chars.peek(), Some('[' | '{')) {
-        return false;
-    }
-    let prefix: String = snapshot
-        .chars_at(offset)
-        .take(crate::task_marker::PREFIX_CHAR_LIMIT)
-        .collect();
-    crate::task_marker::read(&prefix).is_some_and(|task| {
-        snapshot
-            .chars_at(offset + task.source.len())
-            .all(|c| matches!(c, ' ' | '\t'))
-    })
-}
-
-fn eof_tree(
-    snapshot: &BufferSnapshot,
-    layer: &language::SyntaxLayer<'_>,
-) -> Option<language::Tree> {
-    parse_tree(snapshot, Some(layer), true)
-}
-
 fn parse_tree(
     snapshot: &BufferSnapshot,
     layer: Option<&language::SyntaxLayer<'_>>,
-    normalize_eof: bool,
 ) -> Option<language::Tree> {
-    let mut tree = if let Some(layer) = layer {
-        let owned = layer.to_owned();
-        if owned.offset.0 != 0 {
-            return None;
+    let tree = match layer {
+        Some(layer) => {
+            let owned = layer.to_owned();
+            if owned.offset.0 != 0 {
+                return None;
+            }
+            Some(owned.into_tree())
         }
-        Some(owned.into_tree())
-    } else {
-        None
+        None => None,
     };
     let len = snapshot.text.len();
-    let point = snapshot.text.max_point().to_ts_point();
-    // A newline alone can turn a nested empty bullet into a setext underline.
-    // The virtual body forces list syntax; all returned ranges stay in real source.
-    if normalize_eof && let Some(tree) = &mut tree {
-        tree.edit(&tree_sitter::InputEdit {
-            start_byte: len,
-            old_end_byte: len,
-            new_end_byte: len + 2,
-            start_position: point,
-            old_end_position: point,
-            new_end_position: tree_sitter::Point::new(point.row + 1, 0),
-        });
-    }
     let mut parser = language::Parser::new();
     parser
         .set_language(&tree_sitter_quire_markdown::LANGUAGE.into())
@@ -141,11 +67,7 @@ fn parse_tree(
     parser.parse_with_options(
         &mut |offset, _| {
             if offset >= len {
-                if normalize_eof {
-                    b"x\n".get(offset - len..).unwrap_or_default()
-                } else {
-                    &[]
-                }
+                &[]
             } else {
                 chunks.seek(offset);
                 chunks.peek_bytes().unwrap_or_default()
@@ -376,15 +298,7 @@ pub fn blocks(snapshot: &BufferSnapshot) -> Option<Vec<Block>> {
     if layer.node().has_changes() {
         return None;
     }
-    let normalized = if needs_eof_terminator(snapshot) {
-        Some(eof_tree(snapshot, &layer)?)
-    } else {
-        None
-    };
-    let root = normalized
-        .as_ref()
-        .map_or_else(|| layer.node(), language::Tree::root_node);
-    Some(collect_blocks(snapshot, root, normalized.is_some()))
+    Some(collect_blocks(snapshot, layer.node()))
 }
 
 pub fn current_blocks(snapshot: &BufferSnapshot) -> Option<Vec<Block>> {
@@ -400,16 +314,11 @@ pub fn current_blocks(snapshot: &BufferSnapshot) -> Option<Vec<Block>> {
     let layer = snapshot
         .syntax_layers()
         .find(|layer| layer.language.name().as_ref() == "Markdown");
-    let normalized = needs_eof_terminator(snapshot);
-    let tree = parse_tree(snapshot, layer.as_ref(), normalized)?;
-    Some(collect_blocks(snapshot, tree.root_node(), normalized))
+    let tree = parse_tree(snapshot, layer.as_ref())?;
+    Some(collect_blocks(snapshot, tree.root_node()))
 }
 
-fn collect_blocks(
-    snapshot: &BufferSnapshot,
-    root: language::Node<'_>,
-    normalized: bool,
-) -> Vec<Block> {
+fn collect_blocks(snapshot: &BufferSnapshot, root: language::Node<'_>) -> Vec<Block> {
     let source_len = snapshot.text.len();
     let mut stack = vec![(root, 0, None::<String>)];
     let frontmatter = quire_core::markdown::frontmatter_length_chars(snapshot.chars_at(0));
@@ -522,26 +431,6 @@ fn collect_blocks(
         let key = id
             .clone()
             .unwrap_or_else(|| format!("at-{}", snapshot.text.offset_to_offset_utf16(from).0));
-        // An empty item cannot interrupt a paragraph, even though the virtual body can.
-        if normalized
-            && kind == "list"
-            && content_from == source_len
-            && let Some(previous) = result.last_mut()
-            && previous.kind == "paragraph"
-            && previous.depth == depth
-            && previous.parent == parent
-        {
-            let gap: String = snapshot.text_for_range(previous.content_to..from).collect();
-            if gap.bytes().filter(|c| *c == b'\n').count() == 1
-                && gap
-                    .bytes()
-                    .all(|c| matches!(c, b' ' | b'\t' | b'\r' | b'\n'))
-            {
-                previous.content_to = source_len;
-                previous.subtree_to = source_len;
-                continue;
-            }
-        }
         if kind == "list" {
             stack.extend(
                 nested
@@ -681,11 +570,11 @@ mod tests {
                     .find(|layer| layer.language.name().as_ref() == "Markdown")
                     .unwrap();
                 failures.push(format!(
-                    "{} spans expected={} actual={} normalized={:?}",
+                    "{} spans expected={} actual={} tree={}",
                     vector["name"],
                     vector["spans"],
                     json!(spans),
-                    eof_tree(&snapshot, &layer).map(|tree| tree.root_node().to_sexp())
+                    layer.node().to_sexp()
                 ));
             }
             let actual: Vec<_> = native_blocks.into_iter().map(|block| {

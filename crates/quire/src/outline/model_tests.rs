@@ -412,15 +412,24 @@ fn numbered_runs_renumber_only_where_edited(cx: &mut TestAppContext) {
     assert_eq!(number("Just a paragraph\n", 3, 3, None, cx), None);
 }
 
-/// Vectors whose parse differs from rt's, by input and caret positions (UTF-16). Quire's Markdown
-/// grammar reads a bare `-` line after a list item as a lazy continuation of that item, where rt
-/// and CommonMark start an empty sibling item; and its inline grammar ends a code span that holds
-/// `[[x]]` before the closing `]]`, so a caret after them reads as outside code. The Markdown
-/// grammar and block analysis own those fixes; until then these vectors cannot match.
-const PARSE_GAPS: [(&str, std::ops::RangeInclusive<u64>); 2] = [
-    ("- Parent\n- Sibling\n-", 0..=u64::MAX),
-    ("- `code [[x]]` y\n- z\n", 13..=14),
-];
+/// A code span in an injected inline layer counts as code to its closing backtick, even around
+/// `[[x]]`, where walking up with `Node::parent` lost the layer offset and skipped the span.
+#[gpui::test]
+fn carets_in_an_injected_code_span_are_literal(cx: &mut TestAppContext) {
+    let input = "- `code [[x]]` y\n- z\n";
+    blocks(input, cx);
+    let buffer = cx.update(|cx| crate::markdown::buffer(input, cx));
+    cx.run_until_parked();
+    let literal: Vec<bool> = cx.update(|cx| {
+        (2..=16)
+            .map(|at| super::super::literal(&buffer, at, cx))
+            .collect()
+    });
+    let mut expected = vec![false];
+    expected.extend([true; 12]);
+    expected.extend([false, false]);
+    assert_eq!(literal, expected);
+}
 
 /// rt's Enter, Tab, and Shift-Tab at every caret position of its outline corpus, from
 /// `tests/fixtures/outline-parity.json`, copied unchanged from rt. Offsets there are UTF-16.
@@ -446,13 +455,6 @@ fn outline_commands_match_rt_parity_vectors(cx: &mut TestAppContext) {
     let mut mismatches = Vec::new();
     for vector in &vectors {
         let input = vector["input"].as_str().unwrap();
-        let pos = vector["pos"].as_u64().unwrap();
-        if PARSE_GAPS
-            .iter()
-            .any(|(gap, positions)| *gap == input && positions.contains(&pos))
-        {
-            continue;
-        }
         if parsed.last().is_none_or(|(text, ..)| text != input) {
             let parsed_blocks = blocks(input, cx);
             let buffer = cx.update(|cx| crate::markdown::buffer(input, cx));
