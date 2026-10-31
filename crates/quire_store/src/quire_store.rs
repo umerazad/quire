@@ -3,6 +3,7 @@ pub mod database;
 mod durable_files;
 pub mod folder_notebook;
 pub mod index;
+pub mod markdown_import;
 pub mod notebook;
 mod schema;
 pub mod sync;

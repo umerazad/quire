@@ -19,7 +19,7 @@ use std::{
 };
 
 /// The reference app's cap on one change across notes.
-const MAX_EDITS: usize = 1000;
+pub(super) const MAX_EDITS: usize = 1000;
 const JOURNALS: &str = "transactions";
 const RETIRED: &str = "retired";
 

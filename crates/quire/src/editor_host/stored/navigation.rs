@@ -765,6 +765,10 @@ mod embeds_tests;
 mod file_tests;
 
 #[cfg(test)]
+#[path = "exchange_tests.rs"]
+mod exchange_tests;
+
+#[cfg(test)]
 #[path = "task_lists_tests.rs"]
 mod task_lists_tests;
 

@@ -42,6 +42,9 @@ mod tag_edit;
 mod page_writes;
 
 #[cfg(feature = "full-editor")]
+mod exchange;
+
+#[cfg(feature = "full-editor")]
 mod file_actions;
 
 #[cfg(feature = "full-editor")]
