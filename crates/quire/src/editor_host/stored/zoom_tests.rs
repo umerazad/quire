@@ -36,3 +36,58 @@ fn a_focused_zoom_counts_as_its_page_holding_focus(cx: &mut TestAppContext) {
         .unwrap();
     assert!(focused, "Cmd-S saves the page a focused zoom shows");
 }
+
+/// Vim `o` on the last line of a block embed opens the new item inside the embedded block, so
+/// the embed shows it and the caret stays there.
+#[gpui::test]
+fn vim_open_on_an_embeds_last_line_stays_in_the_embed(cx: &mut TestAppContext) {
+    let source = "- Original ^shared\n- After\n";
+    let pages = [
+        ("s", "Source.md", source),
+        ("o", "Other.md", "- {{embed: ((shared))}}\n"),
+    ];
+    let notebook = open_notebook(&pages, "o", cx);
+    cx.simulate_window_resize(
+        notebook.window.into(),
+        gpui::size(gpui::px(1600.), gpui::px(1200.)),
+    );
+    wait_until(cx, "the page editor", |cx| {
+        read(&notebook, cx, |view, _| view.editor.is_some())
+    });
+    notebook
+        .window
+        .update(cx, |view, window, cx| view.focus_active(window, cx))
+        .unwrap();
+    cx.simulate_keystrokes(notebook.window.into(), &key("shift-m"));
+    let host = read(&notebook, cx, |view, cx| {
+        view.editor.as_ref().unwrap().read(cx).source.clone()
+    });
+    let nested =
+        |cx: &mut TestAppContext| cx.update(|cx| crate::embeds::nested_editors(host.read(cx)));
+    wait_until(cx, "the embed", |cx| {
+        draw(&notebook, cx);
+        nested(cx).len() == 1
+    });
+    let embed = nested(cx).remove(0);
+    notebook
+        .window
+        .update(cx, |_, window, cx| {
+            window.focus(&embed.focus_handle(cx), cx)
+        })
+        .unwrap();
+    draw(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "o n e w escape");
+    cx.run_until_parked();
+    notebook
+        .window
+        .update(cx, |_, window, cx| {
+            let editor = embed.read(cx);
+            assert_eq!(
+                editor.text(cx),
+                "- Original ^shared\n  - new",
+                "the embed shows the new item"
+            );
+            assert!(embed.focus_handle(cx).is_focused(window));
+        })
+        .unwrap();
+}
