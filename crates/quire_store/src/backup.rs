@@ -141,6 +141,10 @@ pub struct Manifest {
     pub files: Vec<Entry>,
     /// Row counts of each database file, by its path in `files`.
     pub databases: BTreeMap<String, Counts>,
+    /// The notebook's [`fingerprint`] when the backup began, so a scheduled backup can tell
+    /// that nothing changed since. Absent in older backups and when it could not be taken.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
 }
 
 /// A completed backup.
@@ -151,6 +155,7 @@ pub struct BackupInfo {
     pub created: u64,
     pub source: String,
     pub kind: Kind,
+    pub fingerprint: Option<String>,
 }
 
 impl BackupInfo {
@@ -164,6 +169,7 @@ impl BackupInfo {
             created: manifest.created,
             source: manifest.source.clone(),
             kind: manifest.kind,
+            fingerprint: manifest.fingerprint.clone(),
         }
     }
 }
@@ -240,6 +246,124 @@ pub fn check_destination(source: &Source, destination: &Path) -> Result<PathBuf>
 /// Backs up `source` into `destination`, returning the completed backup. On any failure the
 /// unfinished copy is removed, earlier backups are untouched, and the error says what to do.
 pub fn create(source: &Source, destination: &Path, created: u64) -> Result<BackupInfo> {
+    create_with(source, destination, created, fingerprint(source).ok())
+}
+
+/// Backs up `source` as [`create`] does unless the newest completed backup in `destination`
+/// recorded the same [`fingerprint`] and still holds every file its manifest lists, returning
+/// None then. Anything uncertain (no fingerprint, an older backup, a missing or resized file)
+/// backs up.
+pub fn create_if_changed(
+    source: &Source,
+    destination: &Path,
+    created: u64,
+) -> Result<Option<BackupInfo>> {
+    let current = fingerprint(source).ok();
+    let newest = list(source, destination)?.into_iter().next();
+    let unchanged = current.is_some()
+        && newest
+            .as_ref()
+            .is_some_and(|newest| newest.fingerprint == current && still_present(&newest.path));
+    if unchanged {
+        return Ok(None);
+    }
+    create_with(source, destination, created, current).map(Some)
+}
+
+/// Whether every file a backup's manifest lists is still an ordinary file of the recorded size.
+/// This is a quick check; [`verify`] reads every byte.
+fn still_present(backup: &Path) -> bool {
+    read_manifest(backup).is_ok_and(|manifest| {
+        manifest.files.iter().all(|entry| {
+            fs::symlink_metadata(below(backup, &entry.path))
+                .is_ok_and(|metadata| metadata.is_file() && metadata.len() == entry.size)
+        })
+    })
+}
+
+/// A digest of what `source` holds on disk, without reading file contents: the path, size,
+/// modification time, and on Unix the change time and inode of every file a backup would copy,
+/// plus the write-ahead and rollback journals of the databases, whose commits land there first.
+/// Any save, attachment, or edit by another application changes it, since writing a file or
+/// renaming one into place sets a new change time that no tool can set back.
+pub fn fingerprint(source: &Source) -> Result<String> {
+    let mut lines = vec![format!("{:?}", source.kind())];
+    let mut add = |prefix: &str, root: &Path, skip: &dyn Fn(&str) -> bool| -> Result<()> {
+        if !root.exists() {
+            lines.push(format!("{prefix} absent"));
+            return Ok(());
+        }
+        for path in walk(root, skip)? {
+            lines.push(format!("{prefix}/{path} {}", stat(&below(root, &path))?));
+        }
+        Ok(())
+    };
+    match source {
+        Source::Store { database } => {
+            let folder = database
+                .parent()
+                .context("The notebook database has no folder.")?;
+            let name = database
+                .file_name()
+                .context("The notebook database has no file name.")?
+                .to_string_lossy();
+            add("database", folder, &|path| {
+                !path.starts_with(name.as_ref()) || shared_memory(path)
+            })?;
+            add("attachments", &folder.join("attachments"), &|_| false)?;
+        }
+        Source::Folder { root, state } => {
+            add("notebook", root, &|path| {
+                named(path) == ".git" || shared_memory(path)
+            })?;
+            add("state", state, &|path| {
+                derived_state(path) || shared_memory(path)
+            })?;
+        }
+    }
+    lines.sort();
+    Ok(sha256(lines.join("\n")))
+}
+
+/// SQLite's shared-memory index, which readers write to as well, so it changes without any data
+/// changing.
+fn shared_memory(relative: &str) -> bool {
+    relative.ends_with("-shm")
+}
+
+fn stat(path: &Path) -> Result<String> {
+    let metadata = fs::symlink_metadata(path).with_context(|| {
+        format!(
+            "Cannot read the details of {}. Check that it is readable, then retry.",
+            path.display()
+        )
+    })?;
+    let modified = metadata
+        .modified()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    #[cfg(unix)]
+    let changed = {
+        use std::os::unix::fs::MetadataExt as _;
+        format!(
+            "{}.{} {}",
+            metadata.ctime(),
+            metadata.ctime_nsec(),
+            metadata.ino()
+        )
+    };
+    #[cfg(not(unix))]
+    let changed = "";
+    Ok(format!("{} {modified} {changed}", metadata.len()))
+}
+
+fn create_with(
+    source: &Source,
+    destination: &Path,
+    created: u64,
+    fingerprint: Option<String>,
+) -> Result<BackupInfo> {
     let destination = check_destination(source, destination)?;
     let parent = source.backups_in(&destination)?;
     create_dir_durable(&parent)?;
@@ -272,6 +396,7 @@ pub fn create(source: &Source, destination: &Path, created: u64) -> Result<Backu
             notebook,
             files,
             databases,
+            fingerprint,
         };
         write_manifest(&partial, &manifest)?;
         files::sync_tree(&partial)?;
@@ -374,11 +499,15 @@ fn skip_notebook(relative: &str) -> bool {
 /// What a folder notebook backup leaves out of Quire's state folder: temporary files, the query
 /// index, the window's tabs, and write-ahead files.
 fn skip_state(relative: &str) -> bool {
+    derived_state(relative) || journal_file(named(relative))
+}
+
+/// Temporary files, the query index, and the window's tabs: state Quire rebuilds.
+fn derived_state(relative: &str) -> bool {
     let name = named(relative);
     name.starts_with('.')
         || name.starts_with("query-index.sqlite")
         || name.starts_with("quire-workspace.json")
-        || journal_file(name)
 }
 
 fn is_database(name: &str) -> bool {
