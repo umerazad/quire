@@ -543,6 +543,146 @@ fn a_rename_interrupted_by_a_crash_finishes_on_open_and_says_so(cx: &mut TestApp
     assert!(!opened.file("Old.md").exists());
 }
 
+/// A rename journal whose old note changed before the next open, so the change stays stuck.
+fn open_stuck(cx: &mut TestAppContext) -> FolderNotebook {
+    let old = "- old [[Old]]\n";
+    let journal = serde_json::json!({
+        "edits": [
+            {
+                "path": "New.md",
+                "text": "- old [[New]]\n",
+                "expectedRevision": null,
+                "historyFrom": "Old.md",
+            },
+            {
+                "path": "Old.md",
+                "text": "",
+                "expectedRevision": quire_store::folder_notebook::revision(old),
+                "remove": true,
+                "retirement": "0123456789abcdef0123456789abcdef",
+            },
+        ],
+        "createdAt": 1,
+    })
+    .to_string();
+    let opened = open_folder_with(
+        &[
+            ("Old.md", "- edited after the crash\n"),
+            ("Keep.md", "- keep\n"),
+        ],
+        &[("transactions/interrupted.json", &journal)],
+        "Keep.md",
+        cx,
+    );
+    opened
+        .notebook
+        .window
+        .update(cx, |view, _, cx| view.load_folder_notices(cx))
+        .unwrap();
+    wait_until(cx, "the stuck change", |cx| {
+        read(&opened.notebook, cx, |view, _| {
+            !view.folder.stuck.is_empty()
+        })
+    });
+    opened
+}
+
+fn resolve(
+    notebook: &Notebook,
+    resolution: super::folder::Resolution,
+    cx: &mut TestAppContext,
+) -> Vec<String> {
+    let before = read(notebook, cx, |view, _| view.folder.notices.len());
+    notebook
+        .window
+        .update(cx, |view, _, cx| {
+            view.resolve_stuck("interrupted.json".into(), resolution, cx)
+        })
+        .unwrap();
+    wait_until(cx, "the resolution", |cx| {
+        read(notebook, cx, |view, _| {
+            view.folder.resolving.is_none()
+                && (view.folder.notices.len() > before || view.folder.error.is_some())
+        })
+    });
+    read(notebook, cx, |view, _| {
+        view.folder
+            .notices
+            .iter()
+            .skip(before)
+            .map(|notice| notice.to_string())
+            .chain(view.folder.error.iter().map(|error| error.to_string()))
+            .collect()
+    })
+}
+
+#[gpui::test]
+fn a_stuck_change_is_listed_and_finishes_on_retry_once_its_note_is_put_back(
+    cx: &mut TestAppContext,
+) {
+    let opened = open_stuck(cx);
+    let notebook = &opened.notebook;
+    let summary = read(notebook, cx, |view, _| view.folder.stuck[0].summary());
+    assert_eq!(
+        summary,
+        "Changed since the change was planned: Old.md. Already updated: New.md."
+    );
+    draw(notebook, cx);
+    let refused = resolve(notebook, super::folder::Resolution::Retry, cx);
+    assert_eq!(refused.len(), 1);
+    assert!(refused[0].contains("Old.md"), "{refused:?}");
+    assert!(refused[0].ends_with("Put the note back or set the change aside."));
+    assert_eq!(
+        fs::read_to_string(opened.file("Old.md")).unwrap(),
+        "- edited after the crash\n",
+        "a retry never overwrites the newer note"
+    );
+
+    fs::write(opened.file("Old.md"), "- old [[Old]]\n").unwrap();
+    notebook
+        .window
+        .update(cx, |view, _, _| view.folder.error = None)
+        .unwrap();
+    assert_eq!(
+        resolve(notebook, super::folder::Resolution::Retry, cx),
+        ["Finished the interrupted change. Its notes and links are now saved."]
+    );
+    assert!(!opened.file("Old.md").exists());
+    assert_eq!(
+        fs::read_to_string(opened.file("New.md")).unwrap(),
+        "- old [[New]]\n"
+    );
+    assert!(read(notebook, cx, |view, _| view.folder.stuck.is_empty()));
+}
+
+#[gpui::test]
+fn a_stuck_change_set_aside_leaves_both_notes_and_keeps_its_journal(cx: &mut TestAppContext) {
+    let opened = open_stuck(cx);
+    let notebook = &opened.notebook;
+    draw(notebook, cx);
+    let notices = resolve(notebook, super::folder::Resolution::SetAside, cx);
+    assert_eq!(notices.len(), 1);
+    let kept = notebook
+        .path
+        .parent()
+        .unwrap()
+        .join("transactions/set-aside/interrupted.json");
+    assert_eq!(
+        notices[0],
+        format!(
+            "Set the interrupted change aside. Its notes stay as they are now; every version it planned is kept in {}.",
+            kept.display()
+        )
+    );
+    assert!(kept.exists());
+    assert_eq!(
+        fs::read_to_string(opened.file("Old.md")).unwrap(),
+        "- edited after the crash\n"
+    );
+    assert!(opened.file("New.md").exists());
+    assert!(read(notebook, cx, |view, _| view.folder.stuck.is_empty()));
+}
+
 #[gpui::test]
 fn reference_drafts_are_offered_for_review_and_settle_only_on_their_base(cx: &mut TestAppContext) {
     use quire_store::folder_notebook::revision;

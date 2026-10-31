@@ -21,6 +21,7 @@ pub use files::{
     DiskDocument, ListedFile, Listing, MAX_NOTE_BYTES, is_markdown, list, read, revision, validate,
 };
 pub use history::FolderRevision;
+pub use journal::{StepState, StuckChange};
 pub use reference::RecoveredDraft;
 
 use crate::{
@@ -770,6 +771,19 @@ impl Client<FolderNotebook> {
     }
     pub fn history(&self, page: String) -> Answer<Vec<SavedVersion>> {
         self.request(128 + page.len(), move |notebook| notebook.history(&page))
+    }
+    pub fn stuck_changes(&self) -> Answer<Vec<StuckChange>> {
+        self.request(128, |notebook| Ok(notebook.stuck_changes()))
+    }
+    pub fn retry_change(&self, name: String) -> Answer<()> {
+        self.request(128 + name.len(), move |notebook| {
+            notebook.retry_change(&name)
+        })
+    }
+    pub fn set_aside_change(&self, name: String) -> Answer<PathBuf> {
+        self.request(128 + name.len(), move |notebook| {
+            notebook.set_aside_change(&name)
+        })
     }
     pub fn version_text(&self, page: String, id: String) -> Answer<String> {
         self.request(128 + page.len() + id.len(), move |notebook| {

@@ -9,13 +9,14 @@ use anyhow::Context as _;
 use futures::StreamExt as _;
 use gpui::{SharedString, Task};
 use quire_store::{
-    folder_notebook::{RecoveredDraft, Trash, is_markdown, list, validate},
+    folder_notebook::{RecoveredDraft, StuckChange, Trash, is_markdown, list, validate},
     sync::format::{page_id_for_path, sha256},
 };
 use std::{
     path::{Component, Path},
     time::Duration,
 };
+use ui::Disableable as _;
 
 /// Coalesces bursts of file events, such as an editor's save, into one reread.
 const WATCH_LATENCY: Duration = Duration::from_millis(100);
@@ -176,11 +177,21 @@ fn changed_notes(roots: &[PathBuf], events: &[::fs::PathEvent]) -> Option<Vec<St
 pub(super) struct FolderView {
     comparing: bool,
     copying: Option<Task<()>>,
-    error: Option<SharedString>,
+    pub(super) error: Option<SharedString>,
     /// What opening the folder found and did, such as finishing an interrupted rename.
     pub(super) notices: Vec<SharedString>,
     /// Pages that gained a recovery draft from the reference app's records, to open for review.
     pub(super) recovered: Vec<RecoveredDraft>,
+    /// Interrupted changes across notes that opening could not finish, to retry or set aside.
+    pub(super) stuck: Vec<StuckChange>,
+    pub(super) resolving: Option<Task<()>>,
+}
+
+/// How to resolve an interrupted change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Resolution {
+    Retry,
+    SetAside,
 }
 
 impl StoredWindow {
@@ -353,13 +364,15 @@ impl StoredWindow {
         cx.spawn(async move |this, cx| {
             let notices = crate::query_index::ask(folder.notices()).await;
             let recovered = crate::query_index::ask(folder.recovered_drafts()).await;
+            let stuck = crate::query_index::ask(folder.stuck_changes()).await;
             this.update(cx, |this, cx| {
-                match notices.and_then(|notices| Ok((notices, recovered?))) {
-                    Ok((notices, recovered)) => {
+                match notices.and_then(|notices| Ok((notices, recovered?, stuck?))) {
+                    Ok((notices, recovered, stuck)) => {
                         this.folder
                             .notices
                             .extend(notices.into_iter().map(SharedString::from));
                         this.folder.recovered = recovered;
+                        this.folder.stuck = stuck;
                     }
                     Err(error) => this.folder.error = Some(error.into()),
                 }
@@ -370,12 +383,105 @@ impl StoredWindow {
         .detach();
     }
 
+    /// Retries or sets aside an interrupted change. Either way the folder is reread, so pages the
+    /// change wrote show their new text, and what happened joins the notices.
+    pub(super) fn resolve_stuck(
+        &mut self,
+        name: String,
+        resolution: Resolution,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(folder) = self.session.borrow().storage().folder().cloned() else {
+            return;
+        };
+        if self.folder.resolving.is_some() {
+            return;
+        }
+        self.folder.error = None;
+        self.folder.resolving = Some(cx.spawn(async move |this, cx| {
+            let outcome = match resolution {
+                Resolution::Retry => crate::query_index::ask(folder.retry_change(name.clone()))
+                    .await
+                    .map(|()| "Finished the interrupted change. Its notes and links are now saved.".to_owned()),
+                Resolution::SetAside => crate::query_index::ask(folder.set_aside_change(name.clone()))
+                    .await
+                    .map(|kept| format!(
+                        "Set the interrupted change aside. Its notes stay as they are now; every version it planned is kept in {}.",
+                        kept.display()
+                    )),
+            };
+            let stuck = crate::query_index::ask(folder.stuck_changes()).await;
+            this.update(cx, |this, cx| {
+                this.folder.resolving = None;
+                match outcome {
+                    Ok(notice) => {
+                        this.folder.notices.push(notice.into());
+                        this.folder_changed(None, cx);
+                        this.refresh_catalogue(cx);
+                    }
+                    Err(error) => {
+                        this.folder.error = Some(
+                            format!("{error} Put the note back or set the change aside.").into(),
+                        )
+                    }
+                }
+                match stuck {
+                    Ok(stuck) => this.folder.stuck = stuck,
+                    Err(error) => this.folder.error = Some(error.into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+
+    fn render_stuck(&self, cx: &mut gpui::Context<Self>) -> Vec<gpui::AnyElement> {
+        self.folder
+            .stuck
+            .iter()
+            .enumerate()
+            .map(|(index, stuck)| {
+                let (retry, aside) = (stuck.name.clone(), stuck.name.clone());
+                let busy = self.folder.resolving.is_some();
+                gpui::div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(Label::new(format!(
+                        "An interrupted change across notes is waiting. {}",
+                        stuck.summary()
+                    )))
+                    .child(
+                        gpui::div()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                Button::new(("retry-stuck", index), "Retry")
+                                    .disabled(busy)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.resolve_stuck(retry.clone(), Resolution::Retry, cx)
+                                    })),
+                            )
+                            .child(
+                                Button::new(("set-aside-stuck", index), "Set aside")
+                                    .disabled(busy)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.resolve_stuck(aside.clone(), Resolution::SetAside, cx)
+                                    })),
+                            ),
+                    )
+                    .into_any_element()
+            })
+            .collect()
+    }
+
     fn render_folder_notices(
         &self,
         error: Option<SharedString>,
         cx: &mut gpui::Context<Self>,
     ) -> Option<gpui::AnyElement> {
-        if error.is_none() && self.folder.notices.is_empty() {
+        if error.is_none() && self.folder.notices.is_empty() && self.folder.stuck.is_empty() {
             return None;
         }
         let open = self
@@ -402,6 +508,7 @@ impl StoredWindow {
                 .when_some(error, |div, error| div.child(Label::new(error)))
                 .children(self.folder.notices.iter().cloned().map(Label::new))
                 .child(gpui::div().flex().flex_wrap().gap_2().children(open))
+                .children(self.render_stuck(cx))
                 .when(!self.folder.notices.is_empty(), |div| {
                     div.child(Button::new("dismiss-folder-notices", "Dismiss").on_click(
                         cx.listener(|this, _, _, cx| {
