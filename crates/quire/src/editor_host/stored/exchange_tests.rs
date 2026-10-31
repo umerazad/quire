@@ -578,3 +578,98 @@ fn a_notebook_export_includes_typing_that_has_not_been_saved(cx: &mut TestAppCon
         BTreeMap::from([("A.md".into(), "- a typed\n".into())])
     );
 }
+
+/// Every file below `root` as its SHA-256, by relative path.
+fn digest(root: &Path) -> BTreeMap<String, String> {
+    tree(root)
+        .into_iter()
+        .map(|(path, text)| (path, quire_store::sync::format::sha256(text)))
+        .collect()
+}
+
+/// How many pages and other files `digest` holds.
+fn counts(digest: &BTreeMap<String, String>) -> (usize, usize) {
+    let pages = digest.keys().filter(|path| path.ends_with(".md")).count();
+    (pages, digest.len() - pages)
+}
+
+/// Exports the notebook in `notebook` into a new folder.
+fn export_all(notebook: &Notebook, cx: &mut TestAppContext) -> tempfile::TempDir {
+    let out = tempfile::tempdir().unwrap();
+    dispatch(notebook, ExportNotebookMarkdown, cx);
+    choose_folder(out.path(), cx);
+    let message = finished(notebook, cx);
+    assert!(message.starts_with("Exported "), "{message}");
+    out
+}
+
+const ROUND_TRIP: [(&str, &str); 5] = [
+    (
+        "Deep/B.md",
+        "- ![](../assets/a.png) links [[Top]]\n- second\n",
+    ),
+    ("Top.md", "- ![[assets/r.pdf#page=2]] #plan\n"),
+    ("Ünïcode/Ça.md", "- العربية and اردو\r\n- crlf kept\r\n"),
+    ("assets/a.png", "png bytes"),
+    ("assets/r.pdf", "%PDF-1.4"),
+];
+
+#[gpui::test]
+fn a_quire_notebook_round_trips_through_export_and_import_with_equal_counts_and_hashes(
+    cx: &mut TestAppContext,
+) {
+    let first = open_notebook(&[("k", "Keep.md", "- keep\n")], "k", cx);
+    let source = tempfile::tempdir().unwrap();
+    write_files(source.path(), &ROUND_TRIP);
+    dispatch(&first, ImportMarkdownFolder, cx);
+    choose_folder(source.path(), cx);
+    assert_eq!(finished(&first, cx), "Imported 3 pages and 2 other files.");
+    wait_until(cx, "the page list", |cx| listed(&first, cx).len() == 4);
+    let exported = export_all(&first, cx);
+    let expected = digest(exported.path());
+    assert_eq!(counts(&expected), (4, 2));
+
+    let second = super::tests::open_initialized(&[("k", "Keep.md", "- keep\n")], "k", cx);
+    dispatch(&second, ImportMarkdownFolder, cx);
+    choose_folder(exported.path(), cx);
+    assert_eq!(
+        finished(&second, cx),
+        "Imported 3 pages and 2 other files. 1 pages were already here and were left unchanged."
+    );
+    wait_until(cx, "the page list", |cx| listed(&second, cx).len() == 4);
+    assert_eq!(listed(&second, cx), listed(&first, cx));
+    let again = export_all(&second, cx);
+    assert_eq!(digest(again.path()), expected);
+    for path in ["Deep/B.md", "Top.md", "Ünïcode/Ça.md"] {
+        assert_eq!(
+            stored_text(&second.path, path),
+            stored_text(&first.path, path),
+            "{path}"
+        );
+    }
+}
+
+#[gpui::test]
+fn a_folder_notebook_round_trips_through_export_and_import_with_equal_counts_and_hashes(
+    cx: &mut TestAppContext,
+) {
+    let mut files = vec![("Keep.md", "- keep\n")];
+    files.extend(ROUND_TRIP);
+    let (first, first_folder) = open_folder(&files, "Keep.md", cx);
+    let exported = export_all(&first, cx);
+    let expected = digest(first_folder.path());
+    assert_eq!(counts(&expected), (4, 2));
+    assert_eq!(digest(exported.path()), expected);
+
+    let (second, second_folder) =
+        open_folder_initialized(&[("Keep.md", "- keep\n")], "Keep.md", cx);
+    dispatch(&second, ImportMarkdownFolder, cx);
+    choose_folder(exported.path(), cx);
+    assert_eq!(
+        finished(&second, cx),
+        "Imported 3 pages and 2 other files. 1 pages were already here and were left unchanged."
+    );
+    assert_eq!(digest(second_folder.path()), expected);
+    let again = export_all(&second, cx);
+    assert_eq!(digest(again.path()), expected);
+}

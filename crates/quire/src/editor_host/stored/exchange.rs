@@ -422,7 +422,21 @@ async fn import(
                 .background_spawn(async move { copy_files(&source, &root, &copying) })
                 .await
                 .map_err(describe)?;
-            match ask(client.import_pages(folder.pages, now())).await {
+            let total = folder.pages.len();
+            let (counts, mut written) = mpsc::unbounded();
+            let reply = client.import_pages_reporting(folder.pages, now(), move |count| {
+                counts.unbounded_send(count).ok();
+            });
+            while let Some(count) = written.next().await {
+                exchange.update(cx, |exchange, cx| {
+                    exchange.progress(
+                        format!("Importing pages: wrote {count} of {total} pages…"),
+                        false,
+                        cx,
+                    )
+                });
+            }
+            match ask(reply).await {
                 Ok(imported) => Ok(import_summary(
                     imported.saved.len(),
                     files,
