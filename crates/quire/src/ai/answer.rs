@@ -1,10 +1,10 @@
 //! The answer pane (reference `AiPage.tsx`): questions about the notebook beside the page, each
-//! answered with the excerpts it was sent listed under it, the model's tool activity, and the
-//! answer rendered as Markdown whose citations open the page or block they name. A synthesis of
-//! linked references starts by editing its instruction and runs only on Command-Enter.
+//! answered through the notebook tools with the calls it made listed under it, and the answer
+//! rendered as Markdown whose citations open the page or block they name. A synthesis of linked
+//! references starts by editing its instruction and runs only on Command-Enter.
 
 use super::{
-    context::{Writers, gather},
+    context,
     process::{self, Host, Mode, Outcome, Request, Transcript, Update},
     settings::{self, AiSettings},
 };
@@ -20,11 +20,12 @@ use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use quire_core::ai::{
     AiRange,
     ask::{
-        Cited, DEFAULT_SYNTHESIS, Gathered, NO_CONTEXT, Needs, PRESETS, Preset, Source,
-        TAGGED_DRAFT, Turn, ask_context_summary, build_ask_prompt, link_citations, parse_citation,
+        Cited, DEFAULT_SYNTHESIS, Needs, PRESETS, Preset, TAGGED_DRAFT, Turn, ask_context_summary,
+        build_ask_prompt, cited_blocks, link_citations, parse_citation,
     },
-    backend::{AI_OFF, CANCELED, PROMPT_LIMIT, PROMPT_TOO_LONG},
+    backend::{AI_OFF, CANCELED, PROMPT_LIMIT, PROMPT_TOO_LONG, ToolServer},
 };
+use quire_store::index::IndexClient;
 use std::collections::HashMap;
 use ui::{
     Button, ButtonCommon as _, ButtonStyle, Clickable as _, Color, Disableable as _, Label,
@@ -48,29 +49,18 @@ pub struct Seed {
     pub draft: Option<String>,
     /// Selected text the first question is about.
     pub range: Option<AiRange>,
-    /// Where the first question's excerpts come from.
-    pub source: Option<Source>,
+    /// The page whose linked references the first question sends, for a synthesis.
+    pub references: Option<String>,
 }
 
 impl Seed {
     /// Linked references with no question make a synthesis, which waits for its instruction.
     fn synthesis(&self) -> bool {
-        self.question.as_deref().is_none_or(|q| q.trim().is_empty())
-            && matches!(self.source, Some(Source::References(_)))
+        self.question.as_deref().is_none_or(|q| q.trim().is_empty()) && self.references.is_some()
     }
 
-    /// The pane for a preset: its question and excerpts, or the Tagged with… draft.
+    /// The pane for a preset: its question, or the Tagged with… draft.
     pub fn preset(preset: &Preset, value: &str) -> Self {
-        let source = match (preset.key, preset.needs) {
-            ("due", _) => Some(Source::Due),
-            ("week", _) => Some(Source::Week),
-            ("yesterday", _) => Some(Source::Yesterday),
-            ("last", _) => Some(Source::Mentions(value.to_owned())),
-            (_, Needs::Tag) if !value.trim().is_empty() => {
-                Some(Source::Tagged(value.trim().to_owned()))
-            }
-            _ => None,
-        };
         match (preset.needs, value.trim().is_empty()) {
             (Needs::Tag, true) => Self {
                 draft: Some(TAGGED_DRAFT.into()),
@@ -78,10 +68,20 @@ impl Seed {
             },
             _ => Self {
                 question: Some(preset.question(value)),
-                source,
                 ..Self::default()
             },
         }
+    }
+}
+
+/// The tool server a question with run ID `run` attaches, or why there is none.
+fn tool_server(run: &str, cx: &App) -> Result<ToolServer, &'static str> {
+    #[cfg(unix)]
+    return crate::notebook_tools::ask_server(run, cx);
+    #[cfg(not(unix))]
+    {
+        let _ = (run, cx);
+        Err(quire_core::ai::backend::NO_TOOL_SERVER)
     }
 }
 
@@ -138,7 +138,6 @@ pub struct TurnView {
 
 pub struct AnswerPane {
     host: Entity<ReferenceHost>,
-    writers: Option<Writers>,
     seed: Seed,
     place: Place,
     pub turns: Vec<TurnView>,
@@ -178,6 +177,20 @@ fn open_link(host: &Entity<ReferenceHost>, url: &str, window: &mut Window, cx: &
     );
 }
 
+/// The text of each cited block the index knows, to label its link.
+async fn label_blocks(ids: Vec<String>, index: Option<IndexClient>) -> Vec<(String, String)> {
+    let Some(index) = index else {
+        return Vec::new();
+    };
+    let mut labels = Vec::new();
+    for id in ids {
+        if let Ok(Some(preview)) = crate::query_index::ask(index.block_preview(id.clone())).await {
+            labels.push((id, preview.text));
+        }
+    }
+    labels
+}
+
 /// Why questions cannot run now, or None.
 pub fn blocked(cx: &App) -> Option<&'static str> {
     (!settings::is_on(cx)).then(|| {
@@ -192,7 +205,6 @@ pub fn blocked(cx: &App) -> Option<&'static str> {
 impl AnswerPane {
     pub fn new(
         host: Entity<ReferenceHost>,
-        writers: Option<Writers>,
         seed: Seed,
         place: Place,
         window: &mut Window,
@@ -213,7 +225,6 @@ impl AnswerPane {
         });
         let mut pane = Self {
             host,
-            writers,
             seed,
             place,
             turns: Vec::new(),
@@ -254,26 +265,9 @@ impl AnswerPane {
             .any(|turn| matches!(turn.status, Status::Reading | Status::Streaming))
     }
 
-    /// Where a question's excerpts come from: the seed's for the first question, Tagged with…
-    /// for a typed tag question, and otherwise the blocks matching its words.
-    fn source_for(&self, question: &str, first: bool) -> Option<Source> {
-        if first && (self.seed.source.is_some() || self.seed.range.is_some()) {
-            return self.seed.source.clone();
-        }
-        if let Some(tag) = question.strip_prefix(TAGGED_DRAFT) {
-            let tag: String = tag
-                .chars()
-                .take_while(|c| !c.is_whitespace() && *c != ',')
-                .collect();
-            if !tag.is_empty() {
-                return Some(Source::Tagged(tag));
-            }
-        }
-        Some(Source::Search)
-    }
-
-    /// Asks `question`. The first question of a conversation carries the seed's range and
-    /// excerpts; every question carries the earlier turns of its conversation.
+    /// Asks `question` through the notebook tools. The first question of a conversation carries
+    /// the seed's range or linked references; every question carries the earlier turns of its
+    /// conversation.
     pub fn ask(
         &mut self,
         question: String,
@@ -291,7 +285,7 @@ impl AnswerPane {
         }
         self.notice = None;
         let range = first.then(|| self.seed.range.clone()).flatten();
-        let source = self.source_for(&question, first);
+        let references = first.then(|| self.seed.references.clone()).flatten();
         let earlier: Vec<Turn> = self.turns[self.since..]
             .iter()
             .filter(|turn| turn.status == Status::Done)
@@ -301,6 +295,7 @@ impl AnswerPane {
             })
             .collect();
         let index = self.turns.len();
+        let run = format!("ask-{}", uuid::Uuid::new_v4().simple());
         let markdown = cx.new(|cx| Markdown::new(SharedString::default(), None, None, cx));
         self.turns.push(TurnView {
             question: question.clone(),
@@ -315,36 +310,37 @@ impl AnswerPane {
             cancel: None,
             _run: None,
         });
+        let server = match tool_server(&run, cx) {
+            Ok(server) => server,
+            Err(message) => {
+                self.fail(index, message.into(), false, cx);
+                return;
+            }
+        };
         let index_client = self.host.read(cx).index().cloned();
-        let writers = self.writers.clone();
         let today = self.place.today.clone();
         let settings = AiSettings::get_global(cx).clone();
         let runner = cx.global::<Host>().clone();
         let (cancel, canceled) = oneshot::channel::<()>();
         self.turns[index].cancel = Some(cancel);
-        let run = cx.spawn_in(window, async move |this, cx| {
-            let gathered: Option<Gathered> = match (source, index_client) {
-                (Some(source), Some(client)) => {
-                    match gather(client, source, &question, &today, writers, cx).await {
-                        Ok(gathered) => Some(gathered),
-                        Err(error) => {
-                            this.update(cx, |this, cx| {
-                                this.fail(index, format!("Quire could not read the notebook for this question: {error}. Wait for indexing to finish, then press Retry."), true, cx)
-                            })
-                            .ok();
-                            return;
-                        }
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let gathered = match (references, index_client.clone()) {
+                (Some(title), Some(client)) => match context::references(client, &title).await {
+                    Ok(gathered) => Some(gathered),
+                    Err(error) => {
+                        this.update(cx, |this, cx| {
+                            this.fail(index, format!("Quire could not read the linked references to {title}: {error}. Wait for indexing to finish, then press Retry."), true, cx)
+                        })
+                        .ok();
+                        return;
                     }
-                }
+                },
                 _ => None,
             };
             let prompt = build_ask_prompt(&question, range.as_ref(), gathered.as_ref(), &earlier);
             let ready = this.update(cx, |this, cx| {
                 let turn = &mut this.turns[index];
                 turn.context = ask_context_summary(range.as_ref(), gathered.as_ref());
-                if turn.context.is_empty() {
-                    turn.context.push(NO_CONTEXT.into());
-                }
                 turn.labels = gathered
                     .iter()
                     .flat_map(|gathered| &gathered.excerpts)
@@ -371,14 +367,14 @@ impl AnswerPane {
                 .flatten();
             let request = Request {
                 backend: settings.backend,
-                mode: Mode::Ask { today },
+                mode: Mode::Ask { today, server },
                 binary: settings.binary(settings.backend).to_owned(),
                 model: settings.model.clone(),
                 prompt,
                 timeout: process::ASK_TIMEOUT,
                 transcript: transcripts.map(|folder| Transcript {
                     folder,
-                    id: format!("ask-{}", uuid::Uuid::new_v4().simple()),
+                    id: run,
                     page: String::new(),
                 }),
             };
@@ -405,10 +401,21 @@ impl AnswerPane {
                 }
             }
             let outcome = running.await;
-            this.update(cx, |this, cx| this.finish(index, outcome, cx))
-                .ok();
+            let Ok(cited) = this.update(cx, |this, cx| this.finish(index, outcome, cx)) else {
+                return;
+            };
+            if cited.is_empty() {
+                return;
+            }
+            let labels = label_blocks(cited, index_client).await;
+            this.update(cx, |this, cx| {
+                this.turns[index].labels.extend(labels);
+                this.render_answer(index, cx);
+                cx.notify();
+            })
+            .ok();
         });
-        self.turns[index]._run = Some(run);
+        self.turns[index]._run = Some(task);
         cx.notify();
     }
 
@@ -472,13 +479,20 @@ impl AnswerPane {
         cx.notify();
     }
 
-    fn finish(&mut self, index: usize, outcome: Outcome, cx: &mut Context<Self>) {
+    /// Ends turn `index` with `outcome`; returns the blocks its answer cites that still need a
+    /// label.
+    fn finish(&mut self, index: usize, outcome: Outcome, cx: &mut Context<Self>) -> Vec<String> {
         if self.turns[index].status != Status::Streaming {
-            return;
+            return Vec::new();
         }
+        let mut unlabeled = Vec::new();
         match outcome {
             Outcome::Done(text) => {
                 let turn = &mut self.turns[index];
+                unlabeled = cited_blocks(&text)
+                    .into_iter()
+                    .filter(|id| !turn.labels.contains_key(id))
+                    .collect();
                 turn.answer = text;
                 turn.status = Status::Done;
                 turn.cancel = None;
@@ -488,6 +502,7 @@ impl AnswerPane {
             Outcome::Canceled => self.fail(index, CANCELED.into(), true, cx),
         }
         cx.notify();
+        unlabeled
     }
 
     /// Ends the running question at once; later events from it are dropped.
@@ -565,7 +580,6 @@ impl AnswerPane {
             }
             _ => {
                 let page = self.place.page.clone().unwrap_or_default();
-                self.seed.source = Seed::preset(preset, &page).source;
                 self.ask(preset.question(&page), true, window, cx);
             }
         }
@@ -756,8 +770,8 @@ impl Render for AnswerPane {
             .collect();
         let draft = self.input.read(cx).text(cx);
         let composer = if self.editing_synthesis {
-            let source = match &self.seed.source {
-                Some(Source::References(page)) => format!("Sends the linked references to {page}."),
+            let source = match &self.seed.references {
+                Some(page) => format!("Sends the linked references to {page}."),
                 _ => String::new(),
             };
             let shortcut = if cfg!(target_os = "macos") {

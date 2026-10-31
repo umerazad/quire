@@ -8,8 +8,8 @@ use futures::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, Futur
 use quire_core::ai::{
     Backend, Event, ParseState,
     backend::{
-        CANCELED, drift_error, exit_error, missing_binary, run_args, run_input, stream_error,
-        timeout_error, version_of,
+        CANCELED, ToolServer, ask_args, drift_error, exit_error, missing_binary, run_args,
+        run_input, stream_error, timeout_error, version_of,
     },
     commands::transform_system_prompt,
     parse_line,
@@ -42,18 +42,28 @@ pub struct Host {
 
 impl gpui::Global for Host {}
 
-/// What a run does: rewrite a range, or answer a question from the excerpts in its prompt.
+/// What a run does: rewrite a range, or answer a question through the notebook tools.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Mode {
     Transform,
-    Ask { today: String },
+    Ask { today: String, server: ToolServer },
 }
 
 impl Mode {
     pub fn system_prompt(&self) -> String {
         match self {
             Self::Transform => transform_system_prompt(),
-            Self::Ask { today } => quire_core::ai::ask::ask_system_prompt(today),
+            Self::Ask { today, server } => {
+                quire_core::ai::ask::ask_system_prompt(server.writes, today)
+            }
+        }
+    }
+
+    fn args(&self, backend: Backend, system: &str, folder: &Path, model: &str) -> Vec<String> {
+        let folder = folder.to_string_lossy();
+        match self {
+            Self::Transform => run_args(backend, system, &folder, model),
+            Self::Ask { server, .. } => ask_args(backend, system, &folder, model, server),
         }
     }
 
@@ -319,12 +329,7 @@ impl Host {
         let system = request.mode.system_prompt();
         let mut command = self.command(binary).await;
         command
-            .args(run_args(
-                backend,
-                &system,
-                &folder.to_string_lossy(),
-                &request.model,
-            ))
+            .args(request.mode.args(backend, &system, folder, &request.model))
             .current_dir(folder);
         let mut child = match util::process::Child::spawn(
             command,

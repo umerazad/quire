@@ -51,8 +51,7 @@ impl StoredWindow {
             today: self.today().unwrap_or_default(),
         };
         let host = self.links.host.clone();
-        let writers = self.page_writers();
-        let pane = cx.new(|cx| AnswerPane::new(host, writers, seed, place, window, cx));
+        let pane = cx.new(|cx| AnswerPane::new(host, seed, place, window, cx));
         cx.subscribe_in(
             &pane,
             window,

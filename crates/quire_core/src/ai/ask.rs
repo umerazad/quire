@@ -1,8 +1,9 @@
 //! Questions about the notebook (reference `AiPage.tsx` and the ask half of `ai-commands.ts`):
-//! the presets, the prompt with the notebook excerpts gathered for it, the context summary,
-//! citations turned into links, and the block an answer becomes when it is kept.
+//! the presets, the tool rules, the prompt with the range or linked references sent with it, the
+//! context summary, citations turned into links, and the block an answer becomes when it is kept.
 
 use super::commands::{AiRange, CONVENTIONS, Verb};
+use super::tools::Writes;
 use crate::markdown::{ReferenceKind, decode_uri_component, references};
 use regex::Regex;
 use std::{collections::HashSet, sync::LazyLock};
@@ -11,7 +12,6 @@ pub const DEFAULT_SYNTHESIS: &str =
     "Synthesize these linked references: the main themes, how they connect, and open questions.";
 /// The question box text the Tagged with… preset starts.
 pub const TAGGED_DRAFT: &str = "Show me everything tagged #";
-pub const NO_CONTEXT: &str = "Question only; no notebook excerpts matched it.";
 
 /// What a preset needs before it can be asked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,40 +107,11 @@ impl Preset {
     }
 }
 
-/// Where the excerpts sent with a question came from.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Source {
-    /// Linked references to a page, for a synthesis.
-    References(String),
-    /// Open tasks due by a date.
-    Due,
-    /// Open tasks due within the week.
-    Week,
-    /// The latest pages that mention a page.
-    Mentions(String),
-    /// Yesterday's daily page and the tasks done or added that day.
-    Yesterday,
-    /// Blocks with a tag.
-    Tagged(String),
-    /// Blocks matching the question's words.
-    Search,
-}
+/// What a synthesis sends with its instruction (reference `scope`); questions read the rest of
+/// the notebook through the tools.
+pub const REFERENCES: &str = "Linked references";
 
-impl Source {
-    pub fn label(&self) -> String {
-        match self {
-            Self::References(_) => "Linked references".into(),
-            Self::Due => "Tasks due today or overdue".into(),
-            Self::Week => "Tasks due this week".into(),
-            Self::Mentions(page) => format!("Latest mentions of {page}"),
-            Self::Yesterday => "Yesterday's page and tasks".into(),
-            Self::Tagged(tag) => format!("Blocks tagged #{}", tag.trim_start_matches('#')),
-            Self::Search => "Matching blocks".into(),
-        }
-    }
-}
-
-/// One block of notebook text sent with a question.
+/// One linked reference sent with a synthesis.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Excerpt {
     pub title: String,
@@ -148,10 +119,10 @@ pub struct Excerpt {
     pub text: String,
 }
 
-/// The excerpts sent with a question, and how many were left out to stay under the limits.
+/// The linked references sent with a synthesis, and how many were left out to stay under the
+/// limits.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Gathered {
-    pub source: Source,
     pub excerpts: Vec<Excerpt>,
     pub omitted: usize,
 }
@@ -172,7 +143,7 @@ fn clip(text: &str, limit: usize) -> String {
 impl Gathered {
     /// Keeps the first excerpts that fit the count and size limits, each clipped, and counts the
     /// rest. Repeated blocks are sent once.
-    pub fn bounded(source: Source, excerpts: impl IntoIterator<Item = Excerpt>) -> Self {
+    pub fn bounded(excerpts: impl IntoIterator<Item = Excerpt>) -> Self {
         let mut seen = HashSet::new();
         let mut kept = Vec::new();
         let mut omitted = 0;
@@ -190,7 +161,6 @@ impl Gathered {
             kept.push(Excerpt { text, ..excerpt });
         }
         Self {
-            source,
             excerpts: kept,
             omitted,
         }
@@ -205,18 +175,36 @@ impl Gathered {
     }
 }
 
-/// The rules an ask run follows. Answers come from the excerpts sent; the run has no tools.
-pub const ASK_RULES: [&str; 3] = [
-    "You answer questions about the writer's Quire notebook. Use the notebook excerpts and the conversation given with the question; if they do not answer it, say what is missing rather than guessing.",
-    "Answer in Markdown. Cite sources inline: a page as [[Page title]], a block with an id as ((block-id)), and a block without an id as [[Page title]] followed by its exact words in double quotes.",
-    "Do not change the notebook; you cannot.",
+/// The rules of an ask run, which reads the notebook through the quire tools (reference
+/// `aiPrompts.toolRules`).
+pub const TOOL_RULES: [&str; 4] = [
+    "You answer questions about the writer's Quire notebook through the quire tools. They read the notebook as it is open in the app, including unsaved edits. Do not look for files, and do not read the .quire folder or attachment files.",
+    "Choose the structured tool first: tasks for what is due or open, tagged_blocks for #tags, mentions for the last time a page or meeting came up, daily_pages and list_pages for dates, read_page and read_block to read, linked_references for what links to a page. Use search_notebook to find words.",
+    "Pages are named by title. \"today\" names today's daily page.",
+    "Answer in Markdown. Cite sources inline: a page as [[Page title]], a block with a marker as ((block-id)), and a block without a marker as [[Page title]] followed by its exact words in double quotes.",
 ];
 
-pub fn ask_system_prompt(today: &str) -> String {
-    ASK_RULES
+/// What an ask run may change, by the AI writes setting (reference `aiPrompts.writeRules`).
+pub fn write_rule(writes: Writes) -> &'static str {
+    match writes {
+        Writes::Off => {
+            "You cannot change the notebook. If the writer asks for a change, say that AI writes are off in Settings > AI."
+        }
+        Writes::Review => {
+            "Change the notebook only when the writer asks. Write tools stage each change for the writer to review in Quire; say what you proposed."
+        }
+        Writes::Apply => {
+            "Change the notebook only when the writer asks. Write tools apply at once and the writer can undo each change; say what you changed."
+        }
+    }
+}
+
+/// The system prompt of an ask run (reference `systemPrompt("ask", writes)`).
+pub fn ask_system_prompt(writes: Writes, today: &str) -> String {
+    TOOL_RULES
         .iter()
         .map(|line| (*line).to_owned())
-        .chain([format!("Today is {today}.")])
+        .chain([write_rule(writes).to_owned(), format!("Today is {today}.")])
         .chain(CONVENTIONS.iter().map(|line| (*line).to_owned()))
         .collect::<Vec<_>>()
         .join("\n")
@@ -308,7 +296,7 @@ pub fn build_ask_prompt(
             })
             .collect::<Vec<_>>()
             .join("\n");
-        parts.push(format!("{}:\n{blocks}", gathered.source.label()));
+        parts.push(format!("{}:\n{blocks}", REFERENCES));
     }
     parts.join("\n\n")
 }
@@ -324,11 +312,11 @@ pub fn ask_context_summary(range: Option<&AiRange>, gathered: Option<&Gathered>)
         .unwrap_or_default();
     if let Some(gathered) = gathered {
         items.push(if gathered.excerpts.is_empty() {
-            format!("{}: none found", gathered.source.label())
+            format!("{}: none found", REFERENCES)
         } else {
             format!(
                 "{}: {} from {}",
-                gathered.source.label(),
+                REFERENCES,
                 plural(gathered.excerpts.len(), "block"),
                 plural(gathered.pages(), "page")
             )
@@ -415,6 +403,23 @@ pub fn link_citations(markdown: &str, label: impl Fn(&str) -> Option<String>) ->
     result
 }
 
+/// The block IDs an answer cites, once each, in order.
+pub fn cited_blocks(markdown: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    references(markdown, &[])
+        .into_iter()
+        .filter(|reference| reference.kind == ReferenceKind::Block)
+        .map(|reference| {
+            reference
+                .target
+                .rsplit_once("#^")
+                .map_or(reference.target.as_str(), |(_, id)| id)
+                .to_owned()
+        })
+        .filter(|id| seen.insert(id.clone()))
+        .collect()
+}
+
 /// What a link in an answer opens, when it is a citation.
 pub fn parse_citation(url: &str) -> Option<Cited> {
     if let Some(page) = url.strip_prefix(PAGE_URL) {
@@ -461,25 +466,4 @@ pub fn answer_block(answer: &str) -> String {
         }))
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-const STOP_WORDS: [&str; 40] = [
-    "the", "and", "for", "are", "was", "were", "what", "when", "where", "which", "who", "whom",
-    "why", "how", "this", "that", "these", "those", "with", "from", "about", "into", "have", "has",
-    "had", "did", "does", "can", "could", "would", "should", "will", "any", "all", "my", "our",
-    "your", "there", "their", "notes",
-];
-
-/// The words of a question worth searching for, longest first, at most six.
-pub fn search_terms(question: &str) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut words: Vec<String> = question
-        .split(|c: char| !c.is_alphanumeric() && c != '-' && c != '\'')
-        .map(|word| word.trim_matches(['-', '\'']).to_lowercase())
-        .filter(|word| word.chars().count() >= 3 && !STOP_WORDS.contains(&word.as_str()))
-        .filter(|word| seen.insert(word.clone()))
-        .collect();
-    words.sort_by_key(|word| std::cmp::Reverse(word.chars().count()));
-    words.truncate(6);
-    words
 }

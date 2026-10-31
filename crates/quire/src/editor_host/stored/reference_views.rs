@@ -44,7 +44,7 @@ impl StoredWindow {
                         };
                         let seed = crate::ai::answer::Seed {
                             title: Some(format!("Linked references to {title}")),
-                            source: Some(quire_core::ai::ask::Source::References(title)),
+                            references: Some(title),
                             ..Default::default()
                         };
                         this.open_answer(seed, window, cx);

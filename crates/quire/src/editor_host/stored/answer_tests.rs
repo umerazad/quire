@@ -104,28 +104,41 @@ fn type_question(notebook: &Notebook, text: &str, cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn a_question_sends_matching_excerpts_and_citations_open_what_they_name(
+async fn a_question_reads_the_notebook_through_its_tools_and_citations_open_what_they_name(
     cx: &mut TestAppContext,
 ) {
     let (ai, notebook) = notebook(&FRUIT, "trees", cx).await;
-    ai.answer("Apples are [[Fruit]] ((b-apple)).", &[], cx);
+    ai.answer_with_tools(
+        "Apples are [[Fruit]] ((b-apple)).",
+        serde_json::json!([{ "name": "read_block", "arguments": { "id": "b-apple" } }]),
+        cx,
+    );
     run_ai(&notebook, "", cx);
     let pane = pane(&notebook, cx);
     assert_eq!(cx.read(|cx| pane.read(cx).title()), "Ask the notebook");
     type_question(&notebook, "What about apples?", cx);
     wait_done(&notebook, 0, cx);
     draw(&notebook, cx);
-    assert_eq!(
-        ai.sent(),
-        [
-            "What about apples?\n\nMatching blocks:\n<excerpt page=\"Fruit\" id=\"b-apple\">\napples are good and tasty\n</excerpt>"
-        ]
-    );
+    assert_eq!(ai.sent(), ["What about apples?"]);
+    let calls = ai.tool_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0]["error"], false);
+    let read: serde_json::Value = serde_json::from_str(calls[0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(read["text"], "- apples are good and tasty ^b-apple");
+    wait_until(cx, "the cited block's label", |cx| {
+        cx.read(|cx| pane.read(cx).rendered(0, cx)).contains('↗')
+    });
     cx.read(|cx| {
         let pane = pane.read(cx);
+        assert!(pane.turns[0].context.is_empty());
         assert_eq!(
-            pane.turns[0].context,
-            ["Matching blocks: 1 block from 1 page"]
+            pane.turns[0].tools,
+            [crate::ai::answer::ToolRow {
+                id: Some("toolu_0".into()),
+                label: read["summary"].as_str().unwrap().into(),
+                done: true,
+                failed: false,
+            }]
         );
         assert_eq!(
             pane.rendered(0, cx),
@@ -180,18 +193,30 @@ async fn questions_read_unsaved_edits_of_open_pages(cx: &mut TestAppContext) {
         FRUIT[2].2,
         "the index answers from the unsaved edit"
     );
-    ai.answer("Water the plants.", &[], cx);
+    ai.answer_with_tools(
+        "Water the plants.",
+        serde_json::json!([{ "name": "tasks", "arguments": { "due": "today" } }]),
+        cx,
+    );
     run_ai(&notebook, "due", cx);
     wait_done(&notebook, 0, cx);
+    let calls = ai.tool_calls();
+    let tasks: serde_json::Value =
+        serde_json::from_str(calls[0]["text"].as_str().unwrap()).unwrap();
+    let texts: Vec<&str> = tasks["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|task| task["text"].as_str().unwrap())
+        .collect();
     assert!(
-        ai.sent()[0].ends_with("<excerpt page=\"Work\">\n[ ] Water plants 📅 [[2026-10-30]] (due 2026-10-30)\n</excerpt>"),
-        "{}",
-        ai.sent()[0]
+        texts == ["Water plants"] && tasks["summary"] == "Tasks due today · 1",
+        "the tool reads the unsaved task: {tasks}"
     );
 }
 
 #[gpui::test]
-async fn a_preset_sends_due_tasks_and_a_follow_up_carries_the_earlier_turn(
+async fn a_preset_asks_its_question_and_a_follow_up_carries_the_earlier_turn(
     cx: &mut TestAppContext,
 ) {
     let (ai, notebook) = notebook(&FRUIT, "work", cx).await;
@@ -200,17 +225,33 @@ async fn a_preset_sends_due_tasks_and_a_follow_up_carries_the_earlier_turn(
     wait_done(&notebook, 0, cx);
     assert_eq!(
         ai.sent(),
-        [
-            "What is due today? List overdue tasks separately, with their pages.\n\nTasks due today or overdue:\n<excerpt page=\"Work\">\n[ ] Pay rent 📅 [[2026-10-29]] (overdue since 2026-10-29)\n</excerpt>"
-        ]
+        ["What is due today? List overdue tasks separately, with their pages."]
     );
     ai.answer("Pears.", &[], cx);
     type_question(&notebook, "Which fruit is gritty?", cx);
     wait_done(&notebook, 1, cx);
     assert_eq!(
         ai.sent()[0],
-        "Earlier in this conversation:\n<question>\nWhat is due today? List overdue tasks separately, with their pages.\n</question>\n<answer>\nPay rent is overdue.\n</answer>\n\nWhich fruit is gritty?\n\nMatching blocks:\n<excerpt page=\"Fruit\">\npears are gritty\n</excerpt>\n<excerpt page=\"Fruit\" id=\"b-apple\">\napples are good and tasty\n</excerpt>\n<excerpt page=\"Trees\">\nOrchard notes about [[Fruit]]\n</excerpt>"
+        "Earlier in this conversation:\n<question>\nWhat is due today? List overdue tasks separately, with their pages.\n</question>\n<answer>\nPay rent is overdue.\n</answer>\n\nWhich fruit is gritty?"
     );
+    let runs: Vec<String> = ai
+        .bench
+        .calls()
+        .iter()
+        .filter(|call| call["stdin"] != "Reply with the single word OK.")
+        .map(|call| {
+            let argv: Vec<String> = serde_json::from_value(call["argv"].clone()).unwrap();
+            let at = argv.iter().position(|arg| arg == "--mcp-config").unwrap();
+            let config: serde_json::Value = serde_json::from_str(&argv[at + 1]).unwrap();
+            config["mcpServers"]["quire"]["env"]["QUIRE_RUN"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(runs.len(), 2);
+    assert!(runs.iter().all(|run| run.starts_with("ask-")), "{runs:?}");
+    assert_ne!(runs[0], runs[1], "each question is its own run");
     let pane = pane(&notebook, cx);
     let presets: Vec<String> = cx.read(|cx| {
         pane.read(cx)
