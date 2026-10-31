@@ -8,6 +8,7 @@ pub mod git_sync;
 pub mod index;
 pub mod markdown_import;
 pub mod notebook;
+pub mod notebook_lock;
 pub mod provider;
 pub mod roam_files;
 mod schema;

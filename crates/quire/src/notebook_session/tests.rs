@@ -461,3 +461,39 @@ fn drafts_with_an_unknown_base_or_a_moved_page_stay_for_review(cx: &mut TestAppC
     }
     session.client.close().unwrap();
 }
+
+#[gpui::test]
+fn a_second_session_on_an_open_notebook_is_refused_until_the_first_closes(cx: &mut TestAppContext) {
+    cx.update(|cx| crate::editor_host::init(cx).unwrap());
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("local.sqlite");
+    let store = NotebookStore::open(&path, "nb", "local").unwrap();
+    store.save(&edit("committed")).unwrap();
+    drop(store);
+    let mut first = NotebookSession::open(path.clone(), "nb".into(), "local".into()).unwrap();
+    let page = cx.update(|cx| first.open_page("p".into(), cx));
+    wait(&page, cx);
+    let refused = NotebookSession::open(path.clone(), "nb".into(), "local".into())
+        .err()
+        .unwrap();
+    assert_eq!(refused, quire_store::notebook_lock::HELD);
+    first.client.close().unwrap();
+    drop(first);
+    NotebookSession::open(path, "nb".into(), "local".into())
+        .unwrap()
+        .client
+        .close()
+        .unwrap();
+
+    let notes = root.path().join("notes");
+    let state = root.path().join("state");
+    std::fs::create_dir(&notes).unwrap();
+    std::fs::write(notes.join("Note.md"), "- hello\n").unwrap();
+    let folder = NotebookSession::open_folder(notes.clone(), state.clone(), None).unwrap();
+    let refused = NotebookSession::open_folder(notes.clone(), state, None)
+        .err()
+        .unwrap();
+    assert_eq!(refused, quire_store::notebook_lock::HELD);
+    assert!(!notes.join(".open.lock").exists());
+    folder.client.close().unwrap();
+}
