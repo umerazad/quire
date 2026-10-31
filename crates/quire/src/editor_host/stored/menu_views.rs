@@ -6,8 +6,8 @@ use super::*;
 use crate::{
     file_actions::Target,
     navigation::{
-        CloseTab, CopyLink, DeleteFile, DeletePage, MoveFile, MovePage, NewPageHere, RenameFile,
-        RevealInFileManager, ToggleFavorite,
+        CloseTab, CopyLink, DeleteFile, DeletePage, MoveFile, MovePage, NewFolderHere, NewPageHere,
+        RenameFile, RevealInFileManager, ToggleFavorite,
         file_dialog::Moving,
         pointer_menu::{self, Entry, Item},
     },
@@ -192,6 +192,7 @@ impl StoredWindow {
                 [
                     vec![
                         Item::action("New note here", NewPageHere).done(),
+                        Item::action("New folder here", NewFolderHere).done(),
                         Entry::Separator,
                         Item::action("Rename or move…", RenameFile).done(),
                     ],
@@ -221,6 +222,7 @@ impl StoredWindow {
                             Item::action(favorite_label(favorite), ToggleFavorite).done(),
                             Entry::Separator,
                             Item::action("New note here", NewPageHere).done(),
+                            Item::action("New folder here", NewFolderHere).done(),
                             Entry::Separator,
                             Item::action("Rename", RenameFile).done(),
                             Item::action("Move to…", MoveFile).done(),
@@ -552,21 +554,38 @@ impl StoredWindow {
         }
     }
 
+    /// The highlighted folder, or the highlighted page's folder.
+    fn selected_folder(&self) -> Option<String> {
+        let row = self.selected_row()?;
+        Some(match row.kind {
+            TreeKind::Folder => row.path,
+            TreeKind::File => row
+                .path
+                .rsplit_once('/')
+                .map_or_else(String::new, |(parent, _)| parent.to_owned()),
+        })
+    }
+
+    /// New folder here: asks for a path inside the highlighted folder.
+    pub(in crate::editor_host::stored) fn new_folder_in_selected_folder(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(parent) = self.selected_folder() else {
+            return;
+        };
+        self.ask_new_folder(parent, window, cx);
+    }
+
     /// New note here: in the highlighted folder, or in the highlighted page's folder.
     pub(in crate::editor_host::stored) fn new_page_in_selected_folder(
         &mut self,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let Some(row) = self.selected_row() else {
+        let Some(folder) = self.selected_folder() else {
             return;
-        };
-        let folder = match row.kind {
-            TreeKind::Folder => row.path,
-            TreeKind::File => row
-                .path
-                .rsplit_once('/')
-                .map_or_else(String::new, |(parent, _)| parent.to_owned()),
         };
         self.open_palette_in(
             crate::navigation::palette::PaletteMode::Create,

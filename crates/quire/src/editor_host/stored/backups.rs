@@ -148,6 +148,7 @@ impl StoredWindow {
                 writer,
                 page: page.id().to_owned(),
                 folder: None,
+                today: false,
             }
             .open(cx),
             Location::Folder { root, state } => {

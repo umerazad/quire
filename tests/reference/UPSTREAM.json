@@ -11,7 +11,7 @@
     "markdown/markdown.ts": "ed2023610b8b3fbb9302fd81af889bf0fb4da6fa8b7932bf592de3d914466bb7",
     "markdown/range-set.ts": "f38e035299fb90fe0e8bc9c1b945b58d03a85dc9078dc59bb3281b7ee34b8a6c",
     "daily/daily-layout.ts": "32a3eccd9eea5de811a321f74d930788453ceb4f3d309421acd4bc7ca1bb4e24",
-    "daily/workspace.ts": "b9c05efe0846973676ce8e666f87657e091a69f732741ad933148c4110bd000e",
+    "daily/workspace.ts": "1d324d27ec5a3a2bdb50f134eb157baca8355e1b6dd57a946d2ca1db6c7d831f",
     "daily/local-date.ts": "0786f47b120ae1a8759ea1cbdc840fecc82f24ab3aecb183f77d8f5e681806f6",
     "index/page-analysis.ts": "b93c2341736ba3fadeb6d65eb73c8e270127277eef04290f993b78efff08711e",
     "index/search-index.ts": "896af48e70a467b0e432c8045771679e802b3751c107d29428309e41c11c570b",
@@ -103,7 +103,7 @@
       "graph.ts imports mergeText from ../core/merge instead of ../../core/merge; nothing else changed.",
       "merge.test.ts imports ../fixtures/merges.json and ./core/merge.",
       "core/merge.ts, replica.ts, and merges.json are copied unchanged.",
-      "daily/workspace.ts stays at the base revision; namespaceOf and projectStatus changed later and belong to NR16."
+      "daily/workspace.ts was refreshed under NR16 to rt 5ea5c22310ff src/core/workspace.ts, copied unchanged, for namespaceOf and projectStatus; dailyDate did not change."
     ],
     "vectors": {
       "tool": "tools/merge-vectors.ts",
@@ -491,5 +491,15 @@
       "The pending notebook's last save is made with no await before its store closes, so rt's publication timer cannot publish it.",
       "SQLite WAL and shared-memory files are kept as Bun's node:sqlite leaves them, as a running rt would."
     ]
+  },
+  "namespace_vectors": {
+    "repository": "rt",
+    "revision": "5ea5c22310fff0c3d97f069930500fd85067fa96",
+    "source": "src/core/workspace.ts",
+    "destination": "daily/workspace.ts",
+    "tool": "tools/namespace-vectors.ts",
+    "output": "tests/fixtures/namespace-vectors.json",
+    "cases": "The reference test titles, every listed part alone and nested, and 2000 seeded titles joined by /, ' / ', and //, passed through the frozen namespaceOf.",
+    "bun": "1.4.2"
   }
 }

@@ -67,6 +67,16 @@ pub(super) fn open_initialized(
     first: &str,
     cx: &mut TestAppContext,
 ) -> Notebook {
+    open_configured(pages, first, |_| {}, cx)
+}
+
+/// Opens a notebook whose window `configure` adjusts before its settings and index load.
+pub(super) fn open_configured(
+    pages: &[(&str, &str, &str)],
+    first: &str,
+    configure: impl FnOnce(&mut StoredWindow),
+    cx: &mut TestAppContext,
+) -> Notebook {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("local.sqlite");
     let store = NotebookStore::open(&path, "nb", "local").unwrap();
@@ -77,7 +87,10 @@ pub(super) fn open_initialized(
     let mut session = NotebookSession::open(path.clone(), "nb".into(), "local".into()).unwrap();
     let page = cx.update(|cx| session.open_page(first.into(), cx));
     let window = cx.add_window(|window, cx| {
-        StoredWindow::new(session, page.clone(), path.clone(), "nb".into(), window, cx)
+        let mut view =
+            StoredWindow::new(session, page.clone(), path.clone(), "nb".into(), window, cx);
+        configure(&mut view);
+        view
     });
     let notebook = Notebook {
         _root: root,
@@ -126,6 +139,31 @@ pub(super) fn read<T>(
 
 pub(super) fn active(notebook: &Notebook, cx: &mut TestAppContext) -> String {
     read(notebook, cx, |view, cx| view.page.read(cx).id().to_owned())
+}
+
+/// The text after the caret on its line in the Write editor of the main page, or of the side
+/// pane when `side`.
+pub(super) fn caret_text(notebook: &Notebook, side: bool, cx: &mut TestAppContext) -> String {
+    let editor = read(notebook, cx, |view, cx| {
+        let window = match side {
+            true => view.nav.side.as_ref().and_then(|side| side.editor.clone()),
+            false => view.editor.clone(),
+        };
+        window.map(|window| window.read(cx).source.clone())
+    })
+    .expect("the page's editor is showing");
+    editor.update(cx, |editor, cx| {
+        let caret = editor
+            .selections
+            .newest::<editor::MultiBufferOffset>(&editor.display_snapshot(cx))
+            .head();
+        let text = editor.text(cx);
+        text[caret.0..]
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_owned()
+    })
 }
 
 fn palette_items(notebook: &Notebook, cx: &mut TestAppContext) -> Vec<PaletteItem> {
@@ -316,4 +354,88 @@ fn palette_rejects_results_from_superseded_queries(cx: &mut TestAppContext) {
                 .any(|item| matches!(item, PaletteItem::Page { page, .. } if page == "b"))
         );
     });
+}
+
+fn page_text(notebook: &Notebook, cx: &mut TestAppContext) -> String {
+    let page = read(notebook, cx, |view, _| view.page.clone());
+    cx.update(|cx| {
+        let analysis = page.read(cx).loaded().unwrap().analysis.clone();
+        analysis.read(cx).source.read(cx).text()
+    })
+}
+
+fn editor_focused(notebook: &Notebook, cx: &mut TestAppContext) -> bool {
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.editor
+                .as_ref()
+                .is_some_and(|editor| super::holds_focus(editor, window, cx))
+        })
+        .unwrap()
+}
+
+#[gpui::test]
+fn vim_insert_keys_outside_a_text_field_go_to_the_page_editor(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&PAGES, "a", cx);
+    wait_until(cx, "the first page", |cx| {
+        read(&notebook, cx, |view, _| view.editor.is_some())
+    });
+    cx.simulate_keystrokes(notebook.window.into(), &key("shift-r"));
+    draw(&notebook, cx);
+    assert!(!editor_focused(&notebook, cx));
+    cx.simulate_keystrokes(notebook.window.into(), "shift-a");
+    cx.run_until_parked();
+    assert!(editor_focused(&notebook, cx), "Insert keys reach the page");
+    cx.simulate_input(notebook.window.into(), "!");
+    assert_eq!(page_text(&notebook, cx), "- apple pie!\n");
+
+    cx.simulate_keystrokes(notebook.window.into(), "escape");
+    cx.simulate_keystrokes(notebook.window.into(), &key("k"));
+    draw(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "i");
+    cx.run_until_parked();
+    assert!(
+        !editor_focused(&notebook, cx),
+        "a text field keeps its own typing"
+    );
+}
+
+#[gpui::test]
+fn notebook_ctrl_keys_win_over_vim_inside_a_page(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&PAGES, "a", cx);
+    cx.update(|cx| cx.bind_keys(crate::navigation::inside_pages(false)));
+    wait_until(cx, "the first page", |cx| {
+        read(&notebook, cx, |view, _| view.editor.is_some())
+    });
+    draw(&notebook, cx);
+    assert!(editor_focused(&notebook, cx));
+    cx.simulate_keystrokes(notebook.window.into(), "ctrl-k");
+    draw(&notebook, cx);
+    assert!(
+        read(&notebook, cx, |view, _| view.nav.palette.is_some()),
+        "Ctrl-K finds a page instead of Vim's digraph"
+    );
+    cx.simulate_keystrokes(notebook.window.into(), "escape");
+    draw(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "ctrl-\\");
+    wait_until(cx, "the side pane", |cx| {
+        read(&notebook, cx, |view, _| view.nav.side.is_some())
+    });
+    notebook
+        .window
+        .update(cx, |view, window, cx| view.focus_active(window, cx))
+        .unwrap();
+    super::file_tests::visit(&notebook, Destination::page("b"), cx);
+    wait_until(cx, "Beta's editor", |cx| {
+        read(&notebook, cx, |view, _| view.editor.is_some())
+    });
+    draw(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "i ctrl-w");
+    draw(&notebook, cx);
+    assert_eq!(
+        active(&notebook, cx),
+        "a",
+        "Ctrl-W closes the tab in Insert mode instead of deleting a word"
+    );
 }

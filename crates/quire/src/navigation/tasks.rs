@@ -16,8 +16,8 @@ use quire_core::{
 };
 use quire_store::index::{IndexClient, ProjectSummary, TaskBoard, TaskItem, TaskQuery};
 use ui::{
-    Button, Checkbox, Color, ContextMenu, Disableable, DropdownMenu, Label, LabelCommon, LabelSize,
-    ListItem, ListItemSpacing, ToggleState, Toggleable, prelude::*, v_flex,
+    Button, ButtonStyle, Checkbox, Color, ContextMenu, Disableable, DropdownMenu, Label,
+    LabelCommon, LabelSize, ListItem, ListItemSpacing, ToggleState, Toggleable, prelude::*, v_flex,
 };
 
 gpui::actions!(
@@ -64,9 +64,10 @@ const LIST_KEYS: &str = if cfg!(target_os = "macos") {
 pub enum TasksEvent {
     Open {
         page: String,
+        jump: Option<super::Jump>,
         beside: bool,
     },
-    /// The list, project filter, or status filter changed and should be remembered.
+    /// The list, a filter, the rows shown, or the capture draft changed and should be remembered.
     Remember(TaskChoices),
 }
 
@@ -180,13 +181,26 @@ impl TasksView {
     ) -> Self {
         let filter = field("Filter actions or pages…", window, cx);
         let capture = field(CAPTURE_PLACEHOLDER, window, cx);
+        filter.update(cx, |filter, cx| {
+            filter.set_text(choices.query.as_str(), window, cx)
+        });
+        capture.update(cx, |capture, cx| {
+            capture.set_text(choices.draft.as_str(), window, cx)
+        });
         let filtered = cx.subscribe(&filter, |this, _, event: &EditorEvent, cx| {
             if matches!(event, EditorEvent::BufferEdited) {
                 this.highlighted = 0;
                 this.limit = PAGE;
+                this.remember(cx);
                 this.query(cx);
             }
         });
+        let drafted = cx.subscribe(&capture, |this, _, event: &EditorEvent, cx| {
+            if matches!(event, EditorEvent::BufferEdited) {
+                this.remember(cx);
+            }
+        });
+        let limit = choices.limit.max(PAGE);
         Self {
             board: Live::default(),
             choices,
@@ -198,7 +212,7 @@ impl TasksView {
             highlighted: 0,
             selected: Vec::new(),
             anchor: None,
-            limit: PAGE,
+            limit,
             notice: None,
             error: None,
             work: None,
@@ -208,7 +222,7 @@ impl TasksView {
             destination: std::rc::Rc::new(|_| Ok(CaptureTo::Inbox)),
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
-            _subscriptions: vec![filtered],
+            _subscriptions: vec![filtered, drafted],
         }
     }
 
@@ -247,7 +261,19 @@ impl TasksView {
         window.focus(&self.capture.focus_handle(cx), cx);
     }
 
+    /// The reference status line: whether the last change to a task is still being written.
+    pub fn save_status(&self) -> &'static str {
+        match (&self.work, &self.error) {
+            (Some(_), _) => "Saving locally…",
+            (None, Some(_)) => "Not saved; see the message above",
+            (None, None) => "Saved locally",
+        }
+    }
+
     fn remember(&mut self, cx: &mut Context<Self>) {
+        self.choices.query = self.filter.read(cx).text(cx);
+        self.choices.draft = self.capture.read(cx).text(cx);
+        self.choices.limit = if self.limit > PAGE { self.limit } else { 0 };
         cx.emit(TasksEvent::Remember(self.choices.clone()));
     }
 
@@ -360,18 +386,20 @@ impl TasksView {
 
     fn open(&mut self, index: usize, beside: bool, cx: &mut Context<Self>) {
         self.highlighted = index;
-        let page = match self.choices.view {
+        let target = match self.choices.view {
             TaskView::Projects => self
                 .shown_projects(cx)
                 .get(index)
-                .map(|project| project.page.page.to_lossy_string()),
-            _ => self
-                .rows()
-                .get(index)
-                .map(|task| task.source.page.to_lossy_string()),
+                .map(|project| (project.page.page.to_lossy_string(), None)),
+            _ => self.rows().get(index).map(|task| {
+                (
+                    task.source.page.to_lossy_string(),
+                    Some(super::Jump::at(task.id.clone(), task.from)),
+                )
+            }),
         };
-        if let Some(page) = page {
-            cx.emit(TasksEvent::Open { page, beside });
+        if let Some((page, jump)) = target {
+            cx.emit(TasksEvent::Open { page, jump, beside });
         }
     }
 
@@ -718,6 +746,7 @@ impl TasksView {
                         this.error = None;
                         cx.emit(TasksEvent::Open {
                             page,
+                            jump: None,
                             beside: false,
                         });
                     }
@@ -1172,6 +1201,7 @@ impl Render for TasksView {
                 Button::new("more-tasks", "Show more actions").on_click(cx.listener(
                     |this, _, _, cx| {
                         this.limit += PAGE;
+                        this.remember(cx);
                         this.query(cx);
                     },
                 )),
@@ -1248,11 +1278,22 @@ impl Render for TasksView {
                 window.focus(&this.filter.focus_handle(cx), cx)
             }))
             .child(
-                h_flex().gap_2().child(Label::new("Tasks")).child(
-                    Label::new(format!("{} open actions", counts.open()))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                ),
+                h_flex()
+                    .gap_2()
+                    .child(Label::new("Tasks"))
+                    .child(
+                        Label::new(format!("{} open actions", counts.open()))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        Button::new("tasks-help", "How tasks work")
+                            .style(ButtonStyle::Subtle)
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(crate::help::OpenHelp), cx)
+                            }),
+                    ),
             )
             .child(capture)
             .child(tabs)
@@ -1286,6 +1327,21 @@ impl Render for TasksView {
                 })
                 .size(LabelSize::Small)
                 .color(Color::Muted),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Label::new(format!("{} · Markdown tasks", self.save_status()))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        Label::new("Capture → Clarify → Do → Review")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
             )
     }
 }

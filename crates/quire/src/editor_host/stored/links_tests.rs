@@ -1,5 +1,5 @@
 use super::super::*;
-use super::tests::{Notebook, active, draw, key, open_notebook, read, wait_until};
+use super::tests::{Notebook, active, caret_text, draw, key, open_notebook, read, wait_until};
 use crate::references::{Follow, Target};
 use gpui::TestAppContext;
 use quire_core::workspace::Destination;
@@ -10,7 +10,7 @@ pub(in crate::editor_host::stored) const PAGES: [(&str, &str, &str); 3] = [
         "Home.md",
         "- see [[Target]] and ((blk))\n- [[Missing Page]]\n",
     ),
-    ("t", "Target.md", "- target ^blk\n"),
+    ("t", "Target.md", "- intro\n- target ^blk\n"),
     ("o", "Other.md", "- other\n"),
 ];
 
@@ -59,8 +59,14 @@ fn vim_keys_follow_page_and_block_links_beside_and_to_backlinks(cx: &mut TestApp
     cx.simulate_keystrokes(notebook.window.into(), "f ( ctrl-w d");
     wait_until(cx, "the block's page beside", |cx| {
         side(&notebook, cx).as_deref() == Some("t")
+            && read(&notebook, cx, |view, _| view.nav.jump.is_none())
     });
     assert_eq!(active(&notebook, cx), "h");
+    assert_eq!(
+        caret_text(&notebook, true, cx),
+        "target ^blk",
+        "a followed block link reveals its block"
+    );
 
     focus_home(&notebook, cx);
     cx.simulate_keystrokes(notebook.window.into(), "0 f T g shift-a");

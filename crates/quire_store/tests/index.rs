@@ -491,6 +491,56 @@ fn task_rows_keep_date_sources_through_layout_changes_and_overlays() -> Result<(
 }
 
 #[test]
+fn linked_tasks_come_from_other_pages_linking_by_any_name() -> Result<()> {
+    use quire_core::workspace::TaskStatus;
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "m", "Meeting.md", "m")?;
+    save(&store, "w", "Work.md", "w")?;
+    let linked = |text: &str, state: &str, links: &[&str]| IndexedTask {
+        links: links.iter().map(|link| link.to_string()).collect(),
+        ..task(text, state, Default::default())
+    };
+    let analyses = [
+        (
+            "Meeting.md",
+            PageIndex {
+                tasks: vec![linked("Own task", "next", &["Meeting"])],
+                ..Default::default()
+            },
+        ),
+        (
+            "Work.md",
+            PageIndex {
+                tasks: vec![
+                    linked("Send notes", "next", &["meeting"]),
+                    linked("Booked room", "done", &["Meeting.md"]),
+                    linked("Unrelated", "next", &["Elsewhere"]),
+                ],
+                ..Default::default()
+            },
+        ),
+    ];
+    let index = QueryIndex::open(&database, config(1))?;
+    analyze_all(&index, &analyses)?;
+    let tasks = index.linked_tasks("m")?;
+    let texts: Vec<&str> = tasks.iter().map(|task| task.text.as_str()).collect();
+    assert_eq!(texts, ["Send notes", "Booked room"]);
+    let shown = |status| {
+        tasks
+            .iter()
+            .filter(|task| task.has_status(status, "2026-10-30"))
+            .count()
+    };
+    assert_eq!(
+        TaskStatus::ALL.map(shown),
+        [2, 1, 0, 1],
+        "All, Open, Due, Done"
+    );
+    Ok(())
+}
+
+#[test]
 fn block_choices_and_previews_read_live_blocks_and_refuse_ambiguous_ids() -> Result<()> {
     use quire_store::index::Overlay;
     let root = tempfile::tempdir()?;
@@ -709,5 +759,109 @@ fn relocation_candidates_include_pages_not_analyzed_yet() -> Result<()> {
     assert_eq!(candidates(&index)?, ["Old.md", "Links.md"]);
     analyze_all(&index, &[])?;
     assert_eq!(candidates(&index)?, ["Old.md"]);
+    Ok(())
+}
+
+#[test]
+fn search_reads_unsaved_text_of_open_pages_instead_of_their_last_save() -> Result<()> {
+    use quire_store::index::Overlay;
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "s", "Source.md", "- saved wombat")?;
+    save(&store, "o", "Other.md", "- other wombat")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    let says = |text: &str, id: Option<&str>| PageIndex {
+        blocks: vec![IndexedBlock {
+            text: text.into(),
+            id: id.map(str::to_owned),
+            ..block(None, 0)
+        }],
+        ..Default::default()
+    };
+    analyze_all(
+        &index,
+        &[
+            ("Source.md", says("saved wombat", None)),
+            ("Other.md", says("other wombat", None)),
+        ],
+    )?;
+    let hits = |query: &str| -> Result<Vec<(String, String, Option<String>)>> {
+        Ok(index
+            .search(query)?
+            .into_iter()
+            .map(|hit| (hit.source.title, hit.snippet, hit.block_id))
+            .collect())
+    };
+    assert_eq!(hits("wombat")?.len(), 2);
+    let by_title = hits("source")?.len();
+    index.set_overlay(
+        &JsString::from("s"),
+        &Overlay {
+            path: "Source.md".into(),
+            title: "Source".into(),
+            index: says("typed quokka", Some("b1")),
+        },
+    )?;
+    assert_eq!(
+        hits("quokka")?,
+        [("Source".into(), "typed quokka".into(), Some("b1".into()))],
+        "unsaved text is found with its block"
+    );
+    assert_eq!(
+        hits("wombat")?,
+        [("Other".into(), "other wombat".into(), None)],
+        "the open page's saved text no longer matches"
+    );
+    assert_eq!(
+        hits("source")?.len(),
+        by_title,
+        "the title matches the unsaved rows in place of the saved ones"
+    );
+    index.release_overlay(&JsString::from("s"))?;
+    assert!(hits("quokka")?.is_empty());
+    assert_eq!(hits("wombat")?.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn tagged_tasks_pair_each_tagged_task_block_with_its_task() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "a", "A.md", "")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    let block_at = |from: u32| IndexedBlock {
+        content_from: from + 2,
+        ..block(None, from)
+    };
+    let tagged = |from: u32| quire_store::index::IndexedTag {
+        tag: "#plan".into(),
+        from: from + 2,
+        block_id: None,
+        snippet: "s".into(),
+    };
+    let task_at = |from: u32, text: &str| IndexedTask {
+        from,
+        ..task(text, "next", Default::default())
+    };
+    analyze_all(
+        &index,
+        &[(
+            "A.md",
+            PageIndex {
+                blocks: vec![block_at(0), block_at(20), block_at(40)],
+                tagged: vec![tagged(0), tagged(20)],
+                tasks: vec![task_at(0, "Tagged task"), task_at(40, "Untagged task")],
+                ..Default::default()
+            },
+        )],
+    )?;
+    let tasks = index.tagged_tasks("plan")?;
+    assert_eq!(
+        tasks.len(),
+        1,
+        "the tagged plain block and the untagged task are left out"
+    );
+    let ((_, from), task) = tasks.into_iter().next().unwrap();
+    assert_eq!((from, task.text.as_str()), (2, "Tagged task"));
     Ok(())
 }

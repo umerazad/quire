@@ -70,12 +70,12 @@ impl StoredWindow {
             &list,
             window,
             |this, _, event: &TasksEvent, window, cx| match event {
-                TasksEvent::Open { page, beside } => {
-                    this.open_page(page.clone(), *beside, window, cx)
+                TasksEvent::Open { page, jump, beside } => {
+                    this.open_page_at(page.clone(), jump.clone(), *beside, window, cx)
                 }
                 TasksEvent::Remember(choices) => {
-                    this.nav.workspace.tasks = choices.clone();
-                    this.persist(cx);
+                    let choices = choices.clone();
+                    this.remember(|workspace| workspace.tasks = choices, cx);
                 }
             },
         )

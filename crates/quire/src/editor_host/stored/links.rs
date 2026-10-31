@@ -104,6 +104,21 @@ impl Notebook for WindowNotebook {
             .ok();
     }
 
+    fn show_page_at(
+        &self,
+        page: &str,
+        jump: crate::navigation::Jump,
+        beside: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.window
+            .update(cx, |this, cx| {
+                this.open_page_at(page.to_owned(), Some(jump), beside, window, cx)
+            })
+            .ok();
+    }
+
     fn writers(
         &self,
         _: &App,
@@ -240,7 +255,12 @@ impl StoredWindow {
                     self.visit(Destination::page(id), window, cx);
                     self.focus_references(window, cx);
                 } else {
-                    self.open_page(id, follow.beside, window, cx);
+                    let block = match &follow.target {
+                        Target::Block(target) => target.rsplit("#^").next(),
+                        Target::Page(name) => name.split_once("#^").map(|(_, id)| id),
+                    };
+                    let jump = block.map(crate::navigation::Jump::block);
+                    self.open_page_at(id, jump, follow.beside, window, cx);
                 }
                 if let (true, Target::Page(name)) = (arrival.missing_heading, &follow.target) {
                     self.nav.error = Some(

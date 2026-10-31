@@ -1,5 +1,7 @@
 use super::super::*;
-use super::tests::{Notebook, active, draw, key, open_notebook, read, settle, wait_until};
+use super::tests::{
+    Notebook, active, draw, key, open_configured, open_notebook, read, settle, wait_until,
+};
 use gpui::TestAppContext;
 use quire_core::daily::{DailyCalendar, DailyLayout, format_daily, write_settings};
 use quire_store::{index::SETTINGS_PAGE, notebook::NotebookStore};
@@ -213,4 +215,62 @@ fn unreadable_settings_stay_read_only_and_unchanged(cx: &mut TestAppContext) {
         .unwrap();
     cx.run_until_parked();
     assert_eq!(settings_text(&notebook).as_deref(), Some("{\"version\":2}"));
+}
+
+/// Opens the journal notebook on `a` the way a launch does, with the clock at `now`.
+fn launch_journal(now: i64, cx: &mut TestAppContext) -> Notebook {
+    let (today, _) = title(&journal(), NOW);
+    let settings = write_settings(&journal());
+    let journal_path = format!("Journal/{today}.md");
+    cx.update(|cx| init(cx).unwrap());
+    open_configured(
+        &[
+            ("a", "Alpha.md", "- start\n"),
+            (SETTINGS_PAGE, "notebook-settings", &settings),
+            ("j", &journal_path, "- journal\n"),
+        ],
+        "a",
+        |view| {
+            view.nav.daily.now = Rc::new(move || now);
+            view.nav.daily.open_on_launch = true;
+        },
+        cx,
+    )
+}
+
+#[gpui::test]
+fn a_launch_starts_on_todays_page_after_the_last_page(cx: &mut TestAppContext) {
+    let notebook = launch_journal(NOW, cx);
+    wait_until(cx, "today's journal page", |cx| {
+        active(&notebook, cx) == "j"
+    });
+    read(&notebook, cx, |view, _| {
+        assert!(!view.nav.daily.open_on_launch);
+        assert!(view.nav.error.is_none());
+    });
+    cx.dispatch_action(notebook.window.into(), crate::navigation::GoBack);
+    wait_until(cx, "the restored page behind it", |cx| {
+        active(&notebook, cx) == "a"
+    });
+}
+
+#[gpui::test]
+fn a_launch_creates_todays_page_from_the_configured_layout(cx: &mut TestAppContext) {
+    let notebook = launch_journal(NOW + DAY, cx);
+    let expected = format!("Journal/{}.md", title(&journal(), NOW + DAY).0);
+    wait_until(cx, "the created daily page", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.page
+                .read(cx)
+                .loaded()
+                .is_some_and(|page| page.path.as_deref() == Some(expected.as_str()))
+        })
+    });
+}
+
+#[gpui::test]
+fn opening_without_a_launch_keeps_the_restored_page(cx: &mut TestAppContext) {
+    let (notebook, _, _) = journal_notebook(cx);
+    settle(&notebook, cx);
+    assert_eq!(active(&notebook, cx), "a");
 }

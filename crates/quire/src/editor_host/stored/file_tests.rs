@@ -452,3 +452,67 @@ fn a_rename_is_followed_until_the_page_list_shows_its_new_title(cx: &mut TestApp
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn new_folder_here_shows_an_empty_folder_until_it_is_deleted(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&PAGES, "k", cx);
+    let folders = |cx: &mut TestAppContext| {
+        read(&notebook, cx, |view, _| {
+            view.file_rows()
+                .into_iter()
+                .filter(|row| row.kind == quire_core::workspace::TreeKind::Folder)
+                .map(|row| row.path)
+                .collect::<Vec<_>>()
+        })
+    };
+    cx.simulate_keystrokes(notebook.window.into(), &key("shift-e"));
+    cx.simulate_keystrokes(notebook.window.into(), "home");
+    cx.dispatch_action(notebook.window.into(), crate::navigation::NewFolderHere);
+    draw(&notebook, cx);
+    let typed = read(&notebook, cx, |view, cx| {
+        view.nav.dialog.as_ref().unwrap().read(cx).name(cx)
+    });
+    assert_eq!(typed.as_deref(), Some("Projects/"));
+    cx.simulate_input(notebook.window.into(), "Deep");
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    assert_eq!(
+        dialog_error(&notebook, cx).as_deref(),
+        Some("Projects/Deep already exists. Choose another name for the new folder.")
+    );
+    cx.simulate_input(notebook.window.into(), "er/../x");
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    assert_eq!(
+        dialog_error(&notebook, cx).as_deref(),
+        Some(quire_core::relocate::INVALID_PATH)
+    );
+    for _ in 0.."/../x".len() {
+        cx.simulate_keystrokes(notebook.window.into(), "backspace");
+    }
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    assert!(read(&notebook, cx, |view, _| view.nav.dialog.is_none()));
+    assert_eq!(
+        folders(cx),
+        ["Projects", "Projects/Deep", "Projects/Deeper"]
+    );
+    read(&notebook, cx, |view, _| {
+        assert_eq!(view.nav.workspace.folders, ["Projects/Deeper"]);
+        assert_eq!(
+            view.file_rows()[view.nav.browsers.files_selected].path,
+            "Projects/Deeper",
+            "the new folder is highlighted"
+        );
+    });
+
+    cx.simulate_keystrokes(notebook.window.into(), &key("shift-e"));
+    cx.simulate_keystrokes(notebook.window.into(), "delete");
+    assert!(
+        read(&notebook, cx, |view, _| view.nav.dialog.is_none()),
+        "a folder holding nothing goes without asking"
+    );
+    assert_eq!(folders(cx), ["Projects", "Projects/Deep"]);
+    assert!(read(&notebook, cx, |view, _| view
+        .nav
+        .workspace
+        .folders
+        .is_empty()));
+}

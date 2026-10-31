@@ -67,6 +67,17 @@ pub trait Notebook {
     fn page_path(&self, buffer: &Entity<Buffer>, cx: &App) -> Option<String>;
     /// Opens the page with this ID, beside the current one when asked.
     fn show_page(&self, page: &str, beside: bool, window: &mut Window, cx: &mut App);
+    /// Opens the page with this ID with the caret where `jump` says.
+    fn show_page_at(
+        &self,
+        page: &str,
+        _jump: crate::navigation::Jump,
+        beside: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.show_page(page, beside, window, cx)
+    }
     /// The open pages and the store, for task changes written to other pages.
     fn writers(
         &self,

@@ -353,6 +353,7 @@ fn search_expression(query: &str) -> Option<String> {
 
 impl QueryIndex {
     /// The reference `search`: up to 40 block and title hits by bm25 rank, with 24-token snippets.
+    /// An open page is searched in its unsaved text instead of its last save.
     pub fn search(&self, query: &str) -> Result<Vec<SearchHit>> {
         self.refresh()?;
         let Some(expression) = search_expression(query) else {
@@ -360,9 +361,18 @@ impl QueryIndex {
         };
         let rows: Vec<(PageRow, (String, Option<String>))> =
             self.connection.select_bound(&format!(
-                "SELECT {PAGE_COLUMNS},snippet(search,2,'','',' … ',24),search.block_id FROM search
-             JOIN pages p ON p.revision=search.revision
-             WHERE search MATCH ? AND p.deleted=0 ORDER BY bm25(search) LIMIT 40"
+                "SELECT revision,page,path,title,snippet,block_id FROM (
+               SELECT {PAGE_COLUMNS},snippet(search,2,'','',' … ',24) AS snippet,
+                 search.block_id AS block_id,bm25(search) AS rank FROM search
+               JOIN pages p ON p.revision=search.revision
+               WHERE search MATCH ?1 AND p.deleted=0
+                 AND p.page NOT IN (SELECT page FROM temp.overlay_pages)
+             UNION ALL
+               SELECT {PAGE_COLUMNS},snippet(overlay_search,2,'','',' … ',24),
+                 overlay_search.block_id,bm25(overlay_search) FROM temp.overlay_search
+               JOIN temp.overlay_pages p ON p.revision=overlay_search.revision
+               WHERE overlay_search MATCH ?1
+             ) ORDER BY rank LIMIT 40"
             ))?(expression)?;
         rows.into_iter()
             .map(|(page, (snippet, block_id))| {

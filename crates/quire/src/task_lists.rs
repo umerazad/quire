@@ -406,13 +406,24 @@ impl TaskListView {
         rows
     }
 
-    fn open(&self, page: &str, beside: bool, window: &mut Window, cx: &mut App) {
+    /// Opens `page`, at `jump` when a task row names its block.
+    fn open(
+        &self,
+        page: &str,
+        jump: Option<crate::navigation::Jump>,
+        beside: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         let Some(editor) = self.editor.upgrade() else {
             return;
         };
         if let Some(host) = crate::references::host(editor.read(cx)) {
             let notebook = host.read(cx).notebook().clone();
-            notebook.show_page(page, beside, window, cx);
+            match jump {
+                Some(jump) => notebook.show_page_at(page, jump, beside, window, cx),
+                None => notebook.show_page(page, beside, window, cx),
+            }
         }
     }
 
@@ -484,6 +495,7 @@ impl TaskListView {
         let ticked = task.clone();
         let cycled = task.clone();
         let page = task.source.page.to_lossy_string();
+        let jump = crate::navigation::Jump::at(task.id.clone(), task.from);
         h_flex()
             .gap_2()
             .child(
@@ -516,7 +528,13 @@ impl TaskListView {
                         Color::Default
                     }))
                     .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                        this.open(&page, event.modifiers().shift, window, cx)
+                        this.open(
+                            &page,
+                            Some(jump.clone()),
+                            event.modifiers().shift,
+                            window,
+                            cx,
+                        )
                     })),
             )
             .child(
@@ -573,7 +591,7 @@ impl Render for TaskListView {
                             .label_size(LabelSize::Small)
                             .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall))
                             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                                this.open(&page, event.modifiers().shift, window, cx)
+                                this.open(&page, None, event.modifiers().shift, window, cx)
                             }))
                             .into_any_element(),
                         None => Label::new(label)

@@ -1,5 +1,5 @@
 use super::super::*;
-use super::tests::{Notebook, active, open_notebook, read, save, wait_until};
+use super::tests::{Notebook, active, caret_text, open_notebook, read, save, wait_until};
 use crate::navigation::{
     ShowTags,
     context_rows::ContextRow,
@@ -170,9 +170,14 @@ fn tag_pages_group_by_page_follow_saves_and_open_sources(cx: &mut TestAppContext
             view.nav
                 .side
                 .as_ref()
-                .is_some_and(|side| side.page.read(cx).id() == "b")
+                .is_some_and(|side| side.editor.is_some() && side.page.read(cx).id() == "b")
         })
     });
+    assert_eq!(
+        caret_text(&notebook, true, cx),
+        "fourth #Plan too",
+        "the source block is revealed beside"
+    );
     notebook
         .window
         .update(cx, |view, window, cx| {
@@ -182,6 +187,10 @@ fn tag_pages_group_by_page_follow_saves_and_open_sources(cx: &mut TestAppContext
         .unwrap();
     cx.simulate_keystrokes(notebook.window.into(), "enter");
     assert_eq!(active(&notebook, cx), "b");
+    wait_until(cx, "the revealed block", |cx| {
+        read(&notebook, cx, |view, _| view.editor.is_some())
+    });
+    assert_eq!(caret_text(&notebook, false, cx), "fourth #Plan too");
 }
 
 #[test]
@@ -428,4 +437,56 @@ fn long_previews_list_twenty_changes_until_asked_for_more(cx: &mut TestAppContex
     assert_eq!(shown(cx), (20, 5));
     edits.update(cx, |edits, cx| edits.show_more(cx));
     assert_eq!(shown(cx), (25, 0));
+}
+
+#[gpui::test]
+fn tag_pages_filter_tasks_by_status_and_remember_it(cx: &mut TestAppContext) {
+    use quire_core::workspace::TaskStatus;
+    let notebook = open_notebook(
+        &[(
+            "w",
+            "Work.md",
+            "- [ ] Book the venue #plan\n- [x] Sent the deck #plan\n- Plain note #plan\n",
+        )],
+        "w",
+        cx,
+    );
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.visit(
+                Destination::Tag {
+                    tag: "#plan".into(),
+                },
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    wait_until(cx, "the tag page", |cx| page_rows(&notebook, cx).len() == 4);
+    let page = read(&notebook, cx, |view, _| view.shown_tag_page().unwrap());
+    let blocks = |status: TaskStatus, cx: &mut TestAppContext| {
+        page.update(cx, |page, cx| page.set_status(status, cx));
+        texts(&page_rows(&notebook, cx))
+    };
+    assert_eq!(
+        blocks(TaskStatus::Open, cx),
+        ["Work (1)", "  [ ] Book the venue #plan"]
+    );
+    assert_eq!(
+        blocks(TaskStatus::Done, cx),
+        ["Work (1)", "  [x] Sent the deck #plan"]
+    );
+    assert_eq!(blocks(TaskStatus::Due, cx), Vec::<String>::new());
+    assert_eq!(blocks(TaskStatus::All, cx).len(), 4);
+    blocks(TaskStatus::Done, cx);
+    wait_until(cx, "the remembered status", |cx| {
+        read(&notebook, cx, |view, _| {
+            view.nav
+                .workspace
+                .tag_pages
+                .get("plan")
+                .is_some_and(|choices| choices.status == TaskStatus::Done)
+        })
+    });
 }

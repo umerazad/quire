@@ -2,6 +2,7 @@
 //! grouped under a heading per page, each with its parents above and nested blocks below,
 //! laid out as single-line rows for a virtualized list.
 
+use super::Jump;
 use quire_store::index::Outline;
 use ui::{
     Color, Icon, IconName, Label, LabelCommon, LabelSize, ListItem, ListItemSpacing, Toggleable,
@@ -17,19 +18,23 @@ pub enum ContextRow {
     },
     Parents {
         page: String,
+        jump: Jump,
         text: String,
     },
     Block {
         page: String,
+        jump: Jump,
         text: String,
     },
     Child {
         page: String,
+        jump: Jump,
         depth: u32,
         text: String,
     },
     More {
         page: String,
+        jump: Jump,
         count: usize,
     },
 }
@@ -40,6 +45,8 @@ pub struct ContextItem<'a> {
     pub page: String,
     pub title: &'a str,
     pub text: &'a str,
+    /// Where opening the block puts the caret.
+    pub jump: Jump,
     pub outline: &'a Outline,
 }
 
@@ -51,6 +58,17 @@ impl ContextRow {
             | Self::Block { page, .. }
             | Self::Child { page, .. }
             | Self::More { page, .. } => page,
+        }
+    }
+
+    /// Where opening the row puts the caret; a page heading opens the page at its top.
+    pub fn jump(&self) -> Option<&Jump> {
+        match self {
+            Self::Page { .. } => None,
+            Self::Parents { jump, .. }
+            | Self::Block { jump, .. }
+            | Self::Child { jump, .. }
+            | Self::More { jump, .. } => Some(jump),
         }
     }
 
@@ -125,11 +143,13 @@ pub fn context_rows<'a>(items: impl IntoIterator<Item = ContextItem<'a>>) -> Vec
         if !item.outline.ancestors.is_empty() {
             rows.push(ContextRow::Parents {
                 page: page.clone(),
+                jump: item.jump.clone(),
                 text: item.outline.ancestors.join(" › "),
             });
         }
         rows.push(ContextRow::Block {
             page: page.clone(),
+            jump: item.jump.clone(),
             text: item.text.to_owned(),
         });
         rows.extend(
@@ -138,6 +158,7 @@ pub fn context_rows<'a>(items: impl IntoIterator<Item = ContextItem<'a>>) -> Vec
                 .iter()
                 .map(|(depth, text)| ContextRow::Child {
                     page: page.clone(),
+                    jump: item.jump.clone(),
                     depth: *depth,
                     text: text.clone(),
                 }),
@@ -145,6 +166,7 @@ pub fn context_rows<'a>(items: impl IntoIterator<Item = ContextItem<'a>>) -> Vec
         if item.outline.more_children > 0 {
             rows.push(ContextRow::More {
                 page,
+                jump: item.jump,
                 count: item.outline.more_children,
             });
         }
@@ -169,6 +191,7 @@ mod tests {
             title,
             text,
             outline,
+            jump: Jump::default(),
         };
         let rows = context_rows([
             item("a", "A", "Met [[Ana]]", &nested),

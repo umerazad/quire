@@ -26,7 +26,7 @@ mod sync;
 
 pub(super) use folder::FolderOptions;
 pub(super) use instance::{Handover, handle_launch};
-pub(super) use profiles::open_location;
+pub(super) use profiles::{launch_location, open_location};
 pub(crate) use profiles::{dispatch_to_notebook, notebook_windows, open_in_profile};
 
 pub(super) fn bind_keys(cx: &mut App) {
@@ -135,6 +135,8 @@ pub(super) struct OpenOptions {
     page: String,
     /// The synced folder saves publish to and other computers' changes come from.
     folder: Option<PathBuf>,
+    /// Starts on today's daily page once the notebook is ready, as a launch does.
+    today: bool,
 }
 
 impl OpenOptions {
@@ -184,12 +186,14 @@ impl OpenOptions {
             writer: take("--writer-id")?,
             page: take("--page-id")?,
             folder,
+            today: false,
         }))
     }
 
     pub fn open(self, cx: &mut App) -> Result<(), String> {
         let database = self.database.clone();
         let notebook = self.notebook.clone();
+        let today = self.today;
         crate::profiles::check_open(
             &quire_store::profiles::Notebook::Store {
                 database: database.clone(),
@@ -205,7 +209,11 @@ impl OpenOptions {
         let options = crate::title_bar::options(1100., 760., cx);
         cx.open_window(options, move |window, cx| {
             window.set_window_title("Quire Native");
-            cx.new(|cx| StoredWindow::new(session, page, database, notebook, window, cx))
+            cx.new(|cx| {
+                let mut this = StoredWindow::new(session, page, database, notebook, window, cx);
+                this.nav.daily.open_on_launch = today;
+                this
+            })
         }).map_err(|error| format!("Cannot open Quire's window: {error}. Check desktop and graphics access, then retry."))?;
         cx.activate(true);
         Ok(())
@@ -357,7 +365,7 @@ impl StoredWindow {
         this.watch_backups(window, cx);
         this.watch_sync(window, cx);
         this.watch_live_sync(window, cx);
-        this.load_settings(cx);
+        this.load_settings(window, cx);
         #[cfg(unix)]
         this.offer_notebook_tools(cx);
         this
@@ -406,10 +414,12 @@ impl StoredWindow {
             editor
         });
         self.link_editors(&editor, window, cx);
+        self.track_editor_focus(&editor, window, cx);
         if let Some(previous) = previous {
             window.focus(&previous, cx);
         }
         self.cache_editor(page, editor.clone());
+        self.keep_reading_position(&editor, page, false, window, cx);
         Some(editor)
     }
 
@@ -428,6 +438,7 @@ impl StoredWindow {
             {
                 self.focus_active(window, cx);
             }
+            self.apply_jump(window, cx);
         }
     }
 

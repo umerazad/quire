@@ -6,7 +6,7 @@ use crate::navigation::{
     tag_page::{TagPageEvent, TagPageView},
     tags::{TagsEvent, TagsView},
 };
-use quire_core::workspace::{BrowserView, Destination};
+use quire_core::workspace::{BrowserView, Destination, TagChoices};
 use quire_store::index::tag_key;
 
 #[derive(Default)]
@@ -32,11 +32,16 @@ impl StoredWindow {
                         let session = session.borrow();
                         (session.open_pages(), session.storage())
                     });
-                    let list = cx.new(|cx| TagsView::new(writers, window, cx));
+                    let choices = self.nav.workspace.tag_list.clone();
+                    let list = cx.new(|cx| TagsView::new(choices, writers, window, cx));
                     cx.subscribe_in(&list, window, |this, _, event: &TagsEvent, window, cx| {
                         match event {
                             TagsEvent::Open(tag) => {
                                 this.visit(Destination::Tag { tag: tag.clone() }, window, cx)
+                            }
+                            TagsEvent::Remember(choices) => {
+                                let choices = choices.clone();
+                                this.remember(|workspace| workspace.tag_list = choices, cx)
                             }
                         }
                     })
@@ -59,14 +64,22 @@ impl StoredWindow {
         let page = match self.nav.tags.pages.get(&key).cloned() {
             Some(page) => page,
             None => {
-                let page = cx.new(|cx| TagPageView::new(tag, window, cx));
+                let choices = self
+                    .nav
+                    .workspace
+                    .tag_pages
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or_default();
+                let page = cx.new(|cx| TagPageView::new(tag, choices, window, cx));
                 cx.subscribe_in(
                     &page,
                     window,
                     |this, _, event: &TagPageEvent, window, cx| match event {
-                        TagPageEvent::Open { page, beside } => {
-                            this.open_page(page.clone(), *beside, window, cx)
+                        TagPageEvent::Open { page, jump, beside } => {
+                            this.open_page_at(page.clone(), jump.clone(), *beside, window, cx)
                         }
+                        TagPageEvent::Remember => this.remember_tag_page(cx),
                     },
                 )
                 .detach();
@@ -101,8 +114,34 @@ impl StoredWindow {
             list.update(cx, |list, cx| list.refresh(&client, cx));
         }
         if let Some(page) = self.shown_tag_page() {
-            page.update(cx, |page, cx| page.refresh(&client, cx));
+            let today = self.today().unwrap_or_default();
+            page.update(cx, |page, cx| page.refresh(&client, today, cx));
         }
+    }
+
+    /// Records the shown tag page's filter and first row shown.
+    pub(in crate::editor_host::stored) fn remember_tag_page(
+        &mut self,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some((key, page)) = self
+            .nav
+            .tags
+            .shown
+            .as_deref()
+            .map(tag_key)
+            .zip(self.shown_tag_page())
+        else {
+            return;
+        };
+        let choices = page.read(cx).choices(cx);
+        self.remember(
+            |workspace| match choices == TagChoices::default() {
+                true => _ = workspace.tag_pages.remove(&key),
+                false => _ = workspace.tag_pages.insert(key, choices),
+            },
+            cx,
+        );
     }
 
     pub(in crate::editor_host::stored) fn shown_tag_page(&self) -> Option<Entity<TagPageView>> {

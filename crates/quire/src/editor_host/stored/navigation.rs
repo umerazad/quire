@@ -26,10 +26,14 @@ mod daily;
 mod file_views;
 #[path = "history_views.rs"]
 mod history_views;
+#[path = "insert_anywhere.rs"]
+mod insert_anywhere;
 #[path = "menu_views.rs"]
 mod menu_views;
 #[path = "reference_views.rs"]
 mod reference_views;
+#[path = "reveal.rs"]
+mod reveal;
 #[path = "tag_views.rs"]
 mod tag_views;
 #[path = "task_views.rs"]
@@ -56,10 +60,16 @@ pub(super) struct Navigation {
     pub(super) pages: Vec<ListedPage>,
     catalogue: Option<Task<()>>,
     saving: Option<Task<()>>,
+    /// A save of view state waiting for typing or scrolling to pause.
+    remembering: Option<Task<()>>,
     saves: usize,
     creating: Option<Task<()>>,
     pub(super) error: Option<SharedString>,
     pub(super) side: Option<SidePane>,
+    /// Where the caret goes once the page just opened can show it.
+    pub(super) jump: Option<reveal::PendingJump>,
+    /// The page editor that took focus last, where Vim's Insert keys typed elsewhere go.
+    pub(super) last_editor: Option<gpui::WeakEntity<editor::Editor>>,
     /// The answer pane beside the main page.
     pub(super) answer: answer_views::AnswerState,
     pub(super) view: Option<BrowserView>,
@@ -70,6 +80,9 @@ pub(super) struct Navigation {
     pub(super) tasks: task_views::TaskViews,
     /// Linked reference panels by page, kept for the session so each keeps its filter.
     pub(super) references: HashMap<String, Entity<crate::navigation::references::ReferencesView>>,
+    /// Linked task lists by page, kept for the session so each keeps its status filter.
+    pub(super) linked_tasks:
+        HashMap<String, Entity<crate::navigation::linked_tasks::LinkedTasksView>>,
     /// The guide beside the Templates page, with the ID of the page it belongs to.
     pub(super) templates_guide: Option<(String, Entity<crate::templates::guide::TemplatesGuide>)>,
     /// A question a template asks while it is inserted.
@@ -77,6 +90,17 @@ pub(super) struct Navigation {
     /// Holds focus on the window while the shown page loads, so window keys still dispatch and
     /// the page takes focus on load only if nothing moved it meanwhile.
     pub(super) loading_focus: gpui::FocusHandle,
+}
+
+/// A closing window writes view state still waiting for typing or scrolling to pause.
+impl Drop for Navigation {
+    fn drop(&mut self) {
+        if self.remembering.take().is_some()
+            && let Err(error) = self.file.save(&self.workspace)
+        {
+            eprintln!("{error}");
+        }
+    }
 }
 
 impl Navigation {
@@ -101,10 +125,13 @@ impl Navigation {
             pages: Vec::new(),
             catalogue: None,
             saving: None,
+            remembering: None,
             saves: 0,
             creating: None,
             error: None,
             side: None,
+            jump: None,
+            last_editor: None,
             answer: answer_views::AnswerState::default(),
             view: None,
             browsers: chrome::Browsers::default(),
@@ -113,6 +140,7 @@ impl Navigation {
             tags: tag_views::TagViews::default(),
             tasks: task_views::TaskViews::default(),
             references: HashMap::new(),
+            linked_tasks: HashMap::new(),
             templates_guide: None,
             template_prompt: None,
             loading_focus,
@@ -121,7 +149,7 @@ impl Navigation {
 
     #[cfg(test)]
     pub(super) fn saving_idle(&self) -> bool {
-        self.saving.is_none()
+        self.saving.is_none() && self.remembering.is_none()
     }
 
     pub(super) fn title(&self, page: &str) -> Option<&str> {
@@ -217,6 +245,20 @@ impl StoredWindow {
         );
         let before = self.nav.workspace.clone();
         self.nav.workspace.retain_pages(|id| present.contains(id));
+        let pages = &self.nav.pages;
+        let workspace = &mut self.nav.workspace;
+        if workspace
+            .pages
+            .namespace
+            .as_deref()
+            .is_some_and(|namespace| {
+                !pages.iter().any(|listed| {
+                    quire_core::workspace::in_namespace(&listed.page.title, namespace)
+                })
+            })
+        {
+            workspace.pages.namespace = None;
+        }
         self.nav
             .history
             .retain(|item| item.page_id().is_none_or(|id| present.contains(id)));
@@ -225,7 +267,31 @@ impl StoredWindow {
         }
     }
 
+    /// Records view state, such as a filter, list size, or reading position, and saves it once
+    /// typing or scrolling pauses.
+    pub(super) fn remember(
+        &mut self,
+        change: impl FnOnce(&mut quire_core::workspace::Workspace),
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let before = self.nav.workspace.clone();
+        change(&mut self.nav.workspace);
+        if self.nav.workspace == before {
+            return;
+        }
+        self.nav.remembering = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(400))
+                .await;
+            this.update(cx, |this, cx| {
+                this.persist(cx);
+            })
+            .ok();
+        }));
+    }
+
     fn persist(&mut self, cx: &mut gpui::Context<Self>) {
+        self.nav.remembering = None;
         let file = self.nav.file.clone();
         let workspace = self.nav.workspace.clone();
         let previous = self.nav.saving.take();
@@ -270,6 +336,8 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        self.remember_tag_page(cx);
+        self.nav.jump = None;
         self.nav.view = match destination {
             Destination::Browser { view } => Some(*view),
             Destination::Page { .. } | Destination::Tag { .. } => None,
@@ -374,7 +442,13 @@ impl StoredWindow {
         cx: &mut gpui::Context<Self>,
     ) {
         match choice {
-            PaletteChoice::Open { page, .. } => self.open_page(page, beside, window, cx),
+            PaletteChoice::Open { page, block } => self.open_page_at(
+                page,
+                block.map(crate::navigation::Jump::block),
+                beside,
+                window,
+                cx,
+            ),
             PaletteChoice::Create { title } => self.create(title, folder, beside, window, cx),
         }
     }
@@ -426,6 +500,9 @@ impl StoredWindow {
 
     pub(super) fn register_navigation(div: gpui::Div, cx: &mut gpui::Context<Self>) -> gpui::Div {
         div.key_context(crate::navigation::NAVIGATION_CONTEXT)
+            .on_key_down(
+                cx.listener(|this, event, window, cx| this.insert_anywhere(event, window, cx)),
+            )
             .on_action(cx.listener(|this, _: &FindPage, window, cx| {
                 this.open_palette(PaletteMode::Find, window, cx)
             }))
@@ -642,6 +719,7 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        self.nav.jump = None;
         let page = self.session.borrow_mut().open_page(id.clone(), cx);
         self.watch(&page, window, cx);
         self.nav.side = Some(SidePane {
@@ -689,14 +767,17 @@ impl StoredWindow {
             editor
         });
         self.link_editors(&editor, window, cx);
+        self.track_editor_focus(&editor, window, cx);
         match (focus, previous) {
             (true, _) => window.focus(&editor.read(cx).source.focus_handle(cx), cx),
             (false, Some(previous)) => window.focus(&previous, cx),
             (false, None) => window.blur(cx),
         }
+        self.keep_reading_position(&editor, &page, true, window, cx);
         if let Some(side) = &mut self.nav.side {
             side.editor = Some(editor);
         }
+        self.apply_jump(window, cx);
     }
 }
 
@@ -762,8 +843,10 @@ impl StoredWindow {
                     .into_any_element(),
                 None => content,
             })
-            .when_some(self.shown_references(cx), |main, references| {
-                main.child(references)
+            .when_some(self.shown_linked_tasks(cx), |main, tasks| {
+                let listing = tasks.read(cx).lists_tasks();
+                main.child(tasks)
+                    .when(!listing, |main| main.children(self.shown_references(cx)))
             });
         let side = self.nav.side.as_ref().and_then(|side| side.editor.clone());
         let answer = self.nav.answer.pane.clone();

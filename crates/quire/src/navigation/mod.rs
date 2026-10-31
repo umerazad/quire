@@ -3,6 +3,7 @@
 
 pub mod context_rows;
 pub mod file_dialog;
+pub mod linked_tasks;
 pub mod live;
 pub mod page_history;
 pub mod palette;
@@ -76,11 +77,54 @@ gpui::actions!(
         RevealInFileManager,
         /// Creates a page in the highlighted Files folder, or beside the highlighted page.
         NewPageHere,
+        /// Creates a folder in the highlighted Files folder, or beside the highlighted page.
+        NewFolderHere,
     ]
 );
 
+/// Where an opened page puts its caret: the block with `block` as its ID, else the UTF-16
+/// offset `from` in the page's text, as the index reports both.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Jump {
+    pub block: Option<String>,
+    pub from: Option<u32>,
+}
+
+impl Jump {
+    pub fn block(id: impl Into<String>) -> Self {
+        Self {
+            block: Some(id.into()),
+            from: None,
+        }
+    }
+
+    pub fn at(block: Option<String>, from: u32) -> Self {
+        Self {
+            block,
+            from: Some(from),
+        }
+    }
+}
+
 /// The Files tree's own keys, beside the list keys it shares.
 pub const FILES_CONTEXT: &str = "QuireFiles";
+
+/// The first of `count` rows a virtualized list shows, or the row it is about to scroll to, for
+/// remembering where a list was read.
+pub fn first_shown(scroll: &gpui::UniformListScrollHandle, count: usize) -> usize {
+    let state = scroll.0.borrow();
+    if let Some(deferred) = &state.deferred_scroll_to_item {
+        return deferred.item_index;
+    }
+    let row = state
+        .last_item_size
+        .map(|size| size.contents.height / count.max(1) as f32)
+        .unwrap_or_default();
+    if count == 0 || row <= gpui::px(0.) {
+        return 0;
+    }
+    ((-state.base_handle.offset().y / row).floor().max(0.) as usize).min(count - 1)
+}
 
 /// Arrow, Home, End, Enter, and Shift-Enter for a virtualized list view: `step` moves the
 /// highlight and `confirm` opens the highlighted row, beside the page when `true`.
@@ -122,6 +166,27 @@ macro_rules! primary {
             concat!("ctrl-", $key)
         }
     };
+}
+
+/// The notebook keys bound again at a Vim page editor's depth. Off macOS, Vim binds Ctrl-K,
+/// Ctrl-N, Ctrl-J, Ctrl-W, and Ctrl-\ inside the editor, and a binding nearer the focus wins;
+/// these are bound after Vim's keymap, which wins the tie and drops Vim's Ctrl-W chords. An open
+/// completion menu keeps Ctrl-N.
+pub(crate) fn inside_pages(command: bool) -> Vec<KeyBinding> {
+    let [k, n, j, w, side] = if command {
+        ["cmd-k", "cmd-n", "cmd-j", "cmd-w", "cmd-\\"]
+    } else {
+        ["ctrl-k", "ctrl-n", "ctrl-j", "ctrl-w", "ctrl-\\"]
+    };
+    let context = format!("{NAVIGATION_CONTEXT} > Editor && vim_mode && !showing_completions");
+    let context = Some(context.as_str());
+    vec![
+        KeyBinding::new(k, FindPage, context),
+        KeyBinding::new(n, NewPage, context),
+        KeyBinding::new(j, OpenToday, context),
+        KeyBinding::new(w, CloseTab, context),
+        KeyBinding::new(side, ToggleSidePane, context),
+    ]
 }
 
 pub fn bind_keys(cx: &mut App) {
@@ -200,6 +265,11 @@ pub fn bind_keys(cx: &mut App) {
             Some("QuireTaskList"),
         ),
         KeyBinding::new(primary!("enter"), ToggleTagSelected, Some("QuireTags")),
+        KeyBinding::new(
+            primary!("enter"),
+            crate::tasks::ToggleTask,
+            Some("QuireLinkedTasks"),
+        ),
         KeyBinding::new("delete", DeleteFile, Some(FILES_CONTEXT)),
         KeyBinding::new(primary!("backspace"), DeleteFile, Some(FILES_CONTEXT)),
         KeyBinding::new("enter", menu::Confirm, Some(file_dialog::DIALOG_CONTEXT)),
@@ -249,6 +319,7 @@ pub fn bind_keys(cx: &mut App) {
         bindings.push(KeyBinding::new("alt-left", GoBack, context));
         bindings.push(KeyBinding::new("alt-right", GoForward, context));
     }
+    bindings.extend(inside_pages(cfg!(target_os = "macos")));
     cx.bind_keys(bindings);
 }
 
@@ -292,9 +363,12 @@ impl WorkspaceFile {
         entries.insert(self.notebook.clone(), value);
         let text =
             serde_json::to_vec(&Value::Object(entries)).map_err(|error| error.to_string())?;
-        let temporary = self.path.with_extension("json.tmp");
+        let temporary = self
+            .path
+            .with_extension(format!("{}.json.tmp", uuid::Uuid::new_v4()));
         std::fs::write(&temporary, text)
             .and_then(|()| std::fs::rename(&temporary, &self.path))
+            .inspect_err(|_| _ = std::fs::remove_file(&temporary))
             .map_err(|error| {
                 format!(
                     "Cannot save tabs and favorites to {}: {error}. Check write access to the notebook folder; your notes are unaffected.",

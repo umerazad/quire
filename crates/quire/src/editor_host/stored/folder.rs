@@ -32,6 +32,8 @@ pub(in crate::editor_host) struct FolderOptions {
     notices: Vec<String>,
     /// Quire's state folder for the notebook, when not the one in application data.
     state: Option<PathBuf>,
+    /// A launch without a chosen page, which starts on today's daily page as the reference does.
+    today: bool,
 }
 
 /// Opens the folder notebook at a path in a new window, showing the given notices.
@@ -82,6 +84,7 @@ impl FolderOptions {
         }
         Ok(Some(Self {
             root: root.into(),
+            today: page.is_none(),
             page,
             notices: Vec::new(),
             state: None,
@@ -95,6 +98,15 @@ impl FolderOptions {
             page: None,
             notices,
             state,
+            today: false,
+        }
+    }
+
+    /// Starts on today's daily page, as a launch does.
+    pub fn on_today(self) -> Self {
+        Self {
+            today: true,
+            ..self
         }
     }
 
@@ -114,7 +126,7 @@ impl FolderOptions {
             )
         })?;
         let state = self.state.unwrap_or_else(|| state_folder(&root));
-        show_folder_window(root, state, self.page, self.notices, cx)
+        show_folder_window_at(root, state, self.page, self.notices, self.today, cx)
     }
 }
 
@@ -126,6 +138,17 @@ pub(super) fn show_folder_window(
     state: PathBuf,
     page: Option<String>,
     notices: Vec<String>,
+    cx: &mut App,
+) -> Result<(), String> {
+    show_folder_window_at(root, state, page, notices, false, cx)
+}
+
+fn show_folder_window_at(
+    root: PathBuf,
+    state: PathBuf,
+    page: Option<String>,
+    notices: Vec<String>,
+    today: bool,
     cx: &mut App,
 ) -> Result<(), String> {
     crate::profiles::check_open(
@@ -176,6 +199,7 @@ pub(super) fn show_folder_window(
                 cx,
             );
             this.watch_folder(cx);
+            this.nav.daily.open_on_launch = today;
             this.folder
                 .notices
                 .extend(notices.into_iter().map(SharedString::from));

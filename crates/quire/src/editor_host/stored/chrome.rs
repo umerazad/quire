@@ -17,7 +17,6 @@ use ui::{
 #[derive(Default)]
 pub(in crate::editor_host::stored) struct Browsers {
     pub(in crate::editor_host::stored) filter: Option<Entity<Editor>>,
-    pub(in crate::editor_host::stored) namespace: Option<String>,
     pub(in crate::editor_host::stored) selected: usize,
     pub(in crate::editor_host::stored) list_focus: Option<FocusHandle>,
     scroll: UniformListScrollHandle,
@@ -79,6 +78,7 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        let query = self.nav.workspace.pages.query.clone();
         let filter = self
             .nav
             .browsers
@@ -87,10 +87,13 @@ impl StoredWindow {
                 let editor = cx.new(|cx| {
                     let mut editor = Editor::single_line(window, cx);
                     editor.set_placeholder_text("Filter…", window, cx);
+                    editor.set_text(query.as_str(), window, cx);
                     editor
                 });
-                cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| {
+                cx.subscribe(&editor, |this, editor, event: &EditorEvent, cx| {
                     if matches!(event, EditorEvent::BufferEdited) {
+                        let query = editor.read(cx).text(cx);
+                        this.remember(|workspace| workspace.pages.query = query, cx);
                         this.nav.browsers.selected = 0;
                         cx.notify();
                     }
@@ -128,7 +131,8 @@ impl StoredWindow {
                 .iter()
                 .filter(|listed| {
                     self.nav
-                        .browsers
+                        .workspace
+                        .pages
                         .namespace
                         .as_deref()
                         .is_none_or(|namespace| in_namespace(&listed.page.title, namespace))
@@ -238,7 +242,7 @@ impl StoredWindow {
             .map(|listed| listed.page.path.clone())
             .collect();
         let expanded: BTreeSet<String> = self.nav.workspace.expanded.iter().cloned().collect();
-        folder_rows(&paths, &[], &expanded, |a, b| {
+        folder_rows(&paths, &self.nav.workspace.folders, &expanded, |a, b| {
             a.to_lowercase()
                 .cmp(&b.to_lowercase())
                 .then_with(|| a.cmp(b))
@@ -425,6 +429,11 @@ impl StoredWindow {
             .on_action(cx.listener(|this, _: &NewPageHere, window, cx| {
                 this.new_page_in_selected_folder(window, cx)
             }))
+            .on_action(
+                cx.listener(|this, _: &crate::navigation::NewFolderHere, window, cx| {
+                    this.new_folder_in_selected_folder(window, cx)
+                }),
+            )
             .child(
                 Label::new("FILES")
                     .size(LabelSize::Small)
@@ -774,12 +783,14 @@ impl StoredWindow {
             .into_iter()
             .enumerate()
             .map(|(index, (namespace, count))| {
-                let chosen = self.nav.browsers.namespace.as_deref() == Some(namespace.as_str());
+                let chosen =
+                    self.nav.workspace.pages.namespace.as_deref() == Some(namespace.as_str());
                 let value = namespace.clone();
                 Button::new(("namespace", index), format!("{namespace} ({count})"))
                     .toggle_state(chosen)
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.nav.browsers.namespace = (!chosen).then(|| value.clone());
+                        let namespace = (!chosen).then(|| value.clone());
+                        this.remember(|workspace| workspace.pages.namespace = namespace, cx);
                         this.nav.browsers.selected = 0;
                         cx.notify();
                     }))

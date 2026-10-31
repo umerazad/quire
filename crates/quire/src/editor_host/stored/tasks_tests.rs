@@ -4,7 +4,7 @@
 
 use super::super::*;
 use super::tags_tests::stored;
-use super::tests::{Notebook, key, open_notebook, read, wait_until};
+use super::tests::{Notebook, caret_text, key, open_notebook, read, wait_until};
 use super::workspace_tests::{reopen, saved};
 use crate::navigation::tasks::{TasksView, next_action};
 use gpui::TestAppContext;
@@ -207,6 +207,27 @@ fn task_lists_count_order_and_change_tasks_in_place(cx: &mut TestAppContext) {
         cx,
     );
     assert_eq!(message(&notebook, cx).0.as_deref(), Some("Reopened task."));
+}
+
+#[gpui::test]
+fn opening_a_task_reveals_its_block(cx: &mut TestAppContext) {
+    let notebook = open_notebook(
+        &[("a", "Alpha.md", "- start\n"), ("w", "Work.md", WORK)],
+        "a",
+        cx,
+    );
+    show_tasks(&notebook, cx);
+    assert_eq!(texts(&notebook, cx), ["Today [[2026-10-30]]"]);
+    keys(&notebook, "enter", cx);
+    wait_until(cx, "the task's page", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.page.read(cx).id() == "w" && view.editor.is_some() && view.nav.jump.is_none()
+        })
+    });
+    assert_eq!(
+        caret_text(&notebook, false, cx),
+        "- [ ] Today [[2026-10-30]]"
+    );
 }
 
 #[gpui::test]
@@ -611,4 +632,27 @@ fn task_commands_use_the_notebook_daily_layout_and_page_titles(cx: &mut TestAppC
         "- [ ] start ➕ [[30.10.2026]]\n",
         "created stamps link the daily page by the configured title"
     );
+}
+
+#[gpui::test]
+fn the_status_line_says_saving_until_a_task_change_is_written(cx: &mut TestAppContext) {
+    let notebook = open_notebook(
+        &[
+            ("a", "Alpha.md", "- start\n"),
+            ("w", "Work.md", "- [ ] One\n"),
+        ],
+        "a",
+        cx,
+    );
+    show_tasks(&notebook, cx);
+    wait_rows(&notebook, &["One"], cx);
+    let status = |cx: &mut TestAppContext| {
+        let list = list(&notebook, cx);
+        cx.read(|cx| list.read(cx).save_status())
+    };
+    assert_eq!(status(cx), "Saved locally");
+    list(&notebook, cx).update(cx, |list, cx| list.toggle(0, cx));
+    assert_eq!(status(cx), "Saving locally…");
+    wait_stored(&notebook, "w", "- [x] One ✅ 2026-10-30\n", cx);
+    wait_until(cx, "the saved status", |cx| status(cx) == "Saved locally");
 }

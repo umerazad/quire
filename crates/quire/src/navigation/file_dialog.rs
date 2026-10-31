@@ -1,7 +1,8 @@
 //! The modal for deleting a page or folder, renaming a page, and moving a page or folder.
 //! Deleting names what goes and how many links stop resolving, and applies only when confirmed.
 //! Renaming takes the new name and applies it with every link that follows. Moving takes a path,
-//! previews every page and link that changes, and applies that preview or nothing.
+//! previews every page and link that changes, and applies that preview or nothing. A new folder
+//! takes a path and stays on this computer until a page is saved in it, as the reference's does.
 
 use crate::{
     file_actions::{self, DeletionPlan, LinkUpdate, Relocate, RelocationPlan, Target},
@@ -32,6 +33,8 @@ pub enum FileDialogEvent {
     },
     /// These pages were renamed or moved, and every link to them followed.
     Relocated(Vec<file_actions::Renamed>),
+    /// A new, empty folder at this path.
+    FolderCreated(String),
 }
 
 /// What the dialog shows about a planned deletion or move; it stays after a refused apply.
@@ -93,6 +96,11 @@ enum Mode {
         /// How many link changes the preview shows.
         shown: usize,
     },
+    Folder {
+        path: Entity<Editor>,
+        /// Folders and pages already in the notebook, which a new folder may not reuse.
+        taken: Vec<String>,
+    },
 }
 
 pub struct FileDialog {
@@ -113,7 +121,7 @@ impl Focusable for FileDialog {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.mode {
             Mode::Rename { name, .. } => name.focus_handle(cx),
-            Mode::Move { path, .. } => path.focus_handle(cx),
+            Mode::Move { path, .. } | Mode::Folder { path, .. } => path.focus_handle(cx),
             Mode::Delete { .. } => self.focus.clone(),
         }
     }
@@ -126,6 +134,20 @@ fn field(text: String, window: &mut Window, cx: &mut Context<FileDialog>) -> Ent
         editor.select_all(&editor::actions::SelectAll, window, cx);
         editor
     })
+}
+
+/// The reference `createFolder` path check, refusing a name a folder or page already uses.
+pub fn new_folder(value: &str, taken: &[String]) -> Result<String, String> {
+    let folder = quire_core::relocate::folder_path(value).map_err(str::to_owned)?;
+    match taken
+        .iter()
+        .any(|path| path.to_lowercase() == folder.to_lowercase())
+    {
+        true => Err(format!(
+            "{folder} already exists. Choose another name for the new folder."
+        )),
+        false => Ok(folder),
+    }
 }
 
 impl FileDialog {
@@ -244,12 +266,52 @@ impl FileDialog {
         }
     }
 
+    /// Asks for a new folder's path, starting inside `parent`.
+    pub fn new_folder(
+        parent: String,
+        taken: Vec<String>,
+        writers: Writers,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let start = if parent.is_empty() {
+            String::new()
+        } else {
+            format!("{parent}/")
+        };
+        let path = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_text(start, window, cx);
+            editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
+            editor
+        });
+        let subscriptions = vec![cx.subscribe(&path, |this, _, event: &EditorEvent, cx| {
+            if matches!(event, EditorEvent::BufferEdited) && this.error.take().is_some() {
+                cx.notify();
+            }
+        })];
+        Self {
+            focus: cx.focus_handle(),
+            writers,
+            mode: Mode::Folder { path, taken },
+            path: if parent.is_empty() {
+                "Notebook root".into()
+            } else {
+                parent.into()
+            },
+            summary: None,
+            error: None,
+            work: None,
+            _subscriptions: subscriptions,
+        }
+    }
+
     #[cfg(test)]
     /// The name or path typed so far, for a rename or move.
     pub fn name(&self, cx: &App) -> Option<String> {
         match &self.mode {
             Mode::Rename { name, .. } => Some(name.read(cx).text(cx)),
-            Mode::Move { path, .. } => Some(path.read(cx).text(cx)),
+            Mode::Move { path, .. } | Mode::Folder { path, .. } => Some(path.read(cx).text(cx)),
             Mode::Delete { .. } => None,
         }
     }
@@ -289,7 +351,7 @@ impl FileDialog {
         !self.is_busy()
             && match &self.mode {
                 Mode::Delete { plan, .. } => plan.is_some(),
-                Mode::Rename { .. } | Mode::Move { .. } => true,
+                Mode::Rename { .. } | Mode::Move { .. } | Mode::Folder { .. } => true,
             }
     }
 
@@ -306,6 +368,7 @@ impl FileDialog {
                 moving: Moving::Folder(_),
                 ..
             } => "Rename or move folder",
+            Mode::Folder { .. } => "New folder",
         }
     }
 
@@ -315,6 +378,17 @@ impl FileDialog {
         }
         self.error = None;
         let work = match &mut self.mode {
+            Mode::Folder { path, taken } => {
+                match new_folder(&path.read(cx).text(cx), taken) {
+                    Ok(folder) => {
+                        cx.emit(FileDialogEvent::FolderCreated(folder));
+                        cx.emit(DismissEvent);
+                    }
+                    Err(error) => self.error = Some(error.into()),
+                }
+                cx.notify();
+                return;
+            }
             Mode::Delete { plan, .. } => {
                 let Some(plan) = plan.take() else {
                     return;
@@ -559,6 +633,7 @@ impl FileDialog {
             (Mode::Move { .. }, true) => "Previewing…",
             (Mode::Move { plan: Some(_), .. }, false) => "Move",
             (Mode::Move { .. }, false) => "Preview",
+            (Mode::Folder { .. }, _) => "Create folder",
         }
     }
 
@@ -580,7 +655,7 @@ impl Render for FileDialog {
         let busy = self.is_busy();
         let style = match self.mode {
             Mode::Delete { .. } => ButtonStyle::Tinted(ui::TintColor::Error),
-            Mode::Rename { .. } | Mode::Move { .. } => ButtonStyle::Filled,
+            Mode::Rename { .. } | Mode::Move { .. } | Mode::Folder { .. } => ButtonStyle::Filled,
         };
         let mut modal = Modal::new("file-dialog", None)
             .header(
@@ -607,6 +682,13 @@ impl Render for FileDialog {
                 ),
             );
         match (&self.mode, &self.summary) {
+            (Mode::Folder { path, .. }, _) => {
+                modal = modal.section(Self::render_field(
+                    path,
+                    "Use / to separate folders. The folder stays on this computer until a page is saved in it.",
+                    cx,
+                ))
+            }
             (Mode::Rename { name, .. }, _) => {
                 modal = modal.section(Self::render_field(
                     name,

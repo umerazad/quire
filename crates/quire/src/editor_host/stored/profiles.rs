@@ -313,7 +313,22 @@ pub(in crate::editor_host) fn open_location(
     notebook: &Notebook,
     cx: &mut App,
 ) -> Result<(), String> {
+    open_location_at(notebook, false, cx)
+}
+
+/// Opens a profile's notebook as a launch does: its last page, then today's daily page.
+pub(in crate::editor_host) fn launch_location(
+    notebook: &Notebook,
+    cx: &mut App,
+) -> Result<(), String> {
+    open_location_at(notebook, true, cx)
+}
+
+fn open_location_at(notebook: &Notebook, today: bool, cx: &mut App) -> Result<(), String> {
     match notebook {
+        Notebook::Folder { root } if today => FolderOptions::new(root.clone(), Vec::new(), None)
+            .on_today()
+            .open(cx),
         Notebook::Folder { root } => folder::open_folder_window(root.clone(), Vec::new(), cx),
         Notebook::Store {
             database,
@@ -338,6 +353,7 @@ pub(in crate::editor_host) fn open_location(
                 writer: writer.clone(),
                 page,
                 folder: folder.clone(),
+                today,
             }
             .open(cx)
         }
