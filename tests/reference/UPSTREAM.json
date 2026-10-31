@@ -215,5 +215,46 @@
       "today": "2026-10-29",
       "source": "A synthetic notebook of 11 pages (project blocks, a Projects/ title, project front matter tags, Unicode titles) and 90 seeded tasks, with 338 queries (handwritten edges for every term, JavaScript Number limits, JavaScript whitespace, plus 300 seeded) and 22 query lines. Pages resolve by case-insensitive title or path on both sides. Output is byte-identical in UTC and America/New_York."
     }
+  },
+  "template_extractions": {
+    "repository": "rt",
+    "revision": "5ea5c22310fff0c3d97f069930500fd85067fa96",
+    "files": [
+      {
+        "source": "src/core/templates.ts",
+        "source_sha256": "ba10788ccaced824ad276537057b64a91a8401060c5a11ff8ca6b7705f335a61",
+        "destination": "core/templates.ts",
+        "sha256": "3bcb2bf194f1936b421fb37a7400c23a5bbeb19b457c884d22ccfb8b91ad5576",
+        "change": "Copied unchanged except imports: markdown and daily helpers point to the frozen markdown/ and daily/ copies, localDate to daily/local-date.ts, and the Notebook type to core/template-notebook.ts."
+      },
+      {
+        "source": "src/core/template-guide.ts",
+        "source_sha256": "181e20e4855bcbb2717e7b7266444f49d7124176c81d85d23681eb1aa1a4805c",
+        "destination": "core/template-guide.ts",
+        "sha256": "181e20e4855bcbb2717e7b7266444f49d7124176c81d85d23681eb1aa1a4805c",
+        "change": "Copied unchanged."
+      },
+      {
+        "source": "src/core/fuzzy.ts",
+        "source_sha256": "33b169a4454148f97c420370459a3b1054ab68a98d0ff8f5c5252a2f6e723c73",
+        "destination": "core/fuzzy.ts",
+        "sha256": "33b169a4454148f97c420370459a3b1054ab68a98d0ff8f5c5252a2f6e723c73",
+        "change": "Copied unchanged."
+      },
+      {
+        "source": "src/core/store.ts",
+        "destination": "core/template-notebook.ts",
+        "sha256": "1ea1438689c0f7cab418e37457fcdcc7af2e0928fa234aabc0b201883aa3dd05",
+        "change": "A type naming only the Notebook members templates.ts reads: templates, taggedBlocks and title."
+      }
+    ],
+    "tests": "templates.test.ts ports rt tests/templates.test.ts and tests/fuzzy.test.ts expectations over the frozen modules, with a notebook built from the frozen page analysis.",
+    "vectors": {
+      "tool": "tools/template-vectors.ts",
+      "output": "tests/fixtures/template-vectors.json",
+      "sha256": "60e32f4066b5ce37525615eba0bcb476a2ae650990ae2c77a27aaee018ec64d5",
+      "bun": "1.4.2",
+      "source": "103 Templates pages (42 handwritten edges, the starters, all 14 examples, and 60 seeded), 821 expansions over three clocks, two daily layouts, two destinations, and dismissed questions, with block IDs from a counter in place of crypto.randomUUID; 114 date phrases, 10 past-name cases, 512 fuzzy matches, and the guide lists. TZ is fixed to UTC; clocks are local wall times."
+    }
   }
 }
