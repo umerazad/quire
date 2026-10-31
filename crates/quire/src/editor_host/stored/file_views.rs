@@ -243,6 +243,9 @@ impl StoredWindow {
         let rows = self.file_rows().len();
         self.nav.browsers.files_selected =
             self.nav.browsers.files_selected.min(rows.saturating_sub(1));
+        if self.session.borrow().folder().is_some() {
+            self.folder_changed(None, cx);
+        }
         self.persist(cx);
         self.refresh_catalogue(cx);
         cx.notify();

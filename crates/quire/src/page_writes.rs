@@ -176,9 +176,8 @@ pub fn apply(
     write(writes, None, storage, stale, cx)
 }
 
-pub const FOLDER_DELETION: &str = "Deleting pages is not available in folder notebooks yet. Delete the file in Finder or Explorer; Quire picks up the change.";
-
-/// Deletes every page or none, as `apply` writes them. With `folder`, also refuses when a page
+/// Deletes every page or none, as `apply` writes them: tombstones in a Quire notebook, the system
+/// Trash in a folder notebook, where `folder` goes whole. With `folder`, also refuses when a page
 /// appeared inside it after the pages were chosen. Open pages stop saving, so nothing typed later
 /// can revive them; their text stays in the buffer.
 pub fn delete(
@@ -222,7 +221,9 @@ fn write(
                     (Some(folder), NotebookBackend::Store(client)) => {
                         ask(client.delete_if_heads(edits, folder.clone())).await
                     }
-                    (Some(_), NotebookBackend::Folder(_)) => Err(FOLDER_DELETION.to_owned()),
+                    (Some(folder), NotebookBackend::Folder(client)) => {
+                        ask(client.delete_if_heads(edits, folder.clone())).await
+                    }
                 };
                 match answer {
                     Ok(CheckedSaves::Saved(acks)) => Ok(acks),

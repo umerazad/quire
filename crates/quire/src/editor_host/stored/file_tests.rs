@@ -12,7 +12,7 @@ const PAGES: [(&str, &str, &str); 5] = [
     ("pb", "Projects/Deep/B.md", "- deep\n"),
 ];
 
-fn visit(notebook: &Notebook, destination: Destination, cx: &mut TestAppContext) {
+pub(super) fn visit(notebook: &Notebook, destination: Destination, cx: &mut TestAppContext) {
     notebook
         .window
         .update(cx, |view, window, cx| view.visit(destination, window, cx))
@@ -21,7 +21,10 @@ fn visit(notebook: &Notebook, destination: Destination, cx: &mut TestAppContext)
 }
 
 /// The dialog's heading and detail once planning finished.
-fn summary(notebook: &Notebook, cx: &mut TestAppContext) -> (String, String, Vec<String>) {
+pub(super) fn summary(
+    notebook: &Notebook,
+    cx: &mut TestAppContext,
+) -> (String, String, Vec<String>) {
     wait_until(cx, "the deletion summary", |cx| {
         read(notebook, cx, |view, cx| {
             view.nav
@@ -37,7 +40,7 @@ fn summary(notebook: &Notebook, cx: &mut TestAppContext) -> (String, String, Vec
     })
 }
 
-fn dialog_error(notebook: &Notebook, cx: &mut TestAppContext) -> Option<String> {
+pub(super) fn dialog_error(notebook: &Notebook, cx: &mut TestAppContext) -> Option<String> {
     read(notebook, cx, |view, cx| {
         view.nav
             .dialog

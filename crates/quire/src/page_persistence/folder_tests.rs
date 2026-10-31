@@ -39,7 +39,8 @@ impl Folder {
     }
 
     pub fn session(&self) -> NotebookSession {
-        NotebookSession::open_folder(self.root.path().into(), self.state.path().into()).unwrap()
+        NotebookSession::open_folder(self.root.path().into(), self.state.path().into(), None)
+            .unwrap()
     }
 }
 

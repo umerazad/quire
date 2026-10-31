@@ -5,11 +5,12 @@
 use super::*;
 use crate::navigation::create_page_with;
 use ::fs::Fs as _;
+use anyhow::Context as _;
 use futures::StreamExt as _;
 use gpui::{SharedString, Task};
 use quire_core::markdown::{copy_with_new_ids, page_name, page_title, safe_page_path};
 use quire_store::{
-    folder_notebook::{is_markdown, list, validate},
+    folder_notebook::{Trash, is_markdown, list, validate},
     sync::format::{page_id_for_path, sha256},
 };
 use std::{
@@ -73,7 +74,8 @@ impl FolderOptions {
             })?,
         };
         let state = state_folder(&root);
-        let mut session = NotebookSession::open_folder(root.clone(), state.clone())?;
+        let mut session =
+            NotebookSession::open_folder(root.clone(), state.clone(), Some(system_trash(cx)))?;
         let page = session.open_page(page_id_for_path(&page), cx);
         let options = gpui::WindowOptions {
             window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
@@ -111,6 +113,26 @@ pub(super) fn state_folder(root: &Path) -> PathBuf {
     paths::data_dir()
         .join("folder-notebooks")
         .join(&sha256(root.to_string_lossy().as_bytes())[..16])
+}
+
+/// Moves deleted notes and folders to the system Trash through Zed's file system, where the user
+/// can restore them.
+fn system_trash(cx: &App) -> Trash {
+    let fs = ::fs::RealFs::new(None, cx.background_executor().clone());
+    std::sync::Arc::new(move |path: &Path| {
+        let options = ::fs::RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: false,
+        };
+        futures::executor::block_on(fs.trash(path, options))
+            .map(drop)
+            .with_context(|| {
+                format!(
+                    "Cannot move {} to the Trash. Nothing else was deleted; delete it in Finder or Explorer.",
+                    path.display()
+                )
+            })
+    })
 }
 
 /// Notebook-relative note paths for a batch of watcher events, or None when the batch needs a

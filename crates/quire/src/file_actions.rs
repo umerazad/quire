@@ -36,6 +36,11 @@ pub struct DeletionPlan {
     /// Each page that goes, by identity and path, ordered by path.
     pub pages: Vec<(String, String)>,
     pub broken_links: usize,
+    /// Files that are not pages inside a folder going to the Trash with it.
+    pub other_files: usize,
+    /// Whether the files go to the system Trash (a folder notebook) rather than every computer
+    /// removing them (a Quire notebook).
+    pub trash: bool,
     sources: Vec<PageSource>,
 }
 
@@ -57,8 +62,12 @@ impl DeletionPlan {
     pub fn heading(&self) -> String {
         match self.folder() {
             Some(folder) => format!(
-                "Delete {folder} with its {}?",
-                count(self.pages.len(), "page", "pages")
+                "Delete {folder} with its {}{}?",
+                count(self.pages.len(), "page", "pages"),
+                match self.other_files {
+                    0 => String::new(),
+                    others => format!(" and {}", count(others, "other file", "other files")),
+                }
             ),
             None => format!("Delete {}?", self.title),
         }
@@ -72,7 +81,11 @@ impl DeletionPlan {
                 count(links, "link", "links")
             ),
         };
-        format!("{links} Every computer on this notebook removes it too.")
+        if self.trash {
+            format!("{links} The files go to the system Trash, where you can restore them.")
+        } else {
+            format!("{links} Every computer on this notebook removes it too.")
+        }
     }
 
     /// The paths a folder deletion names, and how many more it does not.
@@ -100,9 +113,6 @@ pub fn plan_deletion(
     storage: NotebookBackend,
     cx: &mut App,
 ) -> Task<Result<DeletionPlan, String>> {
-    if storage.folder().is_some() {
-        return Task::ready(Err(page_writes::FOLDER_DELETION.into()));
-    }
     cx.spawn(async move |cx| {
         let query = match &target {
             Target::Page(page) => DeletionTarget::Page(page.as_str().into()),
@@ -133,11 +143,19 @@ pub fn plan_deletion(
                 }
             });
         }
+        let other_files = match (&target, storage.folder()) {
+            (Target::Folder(folder), Some(client)) => {
+                ask(client.other_files(folder.clone())).await?.len()
+            }
+            _ => 0,
+        };
         Ok(DeletionPlan {
+            trash: storage.folder().is_some(),
             target,
             title,
             pages,
             broken_links: deletion.broken_links,
+            other_files,
             sources,
         })
     })

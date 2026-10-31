@@ -44,6 +44,8 @@ pub fn revision(text: &str) -> String {
 pub struct Listing {
     pub files: Vec<ListedFile>,
     pub folders: Vec<String>,
+    /// Ordinary files that are not notes, such as attachments.
+    pub others: Vec<String>,
     pub warnings: Vec<String>,
 }
 
@@ -59,6 +61,7 @@ pub fn list(root: &Path) -> Listing {
     walk(root, "", &mut listing);
     listing.files.sort_by(|a, b| a.path.cmp(&b.path));
     listing.folders.sort();
+    listing.others.sort();
     listing
 }
 
@@ -106,6 +109,8 @@ fn walk(root: &Path, folder: &str, listing: &mut Listing) {
                 size: metadata.as_ref().map_or(0, |metadata| metadata.len()),
                 modified: metadata.and_then(|metadata| metadata.modified().ok()),
             });
+        } else if kind.is_file() {
+            listing.others.push(relative);
         }
     }
 }

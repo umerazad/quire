@@ -9,10 +9,12 @@
 //! replaced text in history, and rename. Recovery and history live in a state folder outside the
 //! notebook, so opening a folder never changes it.
 
+mod deletion;
 mod files;
 mod history;
 mod settings;
 
+pub use deletion::{NO_TRASH, Trash};
 pub use files::{
     DiskDocument, ListedFile, Listing, MAX_NOTE_BYTES, is_markdown, list, read, revision, validate,
 };
@@ -90,6 +92,8 @@ pub struct FolderNotebook {
     reported: RefCell<HashMap<String, String>>,
     warnings: RefCell<Vec<String>>,
     clock: Box<dyn Fn() -> i64>,
+    /// Where deletions go; None refuses them.
+    trash: Option<Trash>,
 }
 
 fn system_clock() -> i64 {
@@ -178,6 +182,7 @@ impl FolderNotebook {
             reported: RefCell::default(),
             warnings: RefCell::default(),
             clock,
+            trash: None,
         };
         notebook.listing();
         Ok(notebook)
@@ -399,7 +404,7 @@ impl FolderNotebook {
     fn save_with(&self, edit: &Edit, before_publish: &dyn Fn() -> Result<()>) -> Result<SaveAck> {
         ensure!(
             !edit.deleted,
-            "Deleting notes is not available in folder notebooks yet. Delete the file in Finder or Explorer; Quire follows the change."
+            "A save cannot delete a note. Use Delete, which moves the note to the system Trash."
         );
         ensure!(
             edit.base.len() <= 1,
@@ -628,9 +633,17 @@ pub type FolderWorker = Worker<FolderNotebook>;
 
 impl Worker<FolderNotebook> {
     /// Starts the folder adapter on its own thread, without touching the disk on the caller's.
-    pub fn spawn_folder(root: PathBuf, state: PathBuf, limits: QueueLimits) -> Result<Self> {
+    /// Deletions go to `trash`, or are refused without one.
+    pub fn spawn_folder(
+        root: PathBuf,
+        state: PathBuf,
+        trash: Option<Trash>,
+        limits: QueueLimits,
+    ) -> Result<Self> {
         Self::spawn_with("quire-folder", limits, move || {
-            FolderNotebook::open(&root, &state)
+            let mut notebook = FolderNotebook::open(&root, &state)?;
+            notebook.trash = trash;
+            Ok(notebook)
         })
         .context("Cannot start the folder notebook worker. Keep the buffer and retry after freeing process resources.")
     }
@@ -678,6 +691,21 @@ impl Client<FolderNotebook> {
     pub fn save_many_if_heads(&self, edits: Vec<Edit>) -> Answer<CheckedSaves> {
         let bytes = edits.iter().map(edit_bytes).sum();
         self.request(bytes, move |notebook| notebook.save_many_if_heads(&edits))
+    }
+    pub fn delete_if_heads(
+        &self,
+        edits: Vec<Edit>,
+        folder: Option<String>,
+    ) -> Answer<CheckedSaves> {
+        let bytes = edits.iter().map(edit_bytes).sum();
+        self.request(bytes, move |notebook| {
+            notebook.delete_if_heads(&edits, folder.as_deref())
+        })
+    }
+    pub fn other_files(&self, folder: String) -> Answer<Vec<String>> {
+        self.request(128 + folder.len(), move |notebook| {
+            Ok(notebook.other_files(&folder))
+        })
     }
     pub fn refresh(&self, paths: Vec<String>) -> Answer<Vec<FolderChange>> {
         let bytes = paths.iter().map(String::len).sum::<usize>() + 128;
