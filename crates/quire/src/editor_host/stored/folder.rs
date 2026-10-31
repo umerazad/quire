@@ -23,6 +23,8 @@ const WATCH_LATENCY: Duration = Duration::from_millis(100);
 /// How often the whole folder is reread in case the watcher missed a change, as the reference
 /// app does.
 const RESCAN_EVERY: Duration = Duration::from_secs(30);
+/// The note an empty imported notebook opens on; it is created when first saved.
+const FIRST_NOTE: &str = "Untitled.md";
 /// Recovered pages the notice offers to open.
 const LISTED_RECOVERED: usize = 10;
 /// Lines of the disk version the comparison shows.
@@ -155,6 +157,8 @@ pub(super) fn show_folder_window(
     let page = match (page, restored) {
         (Some(page), _) => page_id_for_path(&page),
         (None, Some(restored)) => restored,
+        // An imported graph with no pages opens on Pages, with a first note to write.
+        (None, None) if notes.is_empty() && roam => page_id_for_path(FIRST_NOTE),
         (None, None) => notes.into_iter().next().map(|file| page_id_for_path(&file.path)).ok_or_else(|| {
             format!(
                 "{} has no Markdown notes. Add a .md file or pass --page with the note to create.",
