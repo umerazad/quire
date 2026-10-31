@@ -70,7 +70,7 @@ pub(crate) fn run(
         .write_all(format!("{}\n", lines.join("\n")).as_bytes())
         .unwrap();
     drop(input);
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + crate::test_patience::PATIENCE;
     while child.try_wait().unwrap().is_none() {
         cx.run_until_parked();
         assert!(Instant::now() < deadline, "the MCP server did not exit");

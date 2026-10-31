@@ -445,7 +445,7 @@ fn review_window(
 /// Waits until `done` holds, driving the app, rather than assuming background work finished.
 fn wait_for(cx: &mut TestAppContext, done: impl Fn(&mut TestAppContext) -> bool) {
     cx.executor().allow_parking();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + crate::test_patience::PATIENCE;
     while !done(cx) {
         cx.run_until_parked();
         assert!(

@@ -87,7 +87,7 @@ fn wait_stored(notebook: &Notebook, page: &str, expected: &str, cx: &mut TestApp
 
 fn wait_rows(notebook: &Notebook, expected: &[&str], cx: &mut TestAppContext) {
     let mut shown = Vec::new();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + crate::test_patience::PATIENCE;
     while shown != expected {
         assert!(
             std::time::Instant::now() < deadline,

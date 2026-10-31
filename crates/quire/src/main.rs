@@ -2,6 +2,9 @@
 
 mod document;
 
+#[cfg(test)]
+mod test_patience;
+
 #[cfg(feature = "full-editor")]
 mod editor_host;
 

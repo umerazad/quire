@@ -132,7 +132,7 @@ fn open(alpha: &'static str, vim: bool, cx: &mut TestAppContext) -> Notebook {
 
 fn wait_for_text(notebook: &Notebook, expected: &str, cx: &mut TestAppContext) {
     let mut last = (String::new(), None);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + crate::test_patience::PATIENCE;
     while last.0 != expected {
         assert!(
             std::time::Instant::now() < deadline,

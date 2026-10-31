@@ -57,7 +57,7 @@ pub(super) fn click(notebook: &Notebook, selector: &'static str, cx: &mut TestAp
 /// Clicks the pinned Templates entry and waits for the page it opens.
 pub(super) fn open_templates(notebook: &Notebook, cx: &mut TestAppContext) {
     click(notebook, "quire-templates-entry", cx);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + crate::test_patience::PATIENCE;
     loop {
         wait_until(cx, "a step", |_| true);
         let state = read(notebook, cx, |view, cx| {

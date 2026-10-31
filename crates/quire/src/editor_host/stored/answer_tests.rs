@@ -161,7 +161,7 @@ async fn questions_read_unsaved_edits_of_open_pages(cx: &mut TestAppContext) {
     // Past the index's 150 ms debounce but short of the 450 ms idle save.
     cx.executor()
         .advance_clock(std::time::Duration::from_millis(200));
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + crate::test_patience::PATIENCE;
     while !futures::executor::block_on(client.with_generation(|index| index.tasks()).unwrap())
         .unwrap()
         .1

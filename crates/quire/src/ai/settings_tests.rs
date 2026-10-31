@@ -36,7 +36,7 @@ pub(crate) fn wait_until(
     what: &str,
     mut done: impl FnMut(&mut TestAppContext) -> bool,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + crate::test_patience::PATIENCE;
     loop {
         cx.run_until_parked();
         if done(cx) {

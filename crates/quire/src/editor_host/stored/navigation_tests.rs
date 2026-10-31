@@ -40,7 +40,7 @@ pub(super) fn wait_until(
     mut done: impl FnMut(&mut TestAppContext) -> bool,
 ) {
     cx.executor().allow_parking();
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + crate::test_patience::PATIENCE;
     loop {
         cx.executor().advance_clock(Duration::from_millis(200));
         cx.run_until_parked();
