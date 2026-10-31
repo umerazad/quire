@@ -188,6 +188,9 @@ fn a_heading_link_opens_its_page_and_says_when_the_heading_is_missing(cx: &mut T
     cx.simulate_keystrokes(notebook.window.into(), "f T g d");
     wait_until(cx, "Target to open", |cx| active(&notebook, cx) == "t");
     assert_eq!(read(&notebook, cx, |view, _| view.nav.error.clone()), None);
+    wait_until(cx, "the caret to reach the Goal heading", |cx| {
+        caret_text(&notebook, false, cx).ends_with("Goal")
+    });
 
     cx.simulate_keystrokes(notebook.window.into(), &key("["));
     focus_home(&notebook, cx);

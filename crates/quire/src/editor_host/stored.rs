@@ -26,8 +26,8 @@ mod sync;
 
 pub(super) use folder::FolderOptions;
 pub(super) use instance::{Handover, handle_launch};
-pub(super) use profiles::{launch_location, open_location};
 pub(crate) use profiles::{dispatch_to_notebook, notebook_windows, open_in_profile};
+pub(super) use profiles::{launch_location, open_location};
 
 pub(super) fn bind_keys(cx: &mut App) {
     profiles::init(cx);

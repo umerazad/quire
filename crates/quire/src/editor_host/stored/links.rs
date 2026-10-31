@@ -7,10 +7,10 @@ use crate::references::{Follow, Notebook, ReferenceHost, Target};
 use quire_core::workspace::Destination;
 use quire_store::index::{PageRef, heading_of};
 
-/// The page a followed link opens, and whether the heading it names is missing there.
+/// The page a followed link opens, and where the heading it names starts there, if it names one.
 struct Arrival {
     page: PageRef,
-    missing_heading: bool,
+    heading: Option<Result<u32, ()>>,
 }
 
 pub(super) struct Links {
@@ -220,14 +220,14 @@ impl StoredWindow {
             let found = match heading {
                 Some(heading) => ask(heading).await.map(|target| {
                     target.map(|target| Arrival {
-                        missing_heading: target.heading.is_none(),
+                        heading: Some(target.heading.map(|(_, start)| start).ok_or(())),
                         page: target.page,
                     })
                 }),
                 None => ask(lookup).await.map(|page| {
                     page.map(|page| Arrival {
                         page,
-                        missing_heading: false,
+                        heading: None,
                     })
                 }),
             };
@@ -259,10 +259,13 @@ impl StoredWindow {
                         Target::Block(target) => target.rsplit("#^").next(),
                         Target::Page(name) => name.split_once("#^").map(|(_, id)| id),
                     };
-                    let jump = block.map(crate::navigation::Jump::block);
+                    let jump = match arrival.heading {
+                        Some(Ok(start)) => Some(crate::navigation::Jump::at(None, start)),
+                        _ => block.map(crate::navigation::Jump::block),
+                    };
                     self.open_page_at(id, jump, follow.beside, window, cx);
                 }
-                if let (true, Target::Page(name)) = (arrival.missing_heading, &follow.target) {
+                if let (Some(Err(())), Target::Page(name)) = (arrival.heading, &follow.target) {
                     self.nav.error = Some(
                         format!(
                             "{} has no heading “{}”, so it opened at the top. Check the heading in the link.",
