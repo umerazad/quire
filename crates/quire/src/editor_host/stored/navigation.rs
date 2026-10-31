@@ -206,6 +206,7 @@ impl StoredWindow {
     }
 
     pub(super) fn refresh_catalogue(&mut self, cx: &mut gpui::Context<Self>) {
+        self.refresh_on_disk(cx);
         let Some(client) = self.index_client(cx) else {
             return;
         };

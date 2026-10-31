@@ -513,6 +513,36 @@ impl Workspace {
             self.folders.push(folder.to_owned());
             self.folders.sort();
         }
+        self.open_parents(folder);
+    }
+
+    /// A folder holding no page moved to `to`: it and the folders inside it keep their place in
+    /// the tree, opened or not, and `to` shows.
+    pub fn move_folder(&mut self, from: &str, to: &str) {
+        let moved = |item: &String| {
+            if item == from {
+                Some(to.to_owned())
+            } else {
+                item.strip_prefix(from)
+                    .filter(|rest| rest.starts_with('/'))
+                    .map(|rest| format!("{to}{rest}"))
+            }
+        };
+        let follow = |items: &mut Vec<String>| {
+            let mut next: Vec<String> = items
+                .iter()
+                .map(|item| moved(item).unwrap_or_else(|| item.clone()))
+                .collect();
+            next.sort();
+            next.dedup();
+            *items = next;
+        };
+        follow(&mut self.folders);
+        follow(&mut self.expanded);
+        self.open_parents(to);
+    }
+
+    fn open_parents(&mut self, folder: &str) {
         let parts: Vec<&str> = folder.split('/').collect();
         for end in 1..parts.len() {
             let parent = parts[..end].join("/");

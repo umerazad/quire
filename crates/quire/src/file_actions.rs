@@ -69,14 +69,21 @@ impl DeletionPlan {
 
     pub fn heading(&self) -> String {
         match self.folder() {
-            Some(folder) => format!(
-                "Delete {folder} with its {}{}?",
-                count(self.pages.len(), "page", "pages"),
-                match self.other_files {
-                    0 => String::new(),
-                    others => format!(" and {}", count(others, "other file", "other files")),
-                }
-            ),
+            Some(folder) => match (self.pages.len(), self.other_files) {
+                (0, 0) => format!("Delete the empty folder {folder}?"),
+                (0, others) => format!(
+                    "Delete {folder} with its {}?",
+                    count(others, "file", "files")
+                ),
+                (pages, others) => format!(
+                    "Delete {folder} with its {}{}?",
+                    count(pages, "page", "pages"),
+                    match others {
+                        0 => String::new(),
+                        others => format!(" and {}", count(others, "other file", "other files")),
+                    }
+                ),
+            },
             None => format!("Delete {}?", self.title),
         }
     }
@@ -139,7 +146,8 @@ pub fn plan_deletion(
                 sources.push(source);
             }
         }
-        if pages.is_empty() {
+        if pages.is_empty() && !(matches!(target, Target::Folder(_)) && storage.folder().is_some())
+        {
             return Err(match target {
                 Target::Page(_) => {
                     "This page has no saved version to delete. Close its tab instead.".to_owned()

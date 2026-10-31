@@ -517,6 +517,29 @@ fn new_folder_here_shows_an_empty_folder_until_it_is_deleted(cx: &mut TestAppCon
         .is_empty()));
 }
 
+#[gpui::test]
+fn renaming_a_quire_notebook_folder_without_pages_renames_it_here(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&PAGES, "k", cx);
+    notebook
+        .window
+        .update(cx, |view, _, cx| {
+            view.nav.workspace.add_folder("Ideas/Later");
+            cx.notify();
+        })
+        .unwrap();
+    super::move_tests::select_file(&notebook, "Ideas", cx);
+    cx.simulate_keystrokes(notebook.window.into(), "f2");
+    rename_to(&notebook, "Plans", cx);
+    wait_until(cx, "the folder rename", |cx| {
+        read(&notebook, cx, |view, _| view.nav.dialog.is_none())
+    });
+    read(&notebook, cx, |view, _| {
+        assert_eq!(view.nav.workspace.folders, ["Plans/Later"]);
+        assert!(view.file_rows().iter().any(|row| row.path == "Plans"));
+        assert!(!view.file_rows().iter().any(|row| row.path == "Ideas"));
+    });
+}
+
 /// Gives page `o` a competing first version from another computer, as an import whose merge
 /// failed leaves it.
 fn compete(notebook: &super::tests::Notebook) {

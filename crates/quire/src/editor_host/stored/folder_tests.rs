@@ -1289,3 +1289,119 @@ fn notebook_windows_draw_the_hidden_inset_title_bar_at_the_top(cx: &mut TestAppC
     assert_eq!(bounds.origin.y, gpui::px(0.));
     assert_eq!(bounds.size.height, crate::title_bar::HEIGHT);
 }
+
+#[gpui::test]
+fn files_shows_a_folder_notebooks_empty_folders_and_attachments(cx: &mut TestAppContext) {
+    let opened = open_prepared(
+        &[("Keep.md", "- keep\n"), ("attachments/pic.png", "png")],
+        "Keep.md",
+        |root, _| fs::create_dir_all(root.join("Empty/Inner")).unwrap(),
+        cx,
+    );
+    let notebook = &opened.notebook;
+    let rows = |cx: &mut TestAppContext| {
+        read(notebook, cx, |view, _| {
+            view.file_rows()
+                .into_iter()
+                .map(|row| row.path)
+                .collect::<Vec<_>>()
+        })
+    };
+    wait_until(cx, "the folder's other items", |cx| {
+        rows(cx).contains(&"Empty".to_owned())
+    });
+    assert_eq!(rows(cx), ["attachments", "Empty", "Keep.md"]);
+    notebook
+        .window
+        .update(cx, |view, _, cx| {
+            view.nav.workspace.toggle_expanded("attachments");
+            view.nav.workspace.toggle_expanded("Empty");
+            cx.notify();
+        })
+        .unwrap();
+    assert_eq!(
+        rows(cx),
+        [
+            "attachments",
+            "attachments/pic.png",
+            "Empty",
+            "Empty/Inner",
+            "Keep.md"
+        ]
+    );
+    draw(notebook, cx);
+
+    fs::write(opened.file("Empty/notes.pdf"), "pdf").unwrap();
+    notebook
+        .window
+        .update(cx, |view, _, cx| view.refresh_catalogue(cx))
+        .unwrap();
+    wait_until(cx, "the new attachment", |cx| {
+        rows(cx).contains(&"Empty/notes.pdf".to_owned())
+    });
+}
+
+#[gpui::test]
+fn renaming_a_folder_without_notes_moves_it_with_its_files(cx: &mut TestAppContext) {
+    let opened = open_folder(
+        &[
+            ("Keep.md", "- keep\n"),
+            ("Scans/2024/receipt.pdf", "pdf"),
+            ("Taken/photo.png", "png"),
+        ],
+        "Keep.md",
+        cx,
+    );
+    let notebook = &opened.notebook;
+    wait_until(cx, "the scans folder", |cx| {
+        read(notebook, cx, |view, _| {
+            view.file_rows().iter().any(|row| row.path == "Scans")
+        })
+    });
+    super::move_tests::select_file(notebook, "Scans", cx);
+    cx.simulate_keystrokes(notebook.window.into(), "f2");
+    rename_to(notebook, "Taken", cx);
+    wait_until(cx, "the refusal", |cx| {
+        dialog_error(notebook, cx).is_some_and(|error| error.contains("already exists"))
+    });
+    assert!(
+        !read(notebook, cx, |view, cx| view
+            .nav
+            .dialog
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .is_busy()),
+        "a refused move leaves the dialog ready for another name"
+    );
+    assert!(opened.file("Scans/2024/receipt.pdf").exists());
+    rename_to(notebook, "Archive", cx);
+    wait_until(cx, "the folder move", |cx| {
+        read(notebook, cx, |view, _| view.nav.dialog.is_none())
+    });
+    assert!(!opened.file("Scans").exists());
+    assert_eq!(
+        fs::read_to_string(opened.file("Archive/2024/receipt.pdf")).unwrap(),
+        "pdf"
+    );
+    wait_until(cx, "Files to show the moved folder", |cx| {
+        read(notebook, cx, |view, _| {
+            let rows = view.file_rows();
+            rows.iter().any(|row| row.path == "Archive")
+                && !rows.iter().any(|row| row.path == "Scans")
+        })
+    });
+
+    super::move_tests::select_file(notebook, "Archive", cx);
+    cx.simulate_keystrokes(notebook.window.into(), "delete");
+    let (heading, _, _) = summary(notebook, cx);
+    assert!(heading.contains("Archive"), "{heading}");
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the folder to go to the Trash", |_| {
+        !opened.file("Archive").exists()
+    });
+    assert_eq!(
+        fs::read_to_string(opened.trashed(0).join("2024/receipt.pdf")).unwrap(),
+        "pdf"
+    );
+}

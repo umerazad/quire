@@ -771,6 +771,11 @@ impl Client<FolderNotebook> {
             notebook.delete_if_heads(&edits, folder.as_deref())
         })
     }
+    pub fn move_noteless_folder(&self, from: String, to: String) -> Answer<()> {
+        self.request(128 + from.len() + to.len(), move |notebook| {
+            notebook.move_noteless_folder(&from, &to)
+        })
+    }
     pub fn other_files(&self, folder: String) -> Answer<Vec<String>> {
         self.request(128 + folder.len(), move |notebook| {
             Ok(notebook.other_files(&folder))

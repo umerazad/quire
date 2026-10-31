@@ -206,6 +206,20 @@ impl StoredWindow {
                 .flatten()
                 .collect::<Vec<_>>(),
             ),
+            TreeKind::File if self.page_at_path(&row.path).is_none() => (
+                format!("File actions for {}", row.path),
+                [
+                    vec![
+                        Item::action("Open", menu::Confirm).done(),
+                        Item::action("New note here", NewPageHere).done(),
+                        Item::action("New folder here", NewFolderHere).done(),
+                    ],
+                    reveal.into_iter().collect(),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>(),
+            ),
             TreeKind::File => {
                 let Some(page) = self.page_at_path(&row.path) else {
                     return;
