@@ -200,7 +200,7 @@ fn refresh(
     let snapshot = editor.buffer().read(cx).snapshot(cx);
     let mut hidden = Vec::new();
     let mut tasks = Vec::new();
-    for block in blocks {
+    for (ordinal, block) in blocks.iter().enumerate() {
         let marker = block.marker.start.to_offset(&snapshot)..block.marker.end.to_offset(&snapshot);
         if !marker.is_empty() {
             let content: String = snapshot
@@ -212,7 +212,12 @@ fn refresh(
                 let range = marker.end..MultiBufferOffset(marker.end.0 + task.source.len());
                 tasks.push(Crease::simple(
                     range,
-                    checkbox_placeholder(cx.entity().downgrade(), task.source.into(), task.checked),
+                    checkbox_placeholder(
+                        cx.entity().downgrade(),
+                        ordinal,
+                        task.source.into(),
+                        task.checked,
+                    ),
                 ));
             }
             hidden.push(marker);
@@ -248,7 +253,7 @@ fn refresh(
             (projection.links.clone(), previews)
         })
         .unwrap_or_default();
-    for (preview, text) in previews {
+    for (ordinal, (preview, text)) in previews.into_iter().enumerate() {
         if shown(
             editor,
             &preview.range,
@@ -262,7 +267,7 @@ fn refresh(
                 preview.range.start.to_offset(&snapshot)..preview.range.end.to_offset(&snapshot);
             tasks.push(Crease::simple(
                 range,
-                preview_placeholder(cx.entity().downgrade(), preview, text),
+                preview_placeholder(cx.entity().downgrade(), ordinal, preview, text),
             ));
         }
     }
@@ -428,6 +433,9 @@ fn focusable_control(
         })
 }
 
+/// A clickable fold placeholder. `id` must outlive a refold, which mints new fold IDs: GPUI keeps
+/// a pressed element's click in state keyed by its ID, so a fold ID would drop a click whose
+/// release lands after an index reply refolds the view.
 pub(crate) fn inline_control(
     id: impl Into<gpui::ElementId>,
     editor: WeakEntity<Editor>,
@@ -569,6 +577,7 @@ fn preview_label(preview: &AnchoredPreview, text: Option<&str>) -> String {
 
 fn preview_placeholder(
     editor: WeakEntity<Editor>,
+    ordinal: usize,
     preview: AnchoredPreview,
     text: Option<String>,
 ) -> FoldPlaceholder {
@@ -581,12 +590,12 @@ fn preview_placeholder(
         constrain_width: false,
         merge_adjacent: false,
         type_tag: Some(TypeId::of::<Projection>()),
-        render: Arc::new(move |id, _, cx| {
+        render: Arc::new(move |_, _, cx| {
             use theme::ActiveTheme;
             let editor = editor.clone();
             let preview = preview.clone();
             let colors = cx.theme().colors();
-            inline_control(id, editor.clone())
+            inline_control(("quire-block-preview", ordinal), editor.clone())
                 .debug_selector(|| "quire-block-preview".into())
                 .role(gpui::Role::Link)
                 .aria_label(label.clone())
@@ -710,6 +719,7 @@ pub fn references_changed(editor: &mut Editor, window: &mut Window, cx: &mut Con
 
 fn checkbox_placeholder(
     editor: WeakEntity<Editor>,
+    ordinal: usize,
     source: String,
     checked: bool,
 ) -> FoldPlaceholder {
@@ -718,10 +728,10 @@ fn checkbox_placeholder(
         constrain_width: false,
         merge_adjacent: false,
         type_tag: Some(TypeId::of::<Projection>()),
-        render: Arc::new(move |id, range, _| {
+        render: Arc::new(move |_, range, _| {
             let editor = editor.clone();
             let source = source.clone();
-            inline_control(id, editor.clone())
+            inline_control(("quire-task-checkbox", ordinal), editor.clone())
                 .debug_selector(|| "quire-task-checkbox".into())
                 .role(gpui::Role::CheckBox)
                 .aria_label(if checked {

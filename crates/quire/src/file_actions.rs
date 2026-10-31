@@ -12,7 +12,7 @@ use crate::{
 };
 use gpui::{App, AppContext as _, Entity, Task};
 use quire_core::{
-    markdown::{copy_with_new_ids, page_name, page_title, safe_page_path},
+    markdown::{Addresses, copy_with_new_ids, page_name, page_title, safe_page_path},
     relocate::{
         MISSING_SOURCE, Relocation, folder_path, folder_relocations, notebook_path, relocate_pages,
         rename_target,
@@ -523,8 +523,12 @@ pub fn page_copy(
         source.chars().take(50).collect::<String>()
     );
     let destination = safe_page_path(&title).map_err(|error| error.to_string())?;
-    let copied = copy_with_new_ids(text, &destination, &[page_name(path), &source], || {
-        format!("b-{}", uuid::Uuid::new_v4().simple())
-    });
+    let copied = copy_with_new_ids(
+        text,
+        &Addresses::scan(text),
+        &destination,
+        &[page_name(path), &source],
+        || format!("b-{}", uuid::Uuid::new_v4().simple()),
+    );
     Ok((title, copied))
 }

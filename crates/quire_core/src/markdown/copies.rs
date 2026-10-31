@@ -1,15 +1,30 @@
 //! Copies of a page's text that keep its blocks addressable without duplicating block IDs: the
-//! reference `copyWithNewIds`, used when a conflicting version is saved as a separate page.
+//! reference `copyWithNewIds`, used when a template is inserted and when a conflicting version is
+//! saved as a separate page.
 
-use super::{ReferenceKind, page_name, references};
+use super::{Reference, ReferenceKind, page_name, references};
 use regex::Regex;
 use std::{collections::HashMap, ops::Range, sync::LazyLock};
 
-/// The reference `idPattern`: a `^id` marker ending a line.
+/// The reference `idPattern`: a `^id` marker ending a block's content.
 static ID: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:^|[ \t])\^([a-zA-Z0-9_-]+)[ \t]*$")
         .expect("Quire's block ID pattern is invalid. Fix the pattern and rebuild.")
 });
+
+/// Where a text's blocks can be addressed: the byte range of each block ID after its `^`, in
+/// text order, and the references that may point at them.
+#[derive(Clone, Debug, Default)]
+pub struct Addresses {
+    pub ids: Vec<Range<usize>>,
+    pub references: Vec<Reference>,
+}
+
+/// The range of the ID in a `^id` marker ending `text[content]`, if there is one.
+pub fn block_id_range(text: &str, content: Range<usize>) -> Option<Range<usize>> {
+    let id = ID.captures(&text[content.clone()])?.get(1)?;
+    Some(content.start + id.start()..content.start + id.end())
+}
 
 /// Byte ranges of fenced code blocks, where markers and references are literal text.
 pub(crate) fn fenced_code(text: &str) -> Vec<Range<usize>> {
@@ -37,36 +52,54 @@ pub(crate) fn fenced_code(text: &str) -> Vec<Range<usize>> {
     ranges
 }
 
+impl Addresses {
+    /// Finds addresses line by line, for callers without a Markdown block parser: every line
+    /// outside fenced code that ends in a `^id` marker counts as a block. It differs from the
+    /// parser only where a block spans lines, such as a paragraph whose inner line ends in a
+    /// marker, which the parser leaves alone.
+    pub fn scan(text: &str) -> Self {
+        let code = fenced_code(text);
+        let in_code = |at: usize| code.iter().any(|range| range.contains(&at));
+        let ids = text
+            .split_inclusive('\n')
+            .scan(0, |offset, line| {
+                let start = *offset;
+                *offset += line.len();
+                Some(start..start + line.trim_end_matches(['\n', '\r']).len())
+            })
+            .filter(|line| !in_code(line.start))
+            .filter_map(|line| block_id_range(text, line))
+            .collect();
+        Self {
+            ids,
+            references: references(text, &code),
+        }
+    }
+}
+
 /// Gives every block ID in `text` a fresh one from `new_id`, and points references to those
 /// blocks at the new IDs. A `Page#^id` reference follows only when `Page` is one of
-/// `source_names`, and then names `destination`'s page.
+/// `source_names`, and then names `destination`'s page. As in the reference, `new_id` runs once
+/// per marker, and every copy of a repeated ID takes the last fresh one.
 pub fn copy_with_new_ids(
     text: &str,
+    addresses: &Addresses,
     destination: &str,
     source_names: &[&str],
     mut new_id: impl FnMut() -> String,
 ) -> String {
-    let code = fenced_code(text);
-    let in_code = |at: usize| code.iter().any(|range| range.contains(&at));
-    let mut ids = HashMap::new();
-    let mut edits: Vec<(Range<usize>, String)> = Vec::new();
-    let mut offset = 0;
-    for line in text.split_inclusive('\n') {
-        let content = line.trim_end_matches(['\n', '\r']);
-        if !in_code(offset)
-            && let Some(id) = ID.captures(content).and_then(|captures| captures.get(1))
-        {
-            let fresh = ids
-                .entry(id.as_str().to_owned())
-                .or_insert_with(&mut new_id)
-                .clone();
-            edits.push((offset + id.start()..offset + id.end(), fresh));
-        }
-        offset += line.len();
-    }
-    for reference in references(text, &code) {
+    let ids: HashMap<&str, String> = addresses
+        .ids
+        .iter()
+        .map(|range| (&text[range.clone()], new_id()))
+        .collect();
+    let markers = addresses
+        .ids
+        .iter()
+        .map(|range| (range.clone(), ids[&text[range.clone()]].clone()));
+    let followed = addresses.references.iter().filter_map(|reference| {
         if reference.kind == ReferenceKind::Page {
-            continue;
+            return None;
         }
         let (page, id) = match reference.target.find("#^") {
             Some(separator) => (
@@ -75,43 +108,60 @@ pub fn copy_with_new_ids(
             ),
             None => (None, reference.target.as_str()),
         };
-        let Some(fresh) = ids.get(id) else {
-            continue;
-        };
+        let fresh = ids.get(id)?;
         let target = match page {
-            Some(page) if !source_names.contains(&page) => continue,
+            Some(page) if !source_names.contains(&page) => return None,
             Some(_) => format!("{}#^{fresh}", page_name(destination)),
             None => fresh.clone(),
         };
-        let original = &text[reference.range.clone()];
-        edits.push((
+        Some((
             reference.range.clone(),
-            original.replacen(&reference.target, &target, 1),
-        ));
-    }
+            text[reference.range.clone()].replacen(&reference.target, &target, 1),
+        ))
+    });
+    let mut edits: Vec<_> = markers.chain(followed).collect();
     edits.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
-    let mut copy = text.to_owned();
-    for (range, replacement) in edits {
-        copy.replace_range(range, &replacement);
-    }
-    copy
+    edits
+        .into_iter()
+        .fold(text.to_owned(), |mut copy, (range, replacement)| {
+            copy.replace_range(range, &replacement);
+            copy
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn copies_renumber_blocks_and_follow_their_references() {
+    fn numbered() -> impl FnMut() -> String {
         let mut next = 0;
-        let new_id = || {
+        move || {
             next += 1;
             format!("b-new{next}")
-        };
+        }
+    }
+
+    #[test]
+    fn copies_renumber_blocks_and_follow_their_references() {
         let text = "- first ^b-one\n- see ((b-one)) and [[Note#^b-one]] and [[Other#^b-one]]\n```\n- code ^b-two\n```\n- second ^b-two\r\n";
         assert_eq!(
-            copy_with_new_ids(text, "Note (recovered).md", &["Note"], new_id),
+            copy_with_new_ids(
+                text,
+                &Addresses::scan(text),
+                "Note (recovered).md",
+                &["Note"],
+                numbered()
+            ),
             "- first ^b-new1\n- see ((b-new1)) and [[Note (recovered)#^b-new1]] and [[Other#^b-one]]\n```\n- code ^b-two\n```\n- second ^b-new2\r\n"
+        );
+    }
+
+    #[test]
+    fn repeated_ids_take_the_last_fresh_id_as_the_reference_does() {
+        let text = "- a ^dup\n- b ^dup\n- ((dup))\n";
+        assert_eq!(
+            copy_with_new_ids(text, &Addresses::scan(text), "Note.md", &[], numbered()),
+            "- a ^b-new2\n- b ^b-new2\n- ((b-new2))\n"
         );
     }
 }

@@ -4,11 +4,11 @@
 
 use quire_core::daily::{DailyCalendar, DailyLayout};
 use quire_core::fuzzy::{fuzzy_filter, fuzzy_match};
-use quire_core::markdown::{Reference, ReferenceKind, ReferenceSyntax};
+use quire_core::markdown::{Reference, ReferenceKind, ReferenceSyntax, copy_with_new_ids};
 use quire_core::tasks::DailyNames;
 use quire_core::templates::{
-    Block, CANCELLED, Clock, Context, Expanded, Parsed, Step, TagUse, catalogue, copy_with_new_ids,
-    current, expand, guide, is_templates_page, past_names, placement, preserve_root, template_date,
+    Block, CANCELLED, Clock, Context, Expanded, Parsed, Step, TagUse, catalogue, current, expand,
+    guide, is_templates_page, past_names, placement, preserve_root, template_date,
     templates_in_page,
 };
 use serde_json::{Value, json};
@@ -190,7 +190,13 @@ fn templates_parse_copy_and_expand_as_the_reference_does() {
             let body_parsed = parsed(body, &definition["bodyParsed"]);
             for copy in definition["copies"].as_array().unwrap() {
                 let destination = copy["destination"].as_str().unwrap();
-                let copied = copy_with_new_ids(body, &body_parsed, destination, &SOURCES, ids());
+                let copied = copy_with_new_ids(
+                    body,
+                    &body_parsed.addresses(body),
+                    destination,
+                    &SOURCES,
+                    ids(),
+                );
                 assert_eq!(copied, copy["text"], "{name} copy into {destination}");
                 let copy_parsed = parsed(&copied, &copy["parsed"]);
                 copies.insert(

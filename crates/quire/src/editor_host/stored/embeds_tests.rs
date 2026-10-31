@@ -210,6 +210,31 @@ fn the_caret_reveals_an_embed_reference_its_header_opens_the_source_and_source_v
 }
 
 #[gpui::test]
+fn an_embed_header_click_survives_a_refold_between_press_and_release(cx: &mut TestAppContext) {
+    let pages = [("s", "Source.md", SOURCE), ("o", "Other.md", OTHER)];
+    let (notebook, host) = open_in_write(&pages, "o", 2, cx);
+    let mut visual = gpui::VisualTestContext::from_window(notebook.window.into(), cx);
+    let header = visual
+        .debug_bounds("quire-embed-header")
+        .expect("a rendered embed header");
+    visual.simulate_mouse_down(header.center(), gpui::MouseButton::Left, Default::default());
+    notebook
+        .window
+        .update(cx, |_, window, cx| {
+            host.update(cx, |host, cx| {
+                crate::editor_projection::refold(host, window, cx)
+            })
+        })
+        .unwrap();
+    draw(&notebook, cx);
+    let mut visual = gpui::VisualTestContext::from_window(notebook.window.into(), cx);
+    visual.simulate_mouse_up(header.center(), gpui::MouseButton::Left, Default::default());
+    wait_until(cx, "the embedded block's page", |cx| {
+        active(&notebook, cx) == "s"
+    });
+}
+
+#[gpui::test]
 fn an_embed_of_its_own_ancestor_stops_at_a_recursion_notice(cx: &mut TestAppContext) {
     let pages = [(
         "c",

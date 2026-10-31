@@ -169,7 +169,8 @@ impl StoredWindow {
             Ok(_) => Err("Reading notebook settings…".into()),
             Err(error) => Err(error.clone()),
         };
-        let nav = navigation::Navigation::new(&database, &notebook, calendar.ok());
+        let nav =
+            navigation::Navigation::new(&database, &notebook, calendar.ok(), cx.focus_handle());
         let id = page.read(cx).id().to_owned();
         let links = links::Links::new(cx.weak_entity(), Rc::downgrade(&session), cx);
         let mut this = Self {
@@ -258,7 +259,10 @@ impl StoredWindow {
         self.editor = self.editor_for(&page, window, cx);
         if self.editor.is_some() {
             self.update_title(window, cx);
-            if self.nav.palette.is_none() {
+            if window
+                .focused(cx)
+                .is_none_or(|focused| focused == self.nav.loading_focus)
+            {
                 self.focus_active(window, cx);
             }
         }
@@ -414,6 +418,7 @@ impl Render for StoredWindow {
                 })
                 .child(self.render_exchange_buttons(cx));
         let root = gpui::div()
+            .track_focus(&self.nav.loading_focus)
             .size_full()
             .relative()
             .on_action(cx.listener(|this, _: &SavePage, window, cx| this.save_focused(window, cx)))

@@ -62,6 +62,9 @@ pub(super) struct Navigation {
     pub(super) templates_guide: Option<(String, Entity<crate::templates::guide::TemplatesGuide>)>,
     /// A question a template asks while it is inserted.
     pub(super) template_prompt: Option<Entity<Picker<crate::templates::prompt::TemplatePrompt>>>,
+    /// Holds focus on the window while the shown page loads, so window keys still dispatch and
+    /// the page takes focus on load only if nothing moved it meanwhile.
+    pub(super) loading_focus: gpui::FocusHandle,
 }
 
 impl Navigation {
@@ -69,6 +72,7 @@ impl Navigation {
         database: &std::path::Path,
         notebook: &str,
         calendar: Option<quire_core::daily::DailyCalendar>,
+        loading_focus: gpui::FocusHandle,
     ) -> Self {
         let file = WorkspaceFile::beside(database, notebook);
         Self {
@@ -97,6 +101,7 @@ impl Navigation {
             references: HashMap::new(),
             templates_guide: None,
             template_prompt: None,
+            loading_focus,
         }
     }
 
@@ -271,9 +276,9 @@ impl StoredWindow {
             self.page = page;
             self.editor = self.cached_editor(&self.page);
             self.attach_editor(window, cx);
-            if let Some(editor) = &self.editor {
-                let focus = editor.read(cx).source.focus_handle(cx);
-                window.focus(&focus, cx);
+            match &self.editor {
+                Some(editor) => window.focus(&editor.read(cx).source.focus_handle(cx), cx),
+                None => window.focus(&self.nav.loading_focus, cx),
             }
             self.update_title(window, cx);
             self.show_references(window, cx);

@@ -222,7 +222,8 @@ pub(crate) fn headers(
     lists
         .shown
         .iter()
-        .map(|shown| {
+        .enumerate()
+        .map(|(ordinal, shown)| {
             let label = shown.label.clone();
             let host = host.clone();
             let placeholder = FoldPlaceholder {
@@ -230,32 +231,35 @@ pub(crate) fn headers(
                 constrain_width: false,
                 merge_adjacent: false,
                 type_tag: Some(type_tag),
-                render: Arc::new(move |id, range, cx| {
+                render: Arc::new(move |_, range, cx| {
                     use theme::ActiveTheme;
                     let colors = cx.theme().colors();
                     let host = host.clone();
-                    crate::editor_projection::inline_control(id, host.clone())
-                        .debug_selector(|| "quire-task-list-header".into())
-                        .role(gpui::Role::Button)
-                        .aria_label(label.clone())
-                        .cursor_pointer()
-                        .text_color(colors.text_muted)
-                        .child(label.clone())
-                        .on_click(move |_, window, cx| {
-                            cx.stop_propagation();
-                            let start = range.start;
-                            host.update(cx, |editor, cx| {
-                                window.focus(&gpui::Focusable::focus_handle(editor, cx), cx);
-                                editor.change_selections(
-                                    Default::default(),
-                                    window,
-                                    cx,
-                                    |selections| selections.select_anchor_ranges([start..start]),
-                                );
-                            })
-                            .ok();
+                    crate::editor_projection::inline_control(
+                        ("quire-task-list-header", ordinal),
+                        host.clone(),
+                    )
+                    .debug_selector(|| "quire-task-list-header".into())
+                    .role(gpui::Role::Button)
+                    .aria_label(label.clone())
+                    .cursor_pointer()
+                    .text_color(colors.text_muted)
+                    .child(label.clone())
+                    .on_click(move |_, window, cx| {
+                        cx.stop_propagation();
+                        let start = range.start;
+                        host.update(cx, |editor, cx| {
+                            window.focus(&gpui::Focusable::focus_handle(editor, cx), cx);
+                            editor.change_selections(
+                                Default::default(),
+                                window,
+                                cx,
+                                |selections| selections.select_anchor_ranges([start..start]),
+                            );
                         })
-                        .into_any_element()
+                        .ok();
+                    })
+                    .into_any_element()
                 }),
             };
             (shown.spot.clone(), placeholder)

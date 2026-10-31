@@ -265,6 +265,41 @@ fn files_tree_expands_folders_and_opens_pages_from_the_keyboard(cx: &mut TestApp
 }
 
 #[gpui::test]
+fn a_page_that_loads_after_focus_moves_leaves_focus_where_it_went(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&PAGES, "a", cx);
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.open_page("d".into(), false, window, cx);
+            assert!(view.editor.is_none(), "the daily page is still loading");
+        })
+        .unwrap();
+    let focus_files = if cfg!(target_os = "macos") {
+        "cmd-shift-e"
+    } else {
+        "ctrl-shift-e"
+    };
+    let focus_files = gpui::Keystroke::parse(focus_files).unwrap();
+    cx.dispatch_keystroke(notebook.window.into(), focus_files);
+    wait_until(cx, "the daily page's editor", |cx| {
+        read(&notebook, cx, |view, _| view.editor.is_some())
+    });
+    notebook
+        .window
+        .update(cx, |view, window, _| {
+            assert!(
+                view.nav
+                    .browsers
+                    .files_focus
+                    .as_ref()
+                    .is_some_and(|focus| focus.is_focused(window)),
+                "the loaded page took focus from the Files tree"
+            )
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn pages_browser_filters_by_namespace_and_text(cx: &mut TestAppContext) {
     let notebook = open_notebook(&PAGES, "a", cx);
     dispatch(&notebook, crate::navigation::ShowPages, cx);

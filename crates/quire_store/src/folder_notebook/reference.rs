@@ -18,7 +18,7 @@ use crate::{
     sync::format::{page_id_for_path, sha256},
 };
 use anyhow::{Context as _, Result, bail};
-use quire_core::markdown::{copy_with_new_ids, page_name, page_title};
+use quire_core::markdown::{Addresses, copy_with_new_ids, page_name, page_title};
 use regex::Regex;
 use serde::Deserialize;
 use sqlez::connection::Connection;
@@ -362,6 +362,7 @@ fn recovered_copy(draft: &Pending, destination: &str, key: &str) -> String {
     let mut next = 0;
     let copied = copy_with_new_ids(
         &draft.text,
+        &Addresses::scan(&draft.text),
         destination,
         &[page_name(&draft.path), &title],
         || {
