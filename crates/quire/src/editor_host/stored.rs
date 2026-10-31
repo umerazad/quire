@@ -66,10 +66,10 @@ impl CloseState {
         let pages = if session.is_secured(cx) {
             Activity::Idle
         } else if session.has_error(cx) {
-            Activity::Failed(
-                "Some pages could not be recorded for recovery because storage reported an error."
-                    .into(),
-            )
+            Activity::Failed(match session.unrecorded_conflict(cx) {
+                Some(path) => crate::lifecycle::unrecorded_conflict(&path).into(),
+                None => "Some pages could not be recorded for recovery because storage reported an error.".into(),
+            })
         } else {
             Activity::Busy("Pages are still being recorded for recovery.".into())
         };
