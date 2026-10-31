@@ -548,3 +548,18 @@ fn vim_j_and_k_walk_into_and_out_of_embeds(cx: &mut TestAppContext) {
 fn arrow_keys_walk_into_and_out_of_embeds_with_vim_off(cx: &mut TestAppContext) {
     walk_across_embeds(false, cx);
 }
+
+/// An empty child item interrupts its parent's paragraph, as in rt's Lezer parser, so the
+/// parent keeps its block ID and an embed of it resolves.
+#[gpui::test]
+fn an_embed_of_an_item_above_an_empty_child_resolves(cx: &mut TestAppContext) {
+    let source = "- holder ^spot\n  - \n";
+    let pages = [
+        ("s", "Source.md", source),
+        ("o", "Other.md", "- ((spot))\n"),
+    ];
+    let (notebook, host) = open_in_write(&pages, "o", 1, cx);
+    wait_for_headers(&notebook, &host, &["↳ Embedded block from Source ↗"], cx);
+    let editors = nested(&host, cx);
+    cx.update(|cx| assert_eq!(editors[0].read(cx).text(cx), "- holder ^spot\n  - "));
+}
