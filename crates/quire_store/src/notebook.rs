@@ -23,6 +23,7 @@ pub use checkout::PageCheckout;
 pub use folder::{RescanCursor, RescanLimits, RescanProblem, RescanReport, RescanWait};
 pub use import::{BatchImport, ImportedBatch, ImportedPage};
 pub(crate) use markdown_import::pages_size;
+pub use markdown_import::{FolderImported, SourceFiles};
 pub use merge::{MergeFailure, MergeReport, MergedPage};
 pub(crate) use metadata::revision_metadata;
 pub use metadata::{MetadataLimits, PageMetadata};

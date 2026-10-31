@@ -5,7 +5,9 @@ use crate::exchange::{
 };
 use gpui::TestAppContext;
 use quire_store::{
-    markdown_import::CANCELED, notebook::NotebookStore, sync::format::page_id_for_path,
+    markdown_import::CANCELED,
+    notebook::NotebookStore,
+    sync::format::{attachment_file_name, page_id_for_path},
 };
 use std::{collections::BTreeMap, fs, path::Path};
 
@@ -137,7 +139,7 @@ fn importing_a_markdown_folder_adds_new_pages_and_leaves_pages_already_here(
     choose_folder(source.path(), cx);
     assert_eq!(
         finished(&notebook, cx),
-        "Imported 1 pages and 0 other files. 1 pages were already here and were left unchanged. 1 other files were not copied: Quire notebooks cannot import attachments yet. Keep the source folder; links to those files stay as written."
+        "Imported 1 pages and 0 other files. 1 pages were already here and were left unchanged. 1 other files no imported page links to stayed in the source folder: a Quire notebook keeps only the files its pages link to."
     );
     wait_until(cx, "the page list", |cx| listed(&notebook, cx).len() == 2);
     assert_eq!(listed(&notebook, cx), ["People/Maram.md", "Plan.md"]);
@@ -154,6 +156,29 @@ fn importing_a_markdown_folder_adds_new_pages_and_leaves_pages_already_here(
         before,
         "the source folder is only read"
     );
+}
+
+#[gpui::test]
+fn importing_into_a_quire_notebook_attaches_linked_files(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&[("k", "Keep.md", "- keep\n")], "k", cx);
+    settle(&notebook, cx);
+    let source = tempfile::tempdir().unwrap();
+    rt_source(source.path());
+    write_files(source.path(), &[("assets/unused.txt", "unused")]);
+
+    dispatch(&notebook, ImportMarkdownFolder, cx);
+    choose_folder(source.path(), cx);
+    assert_eq!(
+        finished(&notebook, cx),
+        "Imported 2 pages and 1 other files. 1 other files no imported page links to stayed in the source folder: a Quire notebook keeps only the files its pages link to."
+    );
+    let name = attachment_file_name(b"png", "a.png");
+    assert_eq!(
+        stored_text(&notebook.path, "Plan.md").unwrap(),
+        format!("- see ![](attachments/{name})\n")
+    );
+    let cache = notebook.path.parent().unwrap().join("attachments");
+    assert_eq!(fs::read(cache.join(&name)).unwrap(), b"png");
 }
 
 #[gpui::test]

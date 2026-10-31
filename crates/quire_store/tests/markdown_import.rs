@@ -5,8 +5,8 @@ use anyhow::Result;
 use quire_store::{
     folder_notebook::FolderNotebook,
     markdown_import::{CANCELED, SourceFolder, SourcePage, copy_files, read_source},
-    notebook::{Edit, NotebookStore},
-    sync::format::page_id_for_path,
+    notebook::{Edit, NotebookStore, SourceFiles},
+    sync::format::{attachment_file_name, page_id_for_path},
 };
 use std::{
     collections::BTreeMap,
@@ -163,6 +163,64 @@ fn an_unusable_path_or_a_case_collision_never_leaves_part_of_an_import() -> Resu
     created.sort();
     assert_eq!(created, ["A.md", "B.md", "Café.md"]);
     assert_eq!(imported.skipped.len(), 2, "{:?}", imported.skipped);
+    Ok(())
+}
+
+#[test]
+fn quire_notebooks_copy_linked_files_as_attachments_and_point_links_at_them() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let source = directory.path().join("source");
+    write(
+        &source,
+        &[
+            (
+                "Notes/Page.md",
+                "- ![Chart](../assets/chart.png) ![[../assets/report.pdf#page=2]]\n- [doc](<../assets/my doc.txt>) [web](https://example.com/a.png) ![gone](missing.png)\n",
+            ),
+            ("Top.md", "- ![](assets/chart.png)\n"),
+            ("assets/chart.png", "chart"),
+            ("assets/report.pdf", "%PDF-report"),
+            ("assets/my doc.txt", "doc"),
+            ("assets/unused.bin", "unused"),
+        ],
+    );
+    let before = tree(&source);
+    let store = NotebookStore::open(&directory.path().join("local.sqlite"), "nb", "office")?;
+    let folder = read(&source);
+    let imported = store.import_folder(
+        &folder.pages,
+        &SourceFiles {
+            root: source.clone(),
+            files: folder.files.clone(),
+        },
+        1,
+    )?;
+    assert_eq!(
+        imported.attached,
+        ["assets/chart.png", "assets/my doc.txt", "assets/report.pdf"],
+        "only linked files are copied"
+    );
+    let (chart, report, doc) = (
+        attachment_file_name(b"chart", "chart.png"),
+        attachment_file_name(b"%PDF-report", "report.pdf"),
+        attachment_file_name(b"doc", "my doc.txt"),
+    );
+    assert_eq!(
+        stored_text(&store, "Notes/Page.md").unwrap(),
+        format!(
+            "- ![Chart](attachments/{chart}) ![[attachments/{report}#page=2]]\n- [doc](<attachments/{doc}>) [web](https://example.com/a.png) ![gone](missing.png)\n"
+        )
+    );
+    assert_eq!(
+        stored_text(&store, "Top.md").unwrap(),
+        format!("- ![](attachments/{chart})\n")
+    );
+    let cache = directory.path().join("attachments");
+    assert_eq!(fs::read(cache.join(&chart))?, b"chart");
+    assert_eq!(fs::read(cache.join(&report))?, b"%PDF-report");
+    assert_eq!(fs::read(cache.join(&doc))?, b"doc");
+    assert_eq!(fs::read_dir(&cache)?.count(), 3);
+    assert_eq!(tree(&source), before, "the source folder is only read");
     Ok(())
 }
 

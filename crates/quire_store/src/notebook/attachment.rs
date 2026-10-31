@@ -54,6 +54,17 @@ impl NotebookStore {
     /// Attaches an ordinary file by streaming it, so its size never sits in memory. Returns the
     /// same Markdown reference as [`Self::attach`].
     pub fn attach_file(&self, source: &Path, original: &str) -> Result<String> {
+        self.attach_file_reporting(source, original)
+            .map(|(reference, _)| reference)
+    }
+
+    /// [`Self::attach_file`], also saying whether the attachment is new to this store: neither
+    /// cataloged nor asked for by a synced page before this call.
+    pub(super) fn attach_file_reporting(
+        &self,
+        source: &Path,
+        original: &str,
+    ) -> Result<(String, bool)> {
         self.require_usable()?;
         let source = &fs::canonicalize(source).with_context(|| {
             format!(
@@ -73,8 +84,9 @@ impl NotebookStore {
             source.display()
         );
         let name = format::attachment_name_for_hash(&hash_file(source)?, original);
+        let new = !self.attachment_known(&name)?;
         self.cache_attachment_file(&name, source)?;
-        Ok(format!("attachments/{name}"))
+        Ok((format!("attachments/{name}"), new))
     }
 
     /// Verifies downloaded bytes against their protocol name before writing them.
@@ -129,6 +141,44 @@ impl NotebookStore {
     fn attachment_metadata(&self, name: &str) -> Result<Option<(String, i64)>> {
         self.connection
             .select_row_bound("SELECT hash,size FROM attachments WHERE name=?")?(name)
+    }
+
+    /// Whether the catalog knows `name` or a synced page asks for it; attaching it then removes
+    /// nothing a later rollback could need.
+    pub(super) fn attachment_known(&self, name: &str) -> Result<bool> {
+        let needed: Option<String> = self
+            .connection
+            .select_row_bound("SELECT name FROM attachment_needs WHERE name=?")?(
+            name
+        )?;
+        Ok(needed.is_some() || self.attachment_metadata(name)?.is_some())
+    }
+
+    /// Removes attachments this store installed for a write that then failed. Only names
+    /// [`Self::attachment_known`] reported unknown before the write may be passed, so no page
+    /// can reference them.
+    pub(super) fn forget_attachments(&self, names: &[String]) -> Result<()> {
+        self.transaction(|| {
+            for name in names {
+                self.connection
+                    .exec_bound("DELETE FROM attachments WHERE name=?")?(
+                    name.as_str()
+                )?;
+            }
+            Ok(())
+        })?;
+        let directory = self.directory.join("attachments");
+        for name in names {
+            match fs::remove_file(directory.join(name)) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => {
+                    return Err(error).with_context(|| {
+                        format!("Cannot remove the unused attachment {name}. Delete it from the attachment cache by hand; no page links to it.")
+                    });
+                }
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn require_attachment(&self, name: &str) -> Result<()> {

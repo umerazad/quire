@@ -17,7 +17,10 @@ use quire_core::exchange::{
     notebook_export::{ExportReport, export_target, replace_question},
     page_export::{export_name, localize_attachments},
 };
-use quire_store::markdown_import::{CANCELED, copy_files, read_source, remove_files};
+use quire_store::{
+    markdown_import::{CANCELED, copy_files, read_source, remove_files},
+    notebook::SourceFiles,
+};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -289,12 +292,21 @@ async fn import(
             }
         }
         NotebookBackend::Store(client) => {
-            let imported = ask(client.import_pages(folder.pages, now())).await?;
-            let summary = import_summary(imported.saved.len(), 0, imported.skipped.len());
-            Ok(match files {
+            let source = SourceFiles {
+                root: source,
+                files: folder.files,
+            };
+            let imported = ask(client.import_folder(folder.pages, source, now())).await?;
+            let attached = imported.attached.len();
+            let summary = import_summary(
+                imported.pages.saved.len(),
+                attached,
+                imported.pages.skipped.len(),
+            );
+            Ok(match files - attached {
                 0 => summary,
-                files => format!(
-                    "{summary} {files} other files were not copied: Quire notebooks cannot import attachments yet. Keep the source folder; links to those files stay as written."
+                unlinked => format!(
+                    "{summary} {unlinked} other files no imported page links to stayed in the source folder: a Quire notebook keeps only the files its pages link to."
                 ),
             })
         }
