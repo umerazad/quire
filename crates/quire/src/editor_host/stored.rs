@@ -328,6 +328,8 @@ impl StoredWindow {
         this.watch_backups(window, cx);
         this.watch_sync(window, cx);
         this.load_settings(cx);
+        #[cfg(unix)]
+        this.offer_notebook_tools(cx);
         this
     }
 

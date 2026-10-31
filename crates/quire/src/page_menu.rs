@@ -335,6 +335,9 @@ fn entries(editor: &Editor, cx: &mut App) -> Vec<Entry> {
             .then(|| Item::action("Tidy this day", crate::ai::TidyDay).done());
         [
             Entry::Separator,
+            Item::action("AI changes…", crate::ai::ReviewAiChanges)
+                .disabled(!cfg!(unix))
+                .done(),
             Item::action("Ask AI…", crate::ai::AskAi).done(),
             Item::action("Ask the notebook", crate::ai::AskNotebook).done(),
         ]

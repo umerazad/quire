@@ -189,6 +189,20 @@ async fn invalid_paths_and_models_are_refused_with_the_reference_messages(cx: &m
 }
 
 #[gpui::test]
+async fn ai_writes_default_to_review_and_save_as_settings(cx: &mut TestAppContext) {
+    let bench = Bench::new();
+    let fs = init_ai(&bench, cx).await;
+    cx.update(|cx| assert_eq!(AiSettings::get_global(cx).writes, Writes::Review));
+    cx.update(|cx| set_writes(Writes::Apply, cx));
+    cx.run_until_parked();
+    assert!(settings_text(&fs).await.contains("\"writes\": \"apply\""));
+    cx.update(|cx| assert_eq!(AiSettings::get_global(cx).writes, Writes::Apply));
+    cx.update(|cx| set_writes(Writes::Off, cx));
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(AiSettings::get_global(cx).writes, Writes::Off));
+}
+
+#[gpui::test]
 async fn prompt_history_keeps_thirty_distinct_prompts_newest_first(cx: &mut TestAppContext) {
     let bench = Bench::new();
     init_ai(&bench, cx).await;

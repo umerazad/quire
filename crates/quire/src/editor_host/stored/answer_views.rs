@@ -3,10 +3,7 @@
 //! Tidy in the page's editor.
 
 use super::*;
-use crate::ai::{
-    answer::{AnswerEvent, AnswerPane, Place, Seed},
-    keep::Today,
-};
+use crate::ai::answer::{AnswerEvent, AnswerPane, Place, Seed};
 use quire_core::daily::format_daily;
 
 #[derive(Default)]
@@ -85,25 +82,6 @@ impl StoredWindow {
         cx.notify();
     }
 
-    fn today_page(&self) -> Result<Today, String> {
-        let date = self.today()?;
-        let calendar = self.nav.daily.calendar.as_ref().ok_or_else(|| {
-            "Daily notes need the system time zone. Set a valid time zone and reopen the notebook."
-                .to_owned()
-        })?;
-        let layout = &self.nav.daily.layout;
-        let unusable = |error: &str| {
-            format!(
-                "Cannot keep the answer in today's page: {error}. Fix the daily layout in Daily notes, then retry."
-            )
-        };
-        Ok(Today {
-            title: format_daily(&layout.title, &date, calendar).map_err(unusable)?,
-            folder: layout.folder(&date, calendar).map_err(unusable)?,
-            date,
-        })
-    }
-
     fn keep_answer(
         &mut self,
         pane: Entity<AnswerPane>,
@@ -111,7 +89,13 @@ impl StoredWindow {
         answer: String,
         cx: &mut gpui::Context<Self>,
     ) {
-        let prepared = self.today_page().and_then(|today| {
+        let prepared = self
+            .today_daily(|error| {
+                format!(
+                    "Cannot keep the answer in today's page: {error}. Fix the daily layout in Daily notes, then retry."
+                )
+            })
+            .and_then(|today| {
             let client = self.index_client(cx).ok_or_else(|| {
                 "Keeping an answer needs the notebook index, which has not started. Wait for indexing, then retry.".to_owned()
             })?;

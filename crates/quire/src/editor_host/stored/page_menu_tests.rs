@@ -143,6 +143,7 @@ fn write_menu_restyles_lists_makes_tasks_and_toggles_marks_in_one_undo_step(
             "Copy block reference",
             "Copy block embed",
             "-",
+            "AI changes…",
             "Ask AI…",
             "Ask the notebook",
         ])
@@ -186,6 +187,7 @@ fn write_menu_restyles_lists_makes_tasks_and_toggles_marks_in_one_undo_step(
             "Copy block reference",
             "Copy block embed",
             "-",
+            "AI changes…",
             "Ask AI…",
             "Ask the notebook",
         ])
@@ -240,6 +242,7 @@ fn source_menu_copies_block_references_and_a_right_click_moves_the_caret(cx: &mu
             "Copy block reference",
             "Copy block embed",
             "-",
+            "AI changes…",
             "Ask AI…",
             "Ask the notebook",
         ])

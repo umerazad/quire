@@ -15,6 +15,8 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     settings::init(cx);
     crate::preferences::init(cx);
     crate::ai::settings::init(cx);
+    #[cfg(unix)]
+    crate::notebook_tools::init(crate::notebook_tools::directory(), cx);
     crate::help::init(cx);
     crate::showcase::init(cx);
     theme_settings::init(theme::LoadThemes::All(Box::new(assets::Assets)), cx);

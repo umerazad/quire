@@ -6,7 +6,9 @@
 pub mod ask;
 pub mod backend;
 pub mod commands;
+pub mod mcp;
 pub mod tidy;
+pub mod tools;
 
 pub use backend::{Backend, Event, ParseState, Parsed, parse_line};
 pub use commands::{AiRange, Command, Placement, Verb};

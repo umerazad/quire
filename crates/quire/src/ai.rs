@@ -32,6 +32,8 @@ actions!(
         SubmitQuestion,
         /// Runs the synthesis instruction typed in the answer pane.
         RunSynthesis,
+        /// Opens the changes AI sessions in a terminal proposed, to apply or reject them.
+        ReviewAiChanges,
     ]
 );
 

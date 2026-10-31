@@ -179,20 +179,40 @@ impl StoredWindow {
         if target == settings::CaptureTarget::Inbox {
             return Ok(crate::task_edit::CaptureTo::Inbox);
         }
+        self.today_page()
+    }
+
+    /// Today's daily page as a capture target.
+    pub(in crate::editor_host::stored) fn today_page(
+        &self,
+    ) -> Result<crate::task_edit::CaptureTo, String> {
+        self.today_daily(|error| {
+            format!(
+                "Cannot capture to today's page: {error}. Fix the daily layout in Daily notes, or capture to Inbox in Settings."
+            )
+        })
+        .map(|today| crate::task_edit::CaptureTo::Today {
+            date: today.date,
+            title: today.title,
+            folder: today.folder,
+        })
+    }
+
+    /// Today's daily page: its date, its title under the layout, and the folder it goes in.
+    /// `unusable` words the error when the layout cannot name it.
+    pub(in crate::editor_host::stored) fn today_daily(
+        &self,
+        unusable: impl Fn(&str) -> String,
+    ) -> Result<crate::ai::keep::Today, String> {
         let date = self.today()?;
         let calendar = self.nav.daily.calendar.as_ref().ok_or_else(|| {
             "Daily notes need the system time zone. Set a valid time zone and reopen the notebook."
                 .to_owned()
         })?;
         let layout = &self.nav.daily.layout;
-        let unusable = |error: &str| {
-            format!(
-                "Cannot capture to today's page: {error}. Fix the daily layout in Daily notes, or capture to Inbox in Settings."
-            )
-        };
-        Ok(crate::task_edit::CaptureTo::Today {
-            title: format_daily(&layout.title, &date, calendar).map_err(unusable)?,
-            folder: layout.folder(&date, calendar).map_err(unusable)?,
+        Ok(crate::ai::keep::Today {
+            title: format_daily(&layout.title, &date, calendar).map_err(&unusable)?,
+            folder: layout.folder(&date, calendar).map_err(&unusable)?,
             date,
         })
     }
