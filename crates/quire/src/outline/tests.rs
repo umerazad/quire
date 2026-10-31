@@ -358,6 +358,26 @@ fn folding_collapses_children_and_enter_adds_a_sibling(cx: &mut TestAppContext) 
     assert_eq!(displayed(window, cx), "Parent\n  Kid\nAfter\n");
 }
 
+/// Moves the pointer to the middle of `selector`'s drawn bounds, or to the window's corner when
+/// it is `None`.
+pub(super) fn hover(
+    window: WindowHandle<Editor>,
+    selector: Option<&'static str>,
+    cx: &mut TestAppContext,
+) {
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    let at = selector.map_or(gpui::point(gpui::px(1.), gpui::px(1.)), |selector| {
+        visual
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("a rendered {selector}"))
+            .center()
+    });
+    visual.simulate_mouse_move(at, None, Default::default());
+    cx.executor().run_until_parked();
+}
+
 pub(super) fn click(window: WindowHandle<Editor>, selector: &'static str, cx: &mut TestAppContext) {
     cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
         .unwrap();
@@ -389,11 +409,24 @@ fn bullets_draw_without_changing_text_and_their_arrow_folds(cx: &mut TestAppCont
         bullet.size.width <= gpui::px(24.),
         "a bullet is as narrow as rt's: {bullet:?}"
     );
+    assert!(
+        visual.debug_bounds("quire-bullet-fold").is_none(),
+        "the arrow waits for the pointer, as in rt"
+    );
+    hover(window, Some("quire-line-0"), cx);
     click(window, "quire-bullet-fold", cx);
     assert_eq!(displayed(window, cx), "Parent⋯\nAfter\n");
     assert_eq!(collapsed_count(window, cx), 1);
+    hover(window, None, cx);
     click(window, "quire-bullet-fold", cx);
     assert_eq!(displayed(window, cx), "Parent\n  Kid\nAfter\n");
+    hover(window, None, cx);
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        visual.debug_bounds("quire-bullet-fold").is_none(),
+        "an expanded block's arrow hides when the pointer leaves"
+    );
     assert_eq!(state(window, cx), "- Parent|\n  - Kid\n- After\n");
 }
 

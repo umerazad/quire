@@ -800,6 +800,17 @@ pub trait Addon: 'static {
         Vec::new()
     }
 
+    /// Guides the addon draws in place of the editor's indent guides over the visible buffer
+    /// rows. `None` keeps the editor's own guides.
+    fn indent_guides(
+        &self,
+        _: &Entity<Editor>,
+        _: Range<MultiBufferRow>,
+        _: &App,
+    ) -> Option<Vec<HostIndentGuide>> {
+        None
+    }
+
     fn render_buffer_header_controls(
         &self,
         _: &ExcerptBoundaryInfo,
@@ -1297,6 +1308,23 @@ pub struct EditorSnapshot {
     current_line_highlight: CurrentLineHighlight,
     gutter_hovered: bool,
     semantic_tokens_enabled: bool,
+}
+
+/// A vertical guide an addon draws in place of the editor's indent guides.
+pub struct HostIndentGuide {
+    /// The first and last buffer rows the guide spans. A guide whose rows all fold into one
+    /// display row is not drawn.
+    pub rows: std::ops::RangeInclusive<MultiBufferRow>,
+    /// The indentation column the guide hangs from: its left edge is this many space widths,
+    /// plus `offset`, right of the text's left edge.
+    pub column: u32,
+    pub offset: Pixels,
+    /// How far below the middle of its first row the guide starts.
+    pub start_below_center: Pixels,
+    pub width: Pixels,
+    pub color: Hsla,
+    /// Names the drawn guide in tests' debug bounds.
+    pub debug_selector: String,
 }
 
 /// An interactive overlay whose geometry follows native shaped and wrapped text.

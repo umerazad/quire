@@ -536,6 +536,10 @@ impl TextStyle {
             self.strikethrough = Some(strikethrough);
         }
 
+        if let Some(family) = style.font_family {
+            self.font_family = family.into();
+        }
+
         self
     }
 
@@ -598,6 +602,9 @@ pub struct HighlightStyle {
 
     /// Similar to the CSS `opacity` property, this will cause the text to be less vibrant.
     pub fade_out: Option<f32>,
+
+    /// The font family of the text, replacing the style's family and keeping its fallbacks.
+    pub font_family: Option<&'static str>,
 }
 
 impl Eq for HighlightStyle {}
@@ -610,6 +617,7 @@ impl Hash for HighlightStyle {
         self.background_color.hash(state);
         self.underline.hash(state);
         self.strikethrough.hash(state);
+        self.font_family.hash(state);
         state.write_u32(u32::from_be_bytes(
             self.fade_out.map(|f| f.to_be_bytes()).unwrap_or_default(),
         ));
@@ -906,6 +914,7 @@ impl From<&TextStyle> for HighlightStyle {
             underline: other.underline,
             strikethrough: other.strikethrough,
             fade_out: None,
+            font_family: None,
         }
     }
 }
@@ -938,6 +947,7 @@ impl HighlightStyle {
             background_color: other.background_color.or(self.background_color),
             underline: other.underline.or(self.underline),
             strikethrough: other.strikethrough.or(self.strikethrough),
+            font_family: other.font_family.or(self.font_family),
             fade_out: other
                 .fade_out
                 .map(|source_fade| {
@@ -1354,6 +1364,7 @@ mod tests {
                 color: Some(blue()),
             }),
             fade_out: Some(0.),
+            font_family: None,
             font_style: Some(FontStyle::Italic),
             font_weight: Some(FontWeight(300.)),
             background_color: Some(yellow()),
@@ -1386,6 +1397,7 @@ mod tests {
                 color: Some(crate::red()),
             }),
             fade_out: Some(0.),
+            font_family: None,
             font_style: Some(FontStyle::Oblique),
             font_weight: Some(FontWeight(800.)),
             background_color: Some(green()),
@@ -1404,6 +1416,7 @@ mod tests {
             }),
             // TODO this does not seem right
             fade_out: Some(0.),
+            font_family: None,
             font_style: Some(FontStyle::Oblique),
             font_weight: Some(FontWeight(800.)),
             background_color: Some(green()),

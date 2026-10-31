@@ -9,6 +9,9 @@ use std::borrow::Cow;
 /// The family that Arabic-script text falls back to.
 pub const ARABIC: &str = "Noto Naskh Arabic";
 
+/// The family Urdu lines are set in, as `rt` sets its `lang="ur"` lines in "Quire Urdu".
+pub const URDU: &str = "Noto Nastaliq Urdu";
+
 macro_rules! font {
     ($path:literal) => {
         Cow::Borrowed(include_bytes!(concat!("../assets/fonts/", $path)).as_slice())
