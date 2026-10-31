@@ -827,12 +827,18 @@ impl Client<FolderNotebook> {
             notebook.version_text(&page, &id)
         })
     }
-    /// Takes in another step of the reference app's history queued on opening; true while
-    /// more remains.
-    pub fn import_reference_history(&self) -> Answer<bool> {
+    /// Takes in another step of the reference app's history queued on opening. Returns how many
+    /// saved versions remain, none once it is all in.
+    pub fn import_reference_history(&self) -> Answer<usize> {
         self.request(64, |notebook| {
-            notebook.import_reference_history(reference::HISTORY_STEP)
+            notebook
+                .import_reference_history(reference::HISTORY_STEP)
+                .map(|more| more.then(|| notebook.reference_history_left()).unwrap_or(0))
         })
+    }
+    /// How many of the reference app's saved versions are queued to take in.
+    pub fn reference_history_left(&self) -> Answer<usize> {
+        self.request(64, |notebook| Ok(notebook.reference_history_left()))
     }
 }
 
