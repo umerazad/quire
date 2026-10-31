@@ -388,7 +388,53 @@ pub fn indent(
     let block = blocks
         .iter()
         .find(|item| item.kind == "list" && item.from <= head && head <= item.content_to)?;
-    let range = subtree_range(text, block);
+    indent_group(text, blocks, &[block], head, outdent, zoom)
+}
+
+/// Vim `>` and `<` over several lines, from a count or a visual selection, move the list items
+/// starting on those lines one level together, each with its children. They must be siblings.
+pub fn indent_lines(
+    text: &str,
+    blocks: &[Block],
+    lines: Range<usize>,
+    outdent: bool,
+    zoom: Option<&str>,
+) -> Option<Outcome> {
+    let from = line_start(text, lines.start);
+    let to = line_end(text, lines.end);
+    let selected: Vec<&Block> = blocks
+        .iter()
+        .filter(|item| item.kind == "list" && (from..=to).contains(&line_start(text, item.from)))
+        .collect();
+    let group: Vec<&Block> = selected
+        .iter()
+        .copied()
+        .filter(|item| {
+            !selected
+                .iter()
+                .any(|other| item.parent.as_deref() == Some(other.key.as_str()))
+        })
+        .collect();
+    let first = group.first()?;
+    if group.iter().any(|item| item.parent != first.parent) {
+        return Some(Outcome::Refuse(NOT_SIBLINGS));
+    }
+    let head = bounds(text, first).text_start;
+    indent_group(text, blocks, &group, head, outdent, zoom)
+}
+
+pub const NOT_SIBLINGS: &str = "Those list items sit at different levels. Select items under one parent to move them together.";
+
+fn indent_group(
+    text: &str,
+    blocks: &[Block],
+    group: &[&Block],
+    head: usize,
+    outdent: bool,
+    zoom: Option<&str>,
+) -> Option<Outcome> {
+    let (block, last) = (*group.first()?, *group.last()?);
+    let range = subtree_range(text, block).start..subtree_range(text, last).end;
     let old_indent = &text[range.start..block.from];
     let target = if outdent {
         block
@@ -403,7 +449,10 @@ pub fn indent(
     let Some(target) = target else {
         return apply(Plan::stay(head));
     };
-    if outdent && zoom.is_some() && (target.id.as_deref() == zoom || block.id.as_deref() == zoom) {
+    if outdent
+        && zoom.is_some()
+        && (target.id.as_deref() == zoom || group.iter().any(|item| item.id.as_deref() == zoom))
+    {
         return apply(Plan::stay(head));
     }
     if !outdent && !blank(text.get(target.subtree_to..range.start).unwrap_or("")) {

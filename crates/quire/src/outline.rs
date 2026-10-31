@@ -28,9 +28,9 @@ actions!(
         IndentBlock,
         /// Moves the list item and its children out one level.
         OutdentBlock,
-        /// Vim `>>`: nests the list item on the cursor's line.
+        /// Vim `>>` or visual `>`: nests the list items on the lines, with their children.
         IndentLine,
-        /// Vim `<<`: moves the list item on the cursor's line out one level.
+        /// Vim `<<` or visual `<`: moves the list items on the lines out one level.
         OutdentLine,
         /// Swaps the list item and its children with the previous sibling.
         MoveBlockUp,
@@ -75,6 +75,7 @@ const WRITE: &str = "Editor && QuireWrite && !QuireControl";
 const WRITE_INPUT: &str = "Editor && QuireWrite && !QuireControl && !VimControl && vim_mode != replace && vim_mode != waiting && vim_mode != literal";
 const WRITE_NORMAL: &str =
     "Editor && QuireWrite && !QuireControl && vim_mode == normal && !VimCount";
+const WRITE_VISUAL: &str = "Editor && QuireWrite && !QuireControl && vim_mode == visual";
 
 /// The last outline command refusal, shown by the notebook window until the next command.
 #[derive(Default)]
@@ -261,6 +262,8 @@ fn bind_keys(cx: &mut App) {
             OutdentLine,
             Some("Editor && QuireWrite && vim_operator == <"),
         ),
+        KeyBinding::new(">", IndentLine, Some(WRITE_VISUAL)),
+        KeyBinding::new("<", OutdentLine, Some(WRITE_VISUAL)),
     ]);
     // Zed binds deleting to the line start only on macOS; elsewhere Ctrl-Backspace deletes a word.
     if mac {
@@ -289,7 +292,10 @@ fn register<A: Action>(
             match handled {
                 None => cx.propagate(),
                 Some(Handled::Done) => {}
-                Some(Handled::Record) => vim::record_host_command(&editor, cx),
+                Some(Handled::Record) => {
+                    vim::record_host_command(&editor, cx);
+                    vim::end_host_visual(&editor, window, cx);
+                }
                 Some(Handled::Insert(page, plan)) => {
                     vim::begin_host_insert(&editor, window, cx);
                     editor.update(cx, |editor, cx| apply(editor, &page, plan, window, cx));
@@ -728,24 +734,15 @@ fn indent(
     cx: &mut Context<Editor>,
 ) -> Option<Handled> {
     let page = page(editor, cx)?;
-    let head = if line {
-        if !page.single
-            || model::line_start(&page.text, page.selection.start)
-                != model::line_start(&page.text, page.selection.end)
-        {
-            return None;
-        }
-        model::list_line(&page.text, &page.blocks, page.selection.start)?
-            .1
-            .text_start
-    } else {
-        page.caret()?
-    };
+    if line {
+        return indent_lines(editor, &page, outdent, window, cx);
+    }
+    let head = page.caret()?;
     if literal(&page.buffer, head, cx) {
         return None;
     }
     let zoom = page.zoom.clone();
-    if !line && let Some(bullet) = model::bare_bullet(&page.text, head) {
+    if let Some(bullet) = model::bare_bullet(&page.text, head) {
         let then = |text: &str, blocks: &[Block], cursor| match model::indent(
             text,
             blocks,
@@ -761,7 +758,45 @@ fn indent(
     }
     let outcome = model::indent(&page.text, &page.blocks, head, outdent, page.zoom());
     finish(editor, &page, outcome, window, cx)
-        .map(|handled| if line { Handled::Record } else { handled })
+}
+
+/// Vim `>>` and `<<`, with a count, and `>` and `<` in a visual mode: the list items starting
+/// on the lines move one level with their children. Lines without list items keep Vim's
+/// indent.
+fn indent_lines(
+    editor: &mut Editor,
+    page: &Page,
+    outdent: bool,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> Option<Handled> {
+    if !page.single {
+        return None;
+    }
+    let mut lines = page.selection.clone();
+    if lines.end > lines.start && model::line_start(&page.text, lines.end) == lines.end {
+        lines.end -= 1;
+    }
+    let first = model::list_line(&page.text, &page.blocks, lines.start)?.1;
+    if literal(&page.buffer, first.text_start, cx) {
+        return None;
+    }
+    let count = vim::take_host_count(cx).unwrap_or(1);
+    if lines.is_empty() {
+        lines.end = (1..count).fold(lines.end, |at, _| {
+            (model::line_end(&page.text, at) + 1).min(page.text.len())
+        });
+    }
+    match model::indent_lines(&page.text, &page.blocks, lines, outdent, page.zoom())? {
+        Outcome::Apply(plan) => {
+            apply(editor, page, plan, window, cx);
+            Some(Handled::Record)
+        }
+        Outcome::Refuse(message) => {
+            set_notice(Some(message), cx);
+            Some(Handled::Done)
+        }
+    }
 }
 
 fn move_block(

@@ -485,16 +485,18 @@ fn merging_never_edits_collapsed_children(cx: &mut TestAppContext) {
     expect(window, &[("backspace", "- Parent\n  - Kid|After\n")], cx);
 }
 
-/// Vim replays recorded insertions only through a workspace, which Quire's editors lack, so
-/// `.` repeats the outline command without its typed text.
 #[gpui::test]
-fn vim_dot_repeats_opening_a_block(cx: &mut TestAppContext) {
+fn vim_dot_repeats_opening_a_block_with_its_text(cx: &mut TestAppContext) {
     let window = write_view("- O|ne\n", true, cx);
     expect(
         window,
         &[
             ("o n e w escape", "- One\n- ne|w\n"),
-            (".", "- One\n- new\n- |\n"),
+            (".", "- One\n- new\n- ne|w\n"),
+            (
+                "k shift-o u p escape .",
+                "- One\n- u|p\n- up\n- new\n- new\n",
+            ),
         ],
         cx,
     );
@@ -625,5 +627,47 @@ fn cmd_backspace_stops_at_the_text_start(cx: &mut TestAppContext) {
             ("cmd-z", "- [ ] Hello wor|ld ^x\n- Next\n"),
         ],
         cx,
+    );
+}
+
+#[gpui::test]
+fn vim_counts_and_visual_shifts_move_sibling_subtrees(cx: &mut TestAppContext) {
+    let page = "- One\n- T|wo\n  - Kid\n- Three\n- Four\n";
+    let window = write_view(page, true, cx);
+    expect(
+        window,
+        &[
+            ("3 > >", "- One\n  - |Two\n    - Kid\n  - Three\n- Four\n"),
+            ("u", page),
+            (
+                "shift-v j j >",
+                "- One\n  - |Two\n    - Kid\n  - Three\n- Four\n",
+            ),
+        ],
+        cx,
+    );
+    assert!(
+        window
+            .update(cx, |editor, _, cx| editor
+                .selections
+                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx)))
+            .unwrap()
+            .is_empty(),
+        "visual mode ends"
+    );
+    expect(
+        window,
+        &[("shift-v j j <", "- One\n- |Two\n  - Kid\n- Three\n- Four\n")],
+        cx,
+    );
+    keys(window, "j shift-v j j >", cx);
+    assert_eq!(
+        state(window, cx).replace('|', ""),
+        "- One\n- Two\n  - Kid\n- Three\n- Four\n"
+    );
+    assert_eq!(
+        cx.update(|cx| notice(cx)).as_deref(),
+        Some(model::NOT_SIBLINGS),
+        "a kid and its parent's siblings move only together with the parent"
     );
 }

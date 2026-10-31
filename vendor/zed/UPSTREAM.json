@@ -208,7 +208,7 @@
     },
     {
       "path": "crates/vim/src/vim.rs",
-      "change": "Add editor-local weak search-bar association, targeted submission and command-prefix hooks for embedded hosts; retain workspace lookup and preserve the bar association across Vim toggles. Keep embedded visual/local marks in the Vim session when no workspace exists. Expose initialization with session register retention while leaving default initialization unchanged. Export typed page-command parsing for persistence-aware hosts. Export host_command for host-run Ex commands. Let a host editing command start recorded Insert mode or record itself for dot-repeat, without depending on host types."
+      "change": "Add editor-local weak search-bar association, targeted submission and command-prefix hooks for embedded hosts; retain workspace lookup and preserve the bar association across Vim toggles. Keep embedded visual/local marks in the Vim session when no workspace exists. Expose initialization with session register retention while leaving default initialization unchanged. Export typed page-command parsing for persistence-aware hosts. Export host_command for host-run Ex commands. Let a host editing command start recorded Insert mode or record itself for dot-repeat, without depending on host types. Let a host take the typed count for its command and end a visual mode after acting on the selection."
     },
     {
       "path": "crates/vim/src/normal/search.rs",
@@ -269,6 +269,10 @@
     {
       "path": "crates/vim/src/normal/paste.rs",
       "change": "For views with an edit filter, put linewise text (p, P) at the cursor line's source start or end, beyond hidden syntax, under scoped Structural intent so the filter keeps the exact source position. Ordinary views, charwise and visual puts are unchanged."
+    },
+    {
+      "path": "crates/vim/src/normal/repeat.rs",
+      "change": "Replay recorded insertions into the focused Vim session's editor when the window has no workspace, so dot-repeat in embedded editors retypes the text after o or O. Workspace windows keep using the active item."
     },
     {
       "path": "crates/vim/src/normal/change.rs",

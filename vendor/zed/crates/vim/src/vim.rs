@@ -595,6 +595,29 @@ pub fn record_host_command(editor: &Entity<Editor>, cx: &mut App) {
     }
 }
 
+/// Takes the count typed for a host command, such as the 3 in `3>>`, so the host applies it
+/// instead of Vim. Returns None when no count was typed or Vim is off.
+pub fn take_host_count(cx: &mut App) -> Option<usize> {
+    cx.has_global::<VimGlobals>().then_some(())?;
+    Vim::take_forced_motion(cx);
+    Vim::take_count(cx)
+}
+
+/// Ends a visual mode after a host command acted on the selection, as Vim's own operators do.
+pub fn end_host_visual(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
+    if let Some(vim) = editor
+        .read(cx)
+        .addon::<VimAddon>()
+        .map(|addon| addon.entity.clone())
+        .filter(|vim| vim.read(cx).mode.is_visual())
+    {
+        vim.update(cx, |vim, cx| {
+            vim.store_visual_marks(window, cx);
+            vim.switch_mode(Mode::Normal, true, window, cx)
+        });
+    }
+}
+
 impl editor::Addon for VimAddon {
     fn extend_key_context(&self, key_context: &mut KeyContext, cx: &App) {
         self.entity.read(cx).extend_key_context(key_context, cx)
