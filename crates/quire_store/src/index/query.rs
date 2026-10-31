@@ -81,7 +81,7 @@ fn utf16_order(a: &str, b: &str) -> Ordering {
 }
 
 impl QueryIndex {
-    fn compare_paths(&self, a: &str, b: &str) -> Ordering {
+    pub(super) fn compare_paths(&self, a: &str, b: &str) -> Ordering {
         self.collator.compare(a, b)
     }
 

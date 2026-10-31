@@ -122,6 +122,9 @@ mod tag_labels;
 #[cfg(feature = "full-editor")]
 mod ai;
 
+#[cfg(all(feature = "full-editor", unix))]
+mod notebook_tools;
+
 #[path = "example_support/fonts.rs"]
 mod example_support;
 
@@ -1064,6 +1067,14 @@ fn run_example() {
 
 #[cfg(not(target_family = "wasm"))]
 fn main() {
+    #[cfg(all(feature = "full-editor", unix))]
+    if std::env::args().nth(1).as_deref() == Some(notebook_tools::SERVER_FLAG) {
+        notebook_tools::stdio::run(
+            paths::data_dir().join(notebook_tools::bridge::FILE_NAME),
+            env!("CARGO_PKG_VERSION"),
+        );
+        return;
+    }
     #[cfg(feature = "full-editor")]
     editor_host::run();
     #[cfg(not(feature = "full-editor"))]

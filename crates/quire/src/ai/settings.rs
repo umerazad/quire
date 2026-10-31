@@ -9,9 +9,10 @@ use gpui::{App, Context, Entity, Focusable as _, Global, SharedString, Task, Win
 use quire_core::ai::{
     Backend,
     backend::{validate_binary, validate_model},
+    tools::Writes,
 };
 use serde::{Deserialize, Serialize};
-use settings::{AiBackendName, RegisterSetting, Settings, SettingsContent};
+use settings::{AiBackendName, AiWritesName, RegisterSetting, Settings, SettingsContent};
 use std::path::PathBuf;
 use ui::{
     Button, ButtonCommon as _, ButtonStyle, Clickable as _, Color, Disableable as _, Label,
@@ -31,6 +32,7 @@ pub struct AiSettings {
     pub claude_path: String,
     pub codex_path: String,
     pub model: String,
+    pub writes: Writes,
 }
 
 fn backend_of(name: AiBackendName) -> Backend {
@@ -60,8 +62,49 @@ impl Settings for AiSettings {
             claude_path: ai.claude_path.unwrap_or_default().trim().to_owned(),
             codex_path: ai.codex_path.unwrap_or_default().trim().to_owned(),
             model: ai.model.unwrap_or_default().trim().to_owned(),
+            writes: writes_of(ai.writes.unwrap_or_default()),
         }
     }
+}
+
+fn writes_of(name: AiWritesName) -> Writes {
+    match name {
+        AiWritesName::Off => Writes::Off,
+        AiWritesName::Review => Writes::Review,
+        AiWritesName::Apply => Writes::Apply,
+    }
+}
+
+/// The AI writes choices with their labels and the reference hints.
+const WRITES: [(Writes, &str, &str); 3] = [
+    (
+        Writes::Off,
+        "Off",
+        "The AI can read the notebook but has no tools to change it.",
+    ),
+    (
+        Writes::Review,
+        "Review",
+        "Changes the AI proposes wait in AI changes until you apply them. Nothing changes before that.",
+    ),
+    (
+        Writes::Apply,
+        "Apply",
+        "Changes apply at once, each as one undo step, and stay listed with Undo. A new page cannot be undone here.",
+    ),
+];
+
+/// Chooses what AI write tools may do.
+pub fn set_writes(writes: Writes, cx: &mut App) {
+    if AiSettings::get_global(cx).writes == writes {
+        return;
+    }
+    let name = match writes {
+        Writes::Off => AiWritesName::Off,
+        Writes::Review => AiWritesName::Review,
+        Writes::Apply => AiWritesName::Apply,
+    };
+    write(move |ai| ai.writes = Some(name), cx);
 }
 
 impl AiSettings {
@@ -521,6 +564,27 @@ impl Render for AiSection {
                     .child(Self::field("Binary path", &self.binary))
                     .child(Self::field("Model", &self.model)),
             )
+            .child(Label::new("AI writes"))
+            .child(
+                ToggleButtonGroup::single_row(
+                    "ai-writes",
+                    WRITES.map(|(choice, label, _)| {
+                        ToggleButtonSimple::new(label, move |_, _, cx| set_writes(choice, cx))
+                    }),
+                )
+                .selected_index(
+                    WRITES
+                        .iter()
+                        .position(|(choice, ..)| *choice == shown.writes)
+                        .unwrap_or_default(),
+                ),
+            )
+            .child(Self::hint(
+                WRITES
+                    .iter()
+                    .find(|(choice, ..)| *choice == shown.writes)
+                    .map_or("", |(.., hint)| hint),
+            ))
             .child(
                 h_flex()
                     .gap_2()

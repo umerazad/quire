@@ -179,6 +179,13 @@ impl StoredWindow {
         if target == settings::CaptureTarget::Inbox {
             return Ok(crate::task_edit::CaptureTo::Inbox);
         }
+        self.today_page()
+    }
+
+    /// Today's daily page: its date, its title under the layout, and the folder it goes in.
+    pub(in crate::editor_host::stored) fn today_page(
+        &self,
+    ) -> Result<crate::task_edit::CaptureTo, String> {
         let date = self.today()?;
         let calendar = self.nav.daily.calendar.as_ref().ok_or_else(|| {
             "Daily notes need the system time zone. Set a valid time zone and reopen the notebook."

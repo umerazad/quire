@@ -43,6 +43,36 @@ pub struct QuireAiSettingsContent {
     ///
     /// Default: ""
     pub model: Option<String>,
+    /// What the notebook write tools may do: off, propose changes for review, or apply them.
+    ///
+    /// Default: review
+    pub writes: Option<AiWritesName>,
+}
+
+/// What AI write tools may do to the notebook.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AiWritesName {
+    /// Write tools are not offered.
+    Off,
+    /// Changes wait for review in Quire.
+    #[default]
+    Review,
+    /// Changes apply at once.
+    Apply,
 }
 
 /// The command line tools Quire can run AI commands through.

@@ -90,6 +90,7 @@ pub fn apply_defaults(content: &mut SettingsContent) {
             claude_path: Some(String::new()),
             codex_path: Some(String::new()),
             model: Some(String::new()),
+            writes: Some(settings::AiWritesName::Review),
         }),
     });
 }

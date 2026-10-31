@@ -1,0 +1,660 @@
+[
+ {
+  "name": "mentions",
+  "input": {
+   "page": "Weekly sync"
+  },
+  "outcome": {
+   "ok": true,
+   "result": {
+    "summary": "Pages mentioning [[Weekly sync]] · 2",
+    "pages": [
+     {
+      "page": "2026-10-21",
+      "path": "2026-10-21.md",
+      "daily": "2026-10-21",
+      "modified": "2026-10-21",
+      "count": 1
+     },
+     {
+      "page": "2026-10-14",
+      "path": "2026-10-14.md",
+      "daily": "2026-10-14",
+      "modified": "2026-10-14",
+      "count": 1
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "read_page",
+  "input": {
+   "page": "today"
+  },
+  "outcome": {
+   "ok": true,
+   "result": {
+    "summary": "Read [[2026-10-28]] 2026-10-28",
+    "title": "2026-10-28",
+    "path": "2026-10-28.md",
+    "daily": "2026-10-28",
+    "modified": "2026-10-28",
+    "tags": [
+     "#next"
+    ],
+    "tasks": 2,
+    "references": 1,
+    "lines": {
+     "from": 1,
+     "to": 3,
+     "total": 3
+    },
+    "text": "- [ ] Call the bank #next ^t1\n- [x] Pay rent ✅ 2026-10-27\n",
+    "blocks": [
+     {
+      "line": 1,
+      "key": "L1-amisde"
+     },
+     {
+      "line": 2,
+      "key": "L2-1r9n41n"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "read_page",
+  "input": {
+   "page": "2026-10-21"
+  },
+  "outcome": {
+   "ok": true,
+   "result": {
+    "summary": "Read [[2026-10-21]] 2026-10-21",
+    "title": "2026-10-21",
+    "path": "2026-10-21.md",
+    "daily": "2026-10-21",
+    "modified": "2026-10-21",
+    "tags": [
+     "#next"
+    ],
+    "tasks": 1,
+    "references": 0,
+    "lines": {
+     "from": 1,
+     "to": 4,
+     "total": 4
+    },
+    "text": "- [[Weekly sync]] decided to ship v2 on Friday ^d21\n  - Ana follows up with design\n- [ ] Draft release notes [[2026-10-28]] #next\n",
+    "blocks": [
+     {
+      "line": 1,
+      "key": "L1-g79ql0"
+     },
+     {
+      "line": 2,
+      "key": "L2-16ltn7e"
+     },
+     {
+      "line": 3,
+      "key": "L3-1yfk65n"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "tasks",
+  "input": {
+   "due": "today"
+  },
+  "outcome": {
+   "ok": true,
+   "result": {
+    "summary": "Tasks due today · 2",
+    "today": "2026-10-28",
+    "tasks": [
+     {
+      "key": "2026-10-21.md:at-83:83",
+      "text": "Draft release notes [[2026-10-28]]",
+      "state": "next",
+      "due": "2026-10-28",
+      "tags": [
+       "#next"
+      ],
+      "page": "2026-10-21",
+      "path": "2026-10-21.md"
+     },
+     {
+      "key": "2026-10-28.md:t1:0",
+      "text": "Call the bank",
+      "state": "next",
+      "due": "2026-10-28",
+      "tags": [
+       "#next"
+      ],
+      "page": "2026-10-28",
+      "path": "2026-10-28.md",
+      "block_id": "t1"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "tasks",
+  "input": {
+   "due": "week"
+  },
+  "outcome": {
+   "ok": true,
+   "result": {
+    "summary": "Tasks due this week · 3",
+    "today": "2026-10-28",
+    "tasks": [
+     {
+      "key": "2026-10-21.md:at-83:83",
+      "text": "Draft release notes [[2026-10-28]]",
+      "state": "next",
+      "due": "2026-10-28",
+      "tags": [
+       "#next"
+      ],
+      "page": "2026-10-21",
+      "path": "2026-10-21.md"
+     },
+     {
+      "key": "2026-10-28.md:t1:0",
+      "text": "Call the bank",
+      "state": "next",
+      "due": "2026-10-28",
+      "tags": [
+       "#next"
+      ],
+      "page": "2026-10-28",
+      "path": "2026-10-28.md",
+      "block_id": "t1"
+     },
+     {
+      "key": "Reading list.md:at-35:35",
+      "text": "Finish Dune #reading [[2026-10-30]]",
+      "state": "inbox",
+      "due": "2026-10-30",
+      "tags": [
+       "#reading"
+      ],
+      "page": "Reading list",
+      "path": "Reading list.md"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "tasks",
+  "input": {
+   "due": "overdue"
+  },
+  "outcome": {
+   "ok": true,
+   "result": {
+    "summary": "Tasks overdue · 1",
+    "today": "2026-10-28",
+    "tasks": [
+     {
+      "key": "Projects/Website.md:at-93:93",
+      "text": "Renew the domain [[2026-10-20]]",
+      "state": "inbox",
+      "due": "2026-10-20",
+      "tags": [],
+      "page": "Projects/Website",
+      "path": "Projects/Website.md"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "tasks",
+  "input": {
+   "state": "open",
+   "project": "Projects/Website"
+  },
+  "outcome": {
+   "ok": true,
+   "result": {
+    "summary": "Tasks open · 3",
+    "today": "2026-10-28",
+    "tasks": [
+     {
+      "key": "Projects/Website.md:at-93:93",
+      "text": "Renew the domain [[2026-10-20]]",
+      "state": "inbox",
+      "due": "2026-10-20",
+      "tags": [],
+      "page": "Projects/Website",
+      "path": "Projects/Website.md"
+     },
+     {
+      "key": "Projects/Website.md:at-33:33",
+      "text": "Fix the header",
+      "state": "waiting",
+      "tags": [
+       "#waiting"
+      ],
+      "page": "Projects/Website",
+      "path": "Projects/Website.md"
+     },
+     {
+      "key": "Projects/Website.md:at-63:63",
+      "text": "Try a new font",
+      "state": "someday",
+      "tags": [
+       "#someday"
+      ],
+      "page": "Projects/Website",
+      "path": "Projects/Website.md"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "tagged_blocks",
+  "input": {
+   "tag": "reading",
+   "from": "2026-09-28",
+   "to": "today"
+  },
+  "outcome": {
+   "ok": true,
+   "result": {
+    "summary": "Tagged #reading · 2 blocks",
+    "blocks": [
+     {
+      "page": "Reading list",
+      "path": "Reading list.md",
+      "date": "2026-10-20",
+      "block_id": "r1",
+      "text": "Gödel, Escher, Bach #reading"
+     },
+     {
+      "page": "Reading list",
+      "path": "Reading list.md",
+      "date": "2026-10-20",
+      "task": "inbox",
+      "due": "2026-10-30",
+      "text": "[ ] Finish Dune #reading [[2026-10-30]]"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "tagged_blocks",
+  "input": {
+   "tag": "#reading"
+  },
+  "outcome": {
+   "ok": true,
+   "result": {
+    "summary": "Tagged #reading · 3 blocks",
+    "blocks": [
+     {
+      "page": "Reading list",
+      "path": "Reading list.md",
+      "date": "2026-10-20",
+      "block_id": "r1",
+      "text": "Gödel, Escher, Bach #reading"
+     },
+     {
+      "page": "Reading list",
+      "path": "Reading list.md",
+      "date": "2026-10-20",
+      "task": "inbox",
+      "due": "2026-10-30",
+      "text": "[ ] Finish Dune #reading [[2026-10-30]]"
+     },
+     {
+      "page": "Old notes",
+      "path": "Old notes.md",
+      "date": "2026-06-01",
+      "text": "The Mythical Man-Month #reading"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "tagged_blocks",
+  "input": {
+   "tag": "reading",
+   "status": "open"
+  },
+  "outcome": {
+   "ok": true,
+   "result": {
+    "summary": "Tagged #reading · 1 block",
+    "blocks": [
+     {
+      "page": "Reading list",
+      "path": "Reading list.md",
+      "date": "2026-10-20",
+      "task": "inbox",
+      "due": "2026-10-30",
+      "text": "[ ] Finish Dune #reading [[2026-10-30]]"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "search_notebook",
+  "input": {
+   "query": "ship v2"
+  },
+  "outcome": {
+   "ok": true,
+   "result": {
+    "summary": "Searched ship v2 · 1 block",
+    "results": [
+     {
+      "page": "2026-10-21",
+      "path": "2026-10-21.md",
+      "block_id": "d21",
+      "daily": "2026-10-21",
+      "snippet": "[[Weekly sync]] decided to ship v2 on Friday"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "list_pages",
+  "input": {
+   "namespace": "Projects"
+  },
+  "outcome": {
+   "ok": true,
+   "result": {
+    "summary": "Listed 1 page",
+    "pages": [
+     {
+      "title": "Projects/Website",
+      "path": "Projects/Website.md",
+      "modified": "2026-10-25",
+      "tasks": 3,
+      "references": 0
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "list_pages",
+  "input": {
+   "daily_from": "2026-10-15",
+   "sort": "date"
+  },
+  "outcome": {
+   "ok": true,
+   "result": {
+    "summary": "Listed 2 pages",
+    "pages": [
+     {
+      "title": "2026-10-28",
+      "path": "2026-10-28.md",
+      "daily": "2026-10-28",
+      "modified": "2026-10-28",
+      "tasks": 2,
+      "references": 1
+     },
+     {
+      "title": "2026-10-21",
+      "path": "2026-10-21.md",
+      "daily": "2026-10-21",
+      "modified": "2026-10-21",
+      "tasks": 1,
+      "references": 0
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "list_pages",
+  "input": {
+   "modified_after": "2026-10-26",
+   "sort": "modified"
+  },
+  "outcome": {
+   "ok": true,
+   "result": {
+    "summary": "Listed 2 pages",
+    "pages": [
+     {
+      "title": "2026-10-28",
+      "path": "2026-10-28.md",
+      "daily": "2026-10-28",
+      "modified": "2026-10-28",
+      "tasks": 2,
+      "references": 1
+     },
+     {
+      "title": "Inbox",
+      "path": "Inbox.md",
+      "modified": "2026-10-26",
+      "tasks": 1,
+      "references": 0
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "list_pages",
+  "input": {
+   "prefix": "week"
+  },
+  "outcome": {
+   "ok": true,
+   "result": {
+    "summary": "Listed 1 page",
+    "pages": [
+     {
+      "title": "Weekly sync",
+      "path": "Weekly sync.md",
+      "modified": "2026-09-01",
+      "tasks": 0,
+      "references": 2
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "list_pages",
+  "input": {},
+  "outcome": {
+   "ok": true,
+   "result": {
+    "summary": "Listed 8 pages",
+    "pages": [
+     {
+      "title": "2026-10-14",
+      "path": "2026-10-14.md",
+      "daily": "2026-10-14",
+      "modified": "2026-10-14",
+      "tasks": 0,
+      "references": 0
+     },
+     {
+      "title": "2026-10-21",
+      "path": "2026-10-21.md",
+      "daily": "2026-10-21",
+      "modified": "2026-10-21",
+      "tasks": 1,
+      "references": 0
+     },
+     {
+      "title": "2026-10-28",
+      "path": "2026-10-28.md",
+      "daily": "2026-10-28",
+      "modified": "2026-10-28",
+      "tasks": 2,
+      "references": 1
+     },
+     {
+      "title": "Inbox",
+      "path": "Inbox.md",
+      "modified": "2026-10-26",
+      "tasks": 1,
+      "references": 0
+     },
+     {
+      "title": "Old notes",
+      "path": "Old notes.md",
+      "modified": "2026-06-01",
+      "tasks": 0,
+      "references": 0
+     },
+     {
+      "title": "Projects/Website",
+      "path": "Projects/Website.md",
+      "modified": "2026-10-25",
+      "tasks": 3,
+      "references": 0
+     },
+     {
+      "title": "Reading list",
+      "path": "Reading list.md",
+      "modified": "2026-10-20",
+      "tasks": 1,
+      "references": 0
+     },
+     {
+      "title": "Weekly sync",
+      "path": "Weekly sync.md",
+      "modified": "2026-09-01",
+      "tasks": 0,
+      "references": 2
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "read_block",
+  "input": {
+   "id": "^d21"
+  },
+  "outcome": {
+   "ok": true,
+   "result": {
+    "summary": "Read block ^d21 on [[2026-10-21]]",
+    "page": "2026-10-21",
+    "path": "2026-10-21.md",
+    "daily": "2026-10-21",
+    "ancestors": [],
+    "text": "- [[Weekly sync]] decided to ship v2 on Friday ^d21\n  - Ana follows up with design"
+   }
+  }
+ },
+ {
+  "name": "linked_references",
+  "input": {
+   "page": "Weekly sync"
+  },
+  "outcome": {
+   "ok": true,
+   "result": {
+    "summary": "Linked references to [[Weekly sync]] · 2",
+    "references": [
+     {
+      "page": "2026-10-21",
+      "path": "2026-10-21.md",
+      "daily": "2026-10-21",
+      "block_id": "d21",
+      "text": "[[Weekly sync]] decided to ship v2 on Friday"
+     },
+     {
+      "page": "2026-10-14",
+      "path": "2026-10-14.md",
+      "daily": "2026-10-14",
+      "block_id": "d14",
+      "text": "[[Weekly sync]] budget is on track"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "daily_pages",
+  "input": {
+   "from": "2026-10-15",
+   "to": "today"
+  },
+  "outcome": {
+   "ok": true,
+   "result": {
+    "summary": "Daily pages 2026-10-15 to 2026-10-28 · 2",
+    "pages": [
+     {
+      "date": "2026-10-21",
+      "title": "2026-10-21",
+      "path": "2026-10-21.md",
+      "text": "- [[Weekly sync]] decided to ship v2 on Friday ^d21\n  - Ana follows up with design\n- [ ] Draft release notes [[2026-10-28]] #next\n"
+     },
+     {
+      "date": "2026-10-28",
+      "title": "2026-10-28",
+      "path": "2026-10-28.md",
+      "text": "- [ ] Call the bank #next ^t1\n- [x] Pay rent ✅ 2026-10-27\n"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "read_block",
+  "input": {
+   "id": "missing"
+  },
+  "outcome": {
+   "ok": false,
+   "error": "Block missing is missing. Restore its source or update this reference."
+  }
+ },
+ {
+  "name": "read_page",
+  "input": {
+   "page": "Nope"
+  },
+  "outcome": {
+   "ok": false,
+   "error": "No page named \"Nope\". Use list_pages or search_notebook to find its title."
+  }
+ },
+ {
+  "name": "read_page",
+  "input": {
+   "page": "../secret.md"
+  },
+  "outcome": {
+   "ok": false,
+   "error": "../secret.md is outside the notebook's pages. Pass a page title or a path inside the notebook."
+  }
+ },
+ {
+  "name": "tasks",
+  "input": {
+   "due": "range"
+  },
+  "outcome": {
+   "ok": false,
+   "error": "due \"range\" needs from and to dates, such as from \"2026-11-01\" and to \"2026-11-07\"."
+  }
+ }
+]

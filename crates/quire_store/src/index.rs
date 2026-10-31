@@ -13,6 +13,7 @@ mod references;
 mod schema;
 pub(crate) use schema::uri_path;
 mod tasks;
+mod tools;
 
 pub use blocks::{BlockChoice, BlockPreview};
 pub use catalog::{Deletion, DeletionTarget, ListedPage, RelocationFacts, SETTINGS_PAGE};
