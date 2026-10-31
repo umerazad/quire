@@ -588,6 +588,10 @@ impl StoredWindow {
                     .child(
                         Button::new("settings", "Settings")
                             .on_click(|_, _, cx| crate::preferences::view::open(cx)),
+                    )
+                    .child(
+                        Button::new("appearance", "Light / Dark")
+                            .on_click(|_, _, cx| crate::preferences::toggle_appearance(cx)),
                     ),
             )
             .child(

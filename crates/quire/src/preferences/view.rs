@@ -223,7 +223,7 @@ impl PreferencesWindow {
         Self::section("Appearance")
             .child(ToggleButtonGroup::single_row("appearance", buttons).selected_index(selected))
             .child(Self::hint(
-                "System follows your computer's light or dark setting as it changes. Toggle appearance switches between light and dark.",
+                "System follows your computer's light or dark setting as it changes. The Light / Dark button in the sidebar switches between light and dark.",
             ))
     }
 

@@ -272,19 +272,7 @@ pub fn init(cx: &mut App) {
     SettingsStore::update_global(cx, |store, cx| {
         store.update_default_settings(cx, apply_defaults)
     });
-    cx.on_action(|_: &ToggleAppearance, cx| {
-        let dark = match Preferences::current(cx).appearance {
-            ThemeAppearanceMode::Dark => true,
-            ThemeAppearanceMode::Light => false,
-            ThemeAppearanceMode::System => SystemAppearance::global(cx).0 == Appearance::Dark,
-        };
-        let next = if dark {
-            ThemeAppearanceMode::Light
-        } else {
-            ThemeAppearanceMode::Dark
-        };
-        change(Change::Appearance(next), cx);
-    });
+    cx.on_action(|_: &ToggleAppearance, cx| toggle_appearance(cx));
     cx.on_action(|_: &UseSystemAppearance, cx| {
         change(Change::Appearance(ThemeAppearanceMode::System), cx)
     });
@@ -310,6 +298,21 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("enter", menu::Confirm, Some(view::FIELD_CONTEXT)),
         KeyBinding::new("escape", menu::Cancel, Some(view::FIELD_CONTEXT)),
     ]);
+}
+
+/// Switches to the other of light and dark from what is shown, saved as an explicit choice.
+pub fn toggle_appearance(cx: &mut App) {
+    let dark = match Preferences::current(cx).appearance {
+        ThemeAppearanceMode::Dark => true,
+        ThemeAppearanceMode::Light => false,
+        ThemeAppearanceMode::System => SystemAppearance::global(cx).0 == Appearance::Dark,
+    };
+    let next = if dark {
+        ThemeAppearanceMode::Light
+    } else {
+        ThemeAppearanceMode::Dark
+    };
+    change(Change::Appearance(next), cx);
 }
 
 /// Validates and saves one preference. The settings store applies it to every window once the

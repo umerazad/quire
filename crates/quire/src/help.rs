@@ -27,8 +27,8 @@ pub struct Shortcut {
 impl Shortcut {
     pub fn matches(&self, needle: &str) -> bool {
         needle.is_empty()
-            || [&self.keys, &self.action, &self.scope, &self.name.to_owned()]
-                .iter()
+            || [self.keys.as_str(), &self.action, &self.scope, self.name]
+                .into_iter()
                 .any(|text| text.to_lowercase().contains(needle))
     }
 }
