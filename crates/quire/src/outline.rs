@@ -448,16 +448,29 @@ fn literal(buffer: &Entity<language::Buffer>, position: usize, cx: &App) -> bool
         Some('\n') | None => position,
         Some(_) => position - 1,
     };
-    snapshot.syntax_layers().any(|layer| {
-        let mut node = layer.node().descendant_for_byte_range(before, position);
-        while let Some(current) = node {
-            if LITERAL.contains(&current.kind()) {
-                return true;
-            }
-            node = current.parent();
+    snapshot
+        .syntax_layers()
+        .any(|layer| node_path_has(layer.node(), before..position, LITERAL))
+}
+
+/// Whether a node of one of `kinds` covers `range` on the path down from `root`, choosing
+/// children like `descendant_for_byte_range`. It walks down because `Node::parent` loses an
+/// injected layer's offset and can skip ancestors such as a code span.
+fn node_path_has(root: language::Node<'_>, range: Range<usize>, kinds: &[&str]) -> bool {
+    let covers = |node: &language::Node<'_>| {
+        node.start_byte() <= range.start
+            && node.end_byte() >= range.end
+            && (node.end_byte() > range.start || node.start_byte() == node.end_byte())
+    };
+    let mut node = Some(root).filter(covers);
+    while let Some(current) = node {
+        if kinds.contains(&current.kind()) {
+            return true;
         }
-        false
-    })
+        let mut cursor = current.walk();
+        node = current.children(&mut cursor).find(covers);
+    }
+    false
 }
 
 /// The collapsed block children in the view, as source ranges.
