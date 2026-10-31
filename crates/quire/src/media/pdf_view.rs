@@ -358,9 +358,6 @@ impl PdfView {
         let Some(document) = self.document().cloned() else {
             return;
         };
-        if !document.info().has_text {
-            return;
-        }
         let pages = document.info().pages.len();
         self.reading = Some(cx.spawn(async move |view, cx| {
             for page in 0..pages {
@@ -742,7 +739,6 @@ impl Render for PdfView {
                     .logical_scroll_top()
                     .item_ix
                     .min(pages.saturating_sub(1));
-                let has_text = info.has_text;
                 let found = match (self.query.is_empty(), self.matches.len(), self.current) {
                     (true, _, _) => String::new(),
                     (false, 0, _) => "No matches".into(),
@@ -772,33 +768,23 @@ impl Render for PdfView {
                             .label_size(LabelSize::Small)
                             .on_click(cx.listener(|view, _, _, cx| view.step_zoom(true, cx))),
                     )
-                    .when(has_text, |toolbar| {
-                        toolbar
-                            .child(
-                                div()
-                                    .key_context("QuirePdfFind")
-                                    .w(px(160.))
-                                    .px_1()
-                                    .border_1()
-                                    .border_color(colors.border)
-                                    .rounded_sm()
-                                    .on_action(cx.listener(|view, _: &NextMatch, _, cx| {
-                                        view.next_match(true, cx)
-                                    }))
-                                    .on_action(cx.listener(|view, _: &PreviousMatch, _, cx| {
-                                        view.next_match(false, cx)
-                                    }))
-                                    .child(self.find.clone()),
+                    .child(
+                        div()
+                            .key_context("QuirePdfFind")
+                            .w(px(160.))
+                            .px_1()
+                            .border_1()
+                            .border_color(colors.border)
+                            .rounded_sm()
+                            .on_action(
+                                cx.listener(|view, _: &NextMatch, _, cx| view.next_match(true, cx)),
                             )
-                            .child(div().text_color(colors.text_muted).child(found))
-                    })
-                    .when(!has_text, |toolbar| {
-                        toolbar.child(
-                            div()
-                                .text_color(colors.text_muted)
-                                .child("Find and selection need a PDF stored in the notebook"),
-                        )
-                    })
+                            .on_action(cx.listener(|view, _: &PreviousMatch, _, cx| {
+                                view.next_match(false, cx)
+                            }))
+                            .child(self.find.clone()),
+                    )
+                    .child(div().text_color(colors.text_muted).child(found))
                     .child(open_button());
                 let pages_list = list(self.list.clone(), cx.processor(Self::render_page))
                     .w(self.page_width())

@@ -194,6 +194,40 @@ fn find_and_selection_read_the_stored_pdf_text(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn find_reads_the_text_of_a_pdf_hayro_renders(cx: &mut TestAppContext) {
+    use base64::Engine as _;
+    let data = base64::engine::general_purpose::STANDARD.encode(long_pdf());
+    let (notebook, _) = open_with_attachments(
+        &[],
+        |_| format!("- ![Paper](data:application/pdf;base64,{data})\n"),
+        cx,
+    );
+    let editor = enter_write(&notebook, cx);
+    let view = wait_open(&notebook, &editor, 1, cx).remove(0);
+    assert_eq!(
+        view.read_with(cx, |view, _| view.shows()),
+        PdfShows::Open {
+            engine: Engine::Hayro,
+            pages: 30
+        }
+    );
+    wait_until(cx, "every page's text", |cx| {
+        view.read_with(cx, |view, _| view.texts_read()) == 30
+    });
+    let find = view.read_with(cx, |view, _| view.find_editor());
+    notebook
+        .window
+        .update(cx, |_, window, cx| {
+            find.update(cx, |find, cx| find.set_text("page 2", window, cx))
+        })
+        .unwrap();
+    draw(&notebook, cx);
+    assert_eq!(view.read_with(cx, |view, _| view.matches()), (11, Some(0)));
+    view.update(cx, |view, cx| view.next_match(true, cx));
+    assert_eq!(view.read_with(cx, |view, _| view.top_page()), 19);
+}
+
+#[gpui::test]
 fn remote_and_data_pdfs_render_with_hayro_and_missing_ones_say_what_to_do(cx: &mut TestAppContext) {
     use base64::Engine as _;
     serve(cx);

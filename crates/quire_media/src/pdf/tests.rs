@@ -57,7 +57,6 @@ fn check_rendering(document: &Document, engine: Engine) {
 fn pdfium_renders_pages_and_gives_text_with_boxes() {
     let document = Document::open_stored(&fixture()).unwrap();
     check_rendering(&document, Engine::Pdfium);
-    assert!(document.info().has_text);
     let text = block_on(document.text(1)).unwrap().unwrap();
     let all = text.text(0..text.chars.len());
     assert_eq!(all, "Gamma (page two) beta");
@@ -73,11 +72,37 @@ fn pdfium_renders_pages_and_gives_text_with_boxes() {
 }
 
 #[test]
-fn hayro_renders_untrusted_bytes_without_text() {
+fn hayro_renders_untrusted_bytes_and_reads_text_with_boxes_from_its_glyphs() {
     let document = Document::open_untrusted(testing::simple_pdf(&PAGES)).unwrap();
     check_rendering(&document, Engine::Hayro);
-    assert!(!document.info().has_text);
-    assert_eq!(block_on(document.text(0)).unwrap(), None);
+    let text = block_on(document.text(1)).unwrap().unwrap();
+    assert_eq!(text.text(0..text.chars.len()), "Gamma (page two) beta");
+    assert_eq!(text.find("BETA"), vec![17..21]);
+    let first = text.boxes[0].unwrap();
+    assert!(first.left >= 18. && first.left < 24., "{first:?}");
+    assert!(first.top > 25. && first.bottom < 60., "{first:?}");
+    let under = text.char_at(first.left + 1., (first.top + first.bottom) / 2.);
+    assert_eq!(under, Some(0));
+    assert_eq!(text.char_at(299., 199.), Some(20), "nearest character");
+    let last = text.boxes[20].unwrap();
+    assert!(
+        last.left > first.right && (last.top - first.top).abs() < 1.,
+        "one line, left to right: {first:?} {last:?}"
+    );
+}
+
+#[test]
+fn hayro_text_separates_words_and_lines_the_pdf_draws_apart() {
+    // Two words placed apart on one line, then a second line, with no space glyphs between.
+    let stream = "BT /F1 12 Tf 20 150 Td (left) Tj 60 0 Td (right) Tj 0 -30 Td (below) Tj ET";
+    let pdf = testing::simple_pdf(&["placeholder"]);
+    let pdf = String::from_utf8(pdf)
+        .unwrap()
+        .replace("BT /F1 24 Tf 20 150 Td (placeholder) Tj ET", stream)
+        .replace("/Length 44", &format!("/Length {}", stream.len()));
+    let document = Document::open_untrusted(pdf.into_bytes()).unwrap();
+    let text = block_on(document.text(0)).unwrap().unwrap();
+    assert_eq!(text.text(0..text.chars.len()), "left right\nbelow");
 }
 
 #[test]
