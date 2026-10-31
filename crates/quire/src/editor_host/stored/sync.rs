@@ -1,20 +1,11 @@
 //! The window's sync commands, and rereading notes a Git sync changed.
 
 use super::*;
-use crate::sync_status::{CheckSyncFolder, Settings, ShowSync, SyncStatus, SyncWithGit, Synced};
+use crate::sync_status::{CheckSyncFolder, ShowSync, SyncStatus, SyncWithGit, Synced};
 use quire_store::git_sync::Git;
 
-/// Where this computer remembers each notebook's Git remote and last push. Tests keep it in
-/// memory and run Git without the user's configuration, so they never read the real application
-/// data, identity, or credentials.
-fn settings() -> Settings {
-    if cfg!(test) {
-        Settings::new(None)
-    } else {
-        Settings::new(Some(paths::data_dir().join("personal-git.json")))
-    }
-}
-
+/// Git as the window runs it. Tests run Git without the user's configuration, so they never read
+/// the real identity or credentials.
 pub(super) fn git() -> Git {
     if cfg!(test) {
         [
@@ -34,12 +25,16 @@ pub(super) fn git() -> Git {
 
 pub(super) fn new_sync_status(
     session: &Rc<RefCell<NotebookSession>>,
+    notebook: Option<quire_store::profiles::Notebook>,
     calendar: Option<DailyCalendar>,
     cx: &mut gpui::Context<StoredWindow>,
 ) -> Entity<SyncStatus> {
-    let root = session.borrow().folder().map(|(root, _)| root.to_owned());
+    let folder = session
+        .borrow()
+        .folder()
+        .map(|(root, state)| (root.to_owned(), state.to_owned()));
     let label = backups::clock_label(calendar.unwrap_or_else(DailyCalendar::utc));
-    cx.new(|cx| SyncStatus::new(root, git(), settings(), label, cx))
+    cx.new(|cx| SyncStatus::new(folder, notebook, git(), label, cx))
 }
 
 impl StoredWindow {

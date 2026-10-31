@@ -1,19 +1,12 @@
 //! The window's backup commands, and opening a restored notebook in place of this one.
 
 use super::*;
-use crate::backups::{BackUpNow, Backups, ChooseBackupFolder, Restored, Settings, ShowBackups};
-use quire_store::backup::{Location, Source};
+use crate::backups::{BackUpNow, Backups, ChooseBackupFolder, Restored, ShowBackups};
+use quire_store::{
+    backup::{Location, Source},
+    profiles::Notebook,
+};
 use std::{path::Path, sync::Arc};
-
-/// Where this computer remembers each notebook's backup folder. Tests keep it in memory so they
-/// never read or write the real application data.
-fn settings() -> Settings {
-    if cfg!(test) {
-        Settings::new(None)
-    } else {
-        Settings::new(Some(paths::data_dir().join("backup-folders.json")))
-    }
-}
 
 /// Times in the notebook's time zone, as a date and a 24-hour time.
 pub(super) fn clock_label(calendar: DailyCalendar) -> Rc<dyn Fn(i64) -> String> {
@@ -26,6 +19,7 @@ pub(super) fn clock_label(calendar: DailyCalendar) -> Rc<dyn Fn(i64) -> String> 
 pub(super) fn new_backups(
     session: &Rc<RefCell<NotebookSession>>,
     database: &Path,
+    notebook: Option<Notebook>,
     calendar: Option<DailyCalendar>,
     cx: &mut gpui::Context<StoredWindow>,
 ) -> Entity<Backups> {
@@ -42,7 +36,7 @@ pub(super) fn new_backups(
     cx.new(|cx| {
         Backups::new(
             source,
-            settings(),
+            notebook,
             Arc::new(|root: &Path| folder::state_folder(root)),
             label,
             cx,

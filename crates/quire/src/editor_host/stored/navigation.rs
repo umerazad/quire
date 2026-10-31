@@ -41,7 +41,7 @@ pub(super) struct Navigation {
     file: WorkspaceFile,
     pub(super) workspace: Workspace,
     pub(super) history: History,
-    editors: HashMap<EntityId, Entity<NotebookWindow>>,
+    pub(super) editors: HashMap<EntityId, Entity<NotebookWindow>>,
     watched: HashSet<EntityId>,
     pub(super) palette: Option<Entity<Picker<PagePalette>>>,
     pub(super) dialog: Option<Entity<crate::navigation::file_dialog::FileDialog>>,
@@ -908,3 +908,7 @@ mod sync_tests;
 #[cfg(test)]
 #[path = "answer_tests.rs"]
 mod answer_tests;
+
+#[cfg(test)]
+#[path = "lifecycle_tests.rs"]
+mod lifecycle_tests;

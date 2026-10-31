@@ -14,13 +14,18 @@ use theme::ActiveTheme;
 mod backups;
 mod exchange;
 mod folder;
+mod instance;
 mod links;
 mod navigation;
+mod profiles;
 mod sync;
 
 pub(super) use folder::FolderOptions;
+pub(super) use instance::{Handover, handle_launch};
+pub(super) use profiles::open_location;
 
 pub(super) fn bind_keys(cx: &mut App) {
+    profiles::init(cx);
     cx.bind_keys([KeyBinding::new(
         if cfg!(target_os = "macos") {
             "cmd-s"
@@ -39,21 +44,83 @@ enum CloseIntent {
     Quit,
 }
 
-fn allow_close(
+/// What a close of this window waits for: its pages, its backup and Git sync, and the
+/// services other parts of Quire register.
+#[derive(Clone)]
+struct CloseState {
     session: Rc<RefCell<NotebookSession>>,
+    /// The window's backup and Git sync, and anything else a close must wait for.
+    services: Rc<RefCell<Vec<Rc<crate::lifecycle::Service>>>>,
     closing: Rc<Cell<Option<CloseIntent>>>,
-    intent: CloseIntent,
-    cx: &App,
-) -> bool {
-    if session.borrow().is_secured(cx) {
-        return true;
+    /// When the current close request started waiting, on the executor's clock.
+    since: Rc<Cell<Option<std::time::Instant>>>,
+    window: gpui::AnyWindowHandle,
+}
+
+impl CloseState {
+    fn activity(&self, cx: &App) -> crate::lifecycle::Activity {
+        use crate::lifecycle::Activity;
+        let session = self.session.borrow();
+        let pages = if session.is_secured(cx) {
+            Activity::Idle
+        } else if session.has_error(cx) {
+            Activity::Failed(
+                "Some pages could not be recorded for recovery because storage reported an error."
+                    .into(),
+            )
+        } else {
+            Activity::Busy("Pages are still being recorded for recovery.".into())
+        };
+        let services: Vec<_> = self
+            .services
+            .borrow()
+            .iter()
+            .map(|service| service(cx))
+            .collect();
+        Activity::all(std::iter::once(pages).chain(services))
     }
-    closing.set(Some(intent));
-    cx.spawn(async move |cx| {
-        cx.update(|cx| session.borrow().recover(cx));
-    })
-    .detach();
-    false
+
+    fn busy_while(
+        running: impl Fn(&App) -> bool + 'static,
+        label: &'static str,
+    ) -> Rc<crate::lifecycle::Service> {
+        Rc::new(move |cx| {
+            if running(cx) {
+                crate::lifecycle::Activity::Busy(label.into())
+            } else {
+                crate::lifecycle::Activity::Idle
+            }
+        })
+    }
+
+    /// The close guard: lets an idle window close; otherwise records the request, starts
+    /// securing the pages, and leaves the window to finish the close once the work is done.
+    fn allow(&self, intent: CloseIntent, cx: &App) -> bool {
+        if crate::lifecycle::quit_forced(cx)
+            || self.activity(cx) == crate::lifecycle::Activity::Idle
+        {
+            return true;
+        }
+        self.closing.set(Some(intent));
+        if self.since.get().is_none() {
+            self.since.set(Some(cx.background_executor().now()));
+        }
+        let (session, window) = (self.session.clone(), self.window);
+        cx.spawn(async move |cx| {
+            cx.update(|cx| {
+                session.borrow().recover(cx);
+                window
+                    .update(cx, |view, window, cx| {
+                        if let Ok(view) = view.downcast::<StoredWindow>() {
+                            view.update(cx, |this, cx| this.finish_close(window, cx));
+                        }
+                    })
+                    .ok();
+            });
+        })
+        .detach();
+        false
+    }
 }
 
 pub(super) struct OpenOptions {
@@ -106,6 +173,14 @@ impl OpenOptions {
     pub fn open(self, cx: &mut App) -> Result<(), String> {
         let database = self.database.clone();
         let notebook = self.notebook.clone();
+        crate::profiles::check_open(
+            &quire_store::profiles::Notebook::Store {
+                database: database.clone(),
+                notebook: notebook.clone(),
+                writer: self.writer.clone(),
+            },
+            cx,
+        )?;
         let mut session = NotebookSession::open(self.database, self.notebook, self.writer)?;
         let page = session.open_page(self.page, cx);
         let options = gpui::WindowOptions {
@@ -127,7 +202,16 @@ impl OpenOptions {
 
 struct StoredWindow {
     session: Rc<RefCell<NotebookSession>>,
+    /// Where this notebook lives, which names its profile.
+    location: Option<quire_store::profiles::Notebook>,
+    /// Formats times for the profile line.
+    clock: Rc<dyn Fn(i64) -> String>,
     closing: Rc<Cell<Option<CloseIntent>>>,
+    close: CloseState,
+    /// A close question is on screen.
+    asking: bool,
+    /// Looks again while a close waits on busy work, so it can ask after [`crate::lifecycle::PATIENCE`].
+    close_poll: Option<gpui::Task<()>>,
     close_error: Option<gpui::SharedString>,
     _quit_guard: gpui::Subscription,
     page: Entity<OpenPage>,
@@ -153,17 +237,10 @@ impl StoredWindow {
         cx: &mut gpui::Context<Self>,
     ) -> Self {
         let session = Rc::new(RefCell::new(session));
-        let closing = Rc::new(Cell::new(None));
-        let quit_guard = cx.on_request_quit({
-            let session = session.clone();
-            let closing = closing.clone();
-            move |cx| allow_close(session.clone(), closing.clone(), CloseIntent::Quit, cx)
-        });
-        window.on_window_should_close(cx, {
-            let session = session.clone();
-            let closing = closing.clone();
-            move |_, cx| allow_close(session.clone(), closing.clone(), CloseIntent::Window, cx)
-        });
+        let location = session.borrow().location();
+        let profile_error = location
+            .clone()
+            .and_then(|location| crate::profiles::adopt(location, cx).err());
         session.borrow().enable_editing(cx);
         cx.observe_global::<crate::outline::Notice>(|_, cx| cx.notify())
             .detach();
@@ -173,15 +250,59 @@ impl StoredWindow {
             Ok(_) => Err("Reading notebook settings…".into()),
             Err(error) => Err(error.clone()),
         };
-        let backups = backups::new_backups(&session, &database, calendar.clone().ok(), cx);
-        let sync = sync::new_sync_status(&session, calendar.clone().ok(), cx);
-        let nav =
+        let backups = backups::new_backups(
+            &session,
+            &database,
+            location.clone(),
+            calendar.clone().ok(),
+            cx,
+        );
+        let sync = sync::new_sync_status(&session, location.clone(), calendar.clone().ok(), cx);
+        let close = CloseState {
+            session: session.clone(),
+            services: Rc::new(RefCell::new(vec![
+                CloseState::busy_while(
+                    {
+                        let backups = backups.clone();
+                        move |cx| backups.read(cx).is_running()
+                    },
+                    "A backup is running.",
+                ),
+                CloseState::busy_while(
+                    {
+                        let sync = sync.clone();
+                        move |cx| sync.read(cx).is_running()
+                    },
+                    "Git sync is running.",
+                ),
+            ])),
+            closing: Rc::new(Cell::new(None)),
+            since: Rc::new(Cell::new(None)),
+            window: window.window_handle(),
+        };
+        let quit_guard = cx.on_request_quit({
+            let close = close.clone();
+            move |cx| close.allow(CloseIntent::Quit, cx)
+        });
+        window.on_window_should_close(cx, {
+            let close = close.clone();
+            move |_, cx| close.allow(CloseIntent::Window, cx)
+        });
+        let mut nav =
             navigation::Navigation::new(&database, &notebook, calendar.ok(), cx.focus_handle());
+        nav.error = profile_error.map(Into::into);
         let id = page.read(cx).id().to_owned();
         let links = links::Links::new(cx.weak_entity(), Rc::downgrade(&session), cx);
         let mut this = Self {
             session,
-            closing,
+            location,
+            clock: backups::clock_label(
+                DailyCalendar::system().unwrap_or_else(|_| DailyCalendar::utc()),
+            ),
+            closing: close.closing.clone(),
+            close,
+            asking: false,
+            close_poll: None,
             close_error: None,
             _quit_guard: quit_guard,
             page,
@@ -297,7 +418,7 @@ impl StoredWindow {
     }
 
     fn can_finish_close(&self, cx: &App) -> bool {
-        self.session.borrow().is_secured(cx)
+        self.close.activity(cx) == crate::lifecycle::Activity::Idle
             && (!matches!(self.closing.get(), Some(CloseIntent::SaveWindow))
                 || self
                     .page
@@ -306,7 +427,14 @@ impl StoredWindow {
                     .is_some_and(|page| !page.read(cx).is_dirty(cx)))
     }
 
+    fn end_close_request(&mut self) {
+        self.closing.set(None);
+        self.close.since.set(None);
+        self.close_poll = None;
+    }
+
     fn finish_close(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        use crate::lifecycle::{Activity, PATIENCE};
         let write_failed = matches!(self.closing.get(), Some(CloseIntent::SaveWindow))
             && self
                 .page
@@ -318,7 +446,9 @@ impl StoredWindow {
             if self.closing.get().is_some() {
                 cx.defer_in(window, |this, window, cx| {
                     if this.can_finish_close(cx) {
-                        match this.closing.take() {
+                        let intent = this.closing.get();
+                        this.end_close_request();
+                        match intent {
                             Some(CloseIntent::Quit) => cx.quit(),
                             Some(CloseIntent::Window | CloseIntent::SaveWindow) => {
                                 window.remove_window()
@@ -330,16 +460,111 @@ impl StoredWindow {
                     }
                 });
             }
-        } else if self.closing.get().is_some()
-            && (write_failed || self.session.borrow().has_error(cx))
-        {
-            self.closing.set(None);
-            self.close_error = Some(if write_failed {
-                "The page could not be saved locally. Keep this window open, resolve the save error, and retry :wq. Copy Markdown remains available."
-            } else {
-                "Some pages could not be recorded for recovery. Keep this window open, check the storage error, and retry closing after it is corrected. Copy Markdown remains available."
-            }.into());
+            return;
         }
+        if self.closing.get().is_none() || self.asking {
+            return;
+        }
+        if write_failed {
+            self.end_close_request();
+            self.close_error = Some("The page could not be saved locally. Keep this window open, resolve the save error, and retry :wq. Copy Markdown remains available.".into());
+            return;
+        }
+        match self.close.activity(cx) {
+            Activity::Failed(reason) => self.ask_about_close(true, reason, window, cx),
+            activity => {
+                self.poll_close(window, cx);
+                let now = cx.background_executor().now();
+                let waited = self
+                    .close
+                    .since
+                    .get()
+                    .is_some_and(|since| now.saturating_duration_since(since) >= PATIENCE);
+                if waited {
+                    let reason = match activity {
+                        Activity::Busy(reason) => reason,
+                        _ => "The page is still being saved locally.".into(),
+                    };
+                    self.ask_about_close(false, reason, window, cx);
+                }
+            }
+        }
+    }
+
+    /// Looks again every [`crate::lifecycle::POLL`] while a close waits on busy work.
+    fn poll_close(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        if self.close_poll.is_some() {
+            return;
+        }
+        if self.close.since.get().is_none() {
+            self.close.since.set(Some(cx.background_executor().now()));
+        }
+        self.close_poll = Some(cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor().timer(crate::lifecycle::POLL).await;
+                let waiting = this
+                    .update_in(cx, |this, window, cx| {
+                        this.finish_close(window, cx);
+                        this.closing.get().is_some()
+                    })
+                    .unwrap_or(false);
+                if !waiting {
+                    break;
+                }
+            }
+        }));
+    }
+
+    /// Asks whether to keep waiting (or editing, after a failure) or to close anyway, naming
+    /// what is unfinished.
+    fn ask_about_close(
+        &mut self,
+        failed: bool,
+        reason: gpui::SharedString,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        use crate::lifecycle::{
+            CLOSE_ANYWAY, CLOSE_ANYWAY_DETAIL, FAILED, KEEP_EDITING, KEEP_WAITING, STILL_WORKING,
+        };
+        self.asking = true;
+        let (message, stay) = if failed {
+            (FAILED, KEEP_EDITING)
+        } else {
+            (STILL_WORKING, KEEP_WAITING)
+        };
+        let detail = format!("{reason} {CLOSE_ANYWAY_DETAIL}");
+        let answer = window.prompt(
+            gpui::PromptLevel::Warning,
+            message,
+            Some(&detail),
+            &[stay, CLOSE_ANYWAY],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let close = answer.await == Ok(1);
+            this.update_in(cx, |this, window, cx| {
+                this.asking = false;
+                let intent = this.closing.get();
+                if close {
+                    this.end_close_request();
+                    match intent {
+                        Some(CloseIntent::Quit) => crate::lifecycle::force_quit(cx),
+                        Some(_) => window.remove_window(),
+                        None => {}
+                    }
+                } else if failed {
+                    this.end_close_request();
+                    this.close_error = Some(format!("{reason} Keep this window open, check the storage error, and retry closing after it is corrected. Copy Markdown remains available.").into());
+                } else {
+                    this.close.since.set(Some(cx.background_executor().now()));
+                    this.finish_close(window, cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn copy_markdown(&mut self, cx: &mut gpui::Context<Self>) {
@@ -435,10 +660,16 @@ impl Render for StoredWindow {
                     Button::new("show-sync", "Sync…")
                         .on_click(cx.listener(|this, _, window, cx| this.toggle_sync(window, cx))),
                 );
+        let profile = self.render_profile(cx);
         let root = gpui::div()
             .track_focus(&self.nav.loading_focus)
             .size_full()
             .relative()
+            .on_action(
+                cx.listener(|this, _: &crate::app_menus::CloseWindow, window, cx| {
+                    this.close_window(window, cx)
+                }),
+            )
             .on_action(cx.listener(|this, _: &SavePage, window, cx| this.save_focused(window, cx)))
             .on_action(cx.listener(|this, _: &SaveAndClosePage, window, cx| {
                 this.save_and_close(window, cx)
@@ -454,6 +685,7 @@ impl Render for StoredWindow {
         .flex_col()
         .bg(cx.theme().colors().editor_background)
         .child(header)
+        .child(profile)
         .child(self.exchange.clone())
         .child(self.backups.clone())
         .child(self.sync.clone())
@@ -795,12 +1027,7 @@ mod tests {
         fixture
             .window
             .update(cx, |view, _, cx| {
-                assert!(!allow_close(
-                    view.session.clone(),
-                    view.closing.clone(),
-                    CloseIntent::Window,
-                    cx
-                ));
+                assert!(!view.close.allow(CloseIntent::Window, cx));
             })
             .unwrap();
         crate::page_persistence::tests::wait(&model, cx);
@@ -846,6 +1073,14 @@ mod tests {
         cx.simulate_keystrokes(fixture.window.into(), "i x escape");
         assert!(!cx.simulate_native_quit_request());
         crate::page_persistence::tests::wait(&model, cx);
+        cx.executor().run_until_parked();
+        let (message, detail) = cx.pending_prompt().unwrap();
+        assert_eq!(message, crate::lifecycle::FAILED);
+        assert!(
+            detail.contains("could not be recorded for recovery"),
+            "{detail}"
+        );
+        cx.simulate_prompt_answer(crate::lifecycle::KEEP_EDITING);
         cx.executor().run_until_parked();
         assert_eq!(cx.platform_quit_count(), 0);
         fixture

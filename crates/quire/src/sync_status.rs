@@ -1,20 +1,22 @@
 //! The notebook's sync status: which provider synchronizes the folder, notes it keeps only in the
 //! cloud, the conflict copies it made, and Personal Git with its remote, last push, and last
-//! error. The checks and Git run in `quire_store`, off the UI thread.
+//! error. The checks and Git run in `quire_store`, off the UI thread. Git sync belongs to the
+//! Personal profile: its remote and results live in the profile, and each sync backs the notebook
+//! up first when the profile has a backup folder, as the reference app does.
 
 use editor::Editor;
 use gpui::{
-    AppContext as _, Context, Entity, EventEmitter, IntoElement, ParentElement, PromptLevel,
-    Render, SharedString, Styled, Window,
+    App, AppContext as _, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
+    SharedString, Styled, Window,
 };
 use quire_store::{
-    git_sync::{self, Git, Profile, Target},
+    backup::{self, Source},
+    git_sync::{self, Git, Target},
+    profiles::{Notebook, Profile, ProfileId},
     provider::{self, Provider, Scan},
 };
-use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
+    path::PathBuf,
     rc::Rc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -26,7 +28,7 @@ gpui::actions!(
         /// Shows where the notebook is synchronized, its cloud-only notes and conflict copies,
         /// and Personal Git.
         ShowSync,
-        /// Commits this notebook, brings in the Personal remote's notes, and pushes.
+        /// Backs up this notebook, commits it, brings in the Personal remote's notes, and pushes.
         SyncWithGit,
         /// Looks again for notes kept only in the cloud and for conflict copies.
         CheckSyncFolder,
@@ -35,61 +37,7 @@ gpui::actions!(
 
 pub const BUSY: &str = "Git sync is already running. Wait for it to finish.";
 pub const NO_FOLDER: &str = "Git sync and provider checks work on folder notebooks. Open the notebook's folder to sync it with Git.";
-pub const CONFIRM_PERSONAL: &str = "Use Git sync for this notebook as your Personal notebook?";
-pub const PERSONAL: &str = "Use as Personal";
-
-/// What this computer remembers about a notebook's Personal Git.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GitRecord {
-    /// The person confirmed this notebook holds Personal notes. Until profiles exist, this is the
-    /// only thing that permits Git sync.
-    pub personal: bool,
-    pub remote: Option<String>,
-    pub last_push_at: Option<u64>,
-    pub error: Option<String>,
-}
-
-/// Where this computer keeps each notebook's Git record: a JSON object from the notebook folder
-/// to its record. Without a file (tests), records last until the window closes.
-#[derive(Clone)]
-pub struct Settings(Option<PathBuf>);
-
-impl Settings {
-    pub fn new(file: Option<PathBuf>) -> Self {
-        Self(file)
-    }
-
-    fn entries(&self) -> BTreeMap<String, GitRecord> {
-        self.0
-            .as_ref()
-            .and_then(|file| std::fs::read(file).ok())
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default()
-    }
-
-    fn load(&self, key: &str) -> GitRecord {
-        self.entries().remove(key).unwrap_or_default()
-    }
-
-    fn save(&self, key: &str, record: &GitRecord) -> Result<(), String> {
-        let Some(file) = &self.0 else {
-            return Ok(());
-        };
-        let mut entries = self.entries();
-        entries.insert(key.to_owned(), record.clone());
-        let text = serde_json::to_vec_pretty(&entries).map_err(|error| error.to_string())?;
-        let temporary = file.with_extension("json.tmp");
-        std::fs::create_dir_all(file.parent().unwrap_or(Path::new(".")))
-            .and_then(|()| std::fs::write(&temporary, text))
-            .and_then(|()| std::fs::rename(&temporary, file))
-            .map_err(|error| {
-                format!(
-                    "Cannot remember Git settings in {}: {error}. Check write access to Quire's application data and try again.",
-                    file.display()
-                )
-            })
-    }
-}
+pub const NOT_PERSONAL: &str = "Git sync is available only in Personal, so Work notes never reach a personal remote. Choose File > Profile > Personal and open this notebook there, then enter the remote.";
 
 /// A Git sync changed notes in the folder: the window rereads them.
 pub struct Synced;
@@ -100,18 +48,13 @@ fn now_millis() -> u64 {
         .map_or(0, |elapsed| elapsed.as_millis() as u64)
 }
 
-fn key(root: &Path) -> String {
-    std::fs::canonicalize(root)
-        .unwrap_or_else(|_| root.to_owned())
-        .display()
-        .to_string()
-}
-
 pub struct SyncStatus {
     root: Option<PathBuf>,
+    /// The notebook, whose profile keeps the remote and the last push.
+    notebook: Option<Notebook>,
+    /// Quire's state folder for a folder notebook, for the backup before each sync.
+    state: Option<PathBuf>,
     git: Git,
-    settings: Settings,
-    record: GitRecord,
     provider: Option<Provider>,
     scan: Option<Result<Scan, String>>,
     warnings: Vec<String>,
@@ -127,22 +70,19 @@ impl EventEmitter<Synced> for SyncStatus {}
 
 impl SyncStatus {
     pub fn new(
-        root: Option<PathBuf>,
+        root: Option<(PathBuf, PathBuf)>,
+        notebook: Option<Notebook>,
         git: Git,
-        settings: Settings,
         label: Rc<dyn Fn(i64) -> String>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let record = root
-            .as_deref()
-            .map(|root| settings.load(&key(root)))
-            .unwrap_or_default();
+        let (root, state) = root.unzip();
         let mut this = Self {
             provider: root.as_deref().and_then(provider::detect),
             root,
+            notebook,
+            state,
             git,
-            settings,
-            record,
             scan: None,
             warnings: Vec::new(),
             remote: None,
@@ -168,9 +108,16 @@ impl SyncStatus {
         self.running.clone().or_else(|| self.message.clone())
     }
 
-    #[cfg(test)]
-    pub fn record(&self) -> &GitRecord {
-        &self.record
+    /// The profile holding this notebook.
+    pub fn profile(&self, cx: &App) -> Option<ProfileId> {
+        crate::profiles::holding(self.notebook.as_ref()?, cx)
+    }
+
+    /// The profile's remote, last push, and last Git error.
+    pub fn record(&self, cx: &App) -> Profile {
+        self.profile(cx)
+            .map(|id| crate::profiles::get(id, cx))
+            .unwrap_or_default()
     }
 
     /// Looks for cloud-only notes and conflict copies, and keeps live data out of a repository
@@ -200,7 +147,7 @@ impl SyncStatus {
         self.shown = !self.shown;
         if self.shown {
             if self.remote.is_none() {
-                let text = self.record.remote.clone().unwrap_or_default();
+                let text = self.record(cx).git_remote.unwrap_or_default();
                 self.remote = Some(cx.new(|cx| {
                     let mut editor = Editor::single_line(window, cx);
                     editor.set_placeholder_text("git@example.com:me/notes.git", window, cx);
@@ -219,122 +166,115 @@ impl SyncStatus {
         cx.notify();
     }
 
-    fn remember(&mut self, cx: &mut Context<Self>) {
-        let Some(root) = &self.root else {
-            return;
-        };
-        if let Err(error) = self.settings.save(&key(root), &self.record) {
-            self.message = Some(error.into());
-            cx.notify();
-        }
-    }
-
-    /// Saves the remote typed in the field. The first remote asks the person to confirm this
-    /// notebook holds Personal notes, since Git sync must never carry Work notes.
-    pub fn save_remote(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Saves the remote typed in the field.
+    pub fn save_remote(&mut self, cx: &mut Context<Self>) {
         let text = self
             .remote
             .as_ref()
             .map(|remote| remote.read(cx).text(cx))
             .unwrap_or_default();
-        self.set_remote(text, window, cx);
+        self.set_remote(text, cx);
     }
 
-    pub fn set_remote(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+    /// Sets Personal's remote. Every other profile refuses Git, since Git sync must never carry
+    /// Work notes.
+    pub fn set_remote(&mut self, text: String, cx: &mut Context<Self>) {
         if self.root.is_none() {
-            self.finish(NO_FOLDER, cx);
-            return;
+            return self.finish(NO_FOLDER, cx);
         }
         if self.is_running() {
-            self.message = Some(BUSY.into());
-            cx.notify();
-            return;
+            return self.finish(BUSY, cx);
         }
-        let remote = match git_sync::check_remote(Profile::Personal, &text) {
-            Ok(remote) => remote,
-            Err(error) => return self.finish(error.to_string(), cx),
+        let Some(ProfileId::Personal) = self.profile(cx) else {
+            return self.finish(NOT_PERSONAL, cx);
         };
-        if self.record.personal || remote.is_none() {
-            self.apply_remote(remote, cx);
-            return;
-        }
-        let answer = window.prompt(
-            PromptLevel::Warning,
-            CONFIRM_PERSONAL,
-            Some(
-                "Git sync is only for Personal notes: never push Work notes to a personal remote. Quire remembers this choice for this notebook on this computer.",
-            ),
-            &[PERSONAL, "Cancel"],
-            cx,
-        );
-        cx.spawn(async move |this, cx| {
-            if answer.await != Ok(0) {
-                return;
-            }
-            this.update(cx, |this, cx| {
-                this.record.personal = true;
-                this.apply_remote(remote, cx);
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    fn apply_remote(&mut self, remote: Option<String>, cx: &mut Context<Self>) {
-        let message = match &remote {
-            Some(remote) => format!(
+        let message = match crate::profiles::update(cx, |profiles| {
+            profiles.set_git_remote(ProfileId::Personal, &text)
+        }) {
+            Ok(Some(remote)) => format!(
                 "Git sync uses {remote}. Credentials come from Git's own credential helper or SSH agent."
             ),
-            None => "Git sync is off for this notebook.".to_owned(),
+            Ok(None) => "Git sync is off for this notebook.".to_owned(),
+            Err(error) => error,
         };
-        self.record = GitRecord {
-            personal: self.record.personal,
-            remote,
-            last_push_at: None,
-            error: None,
-        };
-        self.message = Some(message.into());
-        self.remember(cx);
-        cx.notify();
+        self.finish(message, cx);
     }
 
-    /// Commits the notebook, brings in what the remote has, and pushes. A failure keeps every
-    /// note and commit here and is shown until the next attempt.
+    fn record_git(&self, outcome: Result<u64, String>, cx: &mut Context<Self>) {
+        if let Err(error) = crate::profiles::update(cx, |profiles| {
+            profiles.record_git(ProfileId::Personal, outcome)
+        }) {
+            crate::outline::show_notice(error, cx);
+        }
+    }
+
+    /// Backs the notebook up when Personal has a backup folder, then commits it, brings in what
+    /// the remote has, and pushes. A failed backup stops the sync; a failed sync keeps every note
+    /// and commit here and is shown until the next attempt.
     pub fn sync(&mut self, cx: &mut Context<Self>) {
         if self.is_running() {
-            self.message = Some(BUSY.into());
-            cx.notify();
-            return;
+            return self.finish(BUSY, cx);
         }
-        let Some(root) = self.root.clone() else {
+        let (Some(root), Some(state)) = (self.root.clone(), self.state.clone()) else {
             return self.finish(NO_FOLDER, cx);
         };
-        self.running = Some("Syncing with Git…".into());
+        let Some(ProfileId::Personal) = self.profile(cx) else {
+            return self.finish(NOT_PERSONAL, cx);
+        };
+        let profile = crate::profiles::get(ProfileId::Personal, cx);
+        self.running = Some(
+            if profile.backup_folder.is_some() {
+                "Backing up, then syncing with Git…"
+            } else {
+                "Syncing with Git…"
+            }
+            .into(),
+        );
         self.message = None;
         cx.notify();
         let git = self.git.clone();
-        let remote = self.record.remote.clone();
-        let profile = if self.record.personal {
-            Profile::Personal
-        } else {
-            Profile::Current
-        };
         let at = now_millis();
         let work = cx.background_spawn(async move {
+            let backed_up = profile
+                .backup_folder
+                .map(|folder| {
+                    let source = Source::Folder {
+                        root: root.clone(),
+                        state,
+                    };
+                    backup::create(&source, &folder, at)
+                        .map(|made| (made.created, made.path))
+                        .map_err(|error| format!("{error:#}"))
+                })
+                .transpose()?;
             let target = Target {
-                profile,
+                profile: ProfileId::Personal.git(),
                 root: &root,
-                remote: remote.as_deref(),
+                remote: profile.git_remote.as_deref(),
             };
-            git_sync::sync_folder(&git, &target, at).map_err(|error| format!("{error:#}"))
+            let synced =
+                git_sync::sync_folder(&git, &target, at).map_err(|error| format!("{error:#}"));
+            Ok::<_, String>((backed_up, synced))
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             this.update(cx, |this, cx| {
+                let backup = match &result {
+                    Ok((made, _)) => made.clone().map(Ok),
+                    Err(error) => Some(Err(error.clone())),
+                };
+                if let Some(outcome) = backup {
+                    crate::profiles::update(cx, |profiles| {
+                        profiles.record_backup(ProfileId::Personal, outcome)
+                    })
+                    .ok();
+                }
                 let message = match result {
-                    Ok(pushed) => {
-                        this.record.last_push_at = Some(pushed.at);
-                        this.record.error = None;
+                    Err(error) => format!(
+                        "Git sync did not run because the backup before it failed: {error}. Fix the backup folder in Backups…, then sync again."
+                    ),
+                    Ok((_, Ok(pushed))) => {
+                        this.record_git(Ok(pushed.at), cx);
                         cx.emit(Synced);
                         format!(
                             "Pushed {} at {}. Other computers have these notes once they sync.",
@@ -342,12 +282,11 @@ impl SyncStatus {
                             (this.label)(pushed.at as i64)
                         )
                     }
-                    Err(error) => {
-                        this.record.error = Some(error.clone());
+                    Ok((_, Err(error))) => {
+                        this.record_git(Err(error.clone()), cx);
                         format!("Git sync failed: {error}")
                     }
                 };
-                this.remember(cx);
                 this.finish(message, cx);
                 this.check(cx);
             })
@@ -364,7 +303,7 @@ impl SyncStatus {
     }
 
     /// The lines the panel shows, in order; tests read them too.
-    pub fn lines(&self) -> Vec<String> {
+    pub fn lines(&self, cx: &App) -> Vec<String> {
         let Some(root) = &self.root else {
             return vec![NO_FOLDER.to_owned()];
         };
@@ -410,15 +349,16 @@ impl SyncStatus {
             }
         }
         lines.extend(self.warnings.iter().cloned());
-        lines.push(match (&self.record.remote, self.record.personal) {
-            (None, _) => "Personal Git is off. Enter a remote to sync this notebook with Git.".into(),
-            (Some(remote), true) => format!("Personal Git: {remote}"),
-            (Some(remote), false) => format!(
-                "Git remote {remote} is set, but this notebook is not confirmed as Personal. Save the remote again to confirm."
-            ),
+        let record = self.record(cx);
+        lines.push(match (self.profile(cx), &record.git_remote) {
+            (Some(ProfileId::Personal), None) => {
+                "Personal Git is off. Enter a remote to sync this notebook with Git.".into()
+            }
+            (Some(ProfileId::Personal), Some(remote)) => format!("Personal Git: {remote}"),
+            _ => NOT_PERSONAL.into(),
         });
-        if self.record.remote.is_some() {
-            lines.push(match self.record.last_push_at {
+        if record.git_remote.is_some() {
+            lines.push(match record.last_push_at {
                 Some(at) => format!(
                     "Last successful push: {}. A push puts the commits on the remote; another computer has them only after it syncs.",
                     (self.label)(at as i64)
@@ -426,7 +366,7 @@ impl SyncStatus {
                 None => "No successful push yet.".into(),
             });
         }
-        if let Some(error) = &self.record.error {
+        if let Some(error) = &record.git_error {
             lines.push(format!("Last Git error: {error}"));
         }
         lines
@@ -451,49 +391,50 @@ impl Render for SyncStatus {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let message = self.message();
         let running = self.is_running();
-        let panel = self.shown.then(|| {
-            let folder = self.root.is_some();
-            gpui::div()
-                .p_2()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .children(self.lines().into_iter().map(Label::new))
-                .when(folder, |div| {
-                    div.when_some(self.remote.clone(), |div, remote| {
-                        div.child(
+        let panel =
+            self.shown.then(|| {
+                let folder = self.root.is_some();
+                gpui::div()
+                    .p_2()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .children(self.lines(cx).into_iter().map(Label::new))
+                    .when(folder, |div| {
+                        div.when_some(self.remote.clone(), |div, remote| {
+                            div.child(
+                                gpui::div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(Label::new("Git remote"))
+                                    .child(gpui::div().w_96().child(remote))
+                                    .child(Button::new("save-git-remote", "Save remote").on_click(
+                                        cx.listener(|this, _, _, cx| this.save_remote(cx)),
+                                    )),
+                            )
+                        })
+                        .child(
                             gpui::div()
                                 .flex()
-                                .items_center()
                                 .gap_2()
-                                .child(Label::new("Git remote"))
-                                .child(gpui::div().w_96().child(remote))
-                                .child(Button::new("save-git-remote", "Save remote").on_click(
-                                    cx.listener(|this, _, window, cx| this.save_remote(window, cx)),
-                                )),
+                                .when(self.record(cx).git_remote.is_some(), |div| {
+                                    div.child(
+                                        Button::new("sync-with-git", "Sync with Git")
+                                            .on_click(cx.listener(|this, _, _, cx| this.sync(cx))),
+                                    )
+                                })
+                                .child(
+                                    Button::new("check-sync-folder", "Check again")
+                                        .on_click(cx.listener(|this, _, _, cx| this.check(cx))),
+                                ),
                         )
                     })
                     .child(
-                        gpui::div()
-                            .flex()
-                            .gap_2()
-                            .when(self.record.remote.is_some(), |div| {
-                                div.child(
-                                    Button::new("sync-with-git", "Sync with Git")
-                                        .on_click(cx.listener(|this, _, _, cx| this.sync(cx))),
-                                )
-                            })
-                            .child(
-                                Button::new("check-sync-folder", "Check again")
-                                    .on_click(cx.listener(|this, _, _, cx| this.check(cx))),
-                            ),
+                        Button::new("hide-sync", "Hide sync")
+                            .on_click(cx.listener(|this, _, window, cx| this.toggle(window, cx))),
                     )
-                })
-                .child(
-                    Button::new("hide-sync", "Hide sync")
-                        .on_click(cx.listener(|this, _, window, cx| this.toggle(window, cx))),
-                )
-        });
+            });
         gpui::div()
             .flex()
             .flex_col()

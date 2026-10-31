@@ -12,6 +12,8 @@ use gpui::{App, AppContext, Context, Entity, SharedString, Task};
 use quire_store::{
     folder_notebook::{DiskDocument, FolderChange, FolderWorker, Trash},
     notebook::PageCheckout,
+    notebook_lock::{self, NotebookLock},
+    profiles::Notebook,
     sync::json::Json,
     worker::{QueueError, QueueLimits, StorageWorker},
 };
@@ -36,11 +38,26 @@ pub struct NotebookSession {
     folder: Option<(PathBuf, PathBuf)>,
     /// Where notebook-relative media paths resolve.
     media: Option<quire_media::files::Files>,
+    /// Keeps every other session, in this process or another, out of this notebook's recovery.
+    _lock: Option<NotebookLock>,
+    /// Where the notebook lives, which names its profile.
+    location: Option<Notebook>,
 }
 
 impl NotebookSession {
     pub fn open(path: PathBuf, notebook: String, writer: String) -> Result<Self, String> {
+        let lock = path
+            .parent()
+            .filter(|folder| folder.is_dir())
+            .map(|_| NotebookLock::acquire(&notebook_lock::store_lock(&path)))
+            .transpose()
+            .map_err(|error| format!("{error:#}"))?;
         let media = quire_media::files::Files::for_store_database(&path);
+        let location = Notebook::Store {
+            database: path.clone(),
+            notebook: notebook.clone(),
+            writer: writer.clone(),
+        };
         let worker = StorageWorker::spawn(path, notebook, writer, QueueLimits::default())
             .map_err(|error| format!("{error:#}"))?;
         let ready = worker
@@ -50,6 +67,8 @@ impl NotebookSession {
             .shared();
         Ok(Self {
             media: Some(media),
+            _lock: lock,
+            location: Some(location),
             ..Self::from_worker(worker.client, ready)
         })
     }
@@ -61,6 +80,10 @@ impl NotebookSession {
         state: PathBuf,
         trash: Option<Trash>,
     ) -> Result<Self, String> {
+        let lock = std::fs::create_dir_all(&state)
+            .map_err(anyhow::Error::from)
+            .and_then(|()| NotebookLock::acquire(&notebook_lock::folder_lock(&state)))
+            .map_err(|error| format!("{error:#}"))?;
         let worker =
             FolderWorker::spawn_folder(root.clone(), state.clone(), trash, QueueLimits::default())
                 .map_err(|error| format!("{error:#}"))?;
@@ -71,7 +94,9 @@ impl NotebookSession {
             .shared();
         Ok(Self {
             media: Some(quire_media::files::Files::Folder { root: root.clone() }),
+            location: Some(Notebook::Folder { root: root.clone() }),
             folder: Some((root, state)),
+            _lock: Some(lock),
             ..Self::from_worker(worker.client, ready)
         })
     }
@@ -84,7 +109,14 @@ impl NotebookSession {
             editing: Rc::new(Cell::new(false)),
             folder: None,
             media: None,
+            _lock: None,
+            location: None,
         }
+    }
+
+    /// Where this notebook lives, for profiles and reopening.
+    pub fn location(&self) -> Option<Notebook> {
+        self.location.clone()
     }
 
     /// Where this notebook keeps attachments that pages reference by relative path.

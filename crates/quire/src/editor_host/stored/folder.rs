@@ -98,6 +98,14 @@ impl FolderOptions {
         }
     }
 
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn has_page(&self) -> bool {
+        self.page.is_some()
+    }
+
     pub fn open(self, cx: &mut App) -> Result<(), String> {
         let root = std::fs::canonicalize(&self.root).map_err(|error| {
             format!(
@@ -120,10 +128,31 @@ pub(super) fn show_folder_window(
     notices: Vec<String>,
     cx: &mut App,
 ) -> Result<(), String> {
-    let roam = page.is_none() && crate::exchange::roam::is_roam_notebook(&root);
-    let page = match page {
-        Some(page) => page,
-        None => list(&root).files.into_iter().next().map(|file| file.path).ok_or_else(|| {
+    crate::profiles::check_open(
+        &quire_store::profiles::Notebook::Folder { root: root.clone() },
+        cx,
+    )?;
+    let notes = list(&root).files;
+    let restored = page
+        .is_none()
+        .then(|| {
+            crate::navigation::WorkspaceFile::beside(
+                &state.join("folder.sqlite"),
+                &format!("folder:{}", root.display()),
+            )
+            .load()
+            .active?
+            .page_id()
+            .map(str::to_owned)
+        })
+        .flatten()
+        .filter(|id| notes.iter().any(|note| page_id_for_path(&note.path) == *id));
+    let roam =
+        page.is_none() && restored.is_none() && crate::exchange::roam::is_roam_notebook(&root);
+    let page = match (page, restored) {
+        (Some(page), _) => page_id_for_path(&page),
+        (None, Some(restored)) => restored,
+        (None, None) => notes.into_iter().next().map(|file| page_id_for_path(&file.path)).ok_or_else(|| {
             format!(
                 "{} has no Markdown notes. Add a .md file or pass --page with the note to create.",
                 root.display()
@@ -132,7 +161,7 @@ pub(super) fn show_folder_window(
     };
     let mut session =
         NotebookSession::open_folder(root.clone(), state.clone(), Some(system_trash(cx)))?;
-    let page = session.open_page(page_id_for_path(&page), cx);
+    let page = session.open_page(page, cx);
     let options = gpui::WindowOptions {
         window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
             None,

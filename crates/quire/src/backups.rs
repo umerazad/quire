@@ -3,12 +3,12 @@
 //! The work runs in `quire_store::backup`, off the UI thread.
 
 use gpui::{
-    AppContext as _, Context, EventEmitter, IntoElement, ParentElement, PathPromptOptions,
+    App, AppContext as _, Context, EventEmitter, IntoElement, ParentElement, PathPromptOptions,
     PromptLevel, Render, SharedString, Styled, Task, Window,
 };
 use quire_store::backup::{self, BackupInfo, Location, RestoreRequest, Source};
+use quire_store::profiles::Notebook;
 use std::{
-    collections::BTreeMap,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -64,54 +64,21 @@ fn describe(error: anyhow::Error) -> String {
     format!("{error:#}")
 }
 
-/// Where this computer keeps each notebook's backup folder: a JSON object from the notebook's
-/// backup key to the folder. Without a file (tests), choices last until the window closes.
-#[derive(Clone)]
-pub struct Settings(Option<PathBuf>);
-
-impl Settings {
-    pub fn new(file: Option<PathBuf>) -> Self {
-        Self(file)
-    }
-
-    fn entries(&self) -> BTreeMap<String, PathBuf> {
-        self.0
-            .as_ref()
-            .and_then(|file| std::fs::read(file).ok())
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default()
-    }
-
-    fn load(&self, key: &str) -> Option<PathBuf> {
-        self.entries().remove(key)
-    }
-
-    fn save(&self, key: &str, folder: &Path) -> Result<(), String> {
-        let Some(file) = &self.0 else {
-            return Ok(());
-        };
-        let mut entries = self.entries();
-        entries.insert(key.to_owned(), folder.to_owned());
-        let text = serde_json::to_vec_pretty(&entries).map_err(|error| error.to_string())?;
-        let temporary = file.with_extension("json.tmp");
-        std::fs::create_dir_all(file.parent().unwrap_or(Path::new(".")))
-            .and_then(|()| std::fs::write(&temporary, text))
-            .and_then(|()| std::fs::rename(&temporary, file))
-            .map_err(|error| {
-                format!(
-                    "Cannot remember the backup folder in {}: {error}. Check write access to Quire's application data and choose the folder again.",
-                    file.display()
-                )
-            })
-    }
+/// The backup folder of the profile holding `notebook`.
+fn profile_folder(notebook: Option<&Notebook>, cx: &App) -> Option<PathBuf> {
+    let id = crate::profiles::holding(notebook?, cx)?;
+    crate::profiles::get(id, cx).backup_folder
 }
+
+pub const NO_PROFILE: &str = "This notebook belongs to no profile, so it has no backup folder. Open it from File > Profile, or close the notebook that holds its profile, then choose a folder.";
 
 /// A restore finished: the window opens the restored notebook.
 pub struct Restored(pub Location);
 
 pub struct Backups {
     source: Source,
-    settings: Settings,
+    /// The notebook, whose profile keeps the backup folder and the outcome of the last backup.
+    notebook: Option<Notebook>,
     destination: Option<PathBuf>,
     /// Quire's state folder for a restored folder notebook at a given root.
     state_for: Arc<dyn Fn(&Path) -> PathBuf + Send + Sync>,
@@ -133,12 +100,12 @@ impl EventEmitter<Restored> for Backups {}
 impl Backups {
     pub fn new(
         source: Source,
-        settings: Settings,
+        notebook: Option<Notebook>,
         state_for: Arc<dyn Fn(&Path) -> PathBuf + Send + Sync>,
         label: Rc<dyn Fn(i64) -> String>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let destination = source.key().ok().and_then(|key| settings.load(&key));
+        let destination = profile_folder(notebook.as_ref(), cx);
         let schedule = cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(TICK).await;
@@ -149,7 +116,7 @@ impl Backups {
         });
         let mut this = Self {
             source,
-            settings,
+            notebook,
             destination,
             state_for,
             label,
@@ -166,6 +133,30 @@ impl Backups {
 
     pub fn is_running(&self) -> bool {
         self.running.is_some()
+    }
+
+    /// Takes up the profile's backup folder when it changed elsewhere, or drops it when this
+    /// notebook no longer belongs to a profile.
+    fn follow_profile(&mut self, cx: &mut Context<Self>) {
+        let folder = profile_folder(self.notebook.as_ref(), cx);
+        if folder != self.destination {
+            self.destination = folder;
+            self.completed = None;
+            self.attempted = None;
+            self.load_list(self.listed.is_some(), cx);
+        }
+    }
+
+    fn record(&self, outcome: Result<(u64, PathBuf), String>, cx: &mut Context<Self>) {
+        if let Some(id) = self
+            .notebook
+            .as_ref()
+            .and_then(|notebook| crate::profiles::holding(notebook, cx))
+            && let Err(error) =
+                crate::profiles::update(cx, |profiles| profiles.record_backup(id, outcome))
+        {
+            crate::outline::show_notice(error, cx);
+        }
     }
 
     #[cfg(test)]
@@ -205,6 +196,7 @@ impl Backups {
     /// The backup schedule: once an hour since the last completed backup, and no sooner than
     /// fifteen minutes after a failed attempt.
     fn tick(&mut self, cx: &mut Context<Self>) {
+        self.follow_profile(cx);
         let now = cx.background_executor().now();
         let due = |since: Option<Instant>, wait: Duration| {
             since.is_none_or(|since| now.saturating_duration_since(since) >= wait)
@@ -287,11 +279,18 @@ impl Backups {
     }
 
     pub fn set_destination(&mut self, folder: &Path, cx: &mut Context<Self>) {
+        let profile = self
+            .notebook
+            .as_ref()
+            .and_then(|notebook| crate::profiles::holding(notebook, cx));
         let result = backup::check_destination(&self.source, folder)
-            .and_then(|folder| Ok((self.source.key()?, folder)))
             .map_err(describe)
-            .and_then(|(key, folder)| {
-                self.settings.save(&key, &folder)?;
+            .and_then(|folder| {
+                if folder.starts_with(paths::data_dir()) {
+                    return Err("Choose a backup folder outside Quire's application data.".into());
+                }
+                let id = profile.ok_or_else(|| NO_PROFILE.to_owned())?;
+                crate::profiles::update(cx, |profiles| profiles.set_backup_folder(id, &folder))?;
                 Ok(folder)
             });
         match result {
@@ -315,6 +314,7 @@ impl Backups {
         if self.busy(cx) {
             return;
         }
+        self.follow_profile(cx);
         let Some(destination) = self.destination.clone() else {
             self.message = Some(NO_FOLDER.into());
             cx.notify();
@@ -342,17 +342,24 @@ impl Backups {
                     Ok(Some(backup)) => {
                         this.completed = Some(cx.background_executor().now());
                         this.load_list(false, cx);
+                        this.record(Ok((backup.created, backup.path.clone())), cx);
                         format!(
                             "Backed up at {} to {}.",
                             (this.label)(backup.created as i64),
                             backup.path.display()
                         )
                     }
-                    Err(error) if automatic => format!(
-                        "Automatic backup failed: {}. Open Backups and back up now to retry.",
-                        describe(error)
-                    ),
-                    Err(error) => format!("Backup failed: {}", describe(error)),
+                    Err(error) => {
+                        let error = describe(error);
+                        this.record(Err(error.clone()), cx);
+                        if automatic {
+                            format!(
+                                "Automatic backup failed: {error}. Open Backups and back up now to retry."
+                            )
+                        } else {
+                            format!("Backup failed: {error}")
+                        }
+                    }
                 };
                 this.finish(message, cx);
             })
