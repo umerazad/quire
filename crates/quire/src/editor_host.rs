@@ -117,6 +117,7 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     crate::code_format::init(cx);
     crate::tasks::init(cx);
     crate::references::init(cx);
+    crate::page_menu::init(cx);
     stored::bind_keys(cx);
     crate::navigation::bind_keys(cx);
     crate::media::bind_keys(cx);
@@ -174,7 +175,9 @@ fn editor(
     window: &mut Window,
     cx: &mut gpui::Context<Editor>,
 ) -> Editor {
-    Editor::for_buffer(buffer, None, window, cx)
+    let mut editor = Editor::for_buffer(buffer, None, window, cx);
+    crate::page_menu::install(&mut editor);
+    editor
 }
 
 struct NotebookWindow {
@@ -327,7 +330,11 @@ impl NotebookWindow {
         let mode = cx.new(|cx| vim::ModeIndicator::new(window, cx));
         let source = cx.new(|cx| editor(buffer.clone(), window, cx));
         let second = cx.new(|cx| match excerpt {
-            Some(excerpt) => Editor::for_multibuffer(excerpt, None, window, cx),
+            Some(excerpt) => {
+                let mut editor = Editor::for_multibuffer(excerpt, None, window, cx);
+                crate::page_menu::install(&mut editor);
+                editor
+            }
             None => editor(buffer, window, cx),
         });
         let source_search = crate::editor_search::new(&source, window, cx);

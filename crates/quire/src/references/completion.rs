@@ -100,7 +100,7 @@ fn typed(snapshot: &text::BufferSnapshot, offset: usize) -> Option<Typed> {
     })
 }
 
-fn new_id() -> String {
+pub(crate) fn new_id() -> String {
     format!("b-{}", uuid::Uuid::new_v4().simple())
 }
 

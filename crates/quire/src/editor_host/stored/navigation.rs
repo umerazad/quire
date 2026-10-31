@@ -3,10 +3,11 @@
 
 use super::*;
 use crate::navigation::{
-    CaptureTask, CloseTab, DeleteFile, DeletePage, FindPage, FocusFiles, FocusReferences, GoBack,
-    GoForward, MoveFile, MovePage, NewPage, NextTab, OpenToday, PreviousTab, RenameFile,
-    RenamePage, ShowDaily, ShowPageHistory, ShowPages, ShowTags, ShowTasks, ToggleFavorite,
-    ToggleSidePane, WorkspaceFile, create_page,
+    CaptureTask, CloseTab, CopyLink, DeleteFile, DeletePage, FindPage, FocusFiles, FocusReferences,
+    GoBack, GoForward, MoveFile, MovePage, NewPage, NewPageHere, NextTab, OpenContextMenu,
+    OpenToday, PreviousTab, RenameFile, RenamePage, RevealInFileManager, ShowDaily,
+    ShowPageHistory, ShowPages, ShowTags, ShowTasks, ToggleFavorite, ToggleSidePane, WorkspaceFile,
+    create_page,
     palette::{PagePalette, PaletteChoice, PaletteMode},
 };
 use gpui::{DismissEvent, EntityId, SharedString, Task};
@@ -23,6 +24,8 @@ mod daily;
 mod file_views;
 #[path = "history_views.rs"]
 mod history_views;
+#[path = "menu_views.rs"]
+mod menu_views;
 #[path = "reference_views.rs"]
 mod reference_views;
 #[path = "tag_views.rs"]
@@ -41,6 +44,8 @@ pub(super) struct Navigation {
     pub(super) palette: Option<Entity<Picker<PagePalette>>>,
     pub(super) dialog: Option<Entity<crate::navigation::file_dialog::FileDialog>>,
     pub(super) page_history: Option<Entity<crate::navigation::page_history::PageHistory>>,
+    /// The open pointer menu, from Files, the sidebar, or a tab.
+    pub(super) menu: Option<menu_views::DeployedMenu>,
     /// Renamed or moved pages, until the page list shows each at its new path with its title.
     pub(super) renamed: Vec<crate::file_actions::Renamed>,
     pub(super) pages: Vec<ListedPage>,
@@ -84,6 +89,7 @@ impl Navigation {
             palette: None,
             dialog: None,
             page_history: None,
+            menu: None,
             renamed: Vec::new(),
             pages: Vec::new(),
             catalogue: None,
@@ -302,6 +308,17 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        self.open_palette_in(mode, String::new(), window, cx)
+    }
+
+    /// Opens the palette; a page it creates goes into `folder`.
+    pub(super) fn open_palette_in(
+        &mut self,
+        mode: PaletteMode,
+        folder: String,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
         let Some(client) = self.index_client(cx) else {
             self.nav.error = Some(
                 "Find needs the notebook index, which did not start. Reopen the notebook to retry."
@@ -311,17 +328,17 @@ impl StoredWindow {
             return;
         };
         let this = cx.entity().downgrade();
+        let into = folder.clone();
         let choose = Rc::new(move |choice, beside, window: &mut Window, cx: &mut App| {
             let this = this.clone();
+            let into = into.clone();
             window.defer(cx, move |window, cx| {
-                this.update(cx, |this, cx| this.choose(choice, beside, window, cx))
+                this.update(cx, |this, cx| this.choose(choice, into, beside, window, cx))
                     .ok();
             });
         });
-        let picker = cx.new(|cx| {
-            Picker::uniform_list(PagePalette::new(client, mode, choose), window, cx)
-                .reopenable(false, cx)
-        });
+        let palette = PagePalette::new(client, mode, choose).in_folder(folder);
+        let picker = cx.new(|cx| Picker::uniform_list(palette, window, cx).reopenable(false, cx));
         cx.subscribe_in(&picker, window, |this, _, _: &DismissEvent, window, cx| {
             this.nav.palette = None;
             this.focus_active(window, cx);
@@ -343,15 +360,14 @@ impl StoredWindow {
     fn choose(
         &mut self,
         choice: PaletteChoice,
+        folder: String,
         beside: bool,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
         match choice {
             PaletteChoice::Open { page, .. } => self.open_page(page, beside, window, cx),
-            PaletteChoice::Create { title } => {
-                self.create(title, String::new(), beside, window, cx)
-            }
+            PaletteChoice::Create { title } => self.create(title, folder, beside, window, cx),
         }
     }
 
@@ -500,6 +516,19 @@ impl StoredWindow {
             .on_action(
                 cx.listener(|this, _: &MoveFile, window, cx| this.move_selected_file(window, cx)),
             )
+            .on_action(cx.listener(|this, _: &OpenContextMenu, window, cx| {
+                this.deploy_active_tab_menu(window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &CopyLink, _, cx| {
+                if let Some(page) = this.shown_page(cx) {
+                    this.copy_link(&page, cx)
+                }
+            }))
+            .on_action(cx.listener(|this, _: &RevealInFileManager, _, cx| {
+                if let Some(page) = this.shown_page(cx) {
+                    this.reveal_page(&page, cx)
+                }
+            }))
     }
 
     /// Moves through history without recording recents, restoring a closed tab if needed.
@@ -525,7 +554,18 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        if let Some(next) = self.nav.workspace.close(closing, None) {
+        self.close_tabs_preferring(closing, None, window, cx)
+    }
+
+    /// Closes tabs, showing `preferred` when the active tab closed and `preferred` stays open.
+    pub(super) fn close_tabs_preferring(
+        &mut self,
+        closing: impl Fn(&Destination) -> bool,
+        preferred: Option<&Destination>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if let Some(next) = self.nav.workspace.close(closing, preferred) {
             self.nav.history.push(next.clone());
             self.show(&next, window, cx);
         }
@@ -827,3 +867,11 @@ mod media_attach_tests;
 #[cfg(test)]
 #[path = "media_folder_tests.rs"]
 mod media_folder_tests;
+
+#[cfg(test)]
+#[path = "menu_tests.rs"]
+mod menu_tests;
+
+#[cfg(test)]
+#[path = "page_menu_tests.rs"]
+mod page_menu_tests;

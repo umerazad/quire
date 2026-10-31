@@ -173,7 +173,7 @@ impl StoredWindow {
     }
 
     /// A page's path from its open buffer, or else from the page list.
-    fn page_path(&self, page: &str, cx: &App) -> Option<String> {
+    pub(in crate::editor_host::stored) fn page_path(&self, page: &str, cx: &App) -> Option<String> {
         let open = self.session.borrow().open_pages();
         open.iter()
             .find(|open| open.read(cx).id() == page)

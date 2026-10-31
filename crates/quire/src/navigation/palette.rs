@@ -53,6 +53,7 @@ pub struct PagePalette {
     generation: u64,
     error: Option<SharedString>,
     choose: Choose,
+    folder: String,
 }
 
 /// What one index step returned for a query.
@@ -156,7 +157,14 @@ impl PagePalette {
             generation: 0,
             error: None,
             choose,
+            folder: String::new(),
         }
+    }
+
+    /// Names the folder a created page goes into in the prompt.
+    pub fn in_folder(mut self, folder: String) -> Self {
+        self.folder = folder;
+        self
     }
 
     #[cfg(test)]
@@ -277,7 +285,8 @@ impl PickerDelegate for PagePalette {
     fn placeholder_text(&self, _: &mut Window, _: &mut App) -> Arc<str> {
         match self.mode {
             PaletteMode::Find => "Find a page or text… (Shift-Enter opens beside)".into(),
-            PaletteMode::Create => "New page title…".into(),
+            PaletteMode::Create if self.folder.is_empty() => "New page title…".into(),
+            PaletteMode::Create => format!("New page title in {}…", self.folder).into(),
         }
     }
 
