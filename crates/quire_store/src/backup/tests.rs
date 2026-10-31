@@ -369,10 +369,208 @@ fn backup_folders_inside_the_notebook_are_refused() {
     assert!(names(&inside).is_empty());
 }
 
+fn no_state(_: &Path) -> PathBuf {
+    unreachable!("a Quire notebook restore has no state folder")
+}
+
+#[test]
+fn a_restored_store_is_a_new_notebook_with_the_same_pages_history_drafts_and_attachments() {
+    let fixture = StoreFixture::new();
+    let backup = create(&fixture.source(), fixture.destination.path(), 1).unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let original = fixture.open();
+    let restored = restore(
+        &RestoreRequest {
+            backup: &backup.path,
+            parent: parent.path(),
+            current: Some((&fixture.source(), fixture.destination.path())),
+            state_for: &no_state,
+            created: 2,
+        },
+        &mut |_| Ok(()),
+    )
+    .unwrap();
+    let safety = restored
+        .safety
+        .clone()
+        .expect("the current notebook is backed up first");
+    verify(&safety.path).unwrap();
+    let Location::Store {
+        database,
+        notebook,
+        writer,
+    } = restored.location
+    else {
+        panic!("a Quire notebook restores as a Quire notebook");
+    };
+    assert_ne!(notebook, "nb");
+    assert_eq!(writer, "office");
+    assert!(database.starts_with(fs::canonicalize(parent.path()).unwrap()));
+    assert!(
+        database
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("Restored ")
+    );
+    assert!(
+        NotebookStore::open(&database, "nb", "office").is_err(),
+        "the old identity must not open the copy"
+    );
+    let copy = NotebookStore::open(&database, &notebook, &writer).unwrap();
+    for page in ["p-a", "p-b"] {
+        assert_eq!(copy.heads(page).unwrap(), original.heads(page).unwrap());
+        assert_eq!(copy.history(page).unwrap(), original.history(page).unwrap());
+        let head = &copy.heads(page).unwrap()[0];
+        assert_eq!(
+            copy.get(head).unwrap().unwrap().canonical().unwrap(),
+            original.get(head).unwrap().unwrap().canonical().unwrap()
+        );
+    }
+    let mut revisions = copy.outbox().unwrap();
+    revisions.sort();
+    assert_eq!(revisions.len(), 3);
+    for (page, text) in [("p-a", "- typed later"), ("p-new", "- never saved")] {
+        let draft = copy.draft(page).unwrap().unwrap();
+        assert_eq!(draft.text, text);
+        assert!(draft.base.is_empty(), "restored drafts wait for review");
+    }
+    for reference in [&fixture.attachment, &fixture.unreferenced] {
+        assert_eq!(
+            fs::read(database.parent().unwrap().join(reference)).unwrap(),
+            fs::read(fixture.database.parent().unwrap().join(reference)).unwrap()
+        );
+    }
+    assert_eq!(
+        save(&original, "p-b", "B.md", "- still writable"),
+        original.heads("p-b").unwrap()[0]
+    );
+    save(&copy, "p-b", "B.md", "- restored copy writes");
+    assert_eq!(
+        original
+            .get(&original.heads("p-b").unwrap()[0])
+            .unwrap()
+            .unwrap()
+            .root()
+            .field("text")
+            .as_str(),
+        Some("- still writable")
+    );
+}
+
+#[test]
+fn a_restore_interrupted_at_any_step_leaves_the_original_and_creates_nothing() {
+    let fixture = StoreFixture::new();
+    let backup = create(&fixture.source(), fixture.destination.path(), 1).unwrap();
+    let original_files = tree(fixture.database.parent().unwrap());
+    for (index, stop) in [
+        RestoreStep::SafetyBackup,
+        RestoreStep::Copied,
+        RestoreStep::Adopted,
+        RestoreStep::Verified,
+        RestoreStep::Swapped,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let parent = tempfile::tempdir().unwrap();
+        let text = error_text(restore(
+            &RestoreRequest {
+                backup: &backup.path,
+                parent: parent.path(),
+                current: Some((&fixture.source(), fixture.destination.path())),
+                state_for: &no_state,
+                created: 10 + index as u64,
+            },
+            &mut |step| {
+                anyhow::ensure!(step != stop, "interrupted at {step:?}");
+                Ok(())
+            },
+        ));
+        assert!(
+            text.contains("current notebook is unchanged"),
+            "{stop:?}: {text}"
+        );
+        assert!(
+            names(parent.path()).is_empty(),
+            "{stop:?} left {:?}",
+            names(parent.path())
+        );
+        assert_eq!(
+            tree(fixture.database.parent().unwrap()),
+            original_files,
+            "{stop:?}"
+        );
+        let store = fixture.open();
+        assert_eq!(store.draft("p-a").unwrap().unwrap().text, "- typed later");
+        drop(store);
+    }
+    let listed = list(&fixture.source(), fixture.destination.path()).unwrap();
+    assert_eq!(
+        listed.len(),
+        6,
+        "the first backup and one safety backup per attempt"
+    );
+    assert!(listed.iter().all(|backup| verify(&backup.path).is_ok()));
+    let store = fixture.open();
+    save(
+        &store,
+        "p-b",
+        "B.md",
+        "- written after every interrupted restore",
+    );
+}
+
+#[test]
+fn a_damaged_backup_is_refused_before_the_safety_backup_or_any_copy() {
+    let fixture = StoreFixture::new();
+    let backup = create(&fixture.source(), fixture.destination.path(), 1).unwrap();
+    fs::remove_file(backup.path.join(&fixture.unreferenced)).unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let text = error_text(restore(
+        &RestoreRequest {
+            backup: &backup.path,
+            parent: parent.path(),
+            current: Some((&fixture.source(), fixture.destination.path())),
+            state_for: &no_state,
+            created: 2,
+        },
+        &mut |_| Ok(()),
+    ));
+    assert!(text.contains("is missing"), "{text}");
+    assert!(names(parent.path()).is_empty());
+    assert_eq!(
+        list(&fixture.source(), fixture.destination.path())
+            .unwrap()
+            .len(),
+        1
+    );
+    let inside = fixture.database.parent().unwrap().to_path_buf();
+    fs::write(
+        backup.path.join(&fixture.unreferenced),
+        b"kept without a link",
+    )
+    .unwrap();
+    let text = error_text(restore(
+        &RestoreRequest {
+            backup: &backup.path,
+            parent: &inside,
+            current: Some((&fixture.source(), fixture.destination.path())),
+            state_for: &no_state,
+            created: 3,
+        },
+        &mut |_| Ok(()),
+    ));
+    assert!(text.contains("overlaps the notebook's own data"), "{text}");
+}
+
 struct FolderFixture {
     root: tempfile::TempDir,
     state: tempfile::TempDir,
     destination: tempfile::TempDir,
+    states: tempfile::TempDir,
 }
 
 impl FolderFixture {
@@ -381,6 +579,7 @@ impl FolderFixture {
             root: tempfile::tempdir().unwrap(),
             state: tempfile::tempdir().unwrap(),
             destination: tempfile::tempdir().unwrap(),
+            states: tempfile::tempdir().unwrap(),
         };
         for (path, bytes) in [
             ("A.md", &b"- first"[..]),
@@ -424,6 +623,15 @@ impl FolderFixture {
         Source::Folder {
             root: self.root.path().to_owned(),
             state: self.state.path().to_owned(),
+        }
+    }
+
+    fn state_for(&self) -> impl Fn(&Path) -> PathBuf + '_ {
+        |root: &Path| {
+            self.states
+                .path()
+                .join("folder-notebooks")
+                .join(&sha256(root.to_string_lossy().as_bytes())[..16])
         }
     }
 }
@@ -516,6 +724,99 @@ fn folder_backups_fail_rather_than_mix_versions_when_a_note_changes_meanwhile() 
     assert!(
         !names(&parent).iter().any(|name| name.starts_with('.')),
         "no partial copy is left"
+    );
+}
+
+#[test]
+fn a_restored_folder_notebook_keeps_notes_history_and_drafts_for_review_in_a_new_folder() {
+    let fixture = FolderFixture::new();
+    let backup = create(&fixture.source(), fixture.destination.path(), 1).unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let state_for = fixture.state_for();
+    let restored = restore(
+        &RestoreRequest {
+            backup: &backup.path,
+            parent: parent.path(),
+            current: Some((&fixture.source(), fixture.destination.path())),
+            state_for: &state_for,
+            created: 2,
+        },
+        &mut |_| Ok(()),
+    )
+    .unwrap();
+    let Location::Folder { root, state } = restored.location else {
+        panic!("a folder notebook restores as a folder notebook");
+    };
+    assert_eq!(state, state_for(&root));
+    let original = fixture.open();
+    let notebook = FolderNotebook::open(&root, &state).unwrap();
+    let page = page_id_for_path("A.md");
+    assert_eq!(fs::read(root.join("A.md")).unwrap(), b"- second");
+    assert_eq!(fs::read(root.join("assets/photo.png")).unwrap(), b"\x89PNG");
+    assert!(!root.join(".git").exists());
+    assert_eq!(
+        notebook.history(&page).unwrap().len(),
+        original.history(&page).unwrap().len()
+    );
+    assert_eq!(notebook.history(&page).unwrap().len(), 1);
+    let restored_draft = notebook.draft(&page).unwrap().unwrap();
+    assert_eq!(restored_draft.text, "- typed");
+    assert!(
+        restored_draft.base.is_empty(),
+        "restored drafts wait for review"
+    );
+    assert!(
+        !original.draft(&page).unwrap().unwrap().base.is_empty(),
+        "the original draft is unchanged"
+    );
+}
+
+#[test]
+fn a_folder_restore_interrupted_at_any_step_leaves_no_folder_or_state_behind() {
+    let fixture = FolderFixture::new();
+    let backup = create(&fixture.source(), fixture.destination.path(), 1).unwrap();
+    let before = tree(fixture.root.path());
+    let state_for = fixture.state_for();
+    for stop in [
+        RestoreStep::Copied,
+        RestoreStep::Adopted,
+        RestoreStep::Verified,
+        RestoreStep::Swapped,
+    ] {
+        let parent = tempfile::tempdir().unwrap();
+        let text = error_text(restore(
+            &RestoreRequest {
+                backup: &backup.path,
+                parent: parent.path(),
+                current: None,
+                state_for: &state_for,
+                created: 2,
+            },
+            &mut |step| {
+                anyhow::ensure!(step != stop, "interrupted at {step:?}");
+                Ok(())
+            },
+        ));
+        assert!(
+            text.contains("current notebook is unchanged"),
+            "{stop:?}: {text}"
+        );
+        assert!(names(parent.path()).is_empty(), "{stop:?}");
+        assert!(
+            names(&fixture.states.path().join("folder-notebooks")).is_empty(),
+            "{stop:?} left state {:?}",
+            names(&fixture.states.path().join("folder-notebooks"))
+        );
+    }
+    assert_eq!(tree(fixture.root.path()), before);
+    let notebook = fixture.open();
+    assert_eq!(
+        notebook
+            .draft(&page_id_for_path("A.md"))
+            .unwrap()
+            .unwrap()
+            .text,
+        "- typed"
     );
 }
 

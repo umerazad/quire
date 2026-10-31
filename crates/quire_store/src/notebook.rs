@@ -19,6 +19,7 @@ mod migration;
 mod publication;
 mod publisher;
 mod recovery;
+mod restored;
 mod revision;
 pub use checkout::PageCheckout;
 pub use folder::{RescanCursor, RescanLimits, RescanProblem, RescanReport, RescanWait};
@@ -33,6 +34,7 @@ pub use publication::PendingPublication;
 pub use publisher::PublicationAck;
 pub(crate) use recovery::unpack;
 pub use recovery::{Draft, DraftStamp};
+pub(crate) use restored::adopt_restored;
 pub(crate) use revision::read_revision;
 pub use revision::{CheckedSave, CheckedSaves, Cursor, Edit, SaveAck};
 

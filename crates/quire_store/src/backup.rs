@@ -19,10 +19,12 @@
 
 mod database;
 mod files;
+mod restore;
 #[cfg(test)]
 mod tests;
 
 pub use database::Counts;
+pub use restore::{Location, RestoreRequest, RestoreStep, Restored, restore};
 
 use crate::{
     notebook::{APPLICATION_ID, Draft, SCHEMA_VERSION, read_revision, unpack},
