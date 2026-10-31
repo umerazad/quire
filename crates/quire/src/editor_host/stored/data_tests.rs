@@ -348,7 +348,7 @@ fn reveal_shows_a_read_only_copy_of_a_quire_notebook_page(cx: &mut TestAppContex
     );
     wait_until(cx, "the revealed copy", |_| !revealed.borrow().is_empty());
     let copy = copies.path().join("Plan.md");
-    assert_eq!(*revealed.borrow(), [copy.clone()]);
+    assert_eq!(*revealed.borrow(), std::slice::from_ref(&copy));
     assert_eq!(fs::read_to_string(&copy).unwrap(), "- alpha\r\n");
     assert!(fs::metadata(&copy).unwrap().permissions().readonly());
     assert_eq!(read(&notebook, cx, |view, _| view.nav.error.clone()), None);
