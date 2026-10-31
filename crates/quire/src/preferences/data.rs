@@ -8,8 +8,8 @@ use crate::{
     backups::{BackUpNow, ChooseBackupFolder, ShowBackups},
     exchange::{ExportNotebookMarkdown, ExportRoamJson, ImportMarkdownFolder, ImportRoamData},
     profiles::{
-        OpenNotebookDatabase, OpenNotebookFolder, UseCurrentProfile, UsePersonalProfile,
-        UseWorkProfile,
+        NewQuireNotebook, OpenNotebookDatabase, OpenNotebookFolder, UseCurrentProfile,
+        UsePersonalProfile, UseWorkProfile,
     },
     sync_status::SyncWithGit,
 };
@@ -234,10 +234,16 @@ impl Render for DataSection {
                         "Choose Quire notebook",
                         OpenNotebookDatabase,
                         &mut order,
+                    ))
+                    .child(Self::app_command(
+                        "new-quire-notebook",
+                        "New Quire notebook (experimental)",
+                        NewQuireNotebook,
+                        &mut order,
                     )),
             )
             .child(Self::hint(
-                "A Quire notebook keeps pages in a database on this computer; choose its local.sqlite file.",
+                "A Quire notebook keeps pages in a database on each computer and syncs them through change files in a OneDrive, Dropbox, or Git folder. Create one in an empty folder; on another computer, choose that folder with Choose notebook folder. Choose Quire notebook opens a database file on this computer.",
             ))
             .child(Label::new("Import and export"))
             .child(
