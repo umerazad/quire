@@ -345,3 +345,20 @@ fn namespaces_match_the_reference_namespace_of_vectors() {
         .collect();
     assert!(wrong.is_empty(), "title, reference, quire: {wrong:?}");
 }
+
+#[test]
+fn chrome_choices_survive_save_and_load_and_stay_out_of_older_files() {
+    use quire_core::workspace::ChromeChoices;
+    let mut workspace = Workspace::default();
+    assert!(!workspace.save().contains("sidebar_hidden"));
+    workspace.chrome = ChromeChoices {
+        sidebar_hidden: true,
+        files_collapsed: true,
+        daily_month: "2026-10".into(),
+    };
+    assert_eq!(Workspace::load(&workspace.save()), workspace);
+    let older = Workspace::load(r#"{"tabs":[]}"#);
+    assert_eq!(older.chrome, ChromeChoices::default());
+    let damaged = Workspace::load(r#"{"tabs":[],"chrome":{"sidebar_hidden":"yes"}}"#);
+    assert_eq!(damaged.chrome, ChromeChoices::default());
+}

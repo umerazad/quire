@@ -151,6 +151,18 @@ pub struct PageChoices {
     pub namespace: Option<String>,
 }
 
+/// The window chrome a reader set: a hidden sidebar, a collapsed Files heading, and the month the
+/// Daily notes browser shows (`YYYY-MM`, or empty for every month).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChromeChoices {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sidebar_hidden: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub files_collapsed: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub daily_month: String,
+}
+
 /// The Tags browser's remembered filter text and order.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TagListChoices {
@@ -248,6 +260,8 @@ pub struct Workspace {
     /// Reading positions by [`position_key`]: the first line shown of a page in either pane.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub positions: BTreeMap<String, u32>,
+    #[serde(default)]
+    pub chrome: ChromeChoices,
 }
 
 /// Where a page's reading position is kept: the main pane and the side pane each keep one.
@@ -347,6 +361,7 @@ impl Workspace {
             tag_list: field(&value, "tag_list"),
             tag_pages: entries(&value, "tag_pages"),
             positions: entries(&value, "positions"),
+            chrome: field(&value, "chrome"),
         }
     }
 
