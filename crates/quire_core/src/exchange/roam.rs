@@ -1092,3 +1092,49 @@ pub fn export_roam_json(
 pub fn export_file_text(pages: Vec<Value>) -> String {
     js_json::stringify_pretty(&Value::Array(pages)) + "\n"
 }
+
+/// The reference's file-name stamp, `new Date(millis).toISOString()` with `:` and `.` as `-`.
+pub fn file_stamp(millis: i64) -> String {
+    let time = jiff::Timestamp::from_millisecond(millis)
+        .unwrap_or(jiff::Timestamp::UNIX_EPOCH)
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .datetime();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}-{:02}-{:02}-{:03}Z",
+        time.year(),
+        time.month(),
+        time.day(),
+        time.hour(),
+        time.minute(),
+        time.second(),
+        time.millisecond()
+    )
+}
+
+/// The folder a Roam import creates: `Roam import <stamp>-<suffix>`, where the suffix is eight
+/// random hexadecimal digits.
+pub fn import_folder_name(millis: i64, suffix: &str) -> String {
+    format!("Roam import {}-{suffix}", file_stamp(millis))
+}
+
+/// The file name a Roam export suggests: `Quire-<stamp>.json`.
+pub fn export_file_name(millis: i64) -> String {
+    format!("Quire-{}.json", file_stamp(millis))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_carry_the_reference_stamp() {
+        assert_eq!(
+            import_folder_name(1_793_431_650_123, "1a2b3c4d"),
+            "Roam import 2026-10-31T07-27-30-123Z-1a2b3c4d"
+        );
+        assert_eq!(
+            export_file_name(1_793_431_650_007),
+            "Quire-2026-10-31T07-27-30-007Z.json"
+        );
+    }
+}

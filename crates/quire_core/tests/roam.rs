@@ -268,3 +268,75 @@ fn roam_json_exports_as_the_reference_does() {
         }
     }
 }
+
+/// No references and no blocks: the parses of a graph whose texts hold neither.
+struct Plain;
+
+impl RoamMarkdown for Plain {
+    fn references(&self, _: &str) -> Vec<Reference> {
+        Vec::new()
+    }
+
+    fn blocks(&self, _: &str) -> Vec<TextBlock> {
+        Vec::new()
+    }
+}
+
+/// A synthetic graph of 2,000 pages and 50,000 blocks imports, and its unchanged export gives the
+/// graph back, with the time each takes printed for the proof notes.
+#[test]
+fn a_large_graph_round_trips_unchanged() {
+    let pages: Vec<String> = (0..2_000)
+        .map(|page| {
+            let blocks: Vec<String> = (0..5)
+                .map(|block| {
+                    let children: Vec<String> = (0..4)
+                        .map(|child| {
+                            format!(
+                                r#"{{"uid":"p{page}b{block}c{child}","string":"Child {child} of block {block} with [[Page {}]] and **bold** text","create-time":1700000000000}}"#,
+                                (page + 1) % 2_000
+                            )
+                        })
+                        .collect();
+                    format!(
+                        r#"{{"uid":"p{page}b{block}","string":"Block {block} on page {page}","children":[{}]}}"#,
+                        children.join(",")
+                    )
+                })
+                .collect();
+            format!(
+                r#"{{"title":"Page {page}","uid":"p{page}","children":[{}]}}"#,
+                blocks.join(",")
+            )
+        })
+        .collect();
+    let input = format!("[{}]", pages.join(","));
+    let started = std::time::Instant::now();
+    let imported = import_roam_json(parse(&input).unwrap(), &Plain, &mut counter(1)).unwrap();
+    let imported_in = started.elapsed();
+    assert_eq!(
+        imported.report[0],
+        "Imported 2000 pages and 50000 blocks. Original export unchanged."
+    );
+    let started = std::time::Instant::now();
+    let exported = export_roam_json(
+        &imported.documents,
+        Some(&imported.metadata),
+        &Plain,
+        &mut counter(1),
+    )
+    .unwrap();
+    eprintln!(
+        "{} bytes: imported in {imported_in:?}, exported in {:?}",
+        input.len(),
+        started.elapsed()
+    );
+    assert_eq!(
+        exported.report[0],
+        "Exported 2000 pages to Roam JSON. Existing block IDs are preserved; 0 new export-only IDs were generated."
+    );
+    assert_eq!(
+        stringify(&Value::Array(exported.pages)),
+        stringify(&parse(&input).unwrap())
+    );
+}

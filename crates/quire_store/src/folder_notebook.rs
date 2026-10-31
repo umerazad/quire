@@ -21,9 +21,11 @@ pub use deletion::{NO_TRASH, Trash};
 pub use files::{
     DiskDocument, ListedFile, Listing, MAX_NOTE_BYTES, is_markdown, list, read, revision, validate,
 };
+pub(crate) use files::{barrier, flush, flush_directory};
 pub use history::FolderRevision;
 pub use journal::{StepState, StuckChange};
 pub use reference::RecoveredDraft;
+pub(crate) use settings::METADATA;
 
 use crate::{
     database,
