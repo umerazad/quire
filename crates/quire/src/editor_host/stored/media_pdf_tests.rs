@@ -194,6 +194,35 @@ fn find_and_selection_read_the_stored_pdf_text(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_selection_runs_across_pdf_pages_and_copies_with_a_break_between_them(cx: &mut TestAppContext) {
+    serve(cx);
+    let (notebook, _) = open_with_attachments(
+        &[(
+            "three.pdf",
+            simple_pdf(&["First page", "Second page", "Third page"]),
+        )],
+        |files| format!("- ![[{}]]\n", files[0]),
+        cx,
+    );
+    let editor = enter_write(&notebook, cx);
+    let view = wait_open(&notebook, &editor, 1, cx).remove(0);
+    wait_until(cx, "every page's text", |cx| {
+        view.read_with(cx, |view, _| view.texts_read()) == 3
+    });
+    // Dragging backwards from the third page's "Third" to the first page's "page".
+    view.update(cx, |view, cx| view.select((2, 4), (0, 6), cx));
+    assert_eq!(
+        view.read_with(cx, |view, _| view.selected_text()),
+        Some("page\nSecond page\nThird".into())
+    );
+    view.update(cx, |view, cx| view.select((1, 0), (1, 5), cx));
+    assert_eq!(
+        view.read_with(cx, |view, _| view.selected_text()),
+        Some("Second".into())
+    );
+}
+
+#[gpui::test]
 fn find_reads_the_text_of_a_pdf_hayro_renders(cx: &mut TestAppContext) {
     use base64::Engine as _;
     let data = base64::engine::general_purpose::STANDARD.encode(long_pdf());

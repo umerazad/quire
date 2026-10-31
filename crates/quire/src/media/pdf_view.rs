@@ -62,16 +62,28 @@ struct Rendered {
     image: Arc<RenderImage>,
 }
 
+/// Selected characters, from where the drag started to where it is now, each as a page and a
+/// character index; it can run across pages.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Selection {
-    page: usize,
-    anchor: usize,
-    head: usize,
+    anchor: (usize, usize),
+    head: (usize, usize),
 }
 
 impl Selection {
-    fn range(&self) -> Range<usize> {
-        self.anchor.min(self.head)..self.anchor.max(self.head) + 1
+    /// The selected characters of `page`, out of its `length`.
+    fn range(&self, page: usize, length: usize) -> Option<Range<usize>> {
+        let (start, end) = (self.anchor.min(self.head), self.anchor.max(self.head));
+        if page < start.0 || page > end.0 {
+            return None;
+        }
+        let from = if page == start.0 { start.1 } else { 0 };
+        let to = if page == end.0 { end.1 + 1 } else { length };
+        Some(from..to.min(length).max(from))
+    }
+
+    fn pages(&self) -> std::ops::RangeInclusive<usize> {
+        self.anchor.0.min(self.head.0)..=self.anchor.0.max(self.head.0)
     }
 }
 
@@ -454,21 +466,30 @@ impl PdfView {
         self.texts.get(&page)?.char_at(x, y)
     }
 
-    /// Selects the characters of `page` from `anchor` through `head`, inclusive.
+    /// Selects the characters from `anchor` through `head`, inclusive, each a page and a
+    /// character index.
     pub(crate) fn select(
         &mut self,
-        page: usize,
-        anchor: usize,
-        head: usize,
+        anchor: (usize, usize),
+        head: (usize, usize),
         cx: &mut Context<Self>,
     ) {
-        self.selection = Some(Selection { page, anchor, head });
+        self.selection = Some(Selection { anchor, head });
         cx.notify();
     }
 
+    /// The selected text, with a line break between pages. Pages whose text is not read yet
+    /// are left out.
     pub(crate) fn selected_text(&self) -> Option<String> {
         let selection = self.selection?;
-        Some(self.texts.get(&selection.page)?.text(selection.range()))
+        let parts: Vec<String> = selection
+            .pages()
+            .filter_map(|page| {
+                let text = self.texts.get(&page)?;
+                Some(text.text(selection.range(page, text.chars.len())?))
+            })
+            .collect();
+        (!parts.is_empty()).then(|| parts.join("\n"))
     }
 
     fn copy(&mut self, cx: &mut Context<Self>) {
@@ -539,9 +560,12 @@ impl PdfView {
                         .map(|bounds| highlight(bounds, color)),
                 );
             }
-            if let Some(selection) = self.selection.filter(|selection| selection.page == page) {
+            if let Some(range) = self
+                .selection
+                .and_then(|selection| selection.range(page, text.chars.len()))
+            {
                 marks.extend(
-                    text.boxes(selection.range())
+                    text.boxes(range)
                         .into_iter()
                         .map(|bounds| highlight(bounds, colors.element_selection_background)),
                 );
@@ -581,7 +605,7 @@ impl PdfView {
                             cx.stop_propagation();
                             window.focus(&view.focus, cx);
                             match view.char_at(page, event.position) {
-                                Some(at) => view.select(page, at, at, cx),
+                                Some(at) => view.select((page, at), (page, at), cx),
                                 None => {
                                     view.selection = None;
                                     cx.notify();
@@ -593,13 +617,12 @@ impl PdfView {
                         if event.pressed_button != Some(MouseButton::Left) {
                             return;
                         }
-                        let Some(selection) =
-                            view.selection.filter(|selection| selection.page == page)
-                        else {
+                        // A drag that started on another page extends onto this one.
+                        let Some(selection) = view.selection else {
                             return;
                         };
                         if let Some(head) = view.char_at(page, event.position) {
-                            view.select(page, selection.anchor, head, cx);
+                            view.select(selection.anchor, (page, head), cx);
                         }
                     })),
             )
