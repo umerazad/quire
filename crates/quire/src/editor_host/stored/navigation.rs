@@ -777,6 +777,7 @@ impl StoredWindow {
         if let Some(side) = &mut self.nav.side {
             side.editor = Some(editor);
         }
+        self.show_side_references(window, cx);
         self.apply_jump(window, cx);
     }
 }
@@ -871,12 +872,15 @@ impl StoredWindow {
             .when_some(side, |div, editor| {
                 div.child(
                     gpui::div()
+                        .flex()
+                        .flex_col()
                         .flex_1()
                         .min_w_0()
                         .min_h_0()
                         .border_l_1()
                         .border_color(cx.theme().colors().border)
-                        .child(editor),
+                        .child(gpui::div().flex_1().min_h_0().child(editor))
+                        .children(self.render_side_references(cx)),
                 )
             })
             .when_some(help, |div, pane| div.child(pane))
