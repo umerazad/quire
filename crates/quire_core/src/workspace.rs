@@ -219,6 +219,10 @@ impl Destination {
 pub struct Workspace {
     #[serde(default)]
     pub expanded: Vec<String>,
+    /// Folders made here that may hold no page yet; they stay on this computer, as the
+    /// reference keeps them until a page is saved in them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folders: Vec<String>,
     #[serde(default)]
     pub favorites: Vec<Destination>,
     #[serde(default)]
@@ -316,6 +320,7 @@ impl Workspace {
                         .collect()
                 })
                 .unwrap_or_default(),
+            folders: field(&value, "folders"),
             favorites: destinations(value.get("favorites")),
             recent,
             tabs,
@@ -492,12 +497,29 @@ impl Workspace {
 
     /// Forgets a deleted folder and every folder inside it.
     pub fn forget_folder(&mut self, folder: &str) {
-        self.expanded.retain(|item| {
+        let kept = |item: &String| {
             item != folder
                 && !item
                     .strip_prefix(folder)
                     .is_some_and(|rest| rest.starts_with('/'))
-        });
+        };
+        self.expanded.retain(kept);
+        self.folders.retain(kept);
+    }
+
+    /// Adds a new folder and opens its parents so it shows.
+    pub fn add_folder(&mut self, folder: &str) {
+        if !self.folders.iter().any(|item| item == folder) {
+            self.folders.push(folder.to_owned());
+            self.folders.sort();
+        }
+        let parts: Vec<&str> = folder.split('/').collect();
+        for end in 1..parts.len() {
+            let parent = parts[..end].join("/");
+            if !self.expanded.contains(&parent) {
+                self.expanded.push(parent);
+            }
+        }
     }
 }
 

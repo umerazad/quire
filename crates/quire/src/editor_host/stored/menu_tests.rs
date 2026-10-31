@@ -124,6 +124,7 @@ fn files_menus_open_from_shift_f10_and_close_on_escape_back_to_files(cx: &mut Te
                 "Add to favorites",
                 "-",
                 "New note here",
+                "New folder here",
                 "-",
                 "Rename",
                 "Move to…",
@@ -145,6 +146,7 @@ fn files_menus_open_from_shift_f10_and_close_on_escape_back_to_files(cx: &mut Te
             "Folder actions for Projects".into(),
             strings(&[
                 "New note here",
+                "New folder here",
                 "-",
                 "Rename or move…",
                 "-",

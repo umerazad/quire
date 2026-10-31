@@ -77,6 +77,8 @@ gpui::actions!(
         RevealInFileManager,
         /// Creates a page in the highlighted Files folder, or beside the highlighted page.
         NewPageHere,
+        /// Creates a folder in the highlighted Files folder, or beside the highlighted page.
+        NewFolderHere,
     ]
 );
 

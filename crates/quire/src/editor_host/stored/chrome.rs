@@ -242,7 +242,7 @@ impl StoredWindow {
             .map(|listed| listed.page.path.clone())
             .collect();
         let expanded: BTreeSet<String> = self.nav.workspace.expanded.iter().cloned().collect();
-        folder_rows(&paths, &[], &expanded, |a, b| {
+        folder_rows(&paths, &self.nav.workspace.folders, &expanded, |a, b| {
             a.to_lowercase()
                 .cmp(&b.to_lowercase())
                 .then_with(|| a.cmp(b))
@@ -429,6 +429,11 @@ impl StoredWindow {
             .on_action(cx.listener(|this, _: &NewPageHere, window, cx| {
                 this.new_page_in_selected_folder(window, cx)
             }))
+            .on_action(
+                cx.listener(|this, _: &crate::navigation::NewFolderHere, window, cx| {
+                    this.new_folder_in_selected_folder(window, cx)
+                }),
+            )
             .child(
                 Label::new("FILES")
                     .size(LabelSize::Small)

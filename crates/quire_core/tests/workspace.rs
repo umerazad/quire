@@ -316,3 +316,17 @@ fn view_choices_and_reading_positions_survive_save_load_rename_and_delete() {
         ["page:a2", "side:a2"]
     );
 }
+
+#[test]
+fn new_folders_open_their_parents_survive_reload_and_go_with_their_parent() {
+    let mut workspace = Workspace::default();
+    workspace.add_folder("Projects/Plans/Q4");
+    workspace.add_folder("Archive");
+    workspace.add_folder("Archive");
+    assert_eq!(workspace.folders, ["Archive", "Projects/Plans/Q4"]);
+    assert_eq!(workspace.expanded, ["Projects", "Projects/Plans"]);
+    assert_eq!(Workspace::load(&workspace.save()), workspace);
+    workspace.forget_folder("Projects");
+    assert_eq!(workspace.folders, ["Archive"]);
+    assert!(workspace.expanded.is_empty());
+}

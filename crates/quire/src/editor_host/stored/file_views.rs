@@ -50,6 +50,7 @@ impl StoredWindow {
                     this.update_title(window, cx);
                     cx.notify();
                 }
+                FileDialogEvent::FolderCreated(folder) => this.folder_created(folder, cx),
             },
         )
         .detach();
@@ -64,6 +65,20 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        if let Target::Folder(folder) = &target {
+            let inside = format!("{folder}/");
+            if !self
+                .nav
+                .pages
+                .iter()
+                .any(|listed| listed.page.path.starts_with(&inside))
+            {
+                self.nav.workspace.forget_folder(folder);
+                self.persist(cx);
+                cx.notify();
+                return;
+            }
+        }
         let Some(index) = self.index_client(cx) else {
             self.nav.error = Some(
                 "Deleting needs the notebook index, which did not start. Reopen the notebook to retry."
@@ -170,6 +185,43 @@ impl StoredWindow {
         let writers = self.writers();
         let dialog = cx.new(|cx| FileDialog::relocate(moving, path, writers, index, window, cx));
         self.show_dialog(dialog, window, cx);
+    }
+
+    /// Asks for a new folder's path inside `parent`.
+    pub(in crate::editor_host::stored) fn ask_new_folder(
+        &mut self,
+        parent: String,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let taken = self
+            .nav
+            .pages
+            .iter()
+            .flat_map(|listed| {
+                let path = listed.page.path.as_str();
+                std::iter::successors(Some(path), |path| path.rsplit_once('/').map(|(up, _)| up))
+            })
+            .map(str::to_owned)
+            .chain(self.nav.workspace.folders.iter().cloned())
+            .collect();
+        let writers = self.writers();
+        let dialog = cx.new(|cx| FileDialog::new_folder(parent, taken, writers, window, cx));
+        self.show_dialog(dialog, window, cx);
+    }
+
+    /// Shows a new folder in Files, highlighted, with its parents open.
+    fn folder_created(&mut self, folder: &str, cx: &mut gpui::Context<Self>) {
+        self.nav.workspace.add_folder(folder);
+        self.persist(cx);
+        if let Some(index) = self
+            .file_rows()
+            .iter()
+            .position(|row| row.kind == TreeKind::Folder && row.path == folder)
+        {
+            self.nav.browsers.files_selected = index;
+        }
+        cx.notify();
     }
 
     /// A page's path from its open buffer, or else from the page list.
