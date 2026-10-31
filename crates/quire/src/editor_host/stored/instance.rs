@@ -34,21 +34,9 @@ pub(in crate::editor_host) fn handle_launch(launch: Launch, reply: Reply, cx: &m
         return;
     }
     let args = launch.args.get(1..).unwrap_or_default();
-    let shown = |notebook: &Notebook, cx: &App| {
-        cx.windows()
-            .into_iter()
-            .filter_map(|window| window.downcast::<StoredWindow>())
-            .find(|window| {
-                window.read(cx).is_ok_and(|this| {
-                    this.location
-                        .as_ref()
-                        .is_some_and(|location| location.same(notebook))
-                })
-            })
-    };
     let opened = match named(args) {
         Err(error) => Err(error),
-        Ok(Some(notebook)) => match shown(&notebook, cx) {
+        Ok(Some(notebook)) => match super::profiles::showing(&notebook, cx) {
             Some(window) => window
                 .update(cx, |_, window, _| window.activate_window())
                 .map_err(|error| error.to_string()),

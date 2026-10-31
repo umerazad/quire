@@ -33,6 +33,17 @@ pub(super) fn stored_windows(cx: &App) -> Vec<gpui::WindowHandle<StoredWindow>> 
         .collect()
 }
 
+/// The window already showing `notebook`.
+pub(super) fn showing(notebook: &Notebook, cx: &App) -> Option<gpui::WindowHandle<StoredWindow>> {
+    stored_windows(cx).into_iter().find(|window| {
+        window.read(cx).is_ok_and(|this| {
+            this.location
+                .as_ref()
+                .is_some_and(|location| location.same(notebook))
+        })
+    })
+}
+
 /// Opens the profile's notebook, asking for a folder when it has none yet.
 pub(super) fn switch(id: ProfileId, cx: &mut App) {
     match crate::profiles::get(id, cx).notebook {
@@ -171,13 +182,7 @@ fn finish_switch(
     if let Err(error) = changed {
         return refuse(id, error, cx);
     }
-    let shown = windows.iter().copied().find(|window| {
-        window.read(cx).is_ok_and(|this| {
-            this.location
-                .as_ref()
-                .is_some_and(|location| location.same(&notebook))
-        })
-    });
+    let shown = showing(&notebook, cx);
     let opened = match shown {
         Some(window) => window
             .update(cx, |_, window, _| window.activate_window())

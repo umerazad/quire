@@ -41,6 +41,29 @@ fn advance(by: std::time::Duration, cx: &mut TestAppContext) {
     cx.run_until_parked();
 }
 
+/// Waits for a profile switch one poll at a time. `wait_until` moves the clock 200 ms per step,
+/// so under load the switch's 10 s patience could run out before the storage thread saves.
+fn wait_for_switch(
+    cx: &mut TestAppContext,
+    what: &str,
+    mut done: impl FnMut(&mut TestAppContext) -> bool,
+) {
+    cx.executor().allow_parking();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        advance(POLL, cx);
+        if done(cx) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {what}; last notice: {}",
+            notice(cx)
+        );
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
 fn type_into(notebook: &Notebook, keys: &str, cx: &mut TestAppContext) {
     cx.simulate_keystrokes(notebook.window.into(), keys);
     cx.run_until_parked();
@@ -239,7 +262,7 @@ fn switching_profiles_saves_pending_edits_then_opens_the_profile_notebook(cx: &m
         opened.notebook.window.into(),
         crate::profiles::UseWorkProfile,
     );
-    wait_until(cx, "the Work notebook to open", |cx| {
+    wait_for_switch(cx, "the Work notebook to open", |cx| {
         stored_windows(cx).len() == 1 && !is_open(opened.notebook.window, cx)
     });
     assert_eq!(
@@ -265,7 +288,7 @@ fn switching_profiles_saves_pending_edits_then_opens_the_profile_notebook(cx: &m
     );
 
     cx.dispatch_action(shown.into(), crate::profiles::UseCurrentProfile);
-    wait_until(cx, "the Current notebook to open again", |cx| {
+    wait_for_switch(cx, "the Current notebook to open again", |cx| {
         stored_windows(cx).len() == 1 && !is_open(shown, cx)
     });
     assert_eq!(
@@ -654,7 +677,7 @@ async fn switching_profiles_ends_a_running_ai_transform_and_keeps_the_page(
         .collect();
     assert!(!running.is_empty());
     cx.dispatch_action(window.into(), crate::profiles::UseWorkProfile);
-    wait_until(cx, "the Work notebook to open", |cx| {
+    wait_for_switch(cx, "the Work notebook to open", |cx| {
         stored_windows(cx).len() == 1 && !is_open(window, cx)
     });
     for pid in &running {
