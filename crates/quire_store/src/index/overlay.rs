@@ -148,4 +148,10 @@ impl QueryIndex {
     pub(super) fn bump(&self) {
         self.generation.set(self.generation.get() + 1);
     }
+
+    /// Committed rows changed: pages were catalogued, removed, or analyzed.
+    pub(super) fn bump_committed(&self) {
+        self.committed.set(self.committed.get() + 1);
+        self.bump();
+    }
 }

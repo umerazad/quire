@@ -36,6 +36,40 @@ pub struct TagCount {
     pub count: usize,
 }
 
+/// Saved tags by key, tallied at one committed state.
+pub(super) type TagTallies = std::rc::Rc<HashMap<String, TagTally>>;
+
+/// How many blocks use a tag, and its spelling where it is first used by path and offset.
+#[derive(Clone, Debug, Default)]
+pub(super) struct TagTally {
+    count: usize,
+    first: Option<TagUse>,
+}
+
+#[derive(Clone, Debug)]
+struct TagUse {
+    label: String,
+    path: String,
+    from: u32,
+    page: String,
+}
+
+impl TagTally {
+    fn consider(&mut self, (label, path, from, page): (String, String, u32, String)) {
+        let earlier = self.first.as_ref().is_none_or(|first| {
+            utf16_order(&path, &first.path).then(from.cmp(&first.from)) == Ordering::Less
+        });
+        if earlier {
+            self.first = Some(TagUse {
+                label,
+                path,
+                from,
+                page,
+            });
+        }
+    }
+}
+
 pub(super) const PAGE_COLUMNS: &str = "p.revision,p.page,p.path,p.title";
 pub(super) type PageRow = (String, String, String, String);
 /// A page's `name_key`, `title_key`, and `date`.
@@ -341,27 +375,87 @@ impl QueryIndex {
     }
 
     /// The reference `tagNames`: each tag key with its block count, labelled by its first use.
+    /// Committed tags are tallied once per committed change: tag completion asks on every
+    /// keystroke, and tallying all 198,000 tagged blocks at 5x took 125 ms each time. Open pages'
+    /// overlays are folded in on each call.
     pub fn tag_names(&self) -> Result<Vec<TagCount>> {
         self.refresh()?;
-        let rows: Vec<(String, String, String, u32)> = self.connection.select(
-            "SELECT t.tag_key,t.tag,p.path,t.start FROM live_tagged t JOIN live_pages p ON p.revision=t.revision WHERE p.deleted=0",
-        )?()?;
-        let mut groups: HashMap<String, (String, String, u32, usize)> = HashMap::new();
-        for (key, tag, path, from) in rows {
-            let entry = groups
-                .entry(key)
-                .or_insert_with(|| (tag.clone(), path.clone(), from, 0));
-            if utf16_order(&path, &entry.1).then(from.cmp(&entry.2)) == Ordering::Less {
-                *entry = (tag, path, from, entry.3);
+        let mut tallies = (*self.committed_tags()?).clone();
+        let shadowed: Vec<String> = self
+            .connection
+            .select("SELECT page FROM temp.overlay_pages")?()?;
+        let mut stale = BTreeSet::new();
+        for page in &shadowed {
+            let keys: Vec<String> = self.connection.select_bound(
+                "SELECT t.tag_key FROM main.tagged t JOIN main.pages p ON p.revision=t.revision
+                 WHERE p.deleted=0 AND p.page=?",
+            )?(page.as_str())?;
+            for key in keys {
+                if let Some(tally) = tallies.get_mut(&key) {
+                    tally.count -= 1;
+                    if tally
+                        .first
+                        .as_ref()
+                        .is_some_and(|first| &first.page == page)
+                    {
+                        stale.insert(key);
+                    }
+                }
             }
-            entry.3 += 1;
         }
-        let mut names: Vec<_> = groups
+        for key in stale {
+            let uses: Vec<(String, String, u32, String)> = self.connection.select_bound(
+                "SELECT t.tag,p.path,t.start,p.page FROM main.tagged t JOIN main.pages p ON p.revision=t.revision
+                 WHERE p.deleted=0 AND t.tag_key=? AND p.page NOT IN (SELECT page FROM temp.overlay_pages)",
+            )?(key.as_str())?;
+            let tally = tallies
+                .get_mut(&key)
+                .expect("stale keys come from the tallies");
+            tally.first = None;
+            uses.into_iter().for_each(|found| tally.consider(found));
+        }
+        let overlaid: Vec<(String, (String, String, u32, String))> = self.connection.select(
+            "SELECT t.tag_key,t.tag,p.path,t.start,p.page FROM temp.overlay_tagged t
+             JOIN temp.overlay_pages p ON p.revision=t.revision WHERE p.deleted=0",
+        )?()?;
+        for (key, found) in overlaid {
+            let tally = tallies.entry(key).or_default();
+            tally.count += 1;
+            tally.consider(found);
+        }
+        let mut names: Vec<_> = tallies
             .into_values()
-            .map(|(label, _, _, count)| TagCount { label, count })
+            .filter_map(|tally| {
+                Some(TagCount {
+                    label: tally.first.filter(|_| tally.count > 0)?.label,
+                    count: tally.count,
+                })
+            })
             .collect();
         names.sort_by(|a, b| self.collator.compare(&a.label, &b.label));
         Ok(names)
+    }
+
+    fn committed_tags(&self) -> Result<TagTallies> {
+        let committed = self.committed.get();
+        if let Some((at, tallies)) = &*self.tag_tallies.borrow()
+            && *at == committed
+        {
+            return Ok(tallies.clone());
+        }
+        let rows: Vec<(String, (String, String, u32, String))> = self.connection.select(
+            "SELECT t.tag_key,t.tag,p.path,t.start,p.page FROM main.tagged t
+             JOIN main.pages p ON p.revision=t.revision WHERE p.deleted=0",
+        )?()?;
+        let mut tallies: HashMap<String, TagTally> = HashMap::new();
+        for (key, found) in rows {
+            let tally = tallies.entry(key).or_default();
+            tally.count += 1;
+            tally.consider(found);
+        }
+        let tallies = std::rc::Rc::new(tallies);
+        *self.tag_tallies.borrow_mut() = Some((committed, tallies.clone()));
+        Ok(tallies)
     }
 
     /// Pages whose block or front matter tags this edit would change, ordered by path.

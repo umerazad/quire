@@ -152,7 +152,7 @@ impl QueryIndex {
             Ok(changed)
         })?;
         if changed {
-            self.bump();
+            self.bump_committed();
             self.settle_releases()?;
         }
         Ok(changed)

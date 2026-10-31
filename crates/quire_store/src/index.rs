@@ -147,6 +147,9 @@ pub struct QueryIndex {
     days: DailyNames,
     seen_version: Cell<Option<i64>>,
     generation: Cell<u64>,
+    /// Changes with committed rows only, unlike `generation`, which overlays change too.
+    committed: Cell<u64>,
+    tag_tallies: RefCell<Option<(u64, query::TagTallies)>>,
     releasing: RefCell<BTreeSet<String>>,
     collator: icu_collator::CollatorBorrowed<'static>,
     folder: Option<folder::FolderSource>,
@@ -217,6 +220,8 @@ impl QueryIndex {
             calendar: config.calendar,
             seen_version: Cell::new(None),
             generation: Cell::new(0),
+            committed: Cell::new(0),
+            tag_tallies: RefCell::default(),
             releasing: RefCell::default(),
             folder,
         };
@@ -345,7 +350,7 @@ impl QueryIndex {
         })?;
         self.seen_version.set(Some(version));
         if changed {
-            self.bump();
+            self.bump_committed();
             self.settle_releases()?;
         }
         Ok(changed)
@@ -450,7 +455,7 @@ impl QueryIndex {
                 .collect::<Result<Vec<_>>>()
         })?;
         if stored.contains(&true) {
-            self.bump();
+            self.bump_committed();
             self.settle_releases()?;
         }
         Ok(stored)

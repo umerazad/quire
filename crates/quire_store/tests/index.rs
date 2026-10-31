@@ -1138,3 +1138,76 @@ fn closing_an_index_seals_its_last_changes() -> Result<()> {
     );
     Ok(())
 }
+
+fn tagged(tags: &[&str]) -> PageIndex {
+    PageIndex {
+        tagged: tags
+            .iter()
+            .enumerate()
+            .map(|(at, tag)| IndexedTag {
+                tag: (*tag).into(),
+                from: at as u32 * 10,
+                block_id: None,
+                snippet: "s".into(),
+            })
+            .collect(),
+        ..Default::default()
+    }
+}
+
+fn names(index: &QueryIndex) -> Result<Vec<(String, usize)>> {
+    Ok(index
+        .tag_names()?
+        .into_iter()
+        .map(|name| (name.label, name.count))
+        .collect())
+}
+
+#[test]
+fn tag_counts_follow_open_pages_and_saves_while_saved_tags_are_tallied_once() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "a", "A.md", "a")?;
+    save(&store, "b", "B.md", "b")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    analyze_all(
+        &index,
+        &[
+            ("A.md", tagged(&["#Plan"])),
+            ("B.md", tagged(&["#plan", "#Idea"])),
+        ],
+    )?;
+    let saved = vec![("#Idea".to_owned(), 1), ("#Plan".to_owned(), 2)];
+    assert_eq!(names(&index)?, saved);
+    assert_eq!(names(&index)?, saved);
+
+    index.set_overlay(
+        &JsString::from("a"),
+        &quire_store::index::Overlay {
+            path: "A.md".into(),
+            title: "A".into(),
+            index: tagged(&["#Other"]),
+        },
+    )?;
+    assert_eq!(
+        names(&index)?,
+        [
+            ("#Idea".into(), 1),
+            ("#Other".into(), 1),
+            ("#plan".into(), 1)
+        ],
+        "A's unsaved text replaces its saved tags, so B's spelling comes first"
+    );
+
+    index.release_overlay(&JsString::from("a"))?;
+    assert_eq!(names(&index)?, saved);
+
+    save(&store, "b", "B.md", "b2")?;
+    analyze_all(&index, &[("B.md", tagged(&["#Idea"]))])?;
+    assert_eq!(
+        names(&index)?,
+        [("#Idea".into(), 1), ("#Plan".into(), 1)],
+        "a save is counted"
+    );
+    Ok(())
+}
