@@ -51,6 +51,12 @@ gpui::actions!(
         FocusReferences,
         /// Moves focus from the rows of a tag page or linked references to their filter.
         FocusRowFilter,
+        /// Moves focus to the next control of the sidebar or the Templates guide.
+        NextControl,
+        /// Moves focus to the previous control of the sidebar or the Templates guide.
+        PreviousControl,
+        /// Moves focus to the first Add button of the Templates guide beside the Templates page.
+        FocusTemplatesGuide,
         /// Lists tasks by state, due date, and project.
         ShowTasks,
         /// Opens Tasks with the capture field focused.
@@ -202,6 +208,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-shift-tab", PreviousTab, context),
         KeyBinding::new(primary!("\\"), ToggleSidePane, context),
         KeyBinding::new(primary!("shift-e"), FocusFiles, context),
+        KeyBinding::new(primary!("shift-j"), FocusTemplatesGuide, context),
         KeyBinding::new(primary!("shift-r"), FocusReferences, context),
         KeyBinding::new("enter", menu::Confirm, Some("Picker > Editor")),
         KeyBinding::new(
@@ -239,6 +246,10 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", menu::Cancel, Some("QuireReferences > Editor")),
         KeyBinding::new("escape", menu::Cancel, Some("QuireContextRows > Editor")),
         KeyBinding::new("/", FocusRowFilter, Some("QuireContextRows")),
+        KeyBinding::new("tab", NextControl, Some("QuireSidebar")),
+        KeyBinding::new("shift-tab", PreviousControl, Some("QuireSidebar")),
+        KeyBinding::new("tab", NextControl, Some("QuireTemplatesGuide")),
+        KeyBinding::new("shift-tab", PreviousControl, Some("QuireTemplatesGuide")),
         KeyBinding::new(primary!("shift-t"), CaptureTask, context),
         KeyBinding::new("enter", menu::Confirm, Some("QuireTaskField > Editor")),
         KeyBinding::new("escape", menu::Cancel, Some("QuireTaskField > Editor")),

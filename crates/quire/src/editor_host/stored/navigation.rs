@@ -575,6 +575,11 @@ impl StoredWindow {
                 this.focus_references(window, cx)
             }))
             .on_action(cx.listener(|this, _: &FocusFiles, window, cx| this.focus_files(window, cx)))
+            .on_action(cx.listener(
+                |this, _: &crate::navigation::FocusTemplatesGuide, window, cx| {
+                    this.focus_templates_guide(window, cx)
+                },
+            ))
             .on_action(cx.listener(|this, _: &OpenToday, window, cx| this.open_today(window, cx)))
             .on_action(
                 cx.listener(|this, _: &DeletePage, window, cx| this.delete_shown_page(window, cx)),
