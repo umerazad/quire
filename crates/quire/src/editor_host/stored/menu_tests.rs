@@ -335,17 +335,9 @@ fn tab_menus_close_around_the_tab_and_disable_what_cannot_close(cx: &mut TestApp
 #[gpui::test]
 fn shift_f10_outside_files_opens_the_active_tab_menu(cx: &mut TestAppContext) {
     let notebook = open_notebook(&PAGES, "k", cx);
-    notebook
-        .window
-        .update(cx, |view, window, cx| {
-            view.nav
-                .browsers
-                .list_focus
-                .get_or_insert_with(|| cx.focus_handle());
-            let focus = view.nav.browsers.list_focus.clone().unwrap();
-            window.focus(&focus, cx);
-        })
-        .unwrap();
+    wait_until(cx, "the page editor", |cx| {
+        read(&notebook, cx, |view, _| view.editor.is_some())
+    });
     super::file_tests::visit(
         &notebook,
         Destination::Browser {
@@ -353,6 +345,19 @@ fn shift_f10_outside_files_opens_the_active_tab_menu(cx: &mut TestAppContext) {
         },
         cx,
     );
+    // Focus the browser list, outside any editor, once the visit has settled.
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            let focus = view
+                .nav
+                .browsers
+                .list_focus
+                .get_or_insert_with(|| cx.focus_handle())
+                .clone();
+            window.focus(&focus, cx);
+        })
+        .unwrap();
     draw(&notebook, cx);
     cx.simulate_keystrokes(notebook.window.into(), "shift-f10");
     assert_eq!(
