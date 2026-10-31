@@ -11355,6 +11355,7 @@ dependencies = [
  "picker",
  "project",
  "quire_core",
+ "quire_format",
  "quire_store",
  "release_channel",
  "rope",

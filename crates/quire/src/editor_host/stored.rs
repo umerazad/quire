@@ -159,6 +159,8 @@ impl StoredWindow {
             move |_, cx| allow_close(session.clone(), closing.clone(), CloseIntent::Window, cx)
         });
         session.borrow().enable_editing(cx);
+        cx.observe_global::<crate::outline::Notice>(|_, cx| cx.notify())
+            .detach();
         let calendar = DailyCalendar::system()
             .map_err(|error| gpui::SharedString::from(format!("Cannot read the system time zone for daily pages: {error}. Set a valid time zone and reopen the notebook.")));
         let index = match &calendar {
@@ -424,6 +426,9 @@ impl Render for StoredWindow {
             })
             .when_some(self.nav.error.clone(), |div, error| {
                 div.child(gpui::div().p_2().child(error))
+            })
+            .when_some(crate::outline::notice(cx), |div, notice| {
+                div.child(gpui::div().p_2().child(notice))
             })
             .when(loading, |div| {
                 div.child(gpui::div().p_2().child("Opening notebook storage…"))

@@ -99,8 +99,12 @@ impl fmt::Display for FormatError {
             ),
             Self::TimedOut(limit) => write!(
                 f,
-                "Code formatting stopped after {} seconds. Split the block into smaller ones, then run Format code again.",
-                limit.as_secs()
+                "Code formatting stopped after {}. Split the block into smaller ones, then run Format code again.",
+                if limit.subsec_millis() == 0 {
+                    format!("{} seconds", limit.as_secs())
+                } else {
+                    format!("{} ms", limit.as_millis())
+                }
             ),
             Self::Cancelled => write!(f, "Code formatting was cancelled."),
             Self::Engine(message) => write!(

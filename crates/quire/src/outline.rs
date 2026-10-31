@@ -80,6 +80,11 @@ pub(crate) fn set_notice(message: Option<&'static str>, cx: &mut App) {
     }
 }
 
+/// Shows a message built at run time, such as a formatter error that quotes its input.
+pub(crate) fn show_notice(message: impl Into<SharedString>, cx: &mut App) {
+    cx.set_global(Notice(Some(message.into())));
+}
+
 /// Marks folds that collapse a block's children, apart from the folds hiding Write syntax.
 struct OutlineFold;
 

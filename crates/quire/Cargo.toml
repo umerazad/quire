@@ -8,6 +8,7 @@ license = "GPL-3.0-or-later"
 [dependencies]
 quire_core = { workspace = true, optional = true }
 quire_store = { workspace = true, optional = true }
+quire_format = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
 rope = { workspace = true, optional = true }
 uuid = { workspace = true, features = ["v4"], optional = true }
@@ -63,4 +64,4 @@ tree-sitter-md.workspace = true
 [features]
 default = ["full-editor"]
 test-support = ["gpui/test-support", "gpui_platform/test-support"]
-full-editor = ["dep:quire_core", "dep:quire_store", "dep:futures", "dep:rope", "dep:uuid", "dep:editor", "dep:ui", "dep:http_client", "dep:search", "dep:workspace", "dep:language", "dep:multi_buffer", "dep:grammars", "dep:tree-sitter-quire-markdown", "dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-cpp", "dep:tree-sitter-css", "dep:tree-sitter-html", "dep:tree-sitter-jsdoc", "dep:tree-sitter-json", "dep:tree-sitter-python", "dep:tree-sitter-regex", "dep:tree-sitter-rust", "dep:tree-sitter-typescript", "dep:tree-sitter-yaml", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:assets", "dep:util", "dep:zed_actions", "dep:picker", "dep:menu", "dep:db", "dep:serde_json", "dep:project", "dep:anyhow", "dep:fs", "dep:paths"]
+full-editor = ["dep:quire_core", "dep:quire_store", "dep:quire_format", "dep:futures", "dep:rope", "dep:uuid", "dep:editor", "dep:ui", "dep:http_client", "dep:search", "dep:workspace", "dep:language", "dep:multi_buffer", "dep:grammars", "dep:tree-sitter-quire-markdown", "dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-cpp", "dep:tree-sitter-css", "dep:tree-sitter-html", "dep:tree-sitter-jsdoc", "dep:tree-sitter-json", "dep:tree-sitter-python", "dep:tree-sitter-regex", "dep:tree-sitter-rust", "dep:tree-sitter-typescript", "dep:tree-sitter-yaml", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:assets", "dep:util", "dep:zed_actions", "dep:picker", "dep:menu", "dep:db", "dep:serde_json", "dep:project", "dep:anyhow", "dep:fs", "dep:paths"]
