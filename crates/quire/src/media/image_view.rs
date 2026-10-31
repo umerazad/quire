@@ -24,6 +24,7 @@ pub(crate) struct ImageView {
     /// The column width the picture fits into.
     width: Pixels,
     _task: Option<Task<()>>,
+    _arrivals: gpui::Subscription,
 }
 
 /// What a view shows, for tests.
@@ -48,6 +49,11 @@ impl ImageView {
             message: None,
             width: px(640.),
             _task: None,
+            _arrivals: cx.observe_global::<load::Arrivals>(|view, cx| {
+                if matches!(view.state, State::Failed(_)) && load::waits_for_files(&view.target) {
+                    view.retry(cx);
+                }
+            }),
         };
         view.load(cx);
         view

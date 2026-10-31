@@ -373,6 +373,9 @@ impl StoredWindow {
                 .map(|reply| cx.background_spawn(reply).detach())
                 .ok();
         }
+        if notes.is_none() {
+            crate::media::load::files_arrived(cx);
+        }
         let work = self.session.borrow().folder_changed(notes, cx);
         cx.spawn(async move |this, cx| {
             if let Err(error) = work.await {

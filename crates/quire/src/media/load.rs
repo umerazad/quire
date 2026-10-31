@@ -19,6 +19,24 @@ use std::{
 /// Decoded images kept for reuse across views and pages.
 const CACHE_BYTES: usize = 192 * 1024 * 1024;
 
+/// Notifies its observers when notebook files may have appeared: a folder notebook's files
+/// changed, or a Quire notebook's import delivered attachments that arrived after their page.
+#[derive(Default)]
+pub(crate) struct Arrivals;
+
+impl Global for Arrivals {}
+
+/// Media that could not load a notebook file try again.
+pub(crate) fn files_arrived(cx: &mut App) {
+    cx.set_global(Arrivals);
+}
+
+/// Whether a view that failed to load `target` tries again when files arrive: only notebook
+/// files can appear later; a remote or `data:` source fails the same way again.
+pub(crate) fn waits_for_files(target: &Result<MediaTarget, MediaError>) -> bool {
+    matches!(target, Ok(target) if matches!(target.source, MediaSource::Notebook(_)))
+}
+
 pub(crate) struct LoadedImage {
     pub image: Arc<RenderImage>,
     /// The picture's own size, before downscaling.

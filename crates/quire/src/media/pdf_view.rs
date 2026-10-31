@@ -98,6 +98,7 @@ pub(crate) struct PdfView {
     message: Option<SharedString>,
     _open: Option<Task<()>>,
     _find: Subscription,
+    _arrivals: Subscription,
 }
 
 /// What a view shows, for tests.
@@ -152,6 +153,11 @@ impl PdfView {
             message: None,
             _open: None,
             _find: subscription,
+            _arrivals: cx.observe_global::<load::Arrivals>(|view, cx| {
+                if matches!(view.state, State::Failed(_)) && load::waits_for_files(&view.target) {
+                    view.retry(cx);
+                }
+            }),
         };
         cx.on_release(|view, cx| {
             for (_, rendered) in view.rendered.drain() {

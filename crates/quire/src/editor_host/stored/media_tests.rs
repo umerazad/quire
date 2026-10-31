@@ -152,6 +152,47 @@ fn attachments(notebook: &Notebook) -> std::path::PathBuf {
 const GONE: &str = "attachments/gone.png";
 
 #[gpui::test]
+fn a_picture_another_computer_delivers_after_its_page_shows_without_retry(cx: &mut TestAppContext) {
+    let synced = super::live_tests::open_synced("- a\n", cx);
+    let notebook = &synced.notebook;
+    let elsewhere = tempfile::tempdir().unwrap();
+    let writer = NotebookStore::open(&elsewhere.path().join("w.sqlite"), "nb", "writer").unwrap();
+    let reference = writer.attach(&png(3, 2), "late.png").unwrap();
+    save(&writer, "p-w", "W.md", &format!("- ![]({reference})\n"));
+    writer.publish_to(&synced.folder, 100).unwrap();
+    // The cloud provider delivers the page's batch before its picture.
+    let delivered = synced.folder.join(&reference);
+    let held = elsewhere.path().join("held.png");
+    std::fs::rename(&delivered, &held).unwrap();
+    let live = read(notebook, cx, |view, _| view.live.clone().unwrap());
+    let import = |cx: &mut TestAppContext| {
+        live.update(cx, |live, cx| live.import(cx));
+        wait_until(cx, "the import", |cx| {
+            live.read_with(cx, |live, _| !live.is_importing())
+        });
+    };
+    import(cx);
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.open_page("p-w".into(), false, window, cx)
+        })
+        .unwrap();
+    let editor = enter_write(notebook, cx);
+    wait_until(cx, "the missing picture's placeholder", |cx| {
+        draw(notebook, cx);
+        matches!(shows(&editor, cx).as_slice(), [Shows::Placeholder(_)])
+    });
+
+    std::fs::rename(&held, &delivered).unwrap();
+    import(cx);
+    wait_until(cx, "the delivered picture", |cx| {
+        draw(notebook, cx);
+        shows(&editor, cx) == [Shows::Picture { natural: (3, 2) }]
+    });
+}
+
+#[gpui::test]
 fn write_shows_local_remote_and_data_images_with_placeholders_for_missing_ones(
     cx: &mut TestAppContext,
 ) {
