@@ -3,8 +3,9 @@
 //! and `orderReferences`, `src/core/reference-filter.ts`, `src/core/projects.ts`).
 
 use super::{
-    query::{page_ref, PageRow, PAGE_COLUMNS},
-    strip_markdown, PageRef, QueryIndex,
+    PageRef, QueryIndex,
+    query::{PAGE_COLUMNS, PageRow, page_ref},
+    strip_markdown,
 };
 use crate::sync::json::JsString;
 use anyhow::Result;

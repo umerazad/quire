@@ -779,7 +779,11 @@ fn field_name(field: DateField) -> &'static str {
     }
 }
 
-fn field_editor(current: Option<&str>, window: &mut Window, cx: &mut App) -> Entity<Editor> {
+pub(crate) fn field_editor(
+    current: Option<&str>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<Editor> {
     cx.new(|cx| {
         let mut editor = Editor::single_line(window, cx);
         editor.set_placeholder_text("YYYY-MM-DD, today, tomorrow, +3, or a weekday", window, cx);
