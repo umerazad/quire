@@ -24,6 +24,7 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     }
     theme_settings::init(theme::LoadThemes::JustBase, cx);
     crate::markdown::init(cx)?;
+    crate::media::bind_keys(cx);
     release_channel::init(semver::Version::new(0, 1, 0), cx);
     editor::init(cx);
     vim::init_with_register_retention(cx);
@@ -481,6 +482,10 @@ pub fn run() {
             eprintln!("Cannot load Quire's bundled fonts: {error}. Rebuild the application assets.");
             cx.quit();
             return;
+        }
+        match reqwest_client::ReqwestClient::user_agent(concat!("Quire/", env!("CARGO_PKG_VERSION"))) {
+            Ok(client) => cx.set_http_client(std::sync::Arc::new(client)),
+            Err(error) => eprintln!("Cannot start the HTTP client: {error:#}. Remote images and PDFs will not load; restart Quire to retry."),
         }
         cx.on_window_closed(|cx, _| { if cx.windows().is_empty() { cx.quit(); } }).detach();
         if let Some(options) = stored {

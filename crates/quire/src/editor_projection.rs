@@ -282,6 +282,20 @@ fn refresh(
             tasks.push(Crease::simple(range, placeholder));
         }
     }
+    for (spot, placeholder) in crate::media::headers(editor, cx.entity().downgrade(), type_tag) {
+        if shown(
+            editor,
+            &spot.range,
+            &spot.block,
+            &spot.source,
+            &snapshot,
+            window,
+            cx,
+        ) {
+            let range = spot.range.start.to_offset(&snapshot)..spot.range.end.to_offset(&snapshot);
+            tasks.push(Crease::simple(range, placeholder));
+        }
+    }
     for (spot, placeholder) in crate::embeds::headers(editor, cx.entity().downgrade(), type_tag) {
         if shown(
             editor,
@@ -1057,6 +1071,21 @@ fn apply_blocks(
         })
         .collect();
     crate::embeds::sync(editor, spots, window, cx);
+    let media = crate::media::found(snapshot, blocks, references)
+        .into_iter()
+        .filter(|found| shown(&found.range) && !in_query(&found.range))
+        .filter_map(|found| {
+            Some(crate::media::Spot {
+                range: anchor(found.range.start)?..anchor(found.range.end)?,
+                block: anchor(found.block_range.start)?..anchor(found.block_range.end)?,
+                source: page_text[found.range].to_owned(),
+                target: found.target,
+                label: found.label,
+                kind: found.kind,
+            })
+        })
+        .collect();
+    crate::media::sync(editor, media, window, cx);
     let lists = queries
         .into_iter()
         .filter(|(braces, ..)| shown(braces))
@@ -1219,6 +1248,7 @@ pub fn unbind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
         }
         editor.unregister_addon::<Projection>();
         crate::embeds::clear(editor, cx);
+        crate::media::clear(editor, cx);
         crate::task_lists::clear(editor, cx);
         editor
             .buffer()

@@ -100,6 +100,10 @@ impl Notebook for WindowNotebook {
         let session = session.try_borrow().ok()?;
         Some((session.open_pages(), session.storage()))
     }
+
+    fn media_files(&self) -> Option<quire_media::files::Files> {
+        self.session.upgrade()?.try_borrow().ok()?.media_files()
+    }
 }
 
 impl StoredWindow {

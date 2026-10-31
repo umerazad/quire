@@ -747,3 +747,11 @@ mod task_lists_tests;
 #[cfg(test)]
 #[path = "folder_tests.rs"]
 mod folder_tests;
+
+#[cfg(test)]
+#[path = "media_tests.rs"]
+mod media_tests;
+
+#[cfg(test)]
+#[path = "media_pdf_tests.rs"]
+mod media_pdf_tests;
