@@ -114,6 +114,8 @@ pub struct FolderNotebook {
     notices: RefCell<Vec<String>>,
     /// Pages that gained a recovery draft from the reference app's records on opening.
     recovered: RefCell<Vec<RecoveredDraft>>,
+    /// The reference app's history still to take in, by `import_reference_history`.
+    backlog: RefCell<Vec<reference::Backlog>>,
     /// Quire's state folder for this notebook.
     state: PathBuf,
     clock: Box<dyn Fn() -> i64>,
@@ -142,6 +144,20 @@ impl FolderNotebook {
     }
 
     pub fn open_with_clock(root: &Path, state: &Path, clock: Box<dyn Fn() -> i64>) -> Result<Self> {
+        let notebook = Self::open_deferring_history(root, state, clock)?;
+        let failed = notebook.finish_reference_history();
+        notebook.notices.borrow_mut().extend(failed);
+        Ok(notebook)
+    }
+
+    /// Opens like `open_with_clock` but leaves the reference app's history queued for
+    /// `import_reference_history`, so the first page loads without waiting on years of saved
+    /// versions.
+    pub fn open_deferring_history(
+        root: &Path,
+        state: &Path,
+        clock: Box<dyn Fn() -> i64>,
+    ) -> Result<Self> {
         ensure!(
             root.is_absolute() && state.is_absolute(),
             "Cannot open notebook folder {}. Choose an absolute folder path.",
@@ -216,6 +232,7 @@ impl FolderNotebook {
             warnings: RefCell::default(),
             notices: RefCell::default(),
             recovered: RefCell::default(),
+            backlog: RefCell::default(),
             state: state.to_owned(),
             clock,
             trash: None,
@@ -225,7 +242,8 @@ impl FolderNotebook {
             interrupt_staged: std::cell::Cell::default(),
         };
         notebook.listing();
-        let mut notices = notebook.resume();
+        let mut notices = notebook.adopt_reference_journals();
+        notices.extend(notebook.resume());
         let (recovered, imported) = notebook.import_reference();
         notices.extend(imported);
         *notebook.notices.borrow_mut() = notices;
@@ -690,7 +708,7 @@ impl Worker<FolderNotebook> {
         limits: QueueLimits,
     ) -> Result<Self> {
         Self::spawn_with("quire-folder", limits, move || {
-            let mut notebook = FolderNotebook::open(&root, &state)?;
+            let mut notebook = FolderNotebook::open_deferring_history(&root, &state, Box::new(system_clock))?;
             notebook.trash = trash;
             Ok(notebook)
         })
@@ -807,6 +825,13 @@ impl Client<FolderNotebook> {
     pub fn version_text(&self, page: String, id: String) -> Answer<String> {
         self.request(128 + page.len() + id.len(), move |notebook| {
             notebook.version_text(&page, &id)
+        })
+    }
+    /// Takes in another step of the reference app's history queued on opening; true while
+    /// more remains.
+    pub fn import_reference_history(&self) -> Answer<bool> {
+        self.request(64, |notebook| {
+            notebook.import_reference_history(reference::HISTORY_STEP)
         })
     }
 }

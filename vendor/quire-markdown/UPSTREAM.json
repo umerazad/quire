@@ -19,7 +19,7 @@
     },
     {
       "path": "tree-sitter-markdown/src/scanner.c",
-      "reason": "Namespace exported C symbols so the original Zed grammar can coexist. Match the frozen Quire dialect: no setext headings; a bare # at EOF is a heading; a table interrupts a paragraph only under Lezer GFM endLeaf rules (unescaped pipe, raw delimiter row with equal cell counts, first paragraph line without a pipe), tracked by a zero-width paragraph pipe check."
+      "reason": "Namespace exported C symbols so the original Zed grammar can coexist. Match the frozen Quire dialect: no setext headings; a bare # at EOF is a heading; a table interrupts a paragraph only under Lezer GFM endLeaf rules (unescaped pipe, raw delimiter row with equal cell counts, first paragraph line without a pipe), tracked by a zero-width paragraph pipe check. Apply Lezer's list interrupt rule: open blocks record whether each list item is ordered (serialized as packed bits after the blocks, with a block count byte, inside the overflow guard), so an empty bullet may interrupt a paragraph whenever any open item is a bullet and any ordered marker may when any open item is ordered, while outside such lists an empty or non-1 marker never interrupts, even on a lazy line. List markers and thematic breaks may end at EOF, and a list marker at EOF gets a zero-width blank line so its item closes cleanly."
     },
     {
       "path": "tree-sitter-markdown-inline/src/parser.c",

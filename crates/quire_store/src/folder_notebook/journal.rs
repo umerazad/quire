@@ -60,7 +60,7 @@ fn interrupted(journal: &Path, error: &anyhow::Error) -> String {
 }
 
 impl FolderNotebook {
-    fn journals(&self) -> PathBuf {
+    pub(super) fn journals(&self) -> PathBuf {
         self.state.join(JOURNALS)
     }
 
@@ -170,21 +170,30 @@ impl FolderNotebook {
     }
 
     fn write_journal(&self, steps: &[Step]) -> Result<PathBuf> {
-        let folder = self.journals();
-        fs::create_dir_all(&folder).with_context(|| {
-            format!("Cannot create {}. Check write access to Quire's application data folder and retry.", folder.display())
-        })?;
         let bytes = serde_json::to_vec(&Journal {
             edits: steps.to_vec(),
             created_at: (self.clock)(),
         })?;
-        let path = folder.join(format!("{}.json", &sha256(&bytes)[..32]));
+        self.install_journal(&bytes)
+    }
+
+    /// Writes a journal into the state folder, named by its contents, and makes it durable. An
+    /// identical journal already there is kept.
+    pub(super) fn install_journal(&self, bytes: &[u8]) -> Result<PathBuf> {
+        let folder = self.journals();
+        fs::create_dir_all(&folder).with_context(|| {
+            format!("Cannot create {}. Check write access to Quire's application data folder and retry.", folder.display())
+        })?;
+        let path = folder.join(format!("{}.json", &sha256(bytes)[..32]));
+        if fs::read(&path).is_ok_and(|kept| kept == bytes) {
+            return Ok(path);
+        }
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&path)
             .with_context(|| format!("Cannot create the change journal {}. Check write access to Quire's application data folder and retry.", path.display()))?;
-        file.write_all(&bytes)
+        file.write_all(bytes)
             .and_then(|()| files::full_sync(&file))
             .and_then(|()| files::sync_directory(&folder))
             .with_context(|| format!("Cannot write the change journal {}. Check free space and retry; nothing was changed.", path.display()))?;
@@ -336,7 +345,7 @@ impl FolderNotebook {
         let name = step
             .retirement
             .as_deref()
-            .filter(|name| name.len() == 32 && name.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .filter(|name| archive_name(name))
             .context(
                 "The change journal names an invalid archive. Keep the journal for recovery.",
             )?;
@@ -449,7 +458,7 @@ impl FolderNotebook {
         }
     }
 
-    fn transaction<T>(&self, work: impl FnOnce() -> Result<T>) -> Result<T> {
+    pub(super) fn transaction<T>(&self, work: impl FnOnce() -> Result<T>) -> Result<T> {
         self.connection.exec("BEGIN IMMEDIATE")?()?;
         match work() {
             Ok(value) => {
@@ -696,6 +705,16 @@ impl Planned<'_> {
             Self::Write { destination, .. } => destination.parent(),
             _ => None,
         }
+    }
+}
+
+/// Quire's 32 hex digit archive names, or the reference app's random UUIDs.
+fn archive_name(name: &str) -> bool {
+    let hex = |byte: u8| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte);
+    match name.len() {
+        32 => name.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        36 => name.bytes().all(|byte| hex(byte) || byte == b'-'),
+        _ => false,
     }
 }
 

@@ -155,6 +155,30 @@ fn attaching_in_a_folder_notebook_copies_into_attachments_and_links_from_the_pag
     cx.update(|cx| assert_eq!(editor.read(cx).text(cx), original, "one undo step"));
 }
 
+#[gpui::test]
+fn a_picture_that_appears_in_the_folder_later_shows_without_retry(cx: &mut TestAppContext) {
+    let (notebook, folder) = open_folder(
+        &[("Page.md", b"- see ![](late.png)\n".to_vec())],
+        "Page.md",
+        cx,
+    );
+    let editor = enter_write(&notebook, cx);
+    wait_until(cx, "the missing picture's placeholder", |cx| {
+        draw(&notebook, cx);
+        matches!(shows(&editor, cx).as_slice(), [Shows::Placeholder(_)])
+    });
+    std::fs::write(folder.path().join("late.png"), png(3, 2)).unwrap();
+    // The watcher reports a file that is not a note as a whole-folder change.
+    notebook
+        .window
+        .update(cx, |view, _, cx| view.folder_changed(None, cx))
+        .unwrap();
+    wait_until(cx, "the picture", |cx| {
+        draw(&notebook, cx);
+        shows(&editor, cx) == [Shows::Picture { natural: (3, 2) }]
+    });
+}
+
 #[cfg(unix)]
 #[gpui::test]
 fn a_linked_attachments_folder_refuses_attaching_and_leaves_the_page(cx: &mut TestAppContext) {

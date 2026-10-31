@@ -118,4 +118,130 @@ mod tests {
         assert_eq!(tree.root_node().kind(), "document");
         assert!(!tree.root_node().has_error());
     }
+
+    fn block_parser() -> tree_sitter::Parser {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&LANGUAGE.into())
+            .expect("Error loading Markdown block grammar");
+        parser
+    }
+
+    fn block_tree(text: &str) -> String {
+        let tree = block_parser()
+            .parse(text, None)
+            .expect("parsing should produce a tree");
+        let sexp = tree.root_node().to_sexp();
+        sexp.strip_prefix("(document (section ")
+            .and_then(|rest| rest.strip_suffix("))"))
+            .unwrap_or(&sexp)
+            .to_owned()
+    }
+
+    const ITEM: &str = "(list_marker_minus)";
+    const DOT: &str = "(list_marker_dot)";
+
+    fn items(marker: &str, contents: &[&str]) -> String {
+        let items: Vec<String> = contents
+            .iter()
+            .map(|content| format!("(list_item {marker}{content})"))
+            .collect();
+        format!("(list {})", items.join(" "))
+    }
+
+    // Lezer's `isBulletList`/`isOrderedList` with `breaking`: inside any
+    // enclosing list of the same kind, an empty item (or, for ordered lists,
+    // any number) may interrupt a paragraph; outside, CommonMark rules apply.
+    #[test]
+    fn empty_items_interrupt_paragraphs_only_inside_a_list_of_their_kind() {
+        let paragraph = " (paragraph (inline))";
+        let continued = " (paragraph (inline) (block_continuation))";
+        let lazy = " (paragraph (inline (block_continuation)))";
+        let cases = [
+            (
+                "- holder ^spot\n  - \n",
+                items(ITEM, &[&format!("{continued} {}", items(ITEM, &[""]))]),
+            ),
+            (
+                "- foo\n-\n- bar\n",
+                items(ITEM, &[paragraph, "", paragraph]),
+            ),
+            (
+                "> foo\n-\n",
+                "(block_quote (block_quote_marker) (paragraph (inline)))".to_owned(),
+            ),
+            ("1. a\n   - \n", items(DOT, &[lazy])),
+            ("- a\n  7. b\n", items(ITEM, &[lazy])),
+            ("1. a\n2.\n", items(DOT, &[paragraph, ""])),
+            ("a\n2.\n", "(paragraph (inline))".to_owned()),
+            (
+                "1. a\n   7. b\n",
+                items(DOT, &[&format!("{continued} {}", items(DOT, &[paragraph]))]),
+            ),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(block_tree(text), expected, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn markers_and_breaks_may_end_at_eof() {
+        let cases = [
+            (
+                "- Parent\n- Sibling\n-",
+                items(
+                    ITEM,
+                    &[" (paragraph (inline))", " (paragraph (inline))", ""],
+                ),
+            ),
+            ("1.", items(DOT, &[""])),
+            ("* ", "(list (list_item (list_marker_star)))".to_owned()),
+            (
+                "> -",
+                format!("(block_quote (block_quote_marker) {})", items(ITEM, &[""])),
+            ),
+            ("a\n***", "(paragraph (inline)) (thematic_break)".to_owned()),
+            ("a\n___", "(paragraph (inline)) (thematic_break)".to_owned()),
+            ("---", "(thematic_break)".to_owned()),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(block_tree(text), expected, "{text:?}");
+        }
+        assert_eq!(
+            block_parser()
+                .parse("", None)
+                .unwrap()
+                .root_node()
+                .to_sexp(),
+            "(document)"
+        );
+    }
+
+    // The list kind of every open item survives scanner serialization, so an
+    // incremental reparse agrees with a fresh one.
+    #[test]
+    fn list_kinds_survive_incremental_reparses() {
+        let before = "1. a\n   - b\n   - \n\n- c\n  1. d\n";
+        let after = "1. a\n   - b\n   - \n\n- c\n  1. d\n  2.\n";
+        let mut parser = block_parser();
+        let mut tree = parser.parse(before, None).unwrap();
+        tree.edit(&tree_sitter::InputEdit {
+            start_byte: before.len(),
+            old_end_byte: before.len(),
+            new_end_byte: after.len(),
+            start_position: tree_sitter::Point::new(6, 0),
+            old_end_position: tree_sitter::Point::new(6, 0),
+            new_end_position: tree_sitter::Point::new(7, 0),
+        });
+        let edited = parser.parse(after, Some(&tree)).unwrap();
+        assert_eq!(
+            edited.root_node().to_sexp(),
+            block_parser()
+                .parse(after, None)
+                .unwrap()
+                .root_node()
+                .to_sexp()
+        );
+        assert!(!edited.root_node().has_error());
+    }
 }

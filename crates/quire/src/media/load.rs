@@ -19,6 +19,24 @@ use std::{
 /// Decoded images kept for reuse across views and pages.
 const CACHE_BYTES: usize = 192 * 1024 * 1024;
 
+/// Notifies its observers when notebook files may have appeared: a folder notebook's files
+/// changed, or a Quire notebook's import delivered attachments that arrived after their page.
+#[derive(Default)]
+pub(crate) struct Arrivals;
+
+impl Global for Arrivals {}
+
+/// Media that could not load a notebook file try again.
+pub(crate) fn files_arrived(cx: &mut App) {
+    cx.set_global(Arrivals);
+}
+
+/// Whether a view that failed to load `target` tries again when files arrive: only notebook
+/// files can appear later; a remote or `data:` source fails the same way again.
+pub(crate) fn waits_for_files(target: &Result<MediaTarget, MediaError>) -> bool {
+    matches!(target, Ok(target) if matches!(target.source, MediaSource::Notebook(_)))
+}
+
 pub(crate) struct LoadedImage {
     pub image: Arc<RenderImage>,
     /// The picture's own size, before downscaling.
@@ -54,7 +72,10 @@ impl MediaCache {
             cache.entries.remove(&key);
             return;
         };
-        let size = image.image.as_bytes(0).map_or(0, <[u8]>::len);
+        let size = (0..image.image.frame_count())
+            .filter_map(|frame| image.image.as_bytes(frame))
+            .map(<[u8]>::len)
+            .sum();
         cache.bytes += size;
         cache.ready.push_back(key.clone());
         cache.entries.insert(key, Entry::Ready(image, size));
@@ -121,7 +142,7 @@ pub(crate) fn image(source: &MediaSource, files: Option<&Files>, cx: &mut App) -
                         .background_spawn(async move { decode(&bytes, &Limits::default()) })
                         .await?;
                     Ok(Arc::new(LoadedImage {
-                        image: Arc::new(render_image(decoded.bitmap)?),
+                        image: Arc::new(render_frames(decoded.frames)?),
                         natural: decoded.natural,
                     }))
                 }
@@ -139,9 +160,29 @@ pub(crate) fn image(source: &MediaSource, files: Option<&Files>, cx: &mut App) -
 
 /// A GPUI image from a BGRA bitmap.
 pub(crate) fn render_image(bitmap: Bitmap) -> Result<RenderImage, MediaError> {
-    let (width, height) = (bitmap.width, bitmap.height);
-    image::RgbaImage::from_raw(width, height, bitmap.bgra)
-        .map(|buffer| RenderImage::new(vec![image::Frame::new(buffer)]))
+    render_frames(vec![quire_media::images::Frame {
+        bitmap,
+        delay: std::time::Duration::ZERO,
+    }])
+}
+
+/// A GPUI image from BGRA frames, which GPUI animates when there is more than one.
+fn render_frames(frames: Vec<quire_media::images::Frame>) -> Result<RenderImage, MediaError> {
+    frames
+        .into_iter()
+        .map(|frame| {
+            let (width, height) = (frame.bitmap.width, frame.bitmap.height);
+            image::RgbaImage::from_raw(width, height, frame.bitmap.bgra).map(|buffer| {
+                image::Frame::from_parts(
+                    buffer,
+                    0,
+                    0,
+                    image::Delay::from_saturating_duration(frame.delay),
+                )
+            })
+        })
+        .collect::<Option<Vec<_>>>()
+        .map(RenderImage::new)
         .ok_or_else(|| {
             MediaError::Failed(
                 "A decoded picture had the wrong size. Retry, or open it in the system viewer."

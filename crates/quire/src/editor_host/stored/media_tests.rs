@@ -152,6 +152,108 @@ fn attachments(notebook: &Notebook) -> std::path::PathBuf {
 const GONE: &str = "attachments/gone.png";
 
 #[gpui::test]
+fn an_animated_gif_shows_every_frame(cx: &mut TestAppContext) {
+    let mut gif = Vec::new();
+    {
+        let mut encoder = image::codecs::gif::GifEncoder::new(&mut gif);
+        for color in [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]] {
+            encoder
+                .encode_frame(image::Frame::from_parts(
+                    image::RgbaImage::from_pixel(4, 2, image::Rgba(color)),
+                    0,
+                    0,
+                    image::Delay::from_numer_denom_ms(80, 1),
+                ))
+                .unwrap();
+        }
+    }
+    let (notebook, _) = open_with_attachments(
+        &[("spin.gif", gif)],
+        |local| format!("- ![Spin]({})\n", local[0]),
+        cx,
+    );
+    let editor = open_in_write(&notebook, 1, cx);
+    let image = cx.update(|cx| crate::media::images(editor.read(cx))[0].read(cx).image());
+    let image = image.expect("the animation loaded");
+    assert_eq!(image.frame_count(), 3);
+    assert_eq!(
+        std::time::Duration::from(image.delay(1)),
+        std::time::Duration::from_millis(80)
+    );
+}
+
+#[gpui::test]
+fn pictures_refit_their_blocks_when_the_window_narrows_and_widens(cx: &mut TestAppContext) {
+    let (notebook, _) = open_with_attachments(
+        &[("wide.png", png(1200, 400))],
+        |local| format!("- ![Wide]({})\n", local[0]),
+        cx,
+    );
+    let editor = open_in_write(&notebook, 1, cx);
+    let fitted = |cx: &mut TestAppContext| {
+        draw(&notebook, cx);
+        cx.update(|cx| crate::media::fitted(editor.read(cx), cx))[0]
+    };
+    let (wide_rows, wide_width) = fitted(cx);
+    cx.simulate_window_resize(
+        notebook.window.into(),
+        gpui::size(gpui::px(700.), gpui::px(1200.)),
+    );
+    wait_until(cx, "the picture to fit the narrow window", |cx| {
+        let (rows, width) = fitted(cx);
+        width < 700. && rows < wide_rows
+    });
+    cx.simulate_window_resize(
+        notebook.window.into(),
+        gpui::size(gpui::px(1600.), gpui::px(1200.)),
+    );
+    wait_until(cx, "the picture to fit the wide window again", |cx| {
+        fitted(cx) == (wide_rows, wide_width)
+    });
+}
+
+#[gpui::test]
+fn a_picture_another_computer_delivers_after_its_page_shows_without_retry(cx: &mut TestAppContext) {
+    let synced = super::live_tests::open_synced("- a\n", cx);
+    let notebook = &synced.notebook;
+    let elsewhere = tempfile::tempdir().unwrap();
+    let writer = NotebookStore::open(&elsewhere.path().join("w.sqlite"), "nb", "writer").unwrap();
+    let reference = writer.attach(&png(3, 2), "late.png").unwrap();
+    save(&writer, "p-w", "W.md", &format!("- ![]({reference})\n"));
+    writer.publish_to(&synced.folder, 100).unwrap();
+    // The cloud provider delivers the page's batch before its picture.
+    let delivered = synced.folder.join(&reference);
+    let held = elsewhere.path().join("held.png");
+    std::fs::rename(&delivered, &held).unwrap();
+    let live = read(notebook, cx, |view, _| view.live.clone().unwrap());
+    let import = |cx: &mut TestAppContext| {
+        live.update(cx, |live, cx| live.import(cx));
+        wait_until(cx, "the import", |cx| {
+            live.read_with(cx, |live, _| !live.is_importing())
+        });
+    };
+    import(cx);
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.open_page("p-w".into(), false, window, cx)
+        })
+        .unwrap();
+    let editor = enter_write(notebook, cx);
+    wait_until(cx, "the missing picture's placeholder", |cx| {
+        draw(notebook, cx);
+        matches!(shows(&editor, cx).as_slice(), [Shows::Placeholder(_)])
+    });
+
+    std::fs::rename(&held, &delivered).unwrap();
+    import(cx);
+    wait_until(cx, "the delivered picture", |cx| {
+        draw(notebook, cx);
+        shows(&editor, cx) == [Shows::Picture { natural: (3, 2) }]
+    });
+}
+
+#[gpui::test]
 fn write_shows_local_remote_and_data_images_with_placeholders_for_missing_ones(
     cx: &mut TestAppContext,
 ) {
