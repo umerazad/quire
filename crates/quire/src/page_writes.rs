@@ -178,7 +178,21 @@ pub fn apply(
     stale: &'static str,
     cx: &mut App,
 ) -> Task<Result<usize, String>> {
-    write(writes, None, storage, stale, cx)
+    write(writes, Kind::Save, storage, stale, cx)
+}
+
+/// Writes every page or none while `from` moves whole to `to` with every file in it, as
+/// `apply` writes them: a folder notebook renames the folder and writes each note in place; a
+/// Quire notebook, whose folders are only page paths, writes the pages at their new paths.
+pub fn move_folder(
+    writes: Vec<PageWrite>,
+    from: String,
+    to: String,
+    storage: NotebookBackend,
+    stale: &'static str,
+    cx: &mut App,
+) -> Task<Result<usize, String>> {
+    write(writes, Kind::MoveFolder { from, to }, storage, stale, cx)
 }
 
 /// Deletes every page or none, as `apply` writes them: tombstones in a Quire notebook, the system
@@ -192,12 +206,22 @@ pub fn delete(
     stale: &'static str,
     cx: &mut App,
 ) -> Task<Result<usize, String>> {
-    write(writes, Some(folder), storage, stale, cx)
+    write(writes, Kind::Delete(folder), storage, stale, cx)
+}
+
+enum Kind {
+    Save,
+    /// Deletes the pages, or the folder whole when one is named.
+    Delete(Option<String>),
+    MoveFolder {
+        from: String,
+        to: String,
+    },
 }
 
 fn write(
     writes: Vec<PageWrite>,
-    deletion: Option<Option<String>>,
+    kind: Kind,
     storage: NotebookBackend,
     stale: &'static str,
     cx: &mut App,
@@ -219,21 +243,25 @@ fn write(
     }
     cx.spawn(async move |cx| {
         idle(&open, cx).await;
-        let saved = match cx.update(|cx| edits(&writes, deletion.is_some(), cx)) {
+        let deletion = matches!(kind, Kind::Delete(_));
+        let saved = match cx.update(|cx| edits(&writes, deletion, cx)) {
             Some(edits) => {
-                let answer = match (&deletion, &storage) {
-                    (None, _) => ask(storage.save_many_if_heads(edits)).await,
-                    (Some(folder), NotebookBackend::Store(client)) => {
+                let answer = match (&kind, &storage) {
+                    (Kind::Delete(folder), NotebookBackend::Store(client)) => {
                         ask(client.delete_if_heads(edits, folder.clone())).await
                     }
-                    (Some(folder), NotebookBackend::Folder(client)) => {
+                    (Kind::Delete(folder), NotebookBackend::Folder(client)) => {
                         ask(client.delete_if_heads(edits, folder.clone())).await
                     }
+                    (Kind::MoveFolder { from, to }, NotebookBackend::Folder(client)) => {
+                        ask(client.move_folder_if_heads(edits, from.clone(), to.clone())).await
+                    }
+                    _ => ask(storage.save_many_if_heads(edits)).await,
                 };
                 match answer {
                     Ok(CheckedSaves::Saved(acks)) => Ok(acks),
                     Ok(CheckedSaves::HeadsChanged { .. }) => Err(stale.to_owned()),
-                    Ok(CheckedSaves::Appeared { path }) => Err(appeared(&path, &deletion)),
+                    Ok(CheckedSaves::Appeared { path }) => Err(appeared(&path, &kind)),
                     Err(error) => Err(error),
                 }
             }
@@ -250,7 +278,7 @@ fn write(
                     continue;
                 };
                 persistence.update(cx, |persistence, cx| {
-                    if deletion.is_some() {
+                    if deletion {
                         persistence.retire(cx);
                     } else {
                         persistence.relocate(write.path.clone(), cx);
@@ -258,7 +286,7 @@ fn write(
                     }
                 });
             }
-            if !(written && deletion.is_some()) {
+            if !(written && deletion) {
                 for persistence in &open {
                     persistence.update(cx, |persistence, cx| persistence.release(cx));
                 }
@@ -268,10 +296,13 @@ fn write(
     })
 }
 
-fn appeared(path: &str, deletion: &Option<Option<String>>) -> String {
-    match deletion {
-        Some(Some(folder)) => format!(
+fn appeared(path: &str, kind: &Kind) -> String {
+    match kind {
+        Kind::Delete(Some(folder)) => format!(
             "{path} appeared in {folder} after you chose to delete it. Nothing was deleted; try again."
+        ),
+        Kind::MoveFolder { from, .. } => format!(
+            "{path} appeared in {from} after the preview. Nothing was moved; preview the move again."
         ),
         _ => format!(
             "{path} changed before the change could be applied. Nothing was changed; review the page and try again."

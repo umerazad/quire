@@ -221,7 +221,11 @@ fn a_move_refuses_a_page_changed_after_the_preview_and_previews_again(cx: &mut T
 }
 
 const FOLDER: [(&str, &str, &str); 4] = [
-    ("a", "Projects/A.md", "- a [[B]] [b](B.md) [t](../Top.md)\n"),
+    (
+        "a",
+        "Projects/A.md",
+        "- a [[B]] [b](B.md) [t](../Top.md) ![i](attachments/x.png)\n",
+    ),
     ("b", "Projects/B.md", "- b [[Projects/A]]\n"),
     ("t", "Top.md", "- [[Projects/A]] [p](Projects/B.md) [[A]]\n"),
     ("z", "Projects2/Z.md", "- z [[Projects/B]]\n"),
@@ -279,7 +283,7 @@ fn renaming_a_folder_moves_every_page_inside_and_rewrites_links_to_them(cx: &mut
         stored(&store, "a"),
         (
             "Work/A.md".into(),
-            "- a [[B]] [b](B.md) [t](../Top.md)\n".into()
+            "- a [[B]] [b](B.md) [t](../Top.md) ![i](attachments/x.png)\n".into()
         )
     );
     assert_eq!(

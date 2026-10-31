@@ -12,6 +12,7 @@
 mod census;
 mod deletion;
 mod files;
+mod folder_move;
 mod history;
 mod journal;
 mod markdown_import;
@@ -128,6 +129,9 @@ pub struct FolderNotebook {
     /// Stops a change across notes once every new text is staged, before history is recorded.
     #[cfg(test)]
     interrupt_staged: std::cell::Cell<bool>,
+    /// Stops a folder move once its journal is written, before the folder moves.
+    #[cfg(test)]
+    interrupt_folder: std::cell::Cell<bool>,
 }
 
 fn system_clock() -> i64 {
@@ -240,6 +244,8 @@ impl FolderNotebook {
             interrupt_at: std::cell::Cell::default(),
             #[cfg(test)]
             interrupt_staged: std::cell::Cell::default(),
+            #[cfg(test)]
+            interrupt_folder: std::cell::Cell::default(),
         };
         let legacy = settings::adopt_legacy_metadata(&real_root);
         notebook.listing();
@@ -776,6 +782,17 @@ impl Client<FolderNotebook> {
             notebook.move_noteless_folder(&from, &to)
         })
     }
+    pub fn move_folder_if_heads(
+        &self,
+        edits: Vec<Edit>,
+        from: String,
+        to: String,
+    ) -> Answer<CheckedSaves> {
+        let bytes = edits.iter().map(edit_bytes).sum::<usize>() + from.len() + to.len();
+        self.request(bytes, move |notebook| {
+            notebook.move_folder_if_heads(&edits, &from, &to)
+        })
+    }
     pub fn other_files(&self, folder: String) -> Answer<Vec<String>> {
         self.request(128 + folder.len(), move |notebook| {
             Ok(notebook.other_files(&folder))
@@ -855,6 +872,8 @@ impl Client<FolderNotebook> {
     }
 }
 
+#[cfg(test)]
+mod folder_move_tests;
 #[cfg(test)]
 mod rt_tests;
 #[cfg(test)]

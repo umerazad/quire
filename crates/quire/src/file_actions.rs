@@ -14,8 +14,8 @@ use gpui::{App, AppContext as _, Entity, Task};
 use quire_core::{
     markdown::{Addresses, copy_with_new_ids, page_name, page_title, safe_page_path},
     relocate::{
-        MISSING_SOURCE, Relocation, folder_path, folder_relocations, notebook_path, relocate_pages,
-        rename_target,
+        FolderMove, MISSING_SOURCE, Relocation, folder_path, folder_relocations, notebook_path,
+        relocate_folder_pages, relocate_pages, rename_target,
     },
     source_text::SourceText,
 };
@@ -239,6 +239,10 @@ pub struct RelocationPlan {
     pub updated: Vec<String>,
     pub updates: Vec<LinkUpdate>,
     trash: bool,
+    /// For a folder move, the folder's path before and after.
+    folder: Option<(String, String)>,
+    /// Files inside a moved folder notebook folder that are not notes, which move with it.
+    other_files: usize,
     writes: Vec<PageWrite>,
 }
 
@@ -247,20 +251,32 @@ impl RelocationPlan {
         format!("{} → {}", self.source, self.target)
     }
 
+    /// The folder this plan moves whole, before and after.
+    pub fn folder(&self) -> Option<(&str, &str)> {
+        self.folder
+            .as_ref()
+            .map(|(from, to)| (from.as_str(), to.as_str()))
+    }
+
     pub fn detail(&self) -> String {
         let pages = match self.updated.len() {
             0 => "No other page needs link updates.".to_owned(),
             1 => "1 other page needs link updates.".to_owned(),
             count => format!("{count} other pages need link updates."),
         };
-        let moved = match self.moved.len() {
-            1 => String::new(),
-            count => format!("{count} pages move. "),
+        let moved = match (self.moved.len(), self.other_files) {
+            (1, 0) => String::new(),
+            (pages, 0) => format!("{pages} pages move. "),
+            (pages, others) => format!(
+                "{} and {} move. ",
+                count(pages, "page", "pages"),
+                count(others, "other file", "other files")
+            ),
         };
-        let kept = if self.trash {
-            "The original files and saved history are retained for recovery."
-        } else {
-            "Pages keep their block IDs and saved history."
+        let kept = match (self.trash, self.folder.is_some()) {
+            (true, true) => "Saved history keeps the text of every note the move rewrites.",
+            (true, false) => "The original files and saved history are retained for recovery.",
+            _ => "Pages keep their block IDs and saved history.",
         };
         format!("{moved}{pages} {kept}")
     }
@@ -330,17 +346,31 @@ pub fn plan_relocation(
                 (relocations, pages, folder.clone(), target)
             }
         };
+        let moved_folder =
+            matches!(request, Relocate::Folder { .. }).then(|| (source.clone(), target.clone()));
+        let other_files = match (&moved_folder, storage.folder()) {
+            (Some((folder, _)), Some(client)) => {
+                ask(client.other_files(folder.clone())).await?.len()
+            }
+            _ => 0,
+        };
         let mut candidates: Vec<String> = moved_pages.clone();
-        for page in &moved_pages {
-            let Some(facts) = ask(index.relocation(page.as_str().into())).await? else {
-                return Err(MISSING_SOURCE.into());
-            };
-            for candidate in facts.candidates {
+        let mut add = |found: Vec<quire_store::index::PageRef>| {
+            for candidate in found {
                 let id = candidate.page.to_lossy_string();
                 if !candidates.contains(&id) {
                     candidates.push(id);
                 }
             }
+        };
+        for page in &moved_pages {
+            let Some(facts) = ask(index.relocation(page.as_str().into())).await? else {
+                return Err(MISSING_SOURCE.into());
+            };
+            add(facts.candidates);
+        }
+        if let Some((folder, _)) = &moved_folder {
+            add(ask(index.folder_link_candidates(folder.clone())).await?);
         }
         let mut analyzed = Vec::new();
         for id in candidates {
@@ -387,17 +417,35 @@ pub fn plan_relocation(
             updated: Vec::new(),
             updates: Vec::new(),
             trash: folder,
+            folder: moved_folder.clone(),
+            other_files,
             writes: Vec::new(),
         };
+        let carried = moved_folder
+            .as_ref()
+            .map(|(from, to)| FolderMove { from, to });
         for (source, original, normalized, references, urls) in analyzed {
-            let Some(planned) = relocate_pages(
-                &relocations,
-                &source.path,
-                &normalized,
-                &references,
-                &urls,
-                |base| resolved.get(base).cloned().flatten(),
-            ) else {
+            let find = |base: &str| resolved.get(base).cloned().flatten();
+            let planned = match carried {
+                Some(folder) => relocate_folder_pages(
+                    folder,
+                    &relocations,
+                    &source.path,
+                    &normalized,
+                    &references,
+                    &urls,
+                    find,
+                ),
+                None => relocate_pages(
+                    &relocations,
+                    &source.path,
+                    &normalized,
+                    &references,
+                    &urls,
+                    find,
+                ),
+            };
+            let Some(planned) = planned else {
                 continue;
             };
             let text = original.apply(planned.edits).map_err(|error| {
@@ -465,7 +513,10 @@ pub fn relocate(
     stale: &'static str,
     cx: &mut App,
 ) -> Task<Result<usize, String>> {
-    page_writes::apply(plan.writes, storage, stale, cx)
+    match plan.folder {
+        Some((from, to)) => page_writes::move_folder(plan.writes, from, to, storage, stale, cx),
+        None => page_writes::apply(plan.writes, storage, stale, cx),
+    }
 }
 
 /// Writes a rename and every link change or none.

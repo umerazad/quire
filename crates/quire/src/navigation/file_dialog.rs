@@ -584,6 +584,9 @@ impl FileDialog {
     fn move_now(&mut self, plan: RelocationPlan, cx: &mut Context<Self>) -> Task<()> {
         let (_, storage) = (self.writers)(cx);
         let moved = plan.moved.clone();
+        let folder = plan
+            .folder()
+            .map(|(from, to)| (from.to_owned(), to.to_owned()));
         let work = file_actions::relocate(plan, storage, file_actions::STALE_MOVE, cx);
         cx.spawn(async move |this, cx| {
             let result = work.await;
@@ -592,6 +595,9 @@ impl FileDialog {
                 match result {
                     Ok(_) => {
                         cx.emit(FileDialogEvent::Relocated(moved));
+                        if let Some((from, to)) = folder {
+                            cx.emit(FileDialogEvent::FolderMoved { from, to });
+                        }
                         cx.emit(DismissEvent);
                     }
                     Err(error) => {

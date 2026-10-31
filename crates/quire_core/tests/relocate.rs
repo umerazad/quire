@@ -1,9 +1,9 @@
 use quire_core::{
     markdown::{page_title, references},
     relocate::{
-        CASE_ONLY, FOLDER_EMPTY, FOLDER_INSIDE_ITSELF, FOLDER_UNCHANGED, NAME_HAS_SLASH,
-        Relocation, folder_relocations, notebook_path, relative_path, relocate_page,
-        relocate_pages, rename_target,
+        CASE_ONLY, FOLDER_EMPTY, FOLDER_INSIDE_ITSELF, FOLDER_UNCHANGED, FolderMove,
+        NAME_HAS_SLASH, Relocation, folder_relocations, notebook_path, relative_path,
+        relocate_folder_pages, relocate_page, relocate_pages, rename_target,
     },
     source_text::SourceText,
 };
@@ -332,5 +332,64 @@ fn folder_moves_refuse_the_same_folder_a_folder_inside_itself_and_an_empty_folde
             .map(|relocation| (relocation.source.as_str(), relocation.target.as_str()))
             .collect::<Vec<_>>(),
         [("Projects/A.md", "Projects2/Old/A.md")]
+    );
+}
+
+/// A folder that moves whole carries its attachments, so links to them follow the folder: a moved
+/// page keeps its links to neighbouring files as written, and other pages reach them at the new
+/// folder.
+#[test]
+fn a_folder_moving_whole_carries_links_to_the_files_inside_it() {
+    let pages = [
+        ("Projects/A.md".to_owned(), "A".to_owned()),
+        ("Top.md".to_owned(), "Top".to_owned()),
+    ];
+    let relocations = folder_relocations("Projects", "Archive/Work", &pages, |_| false).unwrap();
+    let folder = FolderMove {
+        from: "Projects",
+        to: "Archive/Work",
+    };
+    let plan = |path: &str, text: &str| {
+        let urls: Vec<_> = ["img.png", "../Top.md", "Projects/img.png", "Other/x.png"]
+            .iter()
+            .filter_map(|url| {
+                text.find(&format!("({url})"))
+                    .map(|at| at + 1..at + 1 + url.len())
+            })
+            .collect();
+        relocate_folder_pages(
+            folder,
+            &relocations,
+            path,
+            text,
+            &references(text, &[]),
+            &urls,
+            |base| (base == "Projects/A").then(|| "Projects/A.md".to_owned()),
+        )
+    };
+    let moved = plan(
+        "Projects/A.md",
+        "- ![i](img.png) ![[scan.pdf]] [t](../Top.md) ![[../Other/y.pdf]]\n",
+    )
+    .unwrap();
+    assert_eq!(moved.path, "Archive/Work/A.md");
+    assert_eq!(
+        moved.text,
+        "- ![i](img.png) ![[scan.pdf]] [t](../../Top.md) ![[../../Other/y.pdf]]\n"
+    );
+    let top = plan(
+        "Top.md",
+        "- ![p](Projects/img.png) ![[Projects/scan.pdf]] [[Projects/A]] ![o](Other/x.png)\n",
+    )
+    .unwrap();
+    assert_eq!(top.path, "Top.md");
+    assert_eq!(
+        top.text,
+        "- ![p](Archive/Work/img.png) ![[Archive/Work/scan.pdf]] [[Archive/Work/A]] ![o](Other/x.png)\n"
+    );
+    assert_eq!(
+        plan("Top.md", "- ![o](Other/x.png) [[Elsewhere]]\n"),
+        None,
+        "a page linking to nothing inside the folder is unchanged"
     );
 }

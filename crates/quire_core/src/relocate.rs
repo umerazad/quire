@@ -11,6 +11,8 @@
 //! A folder rename or move relocates every page inside it at once (`folder_relocations`), which
 //! the reference has no command for. `relocate_pages` gives the result of the reference moving
 //! each page in turn, except that pages keep their file names and so get no recorded title.
+//! `relocate_folder_pages` matches the reference renaming the folder itself: every other file
+//! inside moves too, so links to those files follow the folder.
 //!
 //! Two deliberate deviations. A replacement is literal, where JavaScript's `String.replace`
 //! expands `$&` and similar patterns in a new name. A URL that is only a `#fragment` stays as it
@@ -274,11 +276,64 @@ pub fn relocate_pages(
     urls: &[Range<usize>],
     find_page: impl Fn(&str) -> Option<String>,
 ) -> Option<PageRelocation> {
+    relocate_carrying(relocations, None, path, text, references, urls, find_page)
+}
+
+/// A folder that moves whole, carrying every file inside it, such as attachments, along with
+/// its pages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FolderMove<'a> {
+    pub from: &'a str,
+    pub to: &'a str,
+}
+
+impl FolderMove<'_> {
+    /// Where a file inside the folder lives after the move.
+    fn carried(&self, path: &str) -> Option<String> {
+        path.strip_prefix(self.from)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .map(|rest| format!("{}/{rest}", self.to))
+    }
+}
+
+/// Rewrites one page for `folder` moving whole with its pages (`folder_relocations`), as the
+/// reference app renames the folder: links to any file inside follow it, so a moved page's
+/// links to its neighbouring attachments stay as written.
+pub fn relocate_folder_pages(
+    folder: FolderMove,
+    relocations: &[Relocation],
+    path: &str,
+    text: &str,
+    references: &[Reference],
+    urls: &[Range<usize>],
+    find_page: impl Fn(&str) -> Option<String>,
+) -> Option<PageRelocation> {
+    relocate_carrying(
+        relocations,
+        Some(folder),
+        path,
+        text,
+        references,
+        urls,
+        find_page,
+    )
+}
+
+fn relocate_carrying(
+    relocations: &[Relocation],
+    folder: Option<FolderMove>,
+    path: &str,
+    text: &str,
+    references: &[Reference],
+    urls: &[Range<usize>],
+    find_page: impl Fn(&str) -> Option<String>,
+) -> Option<PageRelocation> {
     let moving = |source: &str| {
         relocations
             .iter()
             .find(|relocation| relocation.source == source)
     };
+    let carried = |absolute: &str| folder.and_then(|folder| folder.carried(absolute));
     let own = moving(path);
     let destination = own.map_or(path, |own| own.target.as_str());
     let mut changes: Vec<SourceEdit<String>> = Vec::new();
@@ -303,14 +358,14 @@ pub fn relocate_pages(
                 range: reference.range.clone(),
                 replacement: replace_first(raw, &reference.target, &replacement),
             });
-        } else if let Some(own) = own
-            && reference.kind == ReferenceKind::Embed
+        } else if reference.kind == ReferenceKind::Embed
             && resolved.is_none()
             && !WORD_SCHEME.is_match(&reference.target)
-            && let Some(absolute) = relative_vault_path(Some(&own.source), &reference.target)
+            && let Some(absolute) = relative_vault_path(Some(path), &reference.target)
                 .filter(|absolute| !absolute.is_empty())
+            && let Some(file) = carried(&absolute).or_else(|| own.map(|_| absolute))
         {
-            let replacement = format!("{}{fragment}", relative_path(&own.target, &absolute));
+            let replacement = format!("{}{fragment}", relative_path(destination, &file));
             changes.push(SourceEdit {
                 range: reference.range.clone(),
                 replacement: replace_first(raw, &reference.target, &replacement),
@@ -330,12 +385,14 @@ pub fn relocate_pages(
             continue;
         };
         let fragment = url.find('#').map_or("", |hash| &url[hash..]);
-        let followed = moving(&absolute);
+        let followed = moving(&absolute)
+            .map(|relocation| relocation.target.clone())
+            .or_else(|| carried(&absolute));
         if own.is_none() && followed.is_none() {
             continue;
         }
-        let resolved = followed.map_or(absolute.as_str(), |relocation| &relocation.target);
-        let replacement = format!("{}{fragment}", relative_path(destination, resolved));
+        let resolved = followed.unwrap_or(absolute);
+        let replacement = format!("{}{fragment}", relative_path(destination, &resolved));
         changes.push(SourceEdit {
             range: range.clone(),
             replacement: if angle {
