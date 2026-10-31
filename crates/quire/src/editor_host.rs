@@ -14,6 +14,7 @@ pub(super) const EDITOR_CONTEXT: &str = "Editor && !QuireControl";
 pub(super) fn init(cx: &mut App) -> Result<(), String> {
     settings::init(cx);
     crate::preferences::init(cx);
+    crate::help::init(cx);
     theme_settings::init(theme::LoadThemes::All(Box::new(assets::Assets)), cx);
     crate::markdown::init(cx)?;
     crate::media::init(cx);
@@ -113,6 +114,7 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     stored::bind_keys(cx);
     crate::navigation::bind_keys(cx);
     crate::preferences::bind_keys(cx);
+    crate::help::bind_keys(cx);
     crate::media::bind_keys(cx);
     if !cx.has_global::<db::AppDatabase>() {
         let name = format!("quire-interface-{}", uuid::Uuid::new_v4());

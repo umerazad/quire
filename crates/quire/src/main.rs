@@ -104,6 +104,9 @@ mod page_menu;
 #[cfg(feature = "full-editor")]
 mod preferences;
 
+#[cfg(feature = "full-editor")]
+mod help;
+
 #[path = "example_support/fonts.rs"]
 mod example_support;
 
