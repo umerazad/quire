@@ -1,0 +1,33 @@
+{
+  "margin": 0.1,
+  "budgets": [
+    { "metric": "warm_first_editable_ms", "stat": "p95", "scale": 1, "limit": 750, "source": "plan: warm launch to editable page, p95 <= 750 ms; rt warm first paint 687 ms" },
+    { "metric": "warm_first_editable_ms", "stat": "p95", "scale": 5, "limit": 750, "source": "plan: same at 5x; rt 1,603 ms" },
+    { "metric": "warm_startup_ratio_5x_1x", "stat": "value", "scale": 5, "limit": 1.25, "source": "plan: warm startup grows <= 1.25x from 1x to 5x" },
+    { "metric": "first_open_first_editable_ms", "stat": "value", "scale": 1, "limit": 1500, "source": "plan: cold launch p95 <= 1.5 s at 1x; rt cold first paint 1,392 ms" },
+    { "metric": "first_open_first_editable_ms", "stat": "value", "scale": 5, "limit": 2000, "source": "plan: cold launch <= 2 s at 5x; rt 3,179 ms" },
+    { "metric": "first_open_index_ready_ms", "stat": "value", "scale": 1, "limit": 2800, "source": "rt cold search index build 2,804 ms at 1x" },
+    { "metric": "first_open_index_ready_ms", "stat": "value", "scale": 5, "limit": 15000, "source": "rt cold search index build 15,131 ms at 5x" },
+    { "metric": "warm_index_ready_ms", "stat": "p95", "scale": 1, "limit": 1500, "source": "index current within the plan's 1x cold-launch budget" },
+    { "metric": "warm_index_ready_ms", "stat": "p95", "scale": 5, "limit": 2000, "source": "index current within the plan's 5x cold-launch budget" },
+    { "metric": "typing_work_ms", "stat": "p95", "scale": 1, "limit": 4, "source": "plan: typing foreground CPU p95 <= 4 ms" },
+    { "metric": "typing_work_ms", "stat": "p99", "scale": 1, "limit": 8, "source": "plan: typing foreground CPU p99 <= 8 ms" },
+    { "metric": "typing_work_ms", "stat": "p95", "scale": 5, "limit": 4, "source": "plan: typing foreground CPU p95 <= 4 ms" },
+    { "metric": "typing_frame_ms", "stat": "p95", "scale": 1, "limit": 33.3, "source": "plan: input to frame p95 <= 2 refresh intervals at 60 Hz; rt normal input 25 ms" },
+    { "metric": "typing_frame_ms", "stat": "p95", "scale": 5, "limit": 33.3, "source": "plan: input to frame p95 <= 2 refresh intervals at 60 Hz" },
+    { "metric": "page_open_ms", "stat": "p95", "scale": 1, "limit": 50, "source": "plan: open page p95 <= 50 ms; rt navigation 91 to 107 ms" },
+    { "metric": "page_open_ms", "stat": "p95", "scale": 5, "limit": 50, "source": "plan: open page p95 <= 50 ms" },
+    { "metric": "search_ms", "stat": "p95", "scale": 1, "limit": 100, "source": "plan: full-text search p95 <= 100 ms; rt search_notebook 30.3 ms at 5,000 pages" },
+    { "metric": "search_ms", "stat": "p95", "scale": 5, "limit": 100, "source": "plan: full-text search p95 <= 100 ms" },
+    { "metric": "backlinks_ms", "stat": "p95", "scale": 5, "limit": 50, "source": "plan: backlinks p95 <= 50 ms" },
+    { "metric": "tasks_ms", "stat": "p95", "scale": 5, "limit": 50, "source": "plan: task view p95 <= 50 ms" },
+    { "metric": "tags_ms", "stat": "p95", "scale": 5, "limit": 50, "source": "plan: tags p95 <= 50 ms" },
+    { "metric": "large_open_ms", "stat": "p95", "scale": 1, "limit": 200, "source": "rt gate: largest-page interactions under 200 ms" },
+    { "metric": "large_typing_work_ms", "stat": "p95", "scale": 1, "limit": 8, "source": "plan typing p99 <= 8 ms, applied as p95 to the 1 MiB page" },
+    { "metric": "large_typing_frame_ms", "stat": "p95", "scale": 1, "limit": 33.3, "source": "plan: 2 refresh intervals; rt largest-page input 50 ms" },
+    { "metric": "resident_mib_after_opens", "stat": "max", "scale": 1, "limit": 250, "source": "plan: ready-process RSS <= 250 MiB; rt heaps 40 + 111 MB at 1x" },
+    { "metric": "resident_mib_after_opens", "stat": "max", "scale": 5, "limit": 250, "source": "plan: ready-process RSS <= 250 MiB at 5x; rt heaps 149 + 527 MB" },
+    { "metric": "resident_growth_mib_5x_1x", "stat": "value", "scale": 5, "limit": 50, "source": "plan: RSS growth <= 50 MiB from 1x to 5x" },
+    { "metric": "folder_import_ms_per_note", "stat": "value", "scale": 0, "limit": 10, "source": "NR13: journaled folder import floor 4 to 7 ms per note" }
+  ]
+}

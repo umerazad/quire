@@ -177,7 +177,7 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let Some(row) = self.file_rows().into_iter().nth(index) else {
+        let Some(row) = self.file_rows().get(index).cloned() else {
             return;
         };
         self.nav.browsers.files_selected = index;
@@ -550,8 +550,8 @@ impl StoredWindow {
 
     fn selected_row(&self) -> Option<quire_core::workspace::TreeRow> {
         self.file_rows()
-            .into_iter()
-            .nth(self.nav.browsers.files_selected)
+            .get(self.nav.browsers.files_selected)
+            .cloned()
     }
 
     pub(in crate::editor_host::stored) fn reveal_selected_file(

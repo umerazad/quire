@@ -129,22 +129,19 @@ impl Bench {
 
     pub fn settle(&self, cx: &mut TestAppContext) {
         let client = cx.read(|cx| self.sync.read(cx).client().clone());
-        let deadline = Instant::now() + Duration::from_secs(30);
-        loop {
-            cx.executor().advance_clock(Duration::from_secs(1));
-            cx.run_until_parked();
-            let left = finish(
-                cx.background_spawn({
-                    let client = client.clone();
-                    async move { client.unanalyzed().unwrap().await.unwrap() }
-                }),
-                cx,
-            );
-            if left == 0 {
-                return;
-            }
-            assert!(Instant::now() < deadline, "indexing did not finish");
-        }
+        crate::test_wait::until(
+            cx,
+            Duration::ZERO,
+            crate::test_wait::advance(Duration::from_secs(1)),
+            |cx| {
+                let client = client.clone();
+                finish(
+                    cx.background_spawn(async move { client.unanalyzed().unwrap().await.unwrap() }),
+                    cx,
+                ) == 0
+            },
+            |_| "indexing to finish".into(),
+        );
     }
 
     pub fn register(&self, cx: &mut TestAppContext) {
@@ -223,15 +220,18 @@ pub(crate) fn finish<T: 'static>(task: Task<T>, cx: &mut TestAppContext) -> T {
         async move |_| *result.borrow_mut() = Some(task.await)
     })
     .detach();
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        cx.run_until_parked();
-        if let Some(value) = result.borrow_mut().take() {
-            return value;
-        }
-        assert!(Instant::now() < deadline, "the tool call did not finish");
-        std::thread::sleep(Duration::from_millis(2));
-    }
+    let mut value = None;
+    crate::test_wait::until(
+        cx,
+        Duration::from_millis(2),
+        crate::test_wait::park,
+        |_| {
+            value = result.borrow_mut().take();
+            value.is_some()
+        },
+        |_| "the tool call to finish".into(),
+    );
+    value.expect("until returns once the tool call finished")
 }
 
 /// Replaces every task `key` with a placeholder: keys are opaque handles.

@@ -340,8 +340,8 @@ impl StoredWindow {
     pub(in crate::editor_host::stored) fn selected_file(&self) -> Option<Target> {
         let row = self
             .file_rows()
-            .into_iter()
-            .nth(self.nav.browsers.files_selected)?;
+            .get(self.nav.browsers.files_selected)
+            .cloned()?;
         match row.kind {
             TreeKind::Folder => Some(Target::Folder(row.path)),
             TreeKind::File => self.page_at_path(&row.path).map(Target::Page),

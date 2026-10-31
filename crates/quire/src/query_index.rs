@@ -13,8 +13,11 @@ use quire_store::index::{IndexClient, IndexConfig, IndexWorker};
 use std::collections::HashMap;
 use std::{path::PathBuf, time::Duration};
 
-const BATCH: usize = 16;
+const BATCH: usize = 64;
 const IDLE: Duration = Duration::from_secs(1);
+/// While a backlog is analyzed, open views requery at most this often: each batch changes the
+/// index, and requerying the page list and references per batch made a 5x rebuild quadratic.
+const ANNOUNCE: Duration = Duration::from_secs(1);
 const RETRY: Duration = Duration::from_secs(5);
 /// Coalesces typing into one overlay analysis.
 const DEBOUNCE: Duration = Duration::from_millis(150);
@@ -26,6 +29,7 @@ pub struct IndexSync {
     error: Option<SharedString>,
     tracked: HashMap<EntityId, Tracked>,
     _task: Task<()>,
+    _seal_on_quit: Subscription,
 }
 
 /// The index answers queries differently than before: saved pages were analyzed or removed, or
@@ -106,6 +110,8 @@ impl IndexSync {
                         .ok();
                     return;
                 }
+                let mut announced = None;
+                let mut unannounced = false;
                 loop {
                     let (pause, progress, error) = match Self::step(&client, cx).await {
                         Ok((0, generation)) => (Some(IDLE), Some((0, generation)), None),
@@ -119,8 +125,17 @@ impl IndexSync {
                                 this.remaining = remaining;
                                 cx.notify();
                             }
-                            if this.generation != generation {
-                                this.generation = generation;
+                            let now = cx.background_executor().now();
+                            unannounced |= this.generation != generation;
+                            this.generation = generation;
+                            if unannounced
+                                && (remaining == 0
+                                    || announced.is_none_or(|at: std::time::Instant| {
+                                        now.saturating_duration_since(at) >= ANNOUNCE
+                                    }))
+                            {
+                                announced = Some(now);
+                                unannounced = false;
                                 cx.emit(IndexChanged);
                             }
                         }
@@ -140,6 +155,16 @@ impl IndexSync {
                 error: None,
                 tracked: HashMap::new(),
                 _task: task,
+                // Quitting skips the idle seal, so the last changes would make the next open
+                // scan the whole index. A seal that misses the quit deadline only costs that scan.
+                _seal_on_quit: cx.on_app_quit(|this, _| {
+                    let seal = this.client.seal();
+                    async move {
+                        if let Ok(reply) = seal {
+                            reply.await.ok();
+                        }
+                    }
+                }),
             }
         })
     }
@@ -148,15 +173,27 @@ impl IndexSync {
     /// generation after it.
     async fn step(client: &IndexClient, cx: &mut gpui::AsyncApp) -> Result<(usize, u64), String> {
         let pending = ask(client.pending(BATCH)).await?;
-        for page in pending {
-            let work = cx.update(|cx| analyze(editor_text(&page.text), cx));
-            let Some(analysis) = cx.background_spawn(work).await else {
-                return Err("Cannot analyze pages because the Markdown grammar is unavailable. Rebuild Quire with its bundled grammars.".into());
-            };
-            ask(client.put(page.revision, analysis)).await?;
+        let analyses = pending
+            .into_iter()
+            .map(|page| {
+                let work = cx.update(|cx| analyze(editor_text(&page.text), cx));
+                let analysis = cx.background_spawn(work);
+                async move { analysis.await.map(|analysis| (page.revision, analysis)) }
+            })
+            .collect::<Vec<_>>();
+        let analyses = futures::future::join_all(analyses)
+            .await
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or("Cannot analyze pages because the Markdown grammar is unavailable. Rebuild Quire with its bundled grammars.")?;
+        if !analyses.is_empty() {
+            ask(client.put_many(analyses)).await?;
         }
         let (generation, remaining) =
             ask(client.with_generation(|index| index.unanalyzed())).await?;
+        if remaining == 0 {
+            ask(client.seal()).await?;
+        }
         Ok((remaining, generation))
     }
 
@@ -393,6 +430,100 @@ pub(crate) mod tests {
         );
         assert!(client.tag_names().unwrap().await.unwrap().is_empty());
         assert!(cx.read(|cx| sync.read(cx).error().is_none()));
+    }
+
+    #[gpui::test]
+    async fn a_rebuild_tells_views_once_a_second_and_when_it_finishes(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("local.sqlite");
+        let store = NotebookStore::open(&database, "nb", "local").unwrap();
+        let pages = BATCH * 3 + 1;
+        for page in 0..pages {
+            save(&store, &format!("Page {page}"), "- text\n");
+        }
+        let sync = cx
+            .update(|cx| {
+                IndexSync::spawn(database.clone(), default_config(DailyCalendar::utc()), cx)
+            })
+            .unwrap();
+        let told = std::rc::Rc::new(std::cell::Cell::new(0));
+        cx.update(|cx| {
+            let told = told.clone();
+            cx.subscribe(&sync, move |_, _: &IndexChanged, _| {
+                told.set(told.get() + 1)
+            })
+            .detach()
+        });
+        // The clock stands still, so the four batches fall within one second.
+        crate::test_wait::until(
+            cx,
+            Duration::from_millis(2),
+            crate::test_wait::park,
+            |cx| {
+                let client = cx.read(|cx| sync.read(cx).client().clone());
+                told.get() >= 2
+                    && futures::executor::block_on(client.unanalyzed().unwrap()).unwrap() == 0
+            },
+            |_| {
+                format!(
+                    "the rebuild of {pages} pages; views were told {}",
+                    told.get()
+                )
+            },
+        );
+        cx.run_until_parked();
+        assert_eq!(told.get(), 2, "the first batch and the finished index");
+    }
+
+    #[gpui::test]
+    async fn an_idle_index_is_sealed_so_the_next_open_skips_its_full_scan(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("local.sqlite");
+        let store = NotebookStore::open(&database, "nb", "local").unwrap();
+        save(&store, "Page", "- text\n");
+        let sealed = root.path().join("query-index.sqlite-sealed");
+        let sync = cx
+            .update(|cx| {
+                IndexSync::spawn(database.clone(), default_config(DailyCalendar::utc()), cx)
+            })
+            .unwrap();
+        crate::test_wait::until(
+            cx,
+            Duration::from_millis(2),
+            crate::test_wait::park,
+            |_| sealed.exists(),
+            |_| "the idle index to be sealed".into(),
+        );
+        let log = root.path().join("query-index.sqlite-wal");
+        assert_eq!(std::fs::metadata(&log).map_or(0, |log| log.len()), 0);
+
+        // The clock stands still, so no idle step seals this change; quitting does.
+        save(&store, "Later", "- more\n");
+        let client = cx.read(|cx| sync.read(cx).client().clone());
+        let (_, changed) = client
+            .with_generation(|index| index.refresh())
+            .unwrap()
+            .await
+            .unwrap();
+        assert!(changed);
+        assert!(std::fs::metadata(&log).unwrap().len() > 0);
+        cx.quit();
+        crate::test_wait::until(
+            cx,
+            Duration::from_millis(2),
+            |_| {},
+            |_| std::fs::metadata(&log).map_or(0, |log| log.len()) == 0,
+            |_| "the seal on quit".into(),
+        );
+        let file = root.path().join("query-index.sqlite");
+        assert_eq!(
+            std::fs::read_to_string(&sealed).unwrap().split(':').next(),
+            Some(std::fs::metadata(file).unwrap().len().to_string().as_str())
+        );
     }
 }
 

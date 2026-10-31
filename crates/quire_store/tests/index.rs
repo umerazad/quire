@@ -497,6 +497,7 @@ fn linked_tasks_come_from_other_pages_linking_by_any_name() -> Result<()> {
     let (store, database) = open(root.path())?;
     save(&store, "m", "Meeting.md", "m")?;
     save(&store, "w", "Work.md", "w")?;
+    save(&store, "d", "daily/2026-10-30.md", "d")?;
     let linked = |text: &str, state: &str, links: &[&str]| IndexedTask {
         links: links.iter().map(|link| link.to_string()).collect(),
         ..task(text, state, Default::default())
@@ -516,6 +517,8 @@ fn linked_tasks_come_from_other_pages_linking_by_any_name() -> Result<()> {
                     linked("Send notes", "next", &["meeting"]),
                     linked("Booked room", "done", &["Meeting.md"]),
                     linked("Unrelated", "next", &["Elsewhere"]),
+                    linked("Agenda item", "next", &["Elsewhere", "Meeting#Agenda"]),
+                    linked("On the day", "next", &["2026-10-30"]),
                 ],
                 ..Default::default()
             },
@@ -525,7 +528,18 @@ fn linked_tasks_come_from_other_pages_linking_by_any_name() -> Result<()> {
     analyze_all(&index, &analyses)?;
     let tasks = index.linked_tasks("m")?;
     let texts: Vec<&str> = tasks.iter().map(|task| task.text.as_str()).collect();
-    assert_eq!(texts, ["Send notes", "Booked room"]);
+    assert_eq!(texts, ["Send notes", "Booked room", "Agenda item"]);
+    let on_the_day: Vec<String> = index
+        .linked_tasks("d")?
+        .into_iter()
+        .map(|task| task.text)
+        .collect();
+    assert_eq!(
+        on_the_day,
+        ["On the day"],
+        "a date link names its daily page"
+    );
+    assert!(index.linked_tasks("missing")?.is_empty());
     let shown = |status| {
         tasks
             .iter()
@@ -534,7 +548,7 @@ fn linked_tasks_come_from_other_pages_linking_by_any_name() -> Result<()> {
     };
     assert_eq!(
         TaskStatus::ALL.map(shown),
-        [2, 1, 0, 1],
+        [3, 2, 0, 1],
         "All, Open, Due, Done"
     );
     Ok(())
@@ -996,5 +1010,305 @@ fn text_hits_find_substrings_in_unsaved_text_up_to_eight_per_page() -> Result<()
         hits("café", 40)?.is_empty(),
         "the open page's saved text no longer matches"
     );
+    Ok(())
+}
+
+/// Breaks the `blocks` table's root page, which opening the index never reads.
+fn damage_blocks(file: &Path) -> Result<()> {
+    let connection = sqlez::connection::Connection::open_file(file.to_str().unwrap());
+    let root: i64 =
+        connection.select_row("SELECT rootpage FROM sqlite_schema WHERE name='blocks'")?()?
+            .unwrap();
+    drop(connection);
+    let mut bytes = std::fs::read(file)?;
+    let page_size = match u16::from_be_bytes([bytes[16], bytes[17]]) {
+        1 => 65536,
+        size => size as usize,
+    };
+    bytes[(root as usize - 1) * page_size] = 0x01;
+    std::fs::write(file, bytes)?;
+    Ok(())
+}
+
+/// Copies the index file's size and times into its seal, as unnoticed media damage would leave it.
+fn forge_seal(file: &Path) -> Result<()> {
+    let metadata = std::fs::metadata(file)?;
+    let nanos = |time: std::time::SystemTime| {
+        time.duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    };
+    use std::os::unix::fs::MetadataExt as _;
+    let changed = (metadata.ctime() as i128) * 1_000_000_000 + metadata.ctime_nsec() as i128;
+    std::fs::write(
+        file.with_file_name("query-index.sqlite-sealed"),
+        format!(
+            "{}:{}:{changed}",
+            metadata.len(),
+            nanos(metadata.modified()?)
+        ),
+    )?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_sealed_index_opens_without_a_full_scan_until_its_file_changes() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    let names: Vec<String> = (0..40).map(|n| format!("P{n}.md")).collect();
+    for (n, name) in names.iter().enumerate() {
+        save(&store, &format!("p{n}"), name, "text")?;
+    }
+    let analysis = PageIndex {
+        blocks: (0..50).map(|n| block(None, n * 10)).collect(),
+        ..Default::default()
+    };
+    let analyses: Vec<(&str, PageIndex)> = names
+        .iter()
+        .map(|name| (name.as_str(), analysis.clone()))
+        .collect();
+    let file = root.path().join("query-index.sqlite");
+    let seal = root.path().join("query-index.sqlite-sealed");
+
+    let index = QueryIndex::open(&database, config(1))?;
+    analyze_all(&index, &analyses)?;
+    assert!(index.seal()?);
+    assert!(
+        index.seal()?,
+        "sealing an unchanged index again is harmless"
+    );
+    drop(index);
+    assert!(seal.exists());
+    let index = QueryIndex::open(&database, config(1))?;
+    assert_eq!(index.unanalyzed()?, 0);
+    drop(index);
+
+    damage_blocks(&file)?;
+    let index = QueryIndex::open(&database, config(1))?;
+    assert_eq!(
+        index.unanalyzed()?,
+        40,
+        "a sealed file that changed is scanned, found damaged, and rebuilt"
+    );
+    analyze_all(&index, &analyses)?;
+    assert!(index.seal()?);
+    drop(index);
+
+    damage_blocks(&file)?;
+    forge_seal(&file)?;
+    let index = QueryIndex::open(&database, config(1))?;
+    assert_eq!(
+        index.unanalyzed()?,
+        0,
+        "a file matching its seal opens without the full-file scan"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_crash_after_unsealed_changes_brings_back_the_full_scan() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "a", "A.md", "text")?;
+    let analysis = PageIndex {
+        blocks: vec![block(None, 0)],
+        ..Default::default()
+    };
+    let file = root.path().join("query-index.sqlite");
+    let index = QueryIndex::open(&database, config(1))?;
+    analyze_all(&index, &[("A.md", analysis)])?;
+    assert!(index.seal()?);
+    save(&store, "b", "B.md", "text")?;
+    analyze_all(&index, &[])?;
+    // The process dies with the change only in the write-ahead log.
+    std::mem::forget(index);
+
+    damage_blocks(&file)?;
+    forge_seal(&file)?;
+    let index = QueryIndex::open(&database, config(1))?;
+    assert_eq!(
+        index.unanalyzed()?,
+        2,
+        "a seal with changes waiting in the log is not trusted, so the damage is found"
+    );
+    Ok(())
+}
+
+#[test]
+fn closing_an_index_seals_its_last_changes() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "a", "A.md", "text")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    analyze_all(&index, &[])?;
+    drop(index);
+    let file = root.path().join("query-index.sqlite");
+    let sealed = std::fs::read_to_string(file.with_file_name("query-index.sqlite-sealed"))?;
+    assert_eq!(
+        sealed.split(':').next(),
+        Some(std::fs::metadata(&file)?.len().to_string().as_str())
+    );
+    Ok(())
+}
+
+fn tagged(tags: &[&str]) -> PageIndex {
+    PageIndex {
+        tagged: tags
+            .iter()
+            .enumerate()
+            .map(|(at, tag)| IndexedTag {
+                tag: (*tag).into(),
+                from: at as u32 * 10,
+                block_id: None,
+                snippet: "s".into(),
+            })
+            .collect(),
+        ..Default::default()
+    }
+}
+
+fn names(index: &QueryIndex) -> Result<Vec<(String, usize)>> {
+    Ok(index
+        .tag_names()?
+        .into_iter()
+        .map(|name| (name.label, name.count))
+        .collect())
+}
+
+#[test]
+fn tag_counts_follow_open_pages_and_saves_while_saved_tags_are_tallied_once() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "a", "A.md", "a")?;
+    save(&store, "b", "B.md", "b")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    analyze_all(
+        &index,
+        &[
+            ("A.md", tagged(&["#Plan"])),
+            ("B.md", tagged(&["#plan", "#Idea"])),
+        ],
+    )?;
+    let saved = vec![("#Idea".to_owned(), 1), ("#Plan".to_owned(), 2)];
+    assert_eq!(names(&index)?, saved);
+    assert_eq!(names(&index)?, saved);
+
+    index.set_overlay(
+        &JsString::from("a"),
+        &quire_store::index::Overlay {
+            path: "A.md".into(),
+            title: "A".into(),
+            index: tagged(&["#Other"]),
+        },
+    )?;
+    assert_eq!(
+        names(&index)?,
+        [
+            ("#Idea".into(), 1),
+            ("#Other".into(), 1),
+            ("#plan".into(), 1)
+        ],
+        "A's unsaved text replaces its saved tags, so B's spelling comes first"
+    );
+
+    index.release_overlay(&JsString::from("a"))?;
+    assert_eq!(names(&index)?, saved);
+
+    save(&store, "b", "B.md", "b2")?;
+    analyze_all(&index, &[("B.md", tagged(&["#Idea"]))])?;
+    assert_eq!(
+        names(&index)?,
+        [("#Idea".into(), 1), ("#Plan".into(), 1)],
+        "a save is counted"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_saved_page_keeps_its_analyzed_rows_until_its_new_save_is_analyzed() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "a", "Ana.md", "a")?;
+    save(&store, "w", "Work.md", "- [ ] Book the venue [[Ana]] #plan")?;
+    let work = |state: &str| PageIndex {
+        tasks: vec![IndexedTask {
+            links: vec!["Ana".into()],
+            ..task("Book the venue", state, Default::default())
+        }],
+        links: vec![link("page", "Ana", 2)],
+        ..tagged(&["#plan"])
+    };
+    let index = QueryIndex::open(&database, config(1))?;
+    analyze_all(&index, &[("Work.md", work("next"))])?;
+    let states = |index: &QueryIndex| -> Result<Vec<String>> {
+        Ok(index
+            .linked_tasks("a")?
+            .into_iter()
+            .map(|task| format!("{:?}", task.state))
+            .collect())
+    };
+    let open = states(&index)?;
+    assert_eq!(open.len(), 1);
+    let listed = |index: &QueryIndex| -> Result<usize> {
+        Ok(index
+            .pages()?
+            .iter()
+            .filter(|listed| listed.page.path == "Work.md")
+            .count())
+    };
+
+    save(&store, "w", "Work.md", "- [x] Book the venue [[Ana]] #plan")?;
+    save(
+        &store,
+        "w",
+        "Work.md",
+        "- [x] Book the venue [[Ana]] #plan ",
+    )?;
+    assert_eq!(index.unanalyzed()?, 1, "only the newest save waits");
+    assert_eq!(
+        states(&index)?,
+        open,
+        "the last analysis answers until the new save is analyzed, never an empty list"
+    );
+    assert_eq!(index.backlinks(&JsString::from("a"))?.len(), 1);
+    assert_eq!(names(&index)?, [("#plan".to_owned(), 1)]);
+    assert_eq!(listed(&index)?, 1, "the page is listed once");
+    assert!(index.find_page("Work")?.is_some());
+    let unread = |index: &QueryIndex| -> Result<bool> {
+        Ok(index
+            .relocation(&JsString::from("a"))?
+            .unwrap()
+            .candidates
+            .iter()
+            .any(|page| page.path == "Work.md"))
+    };
+    assert!(
+        unread(&index)?,
+        "a page whose newest save is unread is still read in full"
+    );
+    assert_eq!(index.folder_link_candidates("nowhere")?.len(), 1);
+
+    analyze_all(&index, &[("Work.md", work("done"))])?;
+    let done = states(&index)?;
+    assert_eq!(done.len(), 1);
+    assert_ne!(done, open, "the new analysis replaced the old");
+    assert_eq!(index.backlinks(&JsString::from("a"))?.len(), 1);
+    assert_eq!(names(&index)?, [("#plan".to_owned(), 1)]);
+    assert_eq!(listed(&index)?, 1);
+    assert!(index.folder_link_candidates("nowhere")?.is_empty());
+
+    store.save(&Edit {
+        page: "w".into(),
+        path: "Work.md".into(),
+        text: "".into(),
+        base: store.heads("w")?,
+        deleted: true,
+        created: 1,
+        recovery: None,
+    })?;
+    assert!(states(&index)?.is_empty(), "a deleted page leaves at once");
+    assert_eq!(listed(&index)?, 0);
     Ok(())
 }

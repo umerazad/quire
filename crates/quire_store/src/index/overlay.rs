@@ -1,6 +1,8 @@
 //! Open pages shadow their committed rows with live editor analysis. Overlay rows live in TEMP
 //! tables on the index connection, so they are bounded by open pages and vanish with the worker.
 //! Queries read `live_*` views: a page's committed rows drop out while it has an overlay.
+//! Committed rows hold at most two revisions of a page: its selected head, and while that head
+//! waits for analysis, the last analyzed revision, which queries read in its place.
 
 use super::{PageIndex, QueryIndex, strip_markdown};
 use crate::sync::json::JsString;
@@ -27,9 +29,11 @@ pub(super) const TABLES: &[&str] = &[
     "CREATE TEMP VIEW live_tasks AS
        SELECT revision,ordinal,key,id,start,raw,text,state,tags,links,dates,completed,created,due FROM main.tasks
        UNION ALL SELECT revision,ordinal,key,id,start,raw,text,state,tags,links,dates,completed,created,due FROM temp.overlay_tasks",
+    // A new save waiting for analysis stays hidden behind its page's last analyzed revision.
     "CREATE TEMP VIEW live_pages AS
-       SELECT revision,page,path,name_key,title,title_key,date,deleted,analyzed FROM main.pages
+       SELECT revision,page,path,name_key,title,title_key,date,deleted,analyzed FROM main.pages p
          WHERE page NOT IN (SELECT page FROM temp.overlay_pages)
+           AND NOT (analyzed=0 AND EXISTS (SELECT 1 FROM main.pages o WHERE o.page=p.page AND o.analyzed=1))
        UNION ALL SELECT revision,page,path,name_key,title,title_key,date,deleted,analyzed FROM temp.overlay_pages",
     "CREATE TEMP VIEW live_blocks AS
        SELECT revision,ordinal,key,id,start,finish,content_from,content_to,subtree_to,depth,kind,parent,text,content FROM main.blocks
@@ -147,5 +151,11 @@ impl QueryIndex {
 
     pub(super) fn bump(&self) {
         self.generation.set(self.generation.get() + 1);
+    }
+
+    /// Committed rows changed: pages were catalogued, removed, or analyzed.
+    pub(super) fn bump_committed(&self) {
+        self.committed.set(self.committed.get() + 1);
+        self.bump();
     }
 }

@@ -148,7 +148,19 @@ fn folder_and_store_notebooks_answer_queries_alike_and_follow_file_changes() -> 
         "unchanged until invalidated"
     );
     filed.invalidate();
+    let beta = JsString::from(page_id_for_path("Beta.md").as_str());
+    assert_eq!(filed.unanalyzed()?, 1);
+    assert_eq!(
+        filed.backlinks(&beta)?.len(),
+        1,
+        "a changed file keeps its links until its new text is analyzed"
+    );
+    assert!(
+        filed.find_page("Gamma")?.is_none(),
+        "a removed file leaves at once"
+    );
     analyze_all(&filed)?;
+    assert_eq!(filed.backlinks(&beta)?.len(), 1);
     assert!(filed.generation() > generation);
     assert_eq!(filed.search("wombat")?.len(), 1);
     assert!(filed.search("quokka")?.is_empty());

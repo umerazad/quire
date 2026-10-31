@@ -4,12 +4,9 @@
 //! failures a run can end in.
 
 use super::*;
-use crate::{
-    ai::process::tests::{Bench, fake_cli},
-    test_patience::PATIENCE,
-};
+use crate::ai::process::tests::{Bench, fake_cli};
 use futures::FutureExt as _;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 fn job(format: Format, text: &str, transcripts: Option<PathBuf>) -> Job {
     Job {
@@ -46,11 +43,13 @@ fn file(produced: Produced) -> Vec<u8> {
 }
 
 fn wait_until(what: &str, done: impl Fn() -> bool) {
-    let deadline = Instant::now() + PATIENCE;
-    while !done() {
-        assert!(Instant::now() < deadline, "timed out waiting until {what}");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    crate::test_wait::until(
+        &mut (),
+        Duration::from_millis(20),
+        |_| {},
+        |_| done(),
+        |_| what.to_owned(),
+    );
 }
 
 fn alive(pid: &str) -> bool {

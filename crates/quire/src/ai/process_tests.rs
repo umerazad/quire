@@ -116,11 +116,13 @@ fn alive(pid: &str) -> bool {
 }
 
 fn wait_until(what: &str, done: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !done() {
-        assert!(Instant::now() < deadline, "timed out waiting until {what}");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    crate::test_wait::until(
+        &mut (),
+        Duration::from_millis(20),
+        |_| {},
+        |_| done(),
+        |_| what.to_owned(),
+    );
 }
 
 #[test]

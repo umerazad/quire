@@ -50,6 +50,12 @@ impl PageAnalysis {
 
     /// Computes block analysis lazily and shares it for the current source version.
     /// Metadata rendering uses current_inline instead to avoid foreground block work.
+    /// Whether blocks were parsed for some version of the page.
+    #[cfg(test)]
+    pub fn blocks_parsed(&self) -> bool {
+        self.parsed.borrow().is_some()
+    }
+
     pub fn current(&self, cx: &App) -> Option<Arc<ParsedBlocks>> {
         let source = self.source.read(cx);
         let snapshot = source.snapshot();

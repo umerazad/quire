@@ -10,7 +10,7 @@ use std::{
     io::Write as _,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 pub(crate) fn server() -> PathBuf {
@@ -70,12 +70,13 @@ pub(crate) fn run(
         .write_all(format!("{}\n", lines.join("\n")).as_bytes())
         .unwrap();
     drop(input);
-    let deadline = Instant::now() + crate::test_patience::PATIENCE;
-    while child.try_wait().unwrap().is_none() {
-        cx.run_until_parked();
-        assert!(Instant::now() < deadline, "the MCP server did not exit");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    crate::test_wait::until(
+        cx,
+        Duration::from_millis(5),
+        crate::test_wait::park,
+        |_| child.try_wait().unwrap().is_some(),
+        |_| "the MCP server to exit".into(),
+    );
     let output = child.wait_with_output().unwrap();
     let mut replies: Vec<Value> = String::from_utf8_lossy(&output.stdout)
         .lines()

@@ -85,42 +85,27 @@ fn start(
 }
 
 /// Lets storage threads answer without moving the fake clock.
-fn settle(cx: &mut TestAppContext, what: &str, mut done: impl FnMut(&mut TestAppContext) -> bool) {
+fn settle(cx: &mut TestAppContext, what: &str, done: impl FnMut(&mut TestAppContext) -> bool) {
     cx.executor().allow_parking();
-    let deadline = std::time::Instant::now() + crate::test_patience::PATIENCE;
-    loop {
-        cx.run_until_parked();
-        if done(cx) {
-            return;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    crate::test_wait::until(
+        cx,
+        Duration::from_millis(1),
+        crate::test_wait::park,
+        done,
+        |_| what.into(),
+    );
 }
 
 /// Moves the clock in small steps, letting storage threads answer, until `done` holds.
-fn run_until(
-    cx: &mut TestAppContext,
-    what: &str,
-    mut done: impl FnMut(&mut TestAppContext) -> bool,
-) {
+fn run_until(cx: &mut TestAppContext, what: &str, done: impl FnMut(&mut TestAppContext) -> bool) {
     cx.executor().allow_parking();
-    let deadline = std::time::Instant::now() + crate::test_patience::PATIENCE;
-    loop {
-        cx.executor().advance_clock(Duration::from_millis(25));
-        cx.run_until_parked();
-        if done(cx) {
-            return;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    crate::test_wait::until(
+        cx,
+        Duration::from_millis(1),
+        crate::test_wait::advance(Duration::from_millis(25)),
+        done,
+        |_| what.into(),
+    );
 }
 
 fn block<T>(reply: Result<Reply<T>, QueueError>) -> T {

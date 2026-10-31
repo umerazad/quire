@@ -46,22 +46,16 @@ fn advance(by: std::time::Duration, cx: &mut TestAppContext) {
 fn wait_for_switch(
     cx: &mut TestAppContext,
     what: &str,
-    mut done: impl FnMut(&mut TestAppContext) -> bool,
+    done: impl FnMut(&mut TestAppContext) -> bool,
 ) {
     cx.executor().allow_parking();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    loop {
-        advance(POLL, cx);
-        if done(cx) {
-            return;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for {what}; last notice: {}",
-            notice(cx)
-        );
-        std::thread::sleep(std::time::Duration::from_millis(25));
-    }
+    crate::test_wait::until(
+        cx,
+        std::time::Duration::from_millis(25),
+        |cx| advance(POLL, cx),
+        done,
+        |cx| format!("{what}; last notice: {}", notice(cx)),
+    );
 }
 
 fn type_into(notebook: &Notebook, keys: &str, cx: &mut TestAppContext) {

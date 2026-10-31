@@ -12,6 +12,7 @@ use std::{
 use theme::ActiveTheme;
 
 mod backups;
+mod bench;
 mod block_move_views;
 mod document_export;
 mod exchange;
@@ -377,6 +378,7 @@ impl StoredWindow {
         this.load_settings(window, cx);
         #[cfg(unix)]
         this.offer_notebook_tools(cx);
+        bench::start(window, cx);
         this
     }
 
@@ -845,6 +847,7 @@ impl Render for StoredWindow {
             )
         })
         .children(self.render_menu())
+        .children(bench::marker(cx))
     }
 }
 

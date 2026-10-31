@@ -5,10 +5,7 @@
 use super::*;
 use crate::ai::process::tests::{Bench, fake_cli};
 use gpui::TestAppContext;
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{sync::Arc, time::Duration};
 
 pub(crate) async fn init_ai(bench: &Bench, cx: &mut TestAppContext) -> Arc<fs::FakeFs> {
     cx.executor().allow_parking();
@@ -41,17 +38,15 @@ pub(crate) async fn init_ai(bench: &Bench, cx: &mut TestAppContext) -> Arc<fs::F
 pub(crate) fn wait_until(
     cx: &mut TestAppContext,
     what: &str,
-    mut done: impl FnMut(&mut TestAppContext) -> bool,
+    done: impl FnMut(&mut TestAppContext) -> bool,
 ) {
-    let deadline = Instant::now() + crate::test_patience::PATIENCE;
-    loop {
-        cx.run_until_parked();
-        if done(cx) {
-            return;
-        }
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    crate::test_wait::until(
+        cx,
+        Duration::from_millis(5),
+        crate::test_wait::park,
+        done,
+        |_| what.to_owned(),
+    );
 }
 
 /// Points Claude Code at the fake CLI and passes Test, as a user would in Settings.

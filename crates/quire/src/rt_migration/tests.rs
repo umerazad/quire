@@ -354,7 +354,7 @@ mod window {
     use gpui::{AppContext as _, TestAppContext, WindowHandle};
     use quire_core::ai::{Backend, tools::Writes};
     use settings::Settings as _;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     async fn init(cx: &mut TestAppContext) {
         cx.update(|cx| crate::editor_host::init(cx).expect("editor initialization"));
@@ -371,16 +371,13 @@ mod window {
 
     fn settle(window: WindowHandle<MigrationWindow>, cx: &mut TestAppContext) {
         cx.executor().allow_parking();
-        let deadline = Instant::now() + crate::test_patience::PATIENCE;
-        loop {
-            cx.executor().advance_clock(Duration::from_millis(100));
-            cx.run_until_parked();
-            if !window.update(cx, |view, _, _| view.is_running()).unwrap() {
-                return;
-            }
-            assert!(Instant::now() < deadline, "timed out waiting for the step");
-            std::thread::sleep(Duration::from_millis(2));
-        }
+        crate::test_wait::until(
+            cx,
+            Duration::from_millis(2),
+            crate::test_wait::advance(Duration::from_millis(100)),
+            |cx| !window.update(cx, |view, _, _| view.is_running()).unwrap(),
+            |_| "the step".into(),
+        );
     }
 
     fn report(window: WindowHandle<MigrationWindow>, cx: &mut TestAppContext) -> String {

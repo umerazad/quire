@@ -28,7 +28,7 @@ fn key(document: &DiskDocument, page: &str) -> String {
 
 /// Size, modification time, and (on Unix) change time; a tool that restores a modification time
 /// cannot restore the change time.
-fn stamp(path: &Path) -> Option<String> {
+pub(super) fn stamp(path: &Path) -> Option<String> {
     let metadata = std::fs::metadata(path).ok()?;
     let nanos = |time: std::io::Result<std::time::SystemTime>| {
         time.ok()
@@ -121,14 +121,12 @@ impl QueryIndex {
             .chain(added.iter().map(|(page, _, document)| key(document, page)))
             .collect();
         let changed = self.transaction(|| {
-            let present: Vec<String> = self.connection.select("SELECT revision FROM pages")?()?;
+            let present: HashSet<String> = self
+                .connection
+                .select("SELECT revision FROM pages")?()?
+            .into_iter()
+            .collect();
             let mut changed = false;
-            for revision in present.iter().filter(|revision| !wanted.contains(*revision)) {
-                self.connection
-                    .exec_bound("DELETE FROM pages WHERE revision=?")?(revision.as_str())?;
-                changed = true;
-            }
-            let present: HashSet<String> = present.into_iter().collect();
             for (page, stamp, document) in &added {
                 let revision = key(document, page);
                 if !present.contains(&revision) {
@@ -149,10 +147,14 @@ impl QueryIndex {
                     "INSERT INTO folder_files(path,stamp,revision) VALUES (?,?,?) ON CONFLICT(path) DO UPDATE SET stamp=excluded.stamp,revision=excluded.revision",
                 )?((document.path.as_str(), stamp.as_str(), revision.as_str()))?;
             }
-            Ok(changed)
+            let stale: Vec<String> = present
+                .into_iter()
+                .filter(|revision| !wanted.contains(revision))
+                .collect();
+            Ok(self.retire(&stale)? || changed)
         })?;
         if changed {
-            self.bump();
+            self.bump_committed();
             self.settle_releases()?;
         }
         Ok(changed)

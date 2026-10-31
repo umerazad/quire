@@ -36,14 +36,57 @@ pub struct TagCount {
     pub count: usize,
 }
 
+/// Saved tags by key, tallied at one committed state.
+pub(super) type TagTallies = std::rc::Rc<HashMap<String, TagTally>>;
+
+/// How many blocks use a tag, and its spelling where it is first used by path and offset.
+#[derive(Clone, Debug, Default)]
+pub(super) struct TagTally {
+    count: usize,
+    first: Option<TagUse>,
+}
+
+#[derive(Clone, Debug)]
+struct TagUse {
+    label: String,
+    path: String,
+    from: u32,
+    page: String,
+}
+
+impl TagTally {
+    fn consider(&mut self, (label, path, from, page): (String, String, u32, String)) {
+        let earlier = self.first.as_ref().is_none_or(|first| {
+            utf16_order(&path, &first.path).then(from.cmp(&first.from)) == Ordering::Less
+        });
+        if earlier {
+            self.first = Some(TagUse {
+                label,
+                path,
+                from,
+                page,
+            });
+        }
+    }
+}
+
 pub(super) const PAGE_COLUMNS: &str = "p.revision,p.page,p.path,p.title";
 pub(super) type PageRow = (String, String, String, String);
+/// A page's `name_key`, `title_key`, and `date`.
+type PageKeys = (String, String, Option<String>);
 type LinkRow = (
     PageRow,
     (String, String, String, Option<String>, Option<String>),
     (u32, u32, String),
 );
 const LINK_SELECT: &str = "SELECT p.revision,p.page,p.path,p.title,l.kind,l.syntax,l.target,l.label,l.media,l.start,l.finish,l.text FROM live_links l JOIN live_pages p ON p.revision=l.revision WHERE p.deleted=0 AND ";
+
+/// The live, undeleted page of every block with an ID, one row per block.
+pub(super) fn block_pages() -> String {
+    format!(
+        "SELECT {PAGE_COLUMNS} FROM live_blocks b JOIN live_pages p ON p.revision=b.revision WHERE p.deleted=0 AND b.id=?"
+    )
+}
 
 pub(super) fn page_ref((revision, page, path, title): PageRow) -> Result<PageRef> {
     let page = Json::parse(page.as_bytes())
@@ -114,38 +157,83 @@ impl QueryIndex {
     }
 
     pub(super) fn resolve_page(&self, target: &str) -> Result<Option<PageRef>> {
+        self.resolve_with(target, |column, value| {
+            self.pages_where(&format!("p.{column}=?"), value)
+        })
+    }
+
+    /// [`Self::resolve_page`] for many names: every live page read once and grouped by name,
+    /// title, and date, because preparing its queries per name dominated the task browser.
+    pub(super) fn page_resolver(&self) -> Result<impl Fn(&str) -> Result<Option<PageRef>> + '_> {
+        let rows: Vec<(PageRow, PageKeys)> =
+            self.connection.select(&format!(
+                "SELECT {PAGE_COLUMNS},p.name_key,p.title_key,p.date FROM live_pages p WHERE p.deleted=0"
+            ))?()?;
+        let mut keyed: HashMap<(&'static str, String), Vec<PageRef>> = HashMap::new();
+        for (page, (name, title, date)) in rows {
+            let page = page_ref(page)?;
+            for key in [
+                ("name_key", Some(name)),
+                ("title_key", Some(title)),
+                ("date", date),
+            ] {
+                if let (column, Some(value)) = key {
+                    keyed.entry((column, value)).or_default().push(page.clone());
+                }
+            }
+        }
+        Ok(move |target: &str| {
+            self.resolve_with(target, |column, value| {
+                Ok(keyed
+                    .get(&(column, value.to_owned()))
+                    .cloned()
+                    .unwrap_or_default())
+            })
+        })
+    }
+
+    /// The reference resolution order over `pages(column, value)`, which lists the live pages
+    /// whose `name_key`, `title_key`, or `date` column holds `value`.
+    fn resolve_with(
+        &self,
+        target: &str,
+        mut pages: impl FnMut(&'static str, &str) -> Result<Vec<PageRef>>,
+    ) -> Result<Option<PageRef>> {
         let name = page_key(target);
-        let mut exact = self.pages_where("p.name_key=?", &name)?;
+        let mut exact = pages("name_key", &name)?;
         if !exact.is_empty() {
             // Paths differing only in case share a name; take a stable one.
             exact.sort_by(|a, b| utf16_order(&a.path, &b.path));
             return Ok(exact.into_iter().next());
         }
-        let titled = self.pages_where("p.title_key=?", &name)?;
+        let titled = pages("title_key", &name)?;
         if !titled.is_empty() {
             return Ok((titled.len() == 1)
                 .then(|| titled.into_iter().next())
                 .flatten());
         }
-        match self.date(target) {
-            Some(date) => self.daily_page(&date),
-            None => Ok(None),
-        }
+        Ok(match self.date(target) {
+            Some(date) => self.preferred_daily(&date, pages("date", &date)?),
+            None => None,
+        })
     }
 
     /// The reference `dailyPage`: among pages titled for `date`, prefer the one in the
     /// configured daily folder, otherwise the first by path.
     pub fn daily_page(&self, date: &str) -> Result<Option<PageRef>> {
-        let mut pages = self.pages_where("p.date=?", date)?;
+        Ok(self.preferred_daily(date, self.pages_where("p.date=?", date)?))
+    }
+
+    fn preferred_daily(&self, date: &str, mut pages: Vec<PageRef>) -> Option<PageRef> {
         pages.sort_by(|a, b| utf16_order(&a.path, &b.path));
         let folder = self.layout.folder(date, &self.calendar).ok();
         let preferred = pages.iter().position(|page| {
             Some(&page.path[..page.path.rfind('/').unwrap_or(0)]) == folder.as_deref()
         });
-        Ok(match preferred {
+        match preferred {
             Some(index) => Some(pages.swap_remove(index)),
             None => pages.into_iter().next(),
-        })
+        }
     }
 
     /// The reference `resolve`: a block reference names exactly one block, optionally within
@@ -160,23 +248,22 @@ impl QueryIndex {
             Some(index) => Some(self.resolve_page(&target[..index])?),
             None => None,
         };
-        let rows: Vec<(PageRow, i64)> = self.connection.select_bound(&format!(
-            "SELECT {PAGE_COLUMNS},count(*) FROM live_blocks b JOIN live_pages p ON p.revision=b.revision WHERE p.deleted=0 AND b.id=? GROUP BY p.revision"
-        ))?(block_key(target))?;
-        let mut matches: Vec<(PageRow, i64)> = rows
+        // One row per block: grouping here stops SQLite from flattening the live views, so it
+        // copied every page into a temporary index on each call (2 s per backlinks query at 5x).
+        let rows: Vec<PageRow> = self.connection.select_bound(&block_pages())?(block_key(target))?;
+        let mut matches: Vec<PageRow> = rows
             .into_iter()
-            .filter(|((revision, ..), _)| match &scope {
+            .filter(|(revision, ..)| match &scope {
                 Some(scope) => scope
                     .as_ref()
                     .is_some_and(|page| &page.revision == revision),
                 None => true,
             })
             .collect();
-        let total: i64 = matches.iter().map(|(_, count)| count).sum();
-        if total != 1 {
-            return Ok(None);
+        match (matches.pop(), matches.is_empty()) {
+            (Some(only), true) => page_ref(only).map(Some),
+            _ => Ok(None),
         }
-        page_ref(matches.remove(0).0).map(Some)
     }
 
     /// The reference `backlinks`: links naming the page by path or title, date links it owns as
@@ -288,27 +375,87 @@ impl QueryIndex {
     }
 
     /// The reference `tagNames`: each tag key with its block count, labelled by its first use.
+    /// Committed tags are tallied once per committed change: tag completion asks on every
+    /// keystroke, and tallying all 198,000 tagged blocks at 5x took 125 ms each time. Open pages'
+    /// overlays are folded in on each call.
     pub fn tag_names(&self) -> Result<Vec<TagCount>> {
         self.refresh()?;
-        let rows: Vec<(String, String, String, u32)> = self.connection.select(
-            "SELECT t.tag_key,t.tag,p.path,t.start FROM live_tagged t JOIN live_pages p ON p.revision=t.revision WHERE p.deleted=0",
-        )?()?;
-        let mut groups: HashMap<String, (String, String, u32, usize)> = HashMap::new();
-        for (key, tag, path, from) in rows {
-            let entry = groups
-                .entry(key)
-                .or_insert_with(|| (tag.clone(), path.clone(), from, 0));
-            if utf16_order(&path, &entry.1).then(from.cmp(&entry.2)) == Ordering::Less {
-                *entry = (tag, path, from, entry.3);
+        let mut tallies = (*self.committed_tags()?).clone();
+        let shadowed: Vec<String> = self
+            .connection
+            .select("SELECT page FROM temp.overlay_pages")?()?;
+        let mut stale = BTreeSet::new();
+        for page in &shadowed {
+            let keys: Vec<String> = self.connection.select_bound(
+                "SELECT t.tag_key FROM main.tagged t JOIN main.pages p ON p.revision=t.revision
+                 WHERE p.deleted=0 AND p.page=?",
+            )?(page.as_str())?;
+            for key in keys {
+                if let Some(tally) = tallies.get_mut(&key) {
+                    tally.count -= 1;
+                    if tally
+                        .first
+                        .as_ref()
+                        .is_some_and(|first| &first.page == page)
+                    {
+                        stale.insert(key);
+                    }
+                }
             }
-            entry.3 += 1;
         }
-        let mut names: Vec<_> = groups
+        for key in stale {
+            let uses: Vec<(String, String, u32, String)> = self.connection.select_bound(
+                "SELECT t.tag,p.path,t.start,p.page FROM main.tagged t JOIN main.pages p ON p.revision=t.revision
+                 WHERE p.deleted=0 AND t.tag_key=? AND p.page NOT IN (SELECT page FROM temp.overlay_pages)",
+            )?(key.as_str())?;
+            let tally = tallies
+                .get_mut(&key)
+                .expect("stale keys come from the tallies");
+            tally.first = None;
+            uses.into_iter().for_each(|found| tally.consider(found));
+        }
+        let overlaid: Vec<(String, (String, String, u32, String))> = self.connection.select(
+            "SELECT t.tag_key,t.tag,p.path,t.start,p.page FROM temp.overlay_tagged t
+             JOIN temp.overlay_pages p ON p.revision=t.revision WHERE p.deleted=0",
+        )?()?;
+        for (key, found) in overlaid {
+            let tally = tallies.entry(key).or_default();
+            tally.count += 1;
+            tally.consider(found);
+        }
+        let mut names: Vec<_> = tallies
             .into_values()
-            .map(|(label, _, _, count)| TagCount { label, count })
+            .filter_map(|tally| {
+                Some(TagCount {
+                    label: tally.first.filter(|_| tally.count > 0)?.label,
+                    count: tally.count,
+                })
+            })
             .collect();
         names.sort_by(|a, b| self.collator.compare(&a.label, &b.label));
         Ok(names)
+    }
+
+    fn committed_tags(&self) -> Result<TagTallies> {
+        let committed = self.committed.get();
+        if let Some((at, tallies)) = &*self.tag_tallies.borrow()
+            && *at == committed
+        {
+            return Ok(tallies.clone());
+        }
+        let rows: Vec<(String, (String, String, u32, String))> = self.connection.select(
+            "SELECT t.tag_key,t.tag,p.path,t.start,p.page FROM main.tagged t
+             JOIN main.pages p ON p.revision=t.revision WHERE p.deleted=0",
+        )?()?;
+        let mut tallies: HashMap<String, TagTally> = HashMap::new();
+        for (key, found) in rows {
+            let tally = tallies.entry(key).or_default();
+            tally.count += 1;
+            tally.consider(found);
+        }
+        let tallies = std::rc::Rc::new(tallies);
+        *self.tag_tallies.borrow_mut() = Some((committed, tallies.clone()));
+        Ok(tallies)
     }
 
     /// Pages whose block or front matter tags this edit would change, ordered by path.

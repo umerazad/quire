@@ -231,8 +231,8 @@ fn files_tree_expands_folders_and_opens_pages_from_the_keyboard(cx: &mut TestApp
     let names = |cx: &mut TestAppContext| {
         read(&notebook, cx, |view, _| {
             view.file_rows()
-                .into_iter()
-                .map(|row| row.path)
+                .iter()
+                .map(|row| row.path.clone())
                 .collect::<Vec<_>>()
         })
     };

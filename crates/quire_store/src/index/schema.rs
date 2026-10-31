@@ -1,7 +1,7 @@
 use super::APPLICATION_ID;
 use anyhow::{Context as _, Result, ensure};
 use sqlez::connection::Connection;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Bump when the index tables change; a mismatch rebuilds the index.
 const FORMAT: i32 = 4;
@@ -59,6 +59,7 @@ pub(super) enum Notebook<'a> {
 }
 
 pub(super) fn open(path: &Path, notebook: Notebook<'_>, analyzer: i64) -> Result<Connection> {
+    let sealed = is_sealed(path);
     let name = path
         .to_str()
         .context("The notebook folder path is not valid Unicode. Move the notebook and retry.")?;
@@ -111,11 +112,13 @@ pub(super) fn open(path: &Path, notebook: Notebook<'_>, analyzer: i64) -> Result
         application == Some(APPLICATION_ID) && format == Some(FORMAT),
         "The query index was written by another Quire version."
     );
-    let check: Option<String> = connection.select_row("PRAGMA main.quick_check(1)")?()?;
-    ensure!(
-        check.as_deref() == Some("ok"),
-        "The query index failed its integrity check."
-    );
+    if !sealed {
+        let check: Option<String> = connection.select_row("PRAGMA main.quick_check(1)")?()?;
+        ensure!(
+            check.as_deref() == Some("ok"),
+            "The query index failed its integrity check."
+        );
+    }
     let stored: Option<(String, i64)> =
         connection.select_row("SELECT notebook,analyzer FROM meta")?()?;
     ensure!(
@@ -123,6 +126,56 @@ pub(super) fn open(path: &Path, notebook: Notebook<'_>, analyzer: i64) -> Result
         "The query index belongs to another notebook or analyzer version."
     );
     Ok(connection)
+}
+
+/// The file beside the index naming the index file's size and times when it was last checked or
+/// checkpointed into a fully synced state with an empty write-ahead log.
+fn seal_path(path: &Path) -> PathBuf {
+    suffixed(path, "-sealed")
+}
+
+fn suffixed(path: &Path, suffix: &str) -> PathBuf {
+    let mut file = path.as_os_str().to_owned();
+    file.push(suffix);
+    file.into()
+}
+
+/// Whether the index file is exactly as a sealed session left it: same size and times, and no
+/// committed changes waiting in the write-ahead log. SQLite's write-ahead log keeps the file
+/// consistent through crashes, so an unchanged sealed file needs no integrity scan; anything else,
+/// such as a crash before sealing or an outside edit, is scanned on open.
+fn is_sealed(path: &Path) -> bool {
+    let log_empty = std::fs::metadata(suffixed(path, "-wal")).map_or(true, |log| log.len() == 0);
+    log_empty
+        && super::folder::stamp(path).is_some_and(|stamp| {
+            std::fs::read_to_string(seal_path(path)).is_ok_and(|sealed| sealed == stamp)
+        })
+}
+
+/// Checkpoints the whole write-ahead log into the index file and records the file's stamp, so the
+/// next open can skip the integrity scan. Returns the stamp sealed, or `None` when readers kept
+/// the log from emptying.
+pub(super) fn seal(
+    connection: &Connection,
+    path: &Path,
+    sealed: Option<&str>,
+) -> Result<Option<String>> {
+    let (busy, _, _): (i64, i64, i64) =
+        connection.select_row("PRAGMA main.wal_checkpoint(TRUNCATE)")?()?
+            .context("SQLite returned no checkpoint result. Reopen the notebook.")?;
+    if busy != 0 || !std::fs::metadata(suffixed(path, "-wal")).map_or(true, |log| log.len() == 0) {
+        return Ok(None);
+    }
+    let Some(stamp) = super::folder::stamp(path) else {
+        return Ok(None);
+    };
+    if sealed != Some(stamp.as_str()) {
+        let written = suffixed(path, "-sealing");
+        std::fs::write(&written, &stamp)
+            .and_then(|()| std::fs::rename(&written, seal_path(path)))
+            .with_context(|| format!("Cannot record that the query index {} is consistent. Check write access to its folder.", path.display()))?;
+    }
+    Ok(Some(stamp))
 }
 
 /// Percent-encodes the characters SQLite URI filenames treat specially.
@@ -139,7 +192,7 @@ pub(crate) fn uri_path(path: &str) -> String {
 
 /// Deletes the index and its WAL files. Only derived data is lost.
 pub(super) fn remove(path: &Path) -> Result<()> {
-    for suffix in ["", "-wal", "-shm"] {
+    for suffix in ["-sealed", "", "-wal", "-shm"] {
         let mut file = path.as_os_str().to_owned();
         file.push(suffix);
         match std::fs::remove_file(&file) {

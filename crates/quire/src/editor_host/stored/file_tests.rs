@@ -454,14 +454,55 @@ fn a_rename_is_followed_until_the_page_list_shows_its_new_title(cx: &mut TestApp
 }
 
 #[gpui::test]
+fn the_files_tree_is_rebuilt_only_when_its_pages_or_folders_change(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&PAGES, "o", cx);
+    let listed = |path: &str| quire_store::index::ListedPage {
+        page: quire_store::index::PageRef {
+            page: path.into(),
+            revision: String::new(),
+            path: path.into(),
+            title: path.into(),
+        },
+        date: None,
+    };
+    let paths = |rows: &[quire_core::workspace::TreeRow]| -> Vec<String> {
+        rows.iter().map(|row| row.path.clone()).collect()
+    };
+    notebook
+        .window
+        .update(cx, |view, _, _| {
+            view.nav.pages = vec![listed("Work/A.md"), listed("B.md")];
+            let first = view.file_rows();
+            assert!(
+                std::rc::Rc::ptr_eq(&first, &view.file_rows()),
+                "a second look in the same frame reuses the rows"
+            );
+            assert_eq!(paths(&first), ["Work", "B.md"]);
+
+            view.nav.workspace.toggle_expanded("Work");
+            assert_eq!(paths(&view.file_rows()), ["Work", "Work/A.md", "B.md"]);
+
+            view.nav.pages = vec![listed("Work/A.md"), listed("C.md")];
+            assert_eq!(paths(&view.file_rows()), ["Work", "Work/A.md", "C.md"]);
+
+            view.nav.workspace.add_folder("Empty");
+            assert_eq!(
+                paths(&view.file_rows()),
+                ["Empty", "Work", "Work/A.md", "C.md"]
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn new_folder_here_shows_an_empty_folder_until_it_is_deleted(cx: &mut TestAppContext) {
     let notebook = open_notebook(&PAGES, "k", cx);
     let folders = |cx: &mut TestAppContext| {
         read(&notebook, cx, |view, _| {
             view.file_rows()
-                .into_iter()
+                .iter()
                 .filter(|row| row.kind == quire_core::workspace::TreeKind::Folder)
-                .map(|row| row.path)
+                .map(|row| row.path.clone())
                 .collect::<Vec<_>>()
         })
     };

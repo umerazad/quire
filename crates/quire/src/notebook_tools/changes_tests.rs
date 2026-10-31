@@ -445,15 +445,13 @@ fn review_window(
 /// Waits until `done` holds, driving the app, rather than assuming background work finished.
 fn wait_for(cx: &mut TestAppContext, done: impl Fn(&mut TestAppContext) -> bool) {
     cx.executor().allow_parking();
-    let deadline = std::time::Instant::now() + crate::test_patience::PATIENCE;
-    while !done(cx) {
-        cx.run_until_parked();
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the AI changes did not settle"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
+    crate::test_wait::until(
+        cx,
+        std::time::Duration::from_millis(5),
+        crate::test_wait::park,
+        done,
+        |_| "the AI changes to settle".into(),
+    );
 }
 
 #[gpui::test]

@@ -26,6 +26,19 @@ pub(in crate::editor_host::stored) struct Browsers {
     pub(in crate::editor_host::stored) files_scroll: UniformListScrollHandle,
     /// Empty folders and attachments of a folder notebook.
     pub(in crate::editor_host::stored) on_disk: super::file_views::OnDisk,
+    file_rows: FileRows,
+}
+
+/// The Files tree for the paths, folders, and expanded folders it was built from. Rendering asks
+/// for the rows twice a frame, and rebuilding them sorts every path.
+#[derive(Default)]
+struct FileRows(std::cell::RefCell<Option<BuiltRows>>);
+
+struct BuiltRows {
+    paths: Vec<String>,
+    folders: Vec<String>,
+    expanded: Vec<String>,
+    rows: Rc<[TreeRow]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -293,29 +306,41 @@ impl StoredWindow {
         }
     }
 
-    pub(in crate::editor_host::stored) fn file_rows(&self) -> Vec<TreeRow> {
+    pub(in crate::editor_host::stored) fn file_rows(&self) -> Rc<[TreeRow]> {
         let disk = &self.nav.browsers.on_disk;
-        let paths: Vec<String> = self
-            .nav
-            .pages
-            .iter()
-            .map(|listed| listed.page.path.clone())
-            .chain(disk.files.iter().cloned())
-            .collect();
-        let folders: Vec<String> = self
-            .nav
-            .workspace
-            .folders
-            .iter()
-            .chain(&disk.folders)
-            .cloned()
-            .collect();
-        let expanded: BTreeSet<String> = self.nav.workspace.expanded.iter().cloned().collect();
-        folder_rows(&paths, &folders, &expanded, |a, b| {
+        let expanded = &self.nav.workspace.expanded;
+        let listed_paths = || {
+            self.nav
+                .pages
+                .iter()
+                .map(|listed| &listed.page.path)
+                .chain(&disk.files)
+        };
+        let listed_folders = || self.nav.workspace.folders.iter().chain(&disk.folders);
+        let mut cached = self.nav.browsers.file_rows.0.borrow_mut();
+        if let Some(built) = cached.as_ref()
+            && built.expanded == *expanded
+            && built.paths.iter().eq(listed_paths())
+            && built.folders.iter().eq(listed_folders())
+        {
+            return built.rows.clone();
+        }
+        let paths: Vec<String> = listed_paths().cloned().collect();
+        let folders: Vec<String> = listed_folders().cloned().collect();
+        let open: BTreeSet<String> = expanded.iter().cloned().collect();
+        let rows: Rc<[TreeRow]> = folder_rows(&paths, &folders, &open, |a, b| {
             a.to_lowercase()
                 .cmp(&b.to_lowercase())
                 .then_with(|| a.cmp(b))
         })
+        .into();
+        *cached = Some(BuiltRows {
+            paths,
+            folders,
+            expanded: expanded.clone(),
+            rows: rows.clone(),
+        });
+        rows
     }
 
     pub(in crate::editor_host::stored) fn page_at_path(&self, path: &str) -> Option<String> {
@@ -348,7 +373,7 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let Some(row) = self.file_rows().into_iter().nth(index) else {
+        let Some(row) = self.file_rows().get(index).cloned() else {
             return;
         };
         self.nav.browsers.files_selected = index;

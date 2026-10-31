@@ -8,7 +8,6 @@ use std::{
     io::{BufRead as _, BufReader, Write as _},
     os::unix::net::UnixStream,
     sync::{Arc, Mutex},
-    time::Instant,
 };
 
 pub(crate) struct Switches {
@@ -88,12 +87,13 @@ pub(crate) fn exchange(
             *finished.lock().unwrap() = true;
         })
     };
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !*finished.lock().unwrap() {
-        cx.run_until_parked();
-        assert!(Instant::now() < deadline, "the bridge did not answer");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    crate::test_wait::until(
+        cx,
+        Duration::from_millis(5),
+        crate::test_wait::park,
+        |_| *finished.lock().unwrap(),
+        |_| "the bridge to answer".into(),
+    );
     client.join().unwrap();
     replies.lock().unwrap().clone()
 }
@@ -353,13 +353,16 @@ fn times_out_an_app_that_does_not_answer(cx: &mut TestAppContext) {
             *reply.lock().unwrap() = Some(serde_json::from_str::<Value>(&answer).unwrap());
         })
     };
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while reply.lock().unwrap().is_none() {
-        cx.run_until_parked();
-        cx.executor().advance_clock(Duration::from_secs(1));
-        assert!(Instant::now() < deadline, "the bridge never timed out");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    crate::test_wait::until(
+        cx,
+        Duration::from_millis(5),
+        |cx| {
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_secs(1));
+        },
+        |_| reply.lock().unwrap().is_some(),
+        |_| "the bridge to time out".into(),
+    );
     client.join().unwrap();
     assert_eq!(
         reply.lock().unwrap().clone().unwrap()["result"]["error"],

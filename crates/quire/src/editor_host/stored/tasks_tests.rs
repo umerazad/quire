@@ -86,19 +86,23 @@ fn wait_stored(notebook: &Notebook, page: &str, expected: &str, cx: &mut TestApp
 }
 
 fn wait_rows(notebook: &Notebook, expected: &[&str], cx: &mut TestAppContext) {
-    let mut shown = Vec::new();
-    let deadline = std::time::Instant::now() + crate::test_patience::PATIENCE;
-    while shown != expected {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "listed {shown:?}, expected {expected:?}; {:?}",
-            message(notebook, cx)
-        );
-        cx.executor()
-            .advance_clock(std::time::Duration::from_millis(200));
-        settle_tasks(notebook, cx);
-        shown = texts(notebook, cx);
-    }
+    crate::test_wait::until(
+        cx,
+        std::time::Duration::ZERO,
+        |cx| {
+            cx.executor()
+                .advance_clock(std::time::Duration::from_millis(200));
+            settle_tasks(notebook, cx);
+        },
+        |cx| texts(notebook, cx) == expected,
+        |cx| {
+            format!(
+                "rows {expected:?}; listed {:?}, {:?}",
+                texts(notebook, cx),
+                message(notebook, cx)
+            )
+        },
+    );
 }
 
 fn message(notebook: &Notebook, cx: &mut TestAppContext) -> (Option<String>, Option<String>) {

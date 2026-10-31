@@ -153,6 +153,34 @@ type TaskRow = (
     ),
 );
 
+/// Live tasks with their pages, narrowed by `clause`.
+fn task_select(clause: &str) -> String {
+    format!(
+        "SELECT {PAGE_COLUMNS},p.date,t.key,t.id,t.start,t.raw,t.text,t.state,t.tags,t.links,t.completed,t.created,t.due
+         FROM live_tasks t JOIN live_pages p ON p.revision=t.revision WHERE p.deleted=0{clause}"
+    )
+}
+
+/// A task row with created and due dates falling back to the date of its daily page.
+fn task_item(
+    (page, date, (key, id, from, raw, text, state), (tags, links, completed, created, due)): TaskRow,
+) -> Result<TaskItem> {
+    Ok(TaskItem {
+        source: page_ref(page)?,
+        key,
+        id,
+        from,
+        raw,
+        text,
+        state: TaskState::parse(&state).context(REBUILD)?,
+        tags: parse_list(&tags)?,
+        links: parse_list(&links)?,
+        created: created.or_else(|| date.clone()),
+        due: due.or(date),
+        completed,
+    })
+}
+
 fn parse_list(text: &str) -> Result<Vec<String>> {
     serde_json::from_str(text).context(REBUILD)
 }
@@ -174,42 +202,21 @@ impl QueryIndex {
     /// and due dates fall back to the date of the daily page the task sits on.
     pub fn tasks(&self) -> Result<Vec<TaskItem>> {
         self.refresh()?;
-        let rows: Vec<TaskRow> = self.connection.select(&format!(
-            "SELECT {PAGE_COLUMNS},p.date,t.key,t.id,t.start,t.raw,t.text,t.state,t.tags,t.links,t.completed,t.created,t.due
-             FROM live_tasks t JOIN live_pages p ON p.revision=t.revision WHERE p.deleted=0"
-        ))?()?;
+        let rows: Vec<TaskRow> = self.connection.select(&task_select(""))?()?;
         let mut tasks = rows
             .into_iter()
-            .map(
-                |(
-                    page,
-                    date,
-                    (key, id, from, raw, text, state),
-                    (tags, links, completed, created, due),
-                )| {
-                    Ok(TaskItem {
-                        source: page_ref(page)?,
-                        key,
-                        id,
-                        from,
-                        raw,
-                        text,
-                        state: TaskState::parse(&state).context(REBUILD)?,
-                        tags: parse_list(&tags)?,
-                        links: parse_list(&links)?,
-                        created: created.or_else(|| date.clone()),
-                        due: due.or(date),
-                        completed,
-                    })
-                },
-            )
+            .map(task_item)
             .collect::<Result<Vec<_>>>()?;
+        self.sort_tasks(&mut tasks);
+        Ok(tasks)
+    }
+
+    fn sort_tasks(&self, tasks: &mut [TaskItem]) {
         tasks.sort_by(|a, b| {
             self.collator
                 .compare(&a.source.path, &b.source.path)
                 .then(a.from.cmp(&b.from))
         });
-        Ok(tasks)
     }
 
     /// The tasks among `tag`'s tagged blocks, by the revision and offset its tagged block reports,
@@ -236,36 +243,79 @@ impl QueryIndex {
 
     /// The reference `linkedTasks`: tasks on other pages that link to `page`, directly or through
     /// a parent block, such as action items written under a [[Meeting]] line.
+    ///
+    /// Only links that could name the page, by its name, title, or date, are resolved, and only
+    /// matching tasks are read in full: reading and sorting all 48,260 tasks at 5x on every
+    /// keystroke kept the index thread busy while typing.
     pub fn linked_tasks(&self, page: &str) -> Result<Vec<TaskItem>> {
-        let tasks = self.tasks()?;
-        let find = self.page_finder();
-        Ok(tasks
-            .into_iter()
-            .filter(|task| {
-                task.source.page.as_str() != Some(page)
-                    && task
-                        .links
-                        .iter()
-                        .any(|link| find(link).as_deref() == Some(page))
-            })
-            .collect())
+        self.refresh()?;
+        let identity = crate::sync::json::JsString::from(page).to_json();
+        let Some((name, title, date)): Option<(String, String, Option<String>)> =
+            self.connection.select_row_bound(
+                "SELECT name_key,title_key,date FROM live_pages WHERE page=? AND deleted=0",
+            )?(identity.as_str())?
+        else {
+            return Ok(Vec::new());
+        };
+        let candidates: Vec<(String, i64, String)> = self.connection.select_bound(
+            "SELECT t.revision,t.ordinal,t.links FROM live_tasks t JOIN live_pages p ON p.revision=t.revision
+             WHERE p.deleted=0 AND p.page!=? AND t.links!='[]'",
+        )?(identity.as_str())?;
+        let mut names: HashMap<String, bool> = HashMap::new();
+        let mut names_page = |link: &str| -> Result<bool> {
+            if let Some(known) = names.get(link) {
+                return Ok(*known);
+            }
+            let key = super::page_key(link);
+            let could = key == name || key == title || (date.is_some() && self.date(link) == date);
+            let found = could
+                && self
+                    .resolve_page(link)?
+                    .is_some_and(|found| found.page.to_lossy_string() == page);
+            names.insert(link.to_owned(), found);
+            Ok(found)
+        };
+        let mut linked = Vec::new();
+        for (revision, ordinal, links) in candidates {
+            let mut matched = false;
+            for link in parse_list(&links)? {
+                if names_page(&link)? {
+                    matched = true;
+                    break;
+                }
+            }
+            if matched {
+                let row: Option<TaskRow> = self
+                    .connection
+                    .select_row_bound(&task_select(" AND t.revision=? AND t.ordinal=?"))?(
+                    (
+                    revision.as_str(),
+                    ordinal,
+                )
+                )?;
+                linked.push(task_item(row.context(REBUILD)?)?);
+            }
+        }
+        self.sort_tasks(&mut linked);
+        Ok(linked)
     }
 
     /// Resolves a page name to a page identity, remembering answers for one query.
-    fn page_finder(&self) -> impl Fn(&str) -> Option<String> + '_ {
+    fn page_finder(&self) -> Result<impl Fn(&str) -> Option<String> + '_> {
+        let resolve = self.page_resolver()?;
         let found: RefCell<HashMap<String, Option<String>>> = RefCell::default();
-        move |name: &str| {
+        Ok(move |name: &str| {
             found
                 .borrow_mut()
                 .entry(name.to_owned())
                 .or_insert_with(|| {
-                    self.resolve_page(name)
+                    resolve(name)
                         .ok()
                         .flatten()
                         .map(|page| page.page.to_lossy_string())
                 })
                 .clone()
-        }
+        })
     }
 
     /// Project pages, ordered by title, and for each task the projects it belongs to.
@@ -306,7 +356,7 @@ impl QueryIndex {
     /// describe one index state.
     pub fn task_board(&self, query: &TaskQuery) -> Result<TaskBoard> {
         let tasks = self.tasks()?;
-        let find = self.page_finder();
+        let find = self.page_finder()?;
         let (pages, members) = self.project_members(&tasks, &find)?;
         let projects: Vec<String> = pages
             .iter()
@@ -424,7 +474,7 @@ impl QueryIndex {
     /// The tasks a `{{tasks: ...}}` block lists, unsaved edits included.
     pub fn task_list(&self, list: &TaskListQuery) -> Result<TaskList> {
         let tasks = self.tasks()?;
-        let find = self.page_finder();
+        let find = self.page_finder()?;
         let (projects, members) = if list.query.uses_projects() {
             let (pages, members) = self.project_members(&tasks, &find)?;
             let projects = pages

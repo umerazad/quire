@@ -138,12 +138,18 @@ pub struct IndexConfig {
 
 pub struct QueryIndex {
     connection: Connection,
+    path: PathBuf,
+    /// The index file stamp last recorded as consistent; see [`QueryIndex::seal`].
+    sealed: RefCell<Option<String>>,
     layout: DailyLayout,
     calendar: DailyCalendar,
     parser: DailyParser,
     days: DailyNames,
     seen_version: Cell<Option<i64>>,
     generation: Cell<u64>,
+    /// Changes with committed rows only, unlike `generation`, which overlays change too.
+    committed: Cell<u64>,
+    tag_tallies: RefCell<Option<(u64, query::TagTallies)>>,
     releasing: RefCell<BTreeSet<String>>,
     collator: icu_collator::CollatorBorrowed<'static>,
     folder: Option<folder::FolderSource>,
@@ -202,6 +208,8 @@ impl QueryIndex {
         };
         let index = Self {
             connection,
+            path: path.to_owned(),
+            sealed: RefCell::default(),
             collator: icu_collator::Collator::try_new(Default::default(), Default::default())
                 .context(
                     "Cannot load page sort order data. Rebuild Quire with its locked ICU data.",
@@ -212,12 +220,29 @@ impl QueryIndex {
             calendar: config.calendar,
             seen_version: Cell::new(None),
             generation: Cell::new(0),
+            committed: Cell::new(0),
+            tag_tallies: RefCell::default(),
             releasing: RefCell::default(),
             folder,
         };
         overlay::create(&index.connection)?;
         index.apply_layout()?;
         Ok(index)
+    }
+
+    /// Moves committed changes from the write-ahead log into the index file and records its
+    /// stamp, so the next open skips the full-file integrity scan, which reads every page of the file. Call it
+    /// when the index is idle; it costs a stat and an empty checkpoint when nothing changed.
+    /// Returns whether the index is now sealed.
+    pub fn seal(&self) -> Result<bool> {
+        let sealed = schema::seal(
+            &self.connection,
+            &self.path,
+            self.sealed.borrow().as_deref(),
+        )?;
+        let done = sealed.is_some();
+        *self.sealed.borrow_mut() = sealed;
+        Ok(done)
     }
 
     fn transaction<T>(&self, run: impl FnOnce() -> Result<T>) -> Result<T> {
@@ -308,12 +333,6 @@ impl QueryIndex {
         }
         let changed = self.transaction(|| {
             let stale: Vec<String> = self.connection.select(schema::STALE_PAGES)?()?;
-            for revision in &stale {
-                self.connection
-                    .exec_bound("DELETE FROM pages WHERE revision=?")?(
-                    revision.as_str()
-                )?;
-            }
             let missing: Vec<String> = self.connection.select(schema::MISSING_PAGES)?()?;
             for revision in &missing {
                 let Some(metadata) = revision_metadata(&self.connection, revision)? else {
@@ -321,14 +340,34 @@ impl QueryIndex {
                 };
                 self.catalogue(&metadata)?;
             }
-            Ok(!stale.is_empty() || !missing.is_empty())
+            Ok(self.retire(&stale)? || !missing.is_empty())
         })?;
         self.seen_version.set(Some(version));
         if changed {
-            self.bump();
+            self.bump_committed();
             self.settle_releases()?;
         }
         Ok(changed)
+    }
+
+    /// Drops revisions that are no longer selected heads, run after the new heads are
+    /// catalogued. A page's last analyzed revision stays while its new head waits for analysis,
+    /// so queries keep its previous rows instead of none; analyzing the head drops it. Returns
+    /// whether anything was dropped.
+    fn retire(&self, stale: &[String]) -> Result<bool> {
+        let mut dropped = false;
+        for delete in [
+            "DELETE FROM pages WHERE revision=? AND (analyzed=0 OR deleted=1) RETURNING 1",
+            "DELETE FROM pages WHERE revision=? AND NOT EXISTS (SELECT 1 FROM pages h
+               WHERE h.page=pages.page AND h.analyzed=0 AND h.deleted=0) RETURNING 1",
+        ] {
+            for revision in stale {
+                let gone: Option<i64> =
+                    self.connection.select_row_bound(delete)?(revision.as_str())?;
+                dropped |= gone.is_some();
+            }
+        }
+        Ok(dropped)
     }
 
     fn catalogue(&self, metadata: &PageMetadata) -> Result<()> {
@@ -387,39 +426,82 @@ impl QueryIndex {
     /// Records analysis for one revision. Returns false when the revision is no longer a selected
     /// head, so the caller can drop the work.
     pub fn put(&self, revision: &str, analysis: &PageIndex) -> Result<bool> {
+        Ok(self.put_many(&[(revision, analysis)])?[0])
+    }
+
+    /// Records analysis for several revisions in one transaction, so a rebuild commits and
+    /// flushes the search index once per batch instead of once per page. Each result is what
+    /// [`Self::put`] returns for that revision.
+    pub fn put_many(&self, analyses: &[(&str, &PageIndex)]) -> Result<Vec<bool>> {
         let stored = self.transaction(|| {
-            let row: Option<(bool, String)> = self
-                .connection
-                .select_row_bound("SELECT analyzed,title FROM pages WHERE revision=?")?(
-                revision
-            )?;
-            let title = match row {
-                None => return Ok(false),
-                Some((true, _)) => return Ok(true),
-                Some((false, title)) => title,
-            };
-            let mut search = self.connection.exec_bound(
-                "INSERT INTO search_rows(revision,title,text,block_id) VALUES (?,?,?,?)",
-            )?;
-            search((revision, title.as_str(), "", None::<&str>))?;
-            for block in &analysis.blocks {
-                search((
-                    revision,
-                    title.as_str(),
-                    block.text.as_str(),
-                    block.id.as_deref(),
-                ))?;
-            }
-            self.insert_rows("main.", revision, analysis)?;
-            self.connection
-                .exec_bound("UPDATE pages SET analyzed=1 WHERE revision=?")?(revision)?;
-            Ok(true)
+            let mut planned = std::collections::HashSet::new();
+            let titles = analyses
+                .iter()
+                .map(|&(revision, _)| {
+                    let row: Option<(bool, String, bool)> = self.connection.select_row_bound(
+                        "SELECT analyzed,title,EXISTS (SELECT 1 FROM pages h
+                               WHERE h.page=p.page AND h.analyzed=0 AND h.deleted=0)
+                             FROM pages p WHERE revision=?",
+                    )?(revision)?;
+                    Ok(match row {
+                        None | Some((true, _, true)) => Err(false),
+                        Some((false, title, _)) if planned.insert(revision) => Ok(title),
+                        Some(_) => Err(true),
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            self.insert_search_rows(analyses.iter().zip(&titles).filter_map(
+                |((revision, analysis), title)| Some((*revision, title.as_ref().ok()?, *analysis)),
+            ))?;
+            analyses
+                .iter()
+                .zip(titles)
+                .map(|(&(revision, analysis), title)| match title {
+                    Ok(_) => {
+                        self.insert_rows("main.", revision, analysis)?;
+                        self.connection
+                            .exec_bound("UPDATE pages SET analyzed=1 WHERE revision=?")?(
+                            revision
+                        )?;
+                        self.connection.exec_bound(
+                            "DELETE FROM pages WHERE revision!=?1
+                               AND page=(SELECT page FROM pages WHERE revision=?1)",
+                        )?(revision)?;
+                        Ok(true)
+                    }
+                    Err(stored) => Ok(stored),
+                })
+                .collect::<Result<Vec<_>>>()
         })?;
-        if stored {
-            self.bump();
+        if stored.contains(&true) {
+            self.bump_committed();
             self.settle_releases()?;
         }
         Ok(stored)
+    }
+
+    /// Writes the title row and one row per block of each page in one statement: FTS5 flushes its
+    /// pending terms into a new index segment at every statement savepoint, so a statement per
+    /// block, or per page, made a rebuild write and merge thousands of segments.
+    fn insert_search_rows<'a>(
+        &self,
+        pages: impl Iterator<Item = (&'a str, &'a String, &'a PageIndex)>,
+    ) -> Result<()> {
+        let rows = pages
+            .flat_map(|(revision, title, analysis)| {
+                std::iter::once(serde_json::json!([revision, title, "", null])).chain(
+                    analysis.blocks.iter().map(move |block| {
+                        serde_json::json!([revision, title, block.text, block.id])
+                    }),
+                )
+            })
+            .collect::<Vec<_>>();
+        if !rows.is_empty() {
+            self.connection.exec_bound(
+                "INSERT INTO search_rows(revision,title,text,block_id) SELECT json_extract(value,'$[0]'), json_extract(value,'$[1]'), json_extract(value,'$[2]'), json_extract(value,'$[3]') FROM json_each(?) ORDER BY key",
+            )?(serde_json::to_string(&rows)?.as_str())?;
+        }
+        Ok(())
     }
 
     /// Writes block, link, and tag rows into `main.` tables or the `temp.overlay_` copies.
@@ -482,6 +564,14 @@ impl QueryIndex {
     }
 }
 
+/// Closing the index, as closing its notebook window does, seals it; a failed seal only means the
+/// next open scans the file.
+impl Drop for QueryIndex {
+    fn drop(&mut self) {
+        self.seal().ok();
+    }
+}
+
 pub type IndexClient = Client<QueryIndex>;
 pub type IndexWorker = Worker<QueryIndex>;
 
@@ -508,9 +598,25 @@ impl Client<QueryIndex> {
     pub fn unanalyzed(&self) -> Answer<usize> {
         self.request(64, QueryIndex::unanalyzed)
     }
+    pub fn seal(&self) -> Answer<bool> {
+        self.request(64, QueryIndex::seal)
+    }
     pub fn put(&self, revision: String, analysis: PageIndex) -> Answer<bool> {
         let bytes = 256 + serde_json::to_vec(&analysis).map_or(0, |data| data.len());
         self.request(bytes, move |index| index.put(&revision, &analysis))
+    }
+    pub fn put_many(&self, analyses: Vec<(String, PageIndex)>) -> Answer<Vec<bool>> {
+        let bytes = analyses
+            .iter()
+            .map(|(_, analysis)| 256 + serde_json::to_vec(analysis).map_or(0, |data| data.len()))
+            .sum();
+        self.request(bytes, move |index| {
+            let borrowed: Vec<_> = analyses
+                .iter()
+                .map(|(revision, analysis)| (revision.as_str(), analysis))
+                .collect();
+            index.put_many(&borrowed)
+        })
     }
     pub fn find_page(&self, target: String) -> Answer<Option<PageRef>> {
         self.request(128 + target.len(), move |index| index.find_page(&target))
@@ -670,6 +776,116 @@ mod tests {
     }
 
     #[test]
+    fn a_batch_of_analyses_stores_each_page_as_put_does() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let database = root.path().join("local.sqlite");
+        let store = crate::notebook::NotebookStore::open(&database, "nb", "local")?;
+        for page in ["a", "b"] {
+            store.save(&crate::notebook::Edit {
+                page: page.into(),
+                path: format!("{page}.md"),
+                text: page.into(),
+                base: Vec::new(),
+                deleted: false,
+                created: 1,
+                recovery: None,
+            })?;
+        }
+        let index = QueryIndex::open(
+            &database,
+            IndexConfig {
+                analyzer: 1,
+                layout: DailyLayout::default(),
+                calendar: DailyCalendar::utc(),
+            },
+        )?;
+        let analysis = |word: &str| PageIndex {
+            blocks: vec![IndexedBlock {
+                text: word.into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let pending = index.pending(8)?;
+        let (alpha, beta, gone) = (analysis("alphaword"), analysis("betaword"), analysis("x"));
+        let stored = index.put_many(&[
+            (pending[0].revision.as_str(), &alpha),
+            (pending[1].revision.as_str(), &beta),
+            (pending[0].revision.as_str(), &alpha),
+            ("no-such-revision", &gone),
+        ])?;
+        assert_eq!(
+            stored,
+            [true, true, true, false],
+            "a repeat counts as stored once"
+        );
+        assert_eq!(index.unanalyzed()?, 0);
+        assert_eq!(index.search("alphaword")?.len(), 1);
+        assert_eq!(index.search("betaword")?.len(), 1);
+        assert_eq!(
+            index.put_many(&[(pending[0].revision.as_str(), &alpha)])?,
+            [true],
+            "an analyzed revision stays stored, as put reports"
+        );
+        assert_eq!(index.search("alphaword")?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn the_page_resolver_answers_as_resolve_page_does() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let database = root.path().join("local.sqlite");
+        let store = crate::notebook::NotebookStore::open(&database, "nb", "local")?;
+        for (page, path) in [
+            ("a1", "Alpha.md"),
+            ("a2", "alpha.md"),
+            ("s1", "One/Same.md"),
+            ("s2", "Two/Same.md"),
+            ("u", "Folder/Unique title.md"),
+            ("d1", "2024-01-02.md"),
+            ("d2", "Old/2024-01-02.md"),
+        ] {
+            store.save(&crate::notebook::Edit {
+                page: page.into(),
+                path: path.into(),
+                text: "- text".into(),
+                base: Vec::new(),
+                deleted: false,
+                created: 1,
+                recovery: None,
+            })?;
+        }
+        let index = QueryIndex::open(
+            &database,
+            IndexConfig {
+                analyzer: 1,
+                layout: DailyLayout::default(),
+                calendar: DailyCalendar::utc(),
+            },
+        )?;
+        index.refresh()?;
+        let resolve = index.page_resolver()?;
+        for name in [
+            "Alpha",
+            "ALPHA",
+            "Same",
+            "Unique title",
+            "Folder/Unique title",
+            "2024-01-02",
+            "Jan 2nd, 2024",
+            "Missing",
+        ] {
+            assert_eq!(resolve(name)?, index.resolve_page(name)?, "{name}");
+        }
+        assert!(
+            resolve("Same")?.is_none(),
+            "a shared title resolves to none"
+        );
+        assert_eq!(resolve("Alpha")?.unwrap().path, "Alpha.md");
+        Ok(())
+    }
+
+    #[test]
     fn key_lookups_use_indexes_instead_of_scanning() -> Result<()> {
         let root = tempfile::tempdir()?;
         let database = root.path().join("local.sqlite");
@@ -734,6 +950,36 @@ mod tests {
                 "{query}: {plan:?}"
             );
         }
+        Ok(())
+    }
+
+    /// Block lookups run once per block link in a backlinks query; a plan that copies the live
+    /// page view into a temporary index made each one cost a full pass over every page.
+    #[test]
+    fn block_lookups_search_indexes_instead_of_copying_the_page_view() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let database = root.path().join("local.sqlite");
+        crate::notebook::NotebookStore::open(&database, "nb", "local")?;
+        let index = QueryIndex::open(
+            &database,
+            IndexConfig {
+                analyzer: 1,
+                layout: DailyLayout::default(),
+                calendar: DailyCalendar::utc(),
+            },
+        )?;
+        let plan: Vec<(i64, i64, i64, String)> = index
+            .connection
+            .select_bound(&format!("EXPLAIN QUERY PLAN {}", query::block_pages()))?(
+            "id"
+        )?;
+        let steps: Vec<&str> = plan.iter().map(|(.., step)| step.as_str()).collect();
+        assert!(
+            steps
+                .iter()
+                .all(|step| !step.contains("MATERIALIZE") && !step.contains("AUTOMATIC")),
+            "{steps:#?}"
+        );
         Ok(())
     }
 }

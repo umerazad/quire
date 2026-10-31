@@ -120,15 +120,13 @@ fn until_live(
     done: impl Fn(&Activity) -> bool,
 ) {
     cx.executor().allow_parking();
-    let deadline = std::time::Instant::now() + crate::test_patience::PATIENCE;
-    while !done(&live.read_with(cx, |live, _| live.activity())) {
-        cx.run_until_parked();
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
+    crate::test_wait::until(
+        cx,
+        std::time::Duration::from_millis(1),
+        crate::test_wait::park,
+        |cx| done(&live.read_with(cx, |live, _| live.activity())),
+        |_| what.into(),
+    );
     cx.executor().advance_clock(POLL);
     cx.run_until_parked();
 }

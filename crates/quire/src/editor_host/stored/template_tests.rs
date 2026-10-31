@@ -57,31 +57,34 @@ pub(super) fn click(notebook: &Notebook, selector: &'static str, cx: &mut TestAp
 /// Clicks the pinned Templates entry and waits for the page it opens.
 pub(super) fn open_templates(notebook: &Notebook, cx: &mut TestAppContext) {
     click(notebook, "quire-templates-entry", cx);
-    let deadline = std::time::Instant::now() + crate::test_patience::PATIENCE;
-    loop {
-        wait_until(cx, "a step", |_| true);
-        let state = read(notebook, cx, |view, cx| {
+    let state = |cx: &mut TestAppContext| {
+        read(notebook, cx, |view, cx| {
             (
                 view.page.read(cx).path(cx),
                 view.nav.creating.is_some(),
                 view.nav.error.clone(),
                 view.nav.view,
             )
-        });
-        if state
-            .0
-            .as_deref()
-            .is_some_and(quire_core::templates::is_templates_page)
-            && shown_text(notebook, cx).is_some()
-            && !state.1
-        {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for the Templates page: (path, creating, error, browser) = {state:?}"
-        );
-    }
+        })
+    };
+    crate::test_wait::until(
+        cx,
+        std::time::Duration::ZERO,
+        |cx| wait_until(cx, "a step", |_| true),
+        |cx| {
+            let (path, creating, ..) = state(cx);
+            path.as_deref()
+                .is_some_and(quire_core::templates::is_templates_page)
+                && shown_text(notebook, cx).is_some()
+                && !creating
+        },
+        |cx| {
+            format!(
+                "the Templates page: (path, creating, error, browser) = {:?}",
+                state(cx)
+            )
+        },
+    );
     draw(notebook, cx);
 }
 

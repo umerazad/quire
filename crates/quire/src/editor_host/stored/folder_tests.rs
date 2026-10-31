@@ -788,15 +788,13 @@ fn a_change_the_watcher_missed_is_reread_periodically_and_on_activating_the_wind
         .update(cx, |_, window, _| window.activate_window())
         .unwrap();
     // Without advancing the clock, so the periodic reread cannot be what finds the change.
-    let deadline = std::time::Instant::now() + crate::test_patience::PATIENCE;
-    while text(notebook, cx) != "- three\n" {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for the reread on activating the window"
-        );
-        cx.run_until_parked();
-        std::thread::sleep(Duration::from_millis(2));
-    }
+    crate::test_wait::until(
+        cx,
+        Duration::from_millis(2),
+        crate::test_wait::park,
+        |cx| text(notebook, cx) == "- three\n",
+        |_| "the reread on activating the window".into(),
+    );
 }
 
 #[gpui::test]
@@ -1313,8 +1311,8 @@ fn files_shows_a_folder_notebooks_empty_folders_and_attachments(cx: &mut TestApp
     let rows = |cx: &mut TestAppContext| {
         read(notebook, cx, |view, _| {
             view.file_rows()
-                .into_iter()
-                .map(|row| row.path)
+                .iter()
+                .map(|row| row.path.clone())
                 .collect::<Vec<_>>()
         })
     };
