@@ -230,6 +230,28 @@ fn opening_a_task_reveals_its_block(cx: &mut TestAppContext) {
     );
 }
 
+/// rt `TasksPage.tsx` 805: each row has its own state select, which moves that task alone and
+/// leaves the other selected tasks where they are.
+#[gpui::test]
+fn a_rows_state_menu_moves_that_task_alone(cx: &mut TestAppContext) {
+    let notebook = open_notebook(
+        &[("a", "A.md", "- [ ] One #inbox\n- [ ] Two #inbox\n")],
+        "a",
+        cx,
+    );
+    show_tasks(&notebook, cx);
+    wait_rows(&notebook, &["One", "Two"], cx);
+    keys(&notebook, "space", cx);
+    assert_eq!(selected(&notebook, cx), 1);
+    super::tags_tests::click_at(&notebook, "quire-task-state-1".into(), cx);
+    super::tags_tests::click_at(&notebook, "MENU_ITEM-Waiting".into(), cx);
+    wait_stored(&notebook, "a", "- [ ] One #inbox\n- [ ] Two #waiting\n", cx);
+    wait_until(cx, "the notice", |cx| {
+        message(&notebook, cx).0.as_deref() == Some("Moved to Waiting.")
+    });
+    wait_rows(&notebook, &["One"], cx);
+}
+
 #[gpui::test]
 fn selected_tasks_move_together_and_stale_selections_are_refused(cx: &mut TestAppContext) {
     let notebook = open_notebook(
