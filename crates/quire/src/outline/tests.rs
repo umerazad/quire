@@ -736,9 +736,9 @@ fn cmd_backspace_stops_at_the_text_start(cx: &mut TestAppContext) {
     expect(
         window,
         &[
-            ("cmd-backspace", "- [ ] |ld ^x\n- Next\n"),
-            ("cmd-backspace", "- [ ] |ld ^x\n- Next\n"),
-            ("cmd-z", "- [ ] Hello wor|ld ^x\n- Next\n"),
+            (&*format!("{MOD}-backspace"), "- [ ] |ld ^x\n- Next\n"),
+            (&*format!("{MOD}-backspace"), "- [ ] |ld ^x\n- Next\n"),
+            (&*format!("{MOD}-z"), "- [ ] Hello wor|ld ^x\n- Next\n"),
         ],
         cx,
     );

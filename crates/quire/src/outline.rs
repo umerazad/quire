@@ -42,7 +42,8 @@ actions!(
         DeleteBackward,
         /// Delete at a block's text end pulls in the next block.
         DeleteForward,
-        /// Cmd-Backspace deletes back to the list item's text start, keeping its marker.
+        /// Cmd-Backspace (Ctrl-Backspace off macOS) deletes back to the list item's text start,
+        /// keeping its marker.
         DeleteToTextStart,
         /// Vim `J`: joins the next block's text to this one.
         JoinBlocks,
@@ -286,15 +287,14 @@ fn bind_keys(cx: &mut App) {
         ),
         KeyBinding::new(">", IndentLine, Some(WRITE_VISUAL)),
         KeyBinding::new("<", OutdentLine, Some(WRITE_VISUAL)),
-    ]);
-    // Zed binds deleting to the line start only on macOS; elsewhere Ctrl-Backspace deletes a word.
-    if mac {
-        cx.bind_keys([KeyBinding::new(
-            "cmd-backspace",
+        // rt binds Mod-Backspace everywhere. Quire binds no word deletion to Ctrl-Backspace, so
+        // off macOS it is free for the same command.
+        KeyBinding::new(
+            platform("cmd-backspace", "ctrl-backspace"),
             DeleteToTextStart,
             Some(WRITE_INPUT),
-        )]);
-    }
+        ),
+    ]);
 }
 
 /// Registers a Write view command on an editor. A command returning `None` propagates, so the
