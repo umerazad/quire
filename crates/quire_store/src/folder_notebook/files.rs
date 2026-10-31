@@ -247,6 +247,16 @@ pub(crate) struct Staged {
 /// Writes `text` to a temporary file in the destination's folder, with the existing file's
 /// permissions, and syncs it to disk.
 pub(crate) fn stage(destination: &Path, text: &str) -> Result<Staged> {
+    stage_with(destination, text, full_sync)
+}
+
+/// Like [`stage`], but only [`flush`]es the file, for a batch that calls [`barrier`] once
+/// before publishing any of its files.
+pub(crate) fn stage_flushed(destination: &Path, text: &str) -> Result<Staged> {
+    stage_with(destination, text, flush)
+}
+
+fn stage_with(destination: &Path, text: &str, sync: fn(&File) -> io::Result<()>) -> Result<Staged> {
     let folder = destination
         .parent()
         .context("A note path has no folder. Choose a Markdown file inside the notebook.")?;
@@ -269,7 +279,7 @@ pub(crate) fn stage(destination: &Path, text: &str) -> Result<Staged> {
         )?;
     }
     file.write_all(text.as_bytes())
-        .and_then(|()| file.as_file().sync_all())
+        .and_then(|()| sync(file.as_file()))
         .with_context(|| format!("Cannot write the replacement for {}. Check free space and retry; your text is kept in recovery.", destination.display()))?;
     Ok(Staged {
         file,
@@ -304,6 +314,19 @@ impl Staged {
             .parent()
             .map(Path::to_owned)
             .context("A note path has no folder.")?;
+        let destination = self.destination.clone();
+        if self.place(replace)? == Published::Exists {
+            return Ok(Published::Exists);
+        }
+        sync_directory(&folder).with_context(|| {
+            format!("Saved {} but could not make its name durable. Retry saving to be sure it survives a power loss.", destination.display())
+        })?;
+        Ok(Published::Done)
+    }
+
+    /// Renames the staged file into place without syncing its folder, for a batch that syncs
+    /// each folder once afterwards.
+    pub(crate) fn place(self, replace: bool) -> Result<Published> {
         let destination = self.destination;
         if replace {
             self.file.persist(&destination).map_err(|error| error.error).with_context(|| {
@@ -322,19 +345,78 @@ impl Staged {
                 }
             }
         }
-        sync_directory(&folder).with_context(|| {
-            format!("Saved {} but could not make its name durable. Retry saving to be sure it survives a power loss.", destination.display())
-        })?;
         Ok(Published::Done)
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Syncs on this thread that reach stable storage, `F_FULLFSYNC` on macOS.
+    pub(crate) static FULL_SYNCS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Syncs a file to stable storage, on macOS flushing the drive's whole cache.
+pub(crate) fn full_sync(file: &File) -> io::Result<()> {
+    #[cfg(test)]
+    FULL_SYNCS.with(|count| count.set(count.get() + 1));
+    file.sync_all()
+}
+
 #[cfg(unix)]
 pub(crate) fn sync_directory(path: &Path) -> io::Result<()> {
-    File::open(path)?.sync_all()
+    full_sync(&File::open(path)?)
 }
 
 #[cfg(not(unix))]
 pub(crate) fn sync_directory(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+/// Sends a file's data and attributes to its drive. On macOS this is `fsync`, which leaves them
+/// in the drive's volatile cache, where `sync_all`'s `F_FULLFSYNC` would also flush that whole
+/// cache; a batch flushes each file and then calls [`barrier`] once per drive. Elsewhere
+/// `fsync` already reaches stable storage.
+#[cfg(target_vendor = "apple")]
+pub(crate) fn flush(file: &File) -> io::Result<()> {
+    use std::os::fd::AsRawFd as _;
+    // SAFETY: `fsync` only reads the descriptor, which `file` keeps open for the call.
+    match unsafe { libc::fsync(file.as_raw_fd()) } {
+        0 => Ok(()),
+        _ => Err(io::Error::last_os_error()),
+    }
+}
+
+#[cfg(not(target_vendor = "apple"))]
+pub(crate) fn flush(file: &File) -> io::Result<()> {
+    full_sync(file)
+}
+
+/// [`flush`] for a folder, making the names created or removed in it reach the drive.
+#[cfg(unix)]
+pub(crate) fn flush_directory(path: &Path) -> io::Result<()> {
+    flush(&File::open(path)?)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn flush_directory(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+/// Makes everything already [`flush`]ed to the drives holding `paths` durable, with one full
+/// sync per drive: `F_FULLFSYNC` asks the drive to write its whole cache to stable storage.
+#[cfg(target_vendor = "apple")]
+pub(crate) fn barrier<'a>(paths: impl IntoIterator<Item = &'a Path>) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt as _;
+    let mut drives = std::collections::HashSet::new();
+    for path in paths {
+        if drives.insert(fs::metadata(path)?.dev()) {
+            full_sync(&File::open(path)?)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_vendor = "apple"))]
+pub(crate) fn barrier<'a>(_paths: impl IntoIterator<Item = &'a Path>) -> io::Result<()> {
     Ok(())
 }

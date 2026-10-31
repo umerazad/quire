@@ -11691,6 +11691,7 @@ dependencies = [
  "anyhow",
  "futures 0.3.34",
  "icu_collator",
+ "libc",
  "quire_core",
  "regex",
  "ryu-js",

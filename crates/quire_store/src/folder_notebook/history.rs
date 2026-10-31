@@ -60,6 +60,25 @@ pub(super) fn add(
     add_at(connection, path, text, revision, now, now)
 }
 
+/// Like [`add`], unless `path`'s newest saved version already is `revision`, as when a change
+/// across notes recorded it before a crash and runs again.
+pub(super) fn add_once(
+    connection: &Connection,
+    path: &str,
+    text: &str,
+    revision: &str,
+    now: i64,
+) -> Result<()> {
+    let newest: Option<String> = connection
+        .select_row_bound("SELECT revision FROM history WHERE path=? ORDER BY id DESC LIMIT 1")?(
+        path,
+    )?;
+    if newest.as_deref() == Some(revision) {
+        return Ok(());
+    }
+    add(connection, path, text, revision, now)
+}
+
 /// Records another app's saved version of `path` once, keeping its own time.
 pub(super) fn import(
     connection: &Connection,
