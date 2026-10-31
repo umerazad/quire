@@ -35,6 +35,8 @@ pub enum FileDialogEvent {
     Relocated(Vec<file_actions::Renamed>),
     /// A new, empty folder at this path.
     FolderCreated(String),
+    /// A folder holding no page moved, with any other files in it.
+    FolderMoved { from: String, to: String },
 }
 
 /// What the dialog shows about a planned deletion or move; it stays after a refused apply.
@@ -500,6 +502,10 @@ impl FileDialog {
         index: IndexClient,
         cx: &mut Context<Self>,
     ) -> Task<()> {
+        let noteless = match &request {
+            Relocate::Folder { folder, path } => Some((folder.clone(), path.clone())),
+            _ => None,
+        };
         let (open, storage) = (self.writers)(cx);
         let plan = file_actions::plan_relocation(request, open, index, storage, cx);
         cx.spawn(async move |this, cx| {
@@ -507,6 +513,11 @@ impl FileDialog {
             this.update(cx, |this, cx| {
                 this.work = None;
                 match plan {
+                    Err(error) if error == quire_core::relocate::FOLDER_EMPTY => {
+                        if let Some((from, to)) = noteless {
+                            this.work = this.move_noteless(from, to, cx);
+                        }
+                    }
                     Ok(Some(plan)) => {
                         this.summary = Some(Summary::of_move(&plan));
                         if let Mode::Move {
@@ -526,6 +537,46 @@ impl FileDialog {
             })
             .ok();
         })
+    }
+
+    /// Moves a folder that holds no page, which has no links to preview: a folder notebook moves
+    /// it on disk with its other files; a Quire notebook keeps such folders only here.
+    fn move_noteless(
+        &mut self,
+        from: String,
+        to: String,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<()>> {
+        let to = match quire_core::relocate::folder_path(&to) {
+            Ok(to) => to,
+            Err(error) => {
+                self.error = Some(error.into());
+                cx.notify();
+                return None;
+            }
+        };
+        let (_, storage) = (self.writers)(cx);
+        let request = storage
+            .folder()
+            .map(|folder| folder.move_noteless_folder(from.clone(), to.clone()));
+        Some(cx.spawn(async move |this, cx| {
+            let result = match request {
+                Some(request) => crate::query_index::ask(request).await,
+                None => Ok(()),
+            };
+            this.update(cx, |this, cx| {
+                this.work = None;
+                match result {
+                    Ok(()) => {
+                        cx.emit(FileDialogEvent::FolderMoved { from, to });
+                        cx.emit(DismissEvent);
+                    }
+                    Err(error) => this.error = Some(error.into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        }))
     }
 
     /// Applies the previewed move or nothing. A refusal drops the preview, so the next confirm

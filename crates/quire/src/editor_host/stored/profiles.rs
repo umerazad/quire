@@ -5,9 +5,14 @@
 
 use super::*;
 use crate::profiles::{
-    OpenNotebookDatabase, OpenNotebookFolder, UseCurrentProfile, UsePersonalProfile, UseWorkProfile,
+    NewQuireNotebook, OpenNotebookDatabase, OpenNotebookFolder, UseCurrentProfile,
+    UsePersonalProfile, UseWorkProfile,
 };
 use quire_store::profiles::{Notebook, ProfileId};
+
+/// The page a Quire notebook with no pages shows until today's daily page opens; it is created
+/// only if someone types into it.
+const EMPTY_NOTEBOOK_PAGE: &str = "Untitled.md";
 
 /// How long a switch waits for open pages to be recorded before giving up.
 pub(super) const SWITCH_PATIENCE: std::time::Duration = std::time::Duration::from_secs(10);
@@ -29,6 +34,10 @@ pub(super) fn init(cx: &mut App) {
     cx.on_action(|_: &OpenNotebookDatabase, cx| {
         let id = crate::profiles::active(cx);
         choose_database(id, cx)
+    });
+    cx.on_action(|_: &NewQuireNotebook, cx| {
+        let id = crate::profiles::active(cx);
+        choose_new_quire_notebook(id, cx)
     });
 }
 
@@ -111,18 +120,112 @@ fn choose_folder(id: ProfileId, cx: &mut App) {
         else {
             return;
         };
-        cx.update(|cx| match std::fs::canonicalize(&root) {
-            Ok(root) => open_in_profile(id, Notebook::Folder { root }, cx),
-            Err(error) => crate::outline::show_notice(
+        cx.update(|cx| open_chosen_folder(id, root, paths::data_dir().clone(), cx));
+    })
+    .detach();
+}
+
+/// Opens the folder chosen for `id`: a Quire notebook's synced folder opens as that notebook,
+/// building this computer's database under `quire_data` the first time, and any other folder
+/// opens as a folder of Markdown notes.
+pub(in crate::editor_host) fn open_chosen_folder(
+    id: ProfileId,
+    root: std::path::PathBuf,
+    quire_data: std::path::PathBuf,
+    cx: &mut App,
+) {
+    let root = match std::fs::canonicalize(&root) {
+        Ok(root) => root,
+        Err(error) => {
+            return crate::outline::show_notice(
                 format!(
                     "Cannot open {}: {error}. Choose an existing folder of Markdown notes.",
                     root.display()
                 ),
                 cx,
-            ),
+            );
+        }
+    };
+    if !quire_store::quire_folder::is_quire_notebook(&root) {
+        return open_in_profile(id, Notebook::Folder { root }, cx);
+    }
+    open_quire_folder(
+        id,
+        cx.background_spawn(async move { quire_store::quire_folder::open(&root, &quire_data) }),
+        cx,
+    );
+}
+
+/// Opens the Quire notebook that `work` finds or builds, saying which change files still wait.
+fn open_quire_folder(
+    id: ProfileId,
+    work: gpui::Task<anyhow::Result<(Notebook, Vec<String>)>>,
+    cx: &mut App,
+) {
+    cx.spawn(async move |cx| {
+        let result = work.await;
+        cx.update(|cx| match result {
+            Ok((notebook, problems)) => {
+                if !problems.is_empty() {
+                    crate::outline::show_notice(
+                        format!(
+                            "Some of the notebook's change files could not be read yet ({}). Quire reads them again once the sync tool delivers them.",
+                            problems.join("; ")
+                        ),
+                        cx,
+                    );
+                }
+                open_in_profile(id, notebook, cx)
+            }
+            Err(error) => refuse(id, format!("{error:#}."), cx),
         });
     })
     .detach();
+}
+
+/// Asks for an empty folder, makes it a new Quire notebook, and opens it as the notebook of `id`.
+fn choose_new_quire_notebook(id: ProfileId, cx: &mut App) {
+    let chosen = cx.prompt_for_paths(gpui::PathPromptOptions {
+        files: false,
+        directories: true,
+        multiple: false,
+        prompt: Some("Create notebook here".into()),
+    });
+    cx.spawn(async move |cx| {
+        let Some(root) = chosen
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .flatten()
+            .and_then(|paths| paths.into_iter().next())
+        else {
+            return;
+        };
+        cx.update(|cx| create_quire_notebook(id, root, paths::data_dir().clone(), cx));
+    })
+    .detach();
+}
+
+/// Makes `root` a new Quire notebook and opens it as the notebook of `id`.
+pub(in crate::editor_host) fn create_quire_notebook(
+    id: ProfileId,
+    root: std::path::PathBuf,
+    quire_data: std::path::PathBuf,
+    cx: &mut App,
+) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |time| {
+            u64::try_from(time.as_millis()).unwrap_or(u64::MAX)
+        });
+    open_quire_folder(
+        id,
+        cx.background_spawn(async move {
+            quire_store::quire_folder::create(&root, now)?;
+            quire_store::quire_folder::open(&root, &quire_data)
+        }),
+        cx,
+    );
 }
 
 /// The Quire notebook whose database is `path`, with the identities it records.
@@ -340,20 +443,25 @@ fn open_location_at(notebook: &Notebook, today: bool, cx: &mut App) -> Result<()
                 .load()
                 .active
                 .and_then(|active| active.page_id().map(str::to_owned));
-            let page = match remembered {
-                Some(page) => page,
-                None => quire_store::notebook::NotebookStore::identity(database)
-                    .map_err(|error| format!("{error:#}"))?
-                    .first_page
-                    .ok_or_else(|| format!("The Quire notebook {} has no pages to show yet. Add a page with --page-id once; Quire remembers the page after that.", database.display()))?,
+            let first = match remembered {
+                Some(page) => Some(page),
+                None => {
+                    quire_store::notebook::NotebookStore::identity(database)
+                        .map_err(|error| format!("{error:#}"))?
+                        .first_page
+                }
             };
+            // A notebook with no pages yet, such as a new one, starts on today's daily page.
+            let empty = first.is_none();
             OpenOptions {
                 database: database.clone(),
                 notebook: notebook.clone(),
                 writer: writer.clone(),
-                page,
+                page: first.unwrap_or_else(|| {
+                    quire_store::sync::format::page_id_for_path(EMPTY_NOTEBOOK_PAGE)
+                }),
                 folder: folder.clone(),
-                today,
+                today: today || empty,
             }
             .open(cx)
         }

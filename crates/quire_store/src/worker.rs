@@ -1,6 +1,6 @@
 use crate::notebook::{
-    BatchImport, CheckedSave, CheckedSaves, Cursor, Draft, DraftStamp, Edit, MetadataLimits,
-    NotebookStore, PageCheckout, PageMetadata, PendingPublication, PublicationAck,
+    BatchImport, CheckedSave, CheckedSaves, ConflictVersion, Cursor, Draft, DraftStamp, Edit,
+    MetadataLimits, NotebookStore, PageCheckout, PageMetadata, PendingPublication, PublicationAck,
     PublicationState, RescanCursor, RescanLimits, RescanReport, SaveAck,
 };
 use crate::sync::json::{JsString, Json};
@@ -366,6 +366,29 @@ impl Client<NotebookStore> {
     }
     pub fn heads(&self, page: String) -> std::result::Result<Reply<Vec<String>>, QueueError> {
         self.request(128 + page.capacity(), move |store| store.heads(&page))
+    }
+    pub fn conflict_versions(
+        &self,
+        page: String,
+    ) -> std::result::Result<Reply<Vec<ConflictVersion>>, QueueError> {
+        self.request(128 + page.capacity(), move |store| {
+            store.conflict_versions(&page)
+        })
+    }
+    pub fn resolve_conflict(
+        &self,
+        page: String,
+        heads: Vec<String>,
+        text: String,
+        created: u64,
+    ) -> std::result::Result<Reply<SaveAck>, QueueError> {
+        self.request(
+            256usize
+                .saturating_add(page.capacity())
+                .saturating_add(text.capacity())
+                .saturating_add(strings_size(&heads)),
+            move |store| store.resolve_conflict(&page, &heads, text, created),
+        )
     }
     pub fn history(
         &self,

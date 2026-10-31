@@ -616,3 +616,83 @@ fn reads_for_other_purposes_never_hide_a_change_from_refresh() {
     fixture.notebook.checkout(&page, None).unwrap();
     assert_eq!(fixture.notebook.refresh(&paths).unwrap().len(), 1);
 }
+
+#[test]
+fn a_folder_without_notes_moves_whole_unless_a_note_appeared_or_the_target_exists() {
+    let fixture = fixture(&[
+        ("Keep.md", "- keep"),
+        ("Scans/2024/receipt.pdf", "pdf"),
+        ("Taken/Note.md", "- taken"),
+    ]);
+    let notebook = &fixture.notebook;
+    let refused = |from: &str, to: &str| {
+        notebook
+            .move_noteless_folder(from, to)
+            .unwrap_err()
+            .to_string()
+    };
+    assert!(refused("Scans", "Taken").contains("already exists"));
+    assert!(refused("Scans", "Scans/Inner").contains("inside itself"));
+    assert!(refused("Scans", "../Out").contains("Invalid folder path"));
+    assert!(refused("Taken", "Elsewhere").contains("A note appeared in Taken"));
+    assert!(fixture.folder.join("Taken/Note.md").exists());
+
+    notebook
+        .move_noteless_folder("Scans", "Archive/Scans")
+        .unwrap();
+    assert!(!fixture.folder.join("Scans").exists());
+    assert_eq!(
+        fs::read_to_string(fixture.folder.join("Archive/Scans/2024/receipt.pdf")).unwrap(),
+        "pdf"
+    );
+    assert!(refused("Scans", "Again").contains("no longer in the notebook"));
+}
+
+const LEGACY_SETTINGS: &str = r#"{"version":1,"daily":{"folder":"Journal"}}"#;
+
+#[test]
+fn a_threadnote_metadata_folder_becomes_quire_on_first_open() {
+    let fixture = fixture(&[
+        ("Note.md", "- note"),
+        (".threadnote/notebook.json", LEGACY_SETTINGS),
+    ]);
+    assert!(!fixture.folder.join(".threadnote").exists());
+    assert_eq!(
+        settings::read(&fixture.folder).unwrap().unwrap().text,
+        LEGACY_SETTINGS
+    );
+    assert!(
+        fixture
+            .notebook
+            .notices()
+            .iter()
+            .all(|notice| !notice.contains(".threadnote")),
+        "{:?}",
+        fixture.notebook.notices()
+    );
+}
+
+#[test]
+fn a_threadnote_folder_beside_quire_is_kept_and_named_in_a_notice() {
+    let fixture = fixture(&[
+        (".quire/notebook.json", LEGACY_SETTINGS),
+        (".threadnote/notebook.json", "older"),
+    ]);
+    assert_eq!(
+        fs::read_to_string(fixture.folder.join(".threadnote/notebook.json")).unwrap(),
+        "older"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.folder.join(".quire/notebook.json")).unwrap(),
+        LEGACY_SETTINGS
+    );
+    assert!(
+        fixture
+            .notebook
+            .notices()
+            .iter()
+            .any(|notice| notice.contains("Update every computer to Quire")),
+        "{:?}",
+        fixture.notebook.notices()
+    );
+}

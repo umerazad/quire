@@ -332,6 +332,28 @@ fn new_folders_open_their_parents_survive_reload_and_go_with_their_parent() {
 }
 
 #[test]
+fn a_moved_folder_takes_its_inner_folders_and_their_open_state_along() {
+    let mut workspace = Workspace::default();
+    workspace.add_folder("Projects/Plans/Q4");
+    workspace.add_folder("Projectsish");
+    workspace.toggle_expanded("Projects/Plans/Q4");
+    workspace.move_folder("Projects", "Archive/Old");
+    assert_eq!(workspace.folders, ["Archive/Old/Plans/Q4", "Projectsish"]);
+    assert_eq!(
+        workspace.expanded,
+        [
+            "Archive/Old",
+            "Archive/Old/Plans",
+            "Archive/Old/Plans/Q4",
+            "Archive"
+        ]
+    );
+    workspace.move_folder("Elsewhere", "Inbox/Scans");
+    assert_eq!(workspace.folders, ["Archive/Old/Plans/Q4", "Projectsish"]);
+    assert!(workspace.expanded.contains(&"Inbox".to_owned()));
+}
+
+#[test]
 fn namespaces_match_the_reference_namespace_of_vectors() {
     let vectors: Vec<(String, String)> = serde_json::from_str(include_str!(
         "../../../tests/fixtures/namespace-vectors.json"

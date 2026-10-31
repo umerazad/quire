@@ -355,3 +355,109 @@ fn reveal_shows_a_read_only_copy_of_a_quire_notebook_page(cx: &mut TestAppContex
     assert!(fs::metadata(&copy).unwrap().permissions().readonly());
     assert_eq!(read(&notebook, cx, |view, _| view.nav.error.clone()), None);
 }
+
+/// The single notebook window other than `previous`, once it opened.
+fn other_window(
+    previous: gpui::WindowHandle<StoredWindow>,
+    cx: &mut TestAppContext,
+) -> gpui::WindowHandle<StoredWindow> {
+    wait_until(cx, "the chosen notebook's window", |cx| {
+        let windows = stored_windows(cx);
+        windows.len() == 1 && windows[0] != previous
+    });
+    stored_windows(cx)[0]
+}
+
+#[gpui::test]
+fn choosing_a_quire_notebooks_synced_folder_opens_it_as_a_quire_notebook(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&[("p-a", "A.md", "- alpha")], "p-a", cx);
+    let shared = tempfile::tempdir().unwrap();
+    let synced = shared.path().join("OneDrive Notes");
+    let id = quire_store::quire_folder::create(&synced, 1).unwrap();
+    let office = NotebookStore::open(&shared.path().join("office.sqlite"), &id, "office").unwrap();
+    save(&office, "p-o", "Office.md", "- from the office");
+    office.publish_to(&synced, 2).unwrap();
+    drop(office);
+    let data = shared.path().join("quire-data");
+
+    cx.update(|cx| {
+        super::super::profiles::open_chosen_folder(
+            ProfileId::Current,
+            synced.clone(),
+            data.clone(),
+            cx,
+        )
+    });
+    let opened = other_window(notebook.window, cx);
+    wait_until(cx, "the office page", |cx| {
+        opened
+            .update(cx, |view, _, cx| {
+                view.page.read(cx).id() == "p-o" && view.page.read(cx).loaded().is_some()
+            })
+            .unwrap()
+    });
+    let Some(ProfileNotebook::Store {
+        database,
+        notebook: held,
+        writer,
+        folder,
+    }) = profile(ProfileId::Current, cx).notebook
+    else {
+        panic!("the synced folder opens as a Quire notebook");
+    };
+    assert_eq!(held, id);
+    assert_eq!(folder, Some(fs::canonicalize(&synced).unwrap()));
+    assert!(database.starts_with(&data));
+    assert_ne!(writer, "office");
+    assert!(
+        !synced.join("Office.md").exists(),
+        "a Quire notebook is never read as Markdown files"
+    );
+}
+
+#[gpui::test]
+fn a_new_quire_notebook_needs_an_empty_folder_then_opens_there(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&[("p-a", "A.md", "- alpha")], "p-a", cx);
+    let parent = tempfile::tempdir().unwrap();
+    let data = parent.path().join("quire-data");
+    let busy = parent.path().join("busy");
+    fs::create_dir(&busy).unwrap();
+    fs::write(busy.join("Note.md"), "- keep").unwrap();
+
+    cx.update(|cx| {
+        super::super::profiles::create_quire_notebook(
+            ProfileId::Current,
+            busy.clone(),
+            data.clone(),
+            cx,
+        )
+    });
+    wait_until(cx, "the refusal", |cx| {
+        cx.update(|cx| crate::outline::notice(cx))
+            .is_some_and(|notice| notice.contains("Choose an empty folder"))
+    });
+    assert_eq!(stored_windows(cx), vec![notebook.window]);
+    assert!(!busy.join("quire-notebook.json").exists());
+
+    let empty = parent.path().join("Notes");
+    cx.update(|cx| {
+        super::super::profiles::create_quire_notebook(
+            ProfileId::Current,
+            empty.clone(),
+            data.clone(),
+            cx,
+        )
+    });
+    other_window(notebook.window, cx);
+    let id = quire_store::quire_folder::read_identity(&empty).unwrap();
+    let Some(ProfileNotebook::Store {
+        notebook: held,
+        folder,
+        ..
+    }) = profile(ProfileId::Current, cx).notebook
+    else {
+        panic!("the new notebook is a Quire notebook");
+    };
+    assert_eq!(held, id);
+    assert_eq!(folder, Some(fs::canonicalize(&empty).unwrap()));
+}

@@ -8,11 +8,12 @@
 //! confirms it (`publish`). Afterwards a second, independent replica reads the folder from
 //! scratch, as `rt` would, and must arrive at the same pages Quire shows.
 
-use super::{Migrated, NotebookKind, Record, quire_notebook::import_log, report::summary};
+use super::{Migrated, NotebookKind, Record, report::summary};
 use crate::{
     folder_notebook::{FolderNotebook, state_folder_in},
     notebook::NotebookStore,
     notebook_lock::{NotebookLock, folder_lock, store_lock},
+    quire_folder::import_log,
 };
 use anyhow::{Context as _, Result};
 use std::path::{Path, PathBuf};

@@ -654,7 +654,9 @@ impl Render for StoredWindow {
         window.set_rem_size(
             <theme_settings::ThemeSettings as settings::Settings>::get_global(cx).ui_font_size(cx),
         );
-        let conflict = self.render_folder_conflict(cx);
+        let conflict = self
+            .render_folder_conflict(cx)
+            .or_else(|| self.render_version_conflict(cx));
         let sidebar_toggle = self.render_sidebar_toggle();
         let save_status = self.render_save_status(cx);
         let tools = self.render_page_tools(cx);

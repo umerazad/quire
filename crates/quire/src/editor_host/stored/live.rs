@@ -36,7 +36,25 @@ impl StoredWindow {
         let Some(live) = self.live.clone() else {
             return;
         };
-        cx.subscribe_in(&live, window, |this, _, Imported(pages), _, cx| {
+        cx.subscribe_in(&live, window, |this, _, Imported(pages), window, cx| {
+            // A page with competing versions opens again, so a choice made on another computer
+            // ends the conflict here too.
+            let conflicted: Vec<_> = this
+                .session
+                .borrow()
+                .open_pages()
+                .into_iter()
+                .filter(|open| {
+                    pages.iter().any(|page| page == open.read(cx).id())
+                        && open
+                            .read(cx)
+                            .loaded()
+                            .is_some_and(|loaded| loaded.conflict.is_some())
+                })
+                .collect();
+            for page in conflicted {
+                this.reopen_resolved(&page, window, cx);
+            }
             let open: Vec<_> = pages
                 .iter()
                 .filter_map(|page| {

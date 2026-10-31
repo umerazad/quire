@@ -241,8 +241,10 @@ impl FolderNotebook {
             #[cfg(test)]
             interrupt_staged: std::cell::Cell::default(),
         };
+        let legacy = settings::adopt_legacy_metadata(&real_root);
         notebook.listing();
-        let mut notices = notebook.adopt_reference_journals();
+        let mut notices: Vec<String> = legacy.into_iter().collect();
+        notices.extend(notebook.adopt_reference_journals());
         notices.extend(notebook.resume());
         let (recovered, imported) = notebook.import_reference();
         notices.extend(imported);
@@ -767,6 +769,11 @@ impl Client<FolderNotebook> {
         let bytes = edits.iter().map(edit_bytes).sum();
         self.request(bytes, move |notebook| {
             notebook.delete_if_heads(&edits, folder.as_deref())
+        })
+    }
+    pub fn move_noteless_folder(&self, from: String, to: String) -> Answer<()> {
+        self.request(128 + from.len() + to.len(), move |notebook| {
+            notebook.move_noteless_folder(&from, &to)
         })
     }
     pub fn other_files(&self, folder: String) -> Answer<Vec<String>> {

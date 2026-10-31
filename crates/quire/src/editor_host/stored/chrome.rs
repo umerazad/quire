@@ -24,6 +24,8 @@ pub(in crate::editor_host::stored) struct Browsers {
     pub(in crate::editor_host::stored) files_selected: usize,
     pub(in crate::editor_host::stored) files_focus: Option<FocusHandle>,
     pub(in crate::editor_host::stored) files_scroll: UniformListScrollHandle,
+    /// Empty folders and attachments of a folder notebook.
+    pub(in crate::editor_host::stored) on_disk: super::file_views::OnDisk,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -283,14 +285,24 @@ impl StoredWindow {
     }
 
     pub(in crate::editor_host::stored) fn file_rows(&self) -> Vec<TreeRow> {
+        let disk = &self.nav.browsers.on_disk;
         let paths: Vec<String> = self
             .nav
             .pages
             .iter()
             .map(|listed| listed.page.path.clone())
+            .chain(disk.files.iter().cloned())
+            .collect();
+        let folders: Vec<String> = self
+            .nav
+            .workspace
+            .folders
+            .iter()
+            .chain(&disk.folders)
+            .cloned()
             .collect();
         let expanded: BTreeSet<String> = self.nav.workspace.expanded.iter().cloned().collect();
-        folder_rows(&paths, &self.nav.workspace.folders, &expanded, |a, b| {
+        folder_rows(&paths, &folders, &expanded, |a, b| {
             a.to_lowercase()
                 .cmp(&b.to_lowercase())
                 .then_with(|| a.cmp(b))
@@ -336,13 +348,32 @@ impl StoredWindow {
                 self.nav.workspace.toggle_expanded(&row.path);
                 self.persist(cx);
             }
-            TreeKind::File => {
-                if let Some(page) = self.page_at_path(&row.path) {
-                    self.open_page(page, beside, window, cx);
-                }
-            }
+            TreeKind::File => match self.page_at_path(&row.path) {
+                Some(page) => self.open_page(page, beside, window, cx),
+                None => self.open_attachment(&row.path, cx),
+            },
         }
         cx.notify();
+    }
+
+    /// Opens a folder notebook file that is not a note with the system's app for it.
+    fn open_attachment(&mut self, path: &str, cx: &mut gpui::Context<Self>) {
+        let root = self
+            .session
+            .borrow()
+            .folder()
+            .map(|(root, _)| root.to_owned());
+        if let Some(root) = root
+            && self
+                .nav
+                .browsers
+                .on_disk
+                .files
+                .iter()
+                .any(|file| file == path)
+        {
+            cx.open_with_system(&root.join(path));
+        }
     }
 
     fn move_file(&mut self, delta: isize, cx: &mut gpui::Context<Self>) {
@@ -486,6 +517,14 @@ impl StoredWindow {
             count,
             cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
                 let rows = this.file_rows();
+                let attachments: BTreeSet<&str> = this
+                    .nav
+                    .browsers
+                    .on_disk
+                    .files
+                    .iter()
+                    .map(String::as_str)
+                    .collect();
                 range
                     .filter_map(|index| {
                         let row = rows.get(index)?.clone();
@@ -493,6 +532,9 @@ impl StoredWindow {
                         let icon = match (row.kind, expanded) {
                             (TreeKind::Folder, true) => IconName::FolderOpen,
                             (TreeKind::Folder, false) => IconName::Folder,
+                            (TreeKind::File, _) if attachments.contains(row.path.as_str()) => {
+                                IconName::Paperclip
+                            }
                             (TreeKind::File, _) => IconName::File,
                         };
                         Some(
