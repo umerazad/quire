@@ -153,6 +153,12 @@ impl PdfView {
             _open: None,
             _find: subscription,
         };
+        cx.on_release(|view, cx| {
+            for (_, rendered) in view.rendered.drain() {
+                cx.drop_image(rendered.image, None);
+            }
+        })
+        .detach();
         view.open(cx);
         view
     }
@@ -614,6 +620,14 @@ impl PdfView {
             .collect();
         pages.sort_unstable();
         pages
+    }
+
+    #[cfg(test)]
+    pub(crate) fn rendered_images(&self) -> Vec<Arc<RenderImage>> {
+        self.rendered
+            .values()
+            .map(|rendered| rendered.image.clone())
+            .collect()
     }
 
     #[cfg(test)]

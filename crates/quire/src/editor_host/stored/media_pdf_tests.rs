@@ -97,6 +97,27 @@ fn stored_pdfs_render_lazily_open_at_their_page_zoom_and_stay_bounded(cx: &mut T
         let kept = view.read_with(cx, |view, _| view.rendered_pages().len());
         assert!(kept <= KEPT_PAGES, "{kept} pages kept after page {page}");
     }
+
+    let images = view.read_with(cx, |view, _| view.rendered_images());
+    assert!(!images.is_empty());
+    let in_atlas = |cx: &mut TestAppContext| {
+        notebook
+            .window
+            .update(cx, |_, window, _| {
+                images
+                    .iter()
+                    .filter(|image| window.has_image_atlas_entry(image))
+                    .count()
+            })
+            .unwrap()
+    };
+    assert!(in_atlas(cx) > 0, "shown pages are textures");
+    drop(view);
+    super::media_tests::toggle_mode(&notebook, cx);
+    wait_until(cx, "Source view to release the page textures", |cx| {
+        draw(&notebook, cx);
+        in_atlas(cx) == 0
+    });
 }
 
 #[gpui::test]
