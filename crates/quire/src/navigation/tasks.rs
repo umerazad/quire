@@ -16,8 +16,8 @@ use quire_core::{
 };
 use quire_store::index::{IndexClient, ProjectSummary, TaskBoard, TaskItem, TaskQuery};
 use ui::{
-    Button, Checkbox, Color, ContextMenu, Disableable, DropdownMenu, Label, LabelCommon, LabelSize,
-    ListItem, ListItemSpacing, ToggleState, Toggleable, prelude::*, v_flex,
+    Button, ButtonStyle, Checkbox, Color, ContextMenu, Disableable, DropdownMenu, Label,
+    LabelCommon, LabelSize, ListItem, ListItemSpacing, ToggleState, Toggleable, prelude::*, v_flex,
 };
 
 gpui::actions!(
@@ -259,6 +259,15 @@ impl TasksView {
 
     pub fn focus_capture(&self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.capture.focus_handle(cx), cx);
+    }
+
+    /// The reference status line: whether the last change to a task is still being written.
+    pub fn save_status(&self) -> &'static str {
+        match (&self.work, &self.error) {
+            (Some(_), _) => "Saving locally…",
+            (None, Some(_)) => "Not saved; see the message above",
+            (None, None) => "Saved locally",
+        }
     }
 
     fn remember(&mut self, cx: &mut Context<Self>) {
@@ -1269,11 +1278,22 @@ impl Render for TasksView {
                 window.focus(&this.filter.focus_handle(cx), cx)
             }))
             .child(
-                h_flex().gap_2().child(Label::new("Tasks")).child(
-                    Label::new(format!("{} open actions", counts.open()))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                ),
+                h_flex()
+                    .gap_2()
+                    .child(Label::new("Tasks"))
+                    .child(
+                        Label::new(format!("{} open actions", counts.open()))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        Button::new("tasks-help", "How tasks work")
+                            .style(ButtonStyle::Subtle)
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(crate::help::OpenHelp), cx)
+                            }),
+                    ),
             )
             .child(capture)
             .child(tabs)
@@ -1307,6 +1327,21 @@ impl Render for TasksView {
                 })
                 .size(LabelSize::Small)
                 .color(Color::Muted),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Label::new(format!("{} · Markdown tasks", self.save_status()))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        Label::new("Capture → Clarify → Do → Review")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
             )
     }
 }

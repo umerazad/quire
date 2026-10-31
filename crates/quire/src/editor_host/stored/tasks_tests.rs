@@ -633,3 +633,26 @@ fn task_commands_use_the_notebook_daily_layout_and_page_titles(cx: &mut TestAppC
         "created stamps link the daily page by the configured title"
     );
 }
+
+#[gpui::test]
+fn the_status_line_says_saving_until_a_task_change_is_written(cx: &mut TestAppContext) {
+    let notebook = open_notebook(
+        &[
+            ("a", "Alpha.md", "- start\n"),
+            ("w", "Work.md", "- [ ] One\n"),
+        ],
+        "a",
+        cx,
+    );
+    show_tasks(&notebook, cx);
+    wait_rows(&notebook, &["One"], cx);
+    let status = |cx: &mut TestAppContext| {
+        let list = list(&notebook, cx);
+        cx.read(|cx| list.read(cx).save_status())
+    };
+    assert_eq!(status(cx), "Saved locally");
+    list(&notebook, cx).update(cx, |list, cx| list.toggle(0, cx));
+    assert_eq!(status(cx), "Saving locally…");
+    wait_stored(&notebook, "w", "- [x] One ✅ 2026-10-30\n", cx);
+    wait_until(cx, "the saved status", |cx| status(cx) == "Saved locally");
+}
