@@ -74,8 +74,8 @@ impl StoredWindow {
                     this.open_page_at(page.clone(), jump.clone(), *beside, window, cx)
                 }
                 TasksEvent::Remember(choices) => {
-                    this.nav.workspace.tasks = choices.clone();
-                    this.persist(cx);
+                    let choices = choices.clone();
+                    this.remember(|workspace| workspace.tasks = choices, cx);
                 }
             },
         )

@@ -11,40 +11,19 @@ use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy,
     SharedString, Subscription, UniformListScrollHandle, Window, uniform_list,
 };
+use quire_core::workspace::TagListChoices;
 use quire_store::index::{IndexClient, TagCount};
 use ui::{
     Button, Checkbox, Color, Label, LabelCommon, LabelSize, ListItem, ListItemSpacing, ToggleState,
     Toggleable, prelude::*, v_flex,
 };
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum TagSort {
-    #[default]
-    Name,
-    Most,
-    Fewest,
-}
-
-impl TagSort {
-    fn next(self) -> Self {
-        match self {
-            Self::Name => Self::Most,
-            Self::Most => Self::Fewest,
-            Self::Fewest => Self::Name,
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Name => "Sort: name",
-            Self::Most => "Sort: most blocks first",
-            Self::Fewest => "Sort: fewest blocks first",
-        }
-    }
-}
+pub use quire_core::workspace::TagSort;
 
 pub enum TagsEvent {
     Open(String),
+    /// The filter text or order changed and should be remembered.
+    Remember(TagListChoices),
 }
 
 pub struct TagsView {
@@ -93,16 +72,23 @@ pub fn visible(tags: &[TagCount], filter: &str, sort: TagSort) -> Vec<TagCount> 
 }
 
 impl TagsView {
-    pub fn new(writers: Writers, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        choices: TagListChoices,
+        writers: Writers,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let edits = cx.new(|cx| TagEdits::new(writers, window, cx));
         let filter = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Filter tags…", window, cx);
+            editor.set_text(choices.query.as_str(), window, cx);
             editor
         });
         let filtered = cx.subscribe(&filter, |this, _, event: &EditorEvent, cx| {
             if matches!(event, EditorEvent::BufferEdited) {
                 this.highlighted = 0;
+                this.remember(cx);
                 cx.notify();
             }
         });
@@ -119,7 +105,7 @@ impl TagsView {
         Self {
             tags: Live::default(),
             filter,
-            sort: TagSort::default(),
+            sort: choices.sort,
             highlighted: 0,
             selected: Vec::new(),
             edits,
@@ -141,6 +127,13 @@ impl TagsView {
             |this| &mut this.tags,
             |error| format!("Cannot list tags: {error}. Wait for indexing to finish, then retry."),
         );
+    }
+
+    fn remember(&self, cx: &mut Context<Self>) {
+        cx.emit(TagsEvent::Remember(TagListChoices {
+            query: self.filter.read(cx).text(cx),
+            sort: self.sort,
+        }));
     }
 
     pub fn rows(&self, cx: &App) -> Vec<TagCount> {
@@ -302,6 +295,7 @@ impl Render for TagsView {
                         |this, _, _, cx| {
                             this.sort = this.sort.next();
                             this.highlighted = 0;
+                            this.remember(cx);
                             cx.notify();
                         },
                     )),

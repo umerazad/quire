@@ -390,6 +390,7 @@ impl StoredWindow {
             window.focus(&previous, cx);
         }
         self.cache_editor(page, editor.clone());
+        self.keep_reading_position(&editor, page, false, window, cx);
         Some(editor)
     }
 

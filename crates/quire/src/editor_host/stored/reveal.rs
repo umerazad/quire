@@ -1,10 +1,16 @@
-//! Opening a page at a block: a search hit, tag row, task row, reference row, or followed block
-//! link puts the caret on its block and centers it, as the reference `PageJump` does.
+//! Where a page opens: at a block for a search hit, tag row, task row, reference row, or followed
+//! block link, which puts the caret on its block and centers it as the reference `PageJump`
+//! does; otherwise at the reading position each pane remembers for the page.
 
 use super::*;
 use crate::navigation::Jump;
-use editor::{SelectionEffects, scroll::Autoscroll};
+use editor::{
+    DisplayPoint, Editor, EditorEvent, SelectionEffects,
+    display_map::{DisplayRow, ToDisplayPoint},
+    scroll::Autoscroll,
+};
 use multi_buffer::MultiBufferOffset;
+use quire_core::workspace::position_key;
 
 /// A caret move waiting for its page's editor, or for the page's blocks to parse.
 pub(in crate::editor_host::stored) struct PendingJump {
@@ -126,5 +132,57 @@ impl StoredWindow {
                 }
             }
         }
+    }
+}
+
+/// The source line at the top of an editor's view.
+fn top_line(editor: &mut Editor, cx: &mut gpui::Context<Editor>) -> u32 {
+    let row = editor.scroll_position(cx).y.max(0.).floor() as u32;
+    DisplayPoint::new(DisplayRow(row), 0)
+        .to_point(&editor.display_snapshot(cx))
+        .row
+}
+
+impl StoredWindow {
+    /// Shows the page in a new editor from its remembered line, unless a jump is about to place
+    /// it, and remembers the line whenever the view scrolls.
+    pub(in crate::editor_host::stored) fn keep_reading_position(
+        &mut self,
+        view: &Entity<NotebookWindow>,
+        page: &Entity<OpenPage>,
+        side: bool,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let key = position_key(side, page.read(cx).id());
+        let source = view.read(cx).source.clone();
+        let jumping = self
+            .nav
+            .jump
+            .as_ref()
+            .is_some_and(|pending| pending.side == side && &pending.page == page);
+        if let Some(line) = self.nav.workspace.positions.get(&key).copied()
+            && !jumping
+        {
+            source.update(cx, |editor, cx| {
+                let snapshot = editor.display_snapshot(cx);
+                let row = text::Point::new(line, 0).to_display_point(&snapshot).row();
+                editor.set_scroll_top_row(row, window, cx);
+            });
+        }
+        cx.subscribe(&source, move |this, source, event: &EditorEvent, cx| {
+            if matches!(event, EditorEvent::ScrollPositionChanged { .. }) {
+                let line = source.update(cx, top_line);
+                let key = key.clone();
+                this.remember(
+                    |workspace| match line {
+                        0 => _ = workspace.positions.remove(&key),
+                        line => _ = workspace.positions.insert(key, line),
+                    },
+                    cx,
+                );
+            }
+        })
+        .detach();
     }
 }

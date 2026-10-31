@@ -12,6 +12,7 @@ use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy,
     Subscription, UniformListScrollHandle, Window, uniform_list,
 };
+use quire_core::workspace::{TagChoices, TaskStatus};
 use quire_store::index::{IndexClient, Outline, TaggedBlock};
 use ui::{Color, Icon, IconName, Label, LabelCommon, LabelSize, prelude::*, v_flex};
 
@@ -21,6 +22,8 @@ pub enum TagPageEvent {
         jump: Option<super::Jump>,
         beside: bool,
     },
+    /// The filter text changed and should be remembered.
+    Remember,
 }
 
 pub type Tagged = Vec<(TaggedBlock, Outline)>;
@@ -51,9 +54,12 @@ pub struct TagPageView {
     tag: String,
     pub(crate) blocks: Live<Tagged>,
     filter: Entity<Editor>,
+    status: TaskStatus,
     highlighted: usize,
     focus: FocusHandle,
-    scroll: UniformListScrollHandle,
+    pub(crate) scroll: UniformListScrollHandle,
+    /// The remembered first row, scrolled to once the rows arrive.
+    restore: Option<usize>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -66,15 +72,22 @@ impl Focusable for TagPageView {
 }
 
 impl TagPageView {
-    pub fn new(tag: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        tag: String,
+        choices: TagChoices,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let filter = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Filter by block text or page…", window, cx);
+            editor.set_text(choices.query.as_str(), window, cx);
             editor
         });
         let subscriptions = vec![cx.subscribe(&filter, |this, _, event: &EditorEvent, cx| {
             if matches!(event, EditorEvent::BufferEdited) {
                 this.highlighted = 0;
+                cx.emit(TagPageEvent::Remember);
                 cx.notify();
             }
         })];
@@ -82,9 +95,11 @@ impl TagPageView {
             tag,
             blocks: Live::default(),
             filter,
+            status: choices.status,
             highlighted: 0,
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
+            restore: (choices.scroll > 0).then_some(choices.scroll),
             _subscriptions: subscriptions,
         }
     }
@@ -111,6 +126,18 @@ impl TagPageView {
                 )
             },
         );
+    }
+
+    /// What to remember of this page: the filter, task status, and first row shown.
+    pub fn choices(&self, cx: &App) -> TagChoices {
+        let shown = self.rows(cx).len();
+        TagChoices {
+            query: self.filter.read(cx).text(cx),
+            status: self.status,
+            scroll: self
+                .restore
+                .unwrap_or_else(|| super::first_shown(&self.scroll, shown)),
+        }
     }
 
     pub fn rows(&self, cx: &App) -> Vec<ContextRow> {
@@ -146,6 +173,12 @@ impl TagPageView {
 impl Render for TagPageView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = self.rows(cx);
+        if !rows.is_empty()
+            && let Some(row) = self.restore.take()
+        {
+            self.scroll
+                .scroll_to_item_strict(row.min(rows.len() - 1), ScrollStrategy::Top);
+        }
         let total = self.blocks.value.len();
         let pages = self
             .blocks

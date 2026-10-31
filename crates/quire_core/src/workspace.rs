@@ -3,9 +3,12 @@
 //! stable page identity rather than path so renames keep every list intact.
 
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
-use std::{collections::BTreeSet, sync::LazyLock};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::LazyLock,
+};
 
 pub const MAX_RECENT: usize = 12;
 pub const SHOWN_RECENT: usize = 6;
@@ -108,8 +111,68 @@ impl TaskStatus {
     }
 }
 
-/// The Tasks browser's remembered choices: the list, the project filter (a page identity), and
-/// the Projects status filter.
+/// The most rows a remembered list size may ask for, as the reference allows.
+pub const MAX_LIMIT: usize = 10_000;
+
+/// The Tags browser order: by name, or by how many blocks use the tag.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TagSort {
+    #[default]
+    Name,
+    Most,
+    Fewest,
+}
+
+impl TagSort {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Name => Self::Most,
+            Self::Most => Self::Fewest,
+            Self::Fewest => Self::Name,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Name => "Sort: name",
+            Self::Most => "Sort: most blocks first",
+            Self::Fewest => "Sort: fewest blocks first",
+        }
+    }
+}
+
+/// The Pages browser's remembered filter text and namespace.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageChoices {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub query: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+}
+
+/// The Tags browser's remembered filter text and order.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TagListChoices {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub query: String,
+    #[serde(default)]
+    pub sort: TagSort,
+}
+
+/// A tag page's remembered filter text, task status, and first row shown.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TagChoices {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub query: String,
+    #[serde(default)]
+    pub status: TaskStatus,
+    #[serde(default)]
+    pub scroll: usize,
+}
+
+/// The Tasks browser's remembered choices: the list, the project filter (a page identity), the
+/// Projects status filter, the filter text, how many rows show, and an unsent capture.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskChoices {
     #[serde(default)]
@@ -118,6 +181,17 @@ pub struct TaskChoices {
     pub project: Option<String>,
     #[serde(default)]
     pub project_status: ProjectStatus,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub query: String,
+    /// Rows shown; zero means the first page.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub limit: usize,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub draft: String,
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -160,6 +234,50 @@ pub struct Workspace {
     pub oldest_first: Vec<String>,
     #[serde(default)]
     pub tasks: TaskChoices,
+    #[serde(default)]
+    pub pages: PageChoices,
+    #[serde(default)]
+    pub tag_list: TagListChoices,
+    /// Tag pages by tag key.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tag_pages: BTreeMap<String, TagChoices>,
+    /// Reading positions by [`position_key`]: the first line shown of a page in either pane.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub positions: BTreeMap<String, u32>,
+}
+
+/// Where a page's reading position is kept: the main pane and the side pane each keep one.
+pub fn position_key(side: bool, page: &str) -> String {
+    format!("{}:{page}", if side { "side" } else { "page" })
+}
+
+fn position_page(key: &str) -> Option<&str> {
+    key.strip_prefix("page:")
+        .or_else(|| key.strip_prefix("side:"))
+}
+
+/// A saved value, or its default when missing or unreadable.
+fn field<T: DeserializeOwned + Default>(value: &Value, key: &str) -> T {
+    value
+        .get(key)
+        .and_then(|item| serde_json::from_value(item.clone()).ok())
+        .unwrap_or_default()
+}
+
+/// A saved map, keeping only the entries that read back.
+fn entries<T: DeserializeOwned>(value: &Value, key: &str) -> BTreeMap<String, T> {
+    value
+        .get(key)
+        .and_then(Value::as_object)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|(key, item)| {
+                    Some((key.clone(), serde_json::from_value(item.clone()).ok()?))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn destinations(value: Option<&Value>) -> Vec<Destination> {
@@ -215,10 +333,15 @@ impl Workspace {
                         .collect()
                 })
                 .unwrap_or_default(),
-            tasks: value
-                .get("tasks")
-                .and_then(|tasks| serde_json::from_value(tasks.clone()).ok())
-                .unwrap_or_default(),
+            tasks: {
+                let mut tasks: TaskChoices = field(&value, "tasks");
+                tasks.limit = tasks.limit.min(MAX_LIMIT);
+                tasks
+            },
+            pages: field(&value, "pages"),
+            tag_list: field(&value, "tag_list"),
+            tag_pages: entries(&value, "tag_pages"),
+            positions: entries(&value, "positions"),
         }
     }
 
@@ -297,6 +420,8 @@ impl Workspace {
             self.side = None;
         }
         self.oldest_first.retain(|page| exists(page));
+        self.positions
+            .retain(|key, _| position_page(key).is_none_or(&exists));
         if self
             .tasks
             .project
@@ -337,6 +462,11 @@ impl Workspace {
         }
         if self.tasks.project.as_deref() == Some(from) {
             self.tasks.project = Some(to.to_owned());
+        }
+        for side in [false, true] {
+            if let Some(position) = self.positions.remove(&position_key(side, from)) {
+                self.positions.insert(position_key(side, to), position);
+            }
         }
     }
 

@@ -206,6 +206,9 @@ fn task_choices_survive_save_and_load_and_forget_deleted_projects() {
         view: TaskView::Projects,
         project: Some("atlas".into()),
         project_status: ProjectStatus::Inactive,
+        query: "call".into(),
+        limit: 80,
+        draft: "Email Ana".into(),
     };
     let loaded = Workspace::load(&workspace.save());
     assert_eq!(loaded, workspace);
@@ -257,4 +260,59 @@ fn a_page_whose_identity_changed_keeps_its_tabs_favorites_and_history() {
     assert_eq!(history.current(), Some(&page("new")));
     assert_eq!(history.back(), Some(page("keep")));
     assert_eq!(history.back(), Some(page("new")));
+}
+
+#[test]
+fn view_choices_and_reading_positions_survive_save_load_rename_and_delete() {
+    use quire_core::workspace::{
+        MAX_LIMIT, PageChoices, TagChoices, TagListChoices, TagSort, TaskStatus, position_key,
+    };
+    let mut workspace = Workspace::default();
+    workspace.visit(page("a"));
+    workspace.pages = PageChoices {
+        query: "plan".into(),
+        namespace: Some("Projects".into()),
+    };
+    workspace.tag_list = TagListChoices {
+        query: "wo".into(),
+        sort: TagSort::Most,
+    };
+    workspace.tag_pages.insert(
+        "#work".into(),
+        TagChoices {
+            query: "deck".into(),
+            status: TaskStatus::Due,
+            scroll: 12,
+        },
+    );
+    workspace.positions.insert(position_key(false, "a"), 40);
+    workspace.positions.insert(position_key(true, "a"), 7);
+    workspace.positions.insert(position_key(false, "b"), 3);
+    assert_eq!(Workspace::load(&workspace.save()), workspace);
+
+    let damaged = Workspace::load(
+        r##"{"tabs":[],"positions":{"page:a":5,"page:b":-1,"page:c":"x"},
+            "tag_pages":{"#a":{"query":"x","scroll":2},"#b":{"status":"later"}},
+            "tag_list":{"sort":"loudest"},"tasks":{"limit":99999999}}"##,
+    );
+    assert_eq!(
+        damaged.positions.into_iter().collect::<Vec<_>>(),
+        [("page:a".to_owned(), 5)],
+        "negative and unreadable positions drop"
+    );
+    assert_eq!(damaged.tag_pages.keys().collect::<Vec<_>>(), ["#a"]);
+    assert_eq!(damaged.tag_list, TagListChoices::default());
+    assert_eq!(damaged.tasks.limit, MAX_LIMIT);
+
+    workspace.rename_page("a", "a2");
+    assert_eq!(
+        workspace.positions.get(&position_key(false, "a2")),
+        Some(&40)
+    );
+    assert_eq!(workspace.positions.get(&position_key(true, "a2")), Some(&7));
+    workspace.retain_pages(|id| id != "b");
+    assert_eq!(
+        workspace.positions.keys().collect::<Vec<_>>(),
+        ["page:a2", "side:a2"]
+    );
 }

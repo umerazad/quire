@@ -107,6 +107,23 @@ impl Jump {
 /// The Files tree's own keys, beside the list keys it shares.
 pub const FILES_CONTEXT: &str = "QuireFiles";
 
+/// The first of `count` rows a virtualized list shows, or the row it is about to scroll to, for
+/// remembering where a list was read.
+pub fn first_shown(scroll: &gpui::UniformListScrollHandle, count: usize) -> usize {
+    let state = scroll.0.borrow();
+    if let Some(deferred) = &state.deferred_scroll_to_item {
+        return deferred.item_index;
+    }
+    let row = state
+        .last_item_size
+        .map(|size| size.contents.height / count.max(1) as f32)
+        .unwrap_or_default();
+    if count == 0 || row <= gpui::px(0.) {
+        return 0;
+    }
+    ((-state.base_handle.offset().y / row).floor().max(0.) as usize).min(count - 1)
+}
+
 /// Arrow, Home, End, Enter, and Shift-Enter for a virtualized list view: `step` moves the
 /// highlight and `confirm` opens the highlighted row, beside the page when `true`.
 pub fn list_keys<V: 'static, E: InteractiveElement>(
@@ -322,9 +339,12 @@ impl WorkspaceFile {
         entries.insert(self.notebook.clone(), value);
         let text =
             serde_json::to_vec(&Value::Object(entries)).map_err(|error| error.to_string())?;
-        let temporary = self.path.with_extension("json.tmp");
+        let temporary = self
+            .path
+            .with_extension(format!("{}.json.tmp", uuid::Uuid::new_v4()));
         std::fs::write(&temporary, text)
             .and_then(|()| std::fs::rename(&temporary, &self.path))
+            .inspect_err(|_| _ = std::fs::remove_file(&temporary))
             .map_err(|error| {
                 format!(
                     "Cannot save tabs and favorites to {}: {error}. Check write access to the notebook folder; your notes are unaffected.",

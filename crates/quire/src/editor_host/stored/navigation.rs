@@ -60,6 +60,8 @@ pub(super) struct Navigation {
     pub(super) pages: Vec<ListedPage>,
     catalogue: Option<Task<()>>,
     saving: Option<Task<()>>,
+    /// A save of view state waiting for typing or scrolling to pause.
+    remembering: Option<Task<()>>,
     saves: usize,
     creating: Option<Task<()>>,
     pub(super) error: Option<SharedString>,
@@ -90,6 +92,17 @@ pub(super) struct Navigation {
     pub(super) loading_focus: gpui::FocusHandle,
 }
 
+/// A closing window writes view state still waiting for typing or scrolling to pause.
+impl Drop for Navigation {
+    fn drop(&mut self) {
+        if self.remembering.take().is_some()
+            && let Err(error) = self.file.save(&self.workspace)
+        {
+            eprintln!("{error}");
+        }
+    }
+}
+
 impl Navigation {
     pub(super) fn new(
         database: &std::path::Path,
@@ -112,6 +125,7 @@ impl Navigation {
             pages: Vec::new(),
             catalogue: None,
             saving: None,
+            remembering: None,
             saves: 0,
             creating: None,
             error: None,
@@ -135,7 +149,7 @@ impl Navigation {
 
     #[cfg(test)]
     pub(super) fn saving_idle(&self) -> bool {
-        self.saving.is_none()
+        self.saving.is_none() && self.remembering.is_none()
     }
 
     pub(super) fn title(&self, page: &str) -> Option<&str> {
@@ -231,6 +245,20 @@ impl StoredWindow {
         );
         let before = self.nav.workspace.clone();
         self.nav.workspace.retain_pages(|id| present.contains(id));
+        let pages = &self.nav.pages;
+        let workspace = &mut self.nav.workspace;
+        if workspace
+            .pages
+            .namespace
+            .as_deref()
+            .is_some_and(|namespace| {
+                !pages.iter().any(|listed| {
+                    quire_core::workspace::in_namespace(&listed.page.title, namespace)
+                })
+            })
+        {
+            workspace.pages.namespace = None;
+        }
         self.nav
             .history
             .retain(|item| item.page_id().is_none_or(|id| present.contains(id)));
@@ -239,7 +267,31 @@ impl StoredWindow {
         }
     }
 
+    /// Records view state, such as a filter, list size, or reading position, and saves it once
+    /// typing or scrolling pauses.
+    pub(super) fn remember(
+        &mut self,
+        change: impl FnOnce(&mut quire_core::workspace::Workspace),
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let before = self.nav.workspace.clone();
+        change(&mut self.nav.workspace);
+        if self.nav.workspace == before {
+            return;
+        }
+        self.nav.remembering = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(400))
+                .await;
+            this.update(cx, |this, cx| {
+                this.persist(cx);
+            })
+            .ok();
+        }));
+    }
+
     fn persist(&mut self, cx: &mut gpui::Context<Self>) {
+        self.nav.remembering = None;
         let file = self.nav.file.clone();
         let workspace = self.nav.workspace.clone();
         let previous = self.nav.saving.take();
@@ -284,6 +336,7 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        self.remember_tag_page(cx);
         self.nav.jump = None;
         self.nav.view = match destination {
             Destination::Browser { view } => Some(*view),
@@ -720,6 +773,7 @@ impl StoredWindow {
             (false, Some(previous)) => window.focus(&previous, cx),
             (false, None) => window.blur(cx),
         }
+        self.keep_reading_position(&editor, &page, true, window, cx);
         if let Some(side) = &mut self.nav.side {
             side.editor = Some(editor);
         }
