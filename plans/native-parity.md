@@ -87,6 +87,16 @@ For each row, record the native test names, exact build revision and command, pa
 
 Track folder and format 1 results separately for storage-dependent rows. Track each OS separately for input, dialogs, PDF, packaging and accessibility. Unavailable hardware or providers remain explicit gaps. Reconcile this ledger once more with the final `rt` handoff before calling feature parity complete.
 
+### Recorded evidence
+
+Rows below record partial evidence; each stays pending until its gaps close. Command for all: `cargo test -p quire -p quire_core -p quire_store -p quire_format -p quire_media --locked --features quire/test-support,gpui_platform/runtime_shaders` on macOS 27 (Apple silicon), headless GPUI test platform, batch D branch (2026-10-31).
+
+E11 (partial, macOS headless). Appearance, fonts, spacing, Vim, Format tags, and capture: `preferences::tests` (19). Tag tones and pills with icons: `tag_labels::tests`, `quire_assets::tests`. Reduced motion from the system setting, cursor blink included: `motion::tests::the_cursor_stops_blinking_under_reduced_motion`. Keyboard focus in Settings and Help: `preferences::tests::tab_walks_settings_in_reading_order_and_keys_work_the_focused_control`, `help::tests::tab_walks_help_from_search_to_capture_and_the_topics`. Menus and window controls: `lifecycle_tests`, `title_bar::tests`, `folder_tests::notebook_windows_draw_the_hidden_inset_title_bar_at_the_top`. Gaps: native desktop runs of focus, motion, dialogs, menus, and the title bar; Windows and Linux; screenshots at several sizes and scales.
+
+E17, Reveal only (partial). Folder notebooks reveal the real file: `folder_tests::renaming_a_folder_page_from_the_files_menu_writes_what_f2_writes` chooses Reveal in Finder / Explorer and records the path. Quire notebooks reveal a read-only copy in the temporary `Quire pages` folder: `data_tests::reveal_shows_a_read_only_copy_of_a_quire_notebook_page`, `file_actions::tests::a_revealed_page_is_a_read_only_copy_that_the_next_reveal_replaces`. The rest of the row belongs to its other owning tasks. Gaps: the native file manager on each OS.
+
+S47 (folder and format 1, macOS headless). The same three tests: folder pages reveal the real file inside the notebook only, and a format 1 page reveals an exported read-only copy that the next Reveal replaces, as rt's final source does. Gaps: Finder, Explorer, and Linux file managers.
+
 ## Known source limitations to preserve honestly
 
 The source README lists incomplete native composition/accessibility/Windows verification, no cross-file undo, no standalone fenced-code references, and no complete rich-formatting toolbar. Page and folder deletion exists since 0.9.45 but has no in-app restore. Tasks have no recurrence, priority, or schedule engine; `{{tasks: QUERY}}` lists exist, but the desktop shows the terminal app's `{{query: ...}}` blocks and `key:: value` properties as ordinary text. Imported Roam JavaScript is not executed, and Roam SmartBlock template commands are no longer read since 0.9.55. These are not accidental native regressions, and source limitations do not waive this plan's explicit native input and platform acceptance gates.
