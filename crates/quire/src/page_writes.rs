@@ -34,6 +34,11 @@ pub struct PageSource {
 }
 
 impl PageSource {
+    /// Whether the page had competing versions when it was read.
+    pub fn competing(&self) -> bool {
+        self.base.len() > 1
+    }
+
     /// The write that replaces this page's text with `text`.
     pub fn write(self, text: Arc<str>) -> PageWrite {
         let path = self.path.clone();

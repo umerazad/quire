@@ -429,3 +429,143 @@ fn a_folder_page_export_points_images_at_files_inside_the_notebook(cx: &mut Test
         )
     );
 }
+
+#[gpui::test]
+fn a_quire_notebook_export_copies_attachments_and_links_them_from_each_page(
+    cx: &mut TestAppContext,
+) {
+    let notebook = open_notebook(&[("k", "Keep.md", "- keep\n")], "k", cx);
+    settle(&notebook, cx);
+    let source = tempfile::tempdir().unwrap();
+    write_files(
+        source.path(),
+        &[
+            (
+                "Deep/B.md",
+                "- ![](../assets/a.png) ![x](attachments/gone.png)\n",
+            ),
+            ("Top.md", "- ![[assets/r.pdf#page=2]]\n"),
+            ("assets/a.png", "png"),
+            ("assets/r.pdf", "%PDF"),
+        ],
+    );
+    dispatch(&notebook, ImportMarkdownFolder, cx);
+    choose_folder(source.path(), cx);
+    assert_eq!(
+        finished(&notebook, cx),
+        "Imported 2 pages and 2 other files."
+    );
+    let (image, pdf) = (
+        attachment_file_name(b"png", "a.png"),
+        attachment_file_name(b"%PDF", "r.pdf"),
+    );
+    wait_until(cx, "the page list", |cx| listed(&notebook, cx).len() == 3);
+
+    let out = tempfile::tempdir().unwrap();
+    dispatch(&notebook, ExportNotebookMarkdown, cx);
+    choose_folder(out.path(), cx);
+    assert_eq!(
+        finished(&notebook, cx),
+        format!(
+            "Exported 3 pages and 2 other files to {}. Not exported: page history and earlier versions; 1 attachment the pages link to (Deep/attachments/gone.png); sync logs, notebook settings, and this computer's records.",
+            out.path().display()
+        )
+    );
+    assert_eq!(
+        tree(out.path()),
+        BTreeMap::from([
+            (
+                "Deep/B.md".into(),
+                format!("- ![](../attachments/{image}) ![x](attachments/gone.png)\n")
+            ),
+            ("Keep.md".into(), "- keep\n".into()),
+            (
+                "Top.md".into(),
+                format!("- ![[attachments/{pdf}#page=2]]\n")
+            ),
+            (format!("attachments/{image}"), "png".into()),
+            (format!("attachments/{pdf}"), "%PDF".into()),
+        ])
+    );
+}
+
+#[gpui::test]
+fn a_quire_page_export_points_attachment_links_at_the_stored_files(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&[("k", "Keep.md", "- keep\n")], "k", cx);
+    settle(&notebook, cx);
+    let source = tempfile::tempdir().unwrap();
+    write_files(
+        source.path(),
+        &[("Plan.md", "- ![Chart](img/c.png)\n"), ("img/c.png", "png")],
+    );
+    dispatch(&notebook, ImportMarkdownFolder, cx);
+    choose_folder(source.path(), cx);
+    assert_eq!(
+        finished(&notebook, cx),
+        "Imported 1 pages and 1 other files."
+    );
+    wait_until(cx, "the page list", |cx| listed(&notebook, cx).len() == 2);
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.open_page(page_id_for_path("Plan.md"), false, window, cx)
+        })
+        .unwrap();
+    settle(&notebook, cx);
+
+    let out = tempfile::tempdir().unwrap();
+    let target = out.path().join("Plan.md");
+    dispatch(&notebook, ExportPageMarkdown, cx);
+    wait_until(cx, "the save dialog", |cx| cx.did_prompt_for_new_path());
+    let chosen = target.clone();
+    cx.simulate_new_path_selection(move |_| Some(chosen));
+    assert_eq!(finished(&notebook, cx), "Exported Plan as Markdown.");
+    let stored = fs::canonicalize(
+        notebook
+            .path
+            .parent()
+            .unwrap()
+            .join("attachments")
+            .join(attachment_file_name(b"png", "c.png")),
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read_to_string(&target).unwrap(),
+        format!("- ![Chart](<{}>)\n", stored.display())
+    );
+}
+
+#[gpui::test]
+fn a_notebook_export_includes_typing_that_has_not_been_saved(cx: &mut TestAppContext) {
+    let id = page_id_for_path("A.md");
+    let notebook = open_notebook(&[(&id, "A.md", "- a\n")], &id, cx);
+    settle(&notebook, cx);
+    let editor = super::media_tests::page_editor(&notebook, cx);
+    notebook
+        .window
+        .update(cx, |_, window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.change_selections(Default::default(), window, cx, |selections| {
+                    selections.select_ranges([
+                        multi_buffer::MultiBufferOffset(3)..multi_buffer::MultiBufferOffset(3)
+                    ]);
+                });
+                editor.insert(" typed", window, cx);
+            })
+        })
+        .unwrap();
+    assert_eq!(
+        stored_text(&notebook.path, "A.md").as_deref(),
+        Some("- a\n"),
+        "the typing is not saved yet"
+    );
+
+    let out = tempfile::tempdir().unwrap();
+    dispatch(&notebook, ExportNotebookMarkdown, cx);
+    choose_folder(out.path(), cx);
+    finished(&notebook, cx);
+    assert_eq!(
+        tree(out.path()),
+        BTreeMap::from([("A.md".into(), "- a typed\n".into())])
+    );
+}
