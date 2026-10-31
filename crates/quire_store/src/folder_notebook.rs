@@ -241,8 +241,10 @@ impl FolderNotebook {
             #[cfg(test)]
             interrupt_staged: std::cell::Cell::default(),
         };
+        let legacy = settings::adopt_legacy_metadata(&real_root);
         notebook.listing();
-        let mut notices = notebook.adopt_reference_journals();
+        let mut notices: Vec<String> = legacy.into_iter().collect();
+        notices.extend(notebook.adopt_reference_journals());
         notices.extend(notebook.resume());
         let (recovered, imported) = notebook.import_reference();
         notices.extend(imported);
