@@ -14,6 +14,10 @@ pub struct QuireSettingsContent {
     ///
     /// Default: inbox
     pub capture_target: Option<CaptureTarget>,
+    /// Whether page editors underline misspelled words, using the system's spelling dictionary.
+    ///
+    /// Default: true
+    pub spellcheck: Option<bool>,
     /// AI transforms through a command line tool.
     pub ai: Option<QuireAiSettingsContent>,
 }

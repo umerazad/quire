@@ -384,7 +384,8 @@ fn menu(
             selections.select_display_ranges([point..point])
         });
     }
-    let entries = pointer_menu::tidy(entries(editor, cx));
+    let spelling = crate::spellcheck::menu_entries(editor, point, cx);
+    let entries = pointer_menu::tidy(spelling.into_iter().chain(entries(editor, cx)).collect());
     #[cfg(test)]
     let summary = pointer_menu::summary(&entries);
     let menu = pointer_menu::build(entries, Some(editor.focus_handle(cx)), window, cx);

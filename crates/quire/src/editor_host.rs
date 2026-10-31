@@ -132,6 +132,7 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     crate::references::init(cx);
     crate::embeds::init(cx);
     crate::page_menu::init(cx);
+    crate::spellcheck::init(cx);
     crate::ai::init(cx);
     crate::profiles::init(cx);
     crate::app_menus::init(cx);
@@ -491,6 +492,7 @@ impl NotebookWindow {
         let zooms = self.zooms.iter().flatten().map(|zoom| &zoom.editor);
         for editor in [&self.source, &self.second].into_iter().chain(zooms) {
             crate::tag_labels::refresh(editor, &self.analysis, cx);
+            crate::spellcheck::attach(editor, &self.analysis, cx);
         }
     }
 

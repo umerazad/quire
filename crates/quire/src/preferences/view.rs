@@ -339,6 +339,15 @@ impl Render for PreferencesWindow {
                         |state, _, cx| {
                             super::change(Change::FormatTags(*state == ToggleState::Selected), cx)
                         },
+                    ).tab_index(order.next()))
+                    .child(SwitchField::new(
+                        "spellcheck",
+                        Some("Check spelling"),
+                        Some(crate::spellcheck::preference_hint(cx).into()),
+                        ToggleState::from(shown.spellcheck),
+                        |state, _, cx| {
+                            super::change(Change::Spellcheck(*state == ToggleState::Selected), cx)
+                        },
                     ).tab_index(order.next())),
             )
             .child(self.capture(&mut order))

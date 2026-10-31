@@ -364,7 +364,7 @@
     },
     {
       "path": "crates/settings_content/src/quire.rs",
-      "change": "Add QuireSettingsContent (format_tags, capture_target, and the ai section with QuireAiSettingsContent and AiBackendName for NR28 AI transforms, and AiWritesName for the NR29 notebook write tools' Off/Review/Apply setting) so Quire application preferences are typed settings in the same settings.json, layered and live-reloaded by SettingsStore like Zed settings."
+      "change": "Add QuireSettingsContent (format_tags, capture_target, spellcheck, and the ai section with QuireAiSettingsContent and AiBackendName for NR28 AI transforms, and AiWritesName for the NR29 notebook write tools' Off/Review/Apply setting) so Quire application preferences are typed settings in the same settings.json, layered and live-reloaded by SettingsStore like Zed settings."
     },
     {
       "path": "crates/settings_content/src/settings_content.rs",
