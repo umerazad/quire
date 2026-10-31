@@ -5,9 +5,10 @@
 use super::query::{PAGE_COLUMNS, PageRef, PageRow, page_ref};
 use super::{QueryIndex, REBUILD};
 use anyhow::{Context as _, Result};
+use quire_core::task_query;
 use quire_core::tasks::{TaskFilter, TaskState, add_days, memberships};
 use quire_core::workspace::TaskView;
-use std::{cmp::Ordering, collections::HashMap};
+use std::{cell::RefCell, cmp::Ordering, collections::HashMap};
 
 /// How far ahead Upcoming looks, in days.
 pub const UPCOMING_DAYS: i64 = 7;
@@ -203,8 +204,29 @@ impl QueryIndex {
 
     /// Everything the Tasks browser shows, read in one step so counts, projects, and rows always
     /// describe one index state.
-    pub fn task_board(&self, query: &TaskQuery) -> Result<TaskBoard> {
-        let tasks = self.tasks()?;
+    /// Resolves a page name to a page identity, remembering answers for one query.
+    fn page_finder(&self) -> impl Fn(&str) -> Option<String> + '_ {
+        let found: RefCell<HashMap<String, Option<String>>> = RefCell::default();
+        move |name: &str| {
+            found
+                .borrow_mut()
+                .entry(name.to_owned())
+                .or_insert_with(|| {
+                    self.resolve_page(name)
+                        .ok()
+                        .flatten()
+                        .map(|page| page.page.to_lossy_string())
+                })
+                .clone()
+        }
+    }
+
+    /// Project pages, ordered by title, and for each task the projects it belongs to.
+    fn project_members(
+        &self,
+        tasks: &[TaskItem],
+        find: &dyn Fn(&str) -> Option<String>,
+    ) -> Result<(Vec<PageRef>, Vec<Vec<usize>>)> {
         let pages = self.project_pages()?;
         let projects: Vec<(String, Vec<String>)> = pages
             .iter()
@@ -215,19 +237,7 @@ impl QueryIndex {
                 Ok((page.page.to_lossy_string(), tags))
             })
             .collect::<Result<_>>()?;
-        let mut found: HashMap<String, Option<String>> = HashMap::new();
-        let mut find = |link: &str| -> Option<String> {
-            found
-                .entry(link.to_owned())
-                .or_insert_with(|| {
-                    self.resolve_page(link)
-                        .ok()
-                        .flatten()
-                        .map(|page| page.page.to_lossy_string())
-                })
-                .clone()
-        };
-        let members: Vec<Vec<usize>> = tasks
+        let members = tasks
             .iter()
             .map(|task| {
                 memberships(
@@ -235,12 +245,23 @@ impl QueryIndex {
                     &task.links,
                     &task.tags,
                     &projects,
-                    &mut find,
+                    find,
                 )
                 .into_iter()
                 .filter_map(|id| projects.iter().position(|(page, _)| page == id))
                 .collect()
             })
+            .collect();
+        Ok((pages, members))
+    }
+
+    pub fn task_board(&self, query: &TaskQuery) -> Result<TaskBoard> {
+        let tasks = self.tasks()?;
+        let find = self.page_finder();
+        let (pages, members) = self.project_members(&tasks, &find)?;
+        let projects: Vec<String> = pages
+            .iter()
+            .map(|page| page.page.to_lossy_string())
             .collect();
         let mut summaries: Vec<ProjectSummary> = pages
             .into_iter()
@@ -286,7 +307,7 @@ impl QueryIndex {
         let project = query
             .project
             .as_deref()
-            .and_then(|id| projects.iter().position(|(page, _)| page == id));
+            .and_then(|id| projects.iter().position(|page| page == id));
         let filter = TaskFilter::new(&query.filter);
         let mut matching: Vec<&TaskItem> = tasks
             .iter()
@@ -315,6 +336,104 @@ impl super::IndexClient {
     pub fn task_board(&self, query: TaskQuery) -> super::Answer<TaskBoard> {
         self.request(256 + query.filter.len(), move |index| {
             index.task_board(&query)
+        })
+    }
+}
+
+/// A live task list written in a page: the parsed query, the page holding it, and today.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TaskListQuery {
+    pub query: task_query::TaskQuery,
+    /// The identity of the page holding the query, which `here` names.
+    pub here: String,
+    pub today: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TaskListGroup {
+    /// Empty without grouping.
+    pub label: String,
+    /// The page a page or project group names.
+    pub page: Option<String>,
+    pub tasks: Vec<TaskItem>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TaskList {
+    pub groups: Vec<TaskListGroup>,
+    /// How many tasks match, beyond the limit too.
+    pub total: usize,
+}
+
+impl TaskList {
+    pub fn shown(&self) -> usize {
+        self.groups.iter().map(|group| group.tasks.len()).sum()
+    }
+}
+
+impl QueryIndex {
+    /// The tasks a `{{tasks: ...}}` block lists, unsaved edits included.
+    pub fn task_list(&self, list: &TaskListQuery) -> Result<TaskList> {
+        let tasks = self.tasks()?;
+        let find = self.page_finder();
+        let (projects, members) = if list.query.uses_projects() {
+            let (pages, members) = self.project_members(&tasks, &find)?;
+            let projects = pages
+                .into_iter()
+                .map(|page| task_query::Project {
+                    page: page.page.to_lossy_string(),
+                    title: page.title,
+                })
+                .collect();
+            (projects, members)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        let pages: Vec<String> = tasks
+            .iter()
+            .map(|task| task.source.page.to_lossy_string())
+            .collect();
+        let listed: Vec<task_query::Listed> = tasks
+            .iter()
+            .zip(&pages)
+            .map(|(task, page)| task_query::Listed {
+                page,
+                title: &task.source.title,
+                text: &task.text,
+                tags: &task.tags,
+                links: &task.links,
+                state: task.state,
+                due: task.due.as_deref(),
+            })
+            .collect();
+        let compare = |a: &str, b: &str| self.collator.compare(a, b);
+        let listing = task_query::run(
+            &list.query,
+            &listed,
+            &task_query::Notebook {
+                here: &list.here,
+                today: &list.today,
+                projects: &projects,
+                members: &members,
+                find_page: &find,
+                compare: &compare,
+            },
+        );
+        Ok(TaskList {
+            total: listing.total,
+            groups: listing
+                .groups
+                .into_iter()
+                .map(|group| TaskListGroup {
+                    label: group.label,
+                    page: group.page,
+                    tasks: group
+                        .tasks
+                        .into_iter()
+                        .map(|index| tasks[index].clone())
+                        .collect(),
+                })
+                .collect(),
         })
     }
 }
