@@ -73,6 +73,13 @@ pub trait Notebook {
         Vec<Entity<OpenPage>>,
         crate::notebook_backend::NotebookBackend,
     )>;
+    /// Asks for a value a template needs. The answer is None when the question is dismissed.
+    fn prompt(
+        &self,
+        prompt: crate::templates::prompt::Prompt,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> futures::channel::oneshot::Receiver<Option<String>>;
 }
 
 /// Shares one notebook among a window's page editors and tells them when indexed answers may

@@ -442,6 +442,19 @@ impl Render for StoredWindow {
                         .child(palette),
                 )
             })
+            .when_some(self.nav.template_prompt.clone(), |div, prompt| {
+                div.child(
+                    gpui::div()
+                        .absolute()
+                        .top_16()
+                        .left_0()
+                        .right_0()
+                        .flex()
+                        .justify_center()
+                        .occlude()
+                        .child(prompt),
+                )
+            })
             .when_some(self.nav.dialog.clone(), |div, dialog| {
                 div.child(
                     gpui::div()

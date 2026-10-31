@@ -1,4 +1,5 @@
 pub mod daily;
+pub mod fuzzy;
 pub mod json;
 pub mod markdown;
 pub mod merge;
@@ -8,4 +9,5 @@ pub mod source_text;
 pub mod tag_edits;
 pub mod task_query;
 pub mod tasks;
+pub mod templates;
 pub mod workspace;

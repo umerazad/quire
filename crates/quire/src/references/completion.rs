@@ -165,9 +165,16 @@ impl CompletionProvider for References {
         buffer: &Entity<Buffer>,
         buffer_position: text::Anchor,
         _: editor::CompletionContext,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<anyhow::Result<Vec<CompletionResponse>>> {
+        let page = buffer.read(cx).snapshot();
+        let caret = buffer_position.to_offset(&page);
+        if let Some(after) = crate::templates::insert::trigger_at(&page, caret) {
+            return crate::templates::insert::completions(
+                &self.host, buffer, after, caret, window, cx,
+            );
+        }
         let snapshot = buffer.read(cx).text_snapshot();
         let Some(typed) = typed(&snapshot, buffer_position.to_offset(&snapshot)) else {
             return Task::ready(Ok(Vec::new()));
@@ -253,8 +260,13 @@ impl CompletionProvider for References {
         if text.contains('\n') {
             return false;
         }
+        let page = buffer.read(cx).snapshot();
+        let caret = position.to_offset(&page);
+        if crate::templates::insert::trigger_at(&page, caret).is_some() {
+            return true;
+        }
         let snapshot = buffer.read(cx).text_snapshot();
-        typed(&snapshot, position.to_offset(&snapshot)).is_some()
+        typed(&snapshot, caret).is_some()
     }
 }
 

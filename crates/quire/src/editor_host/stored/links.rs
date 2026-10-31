@@ -100,6 +100,19 @@ impl Notebook for WindowNotebook {
         let session = session.try_borrow().ok()?;
         Some((session.open_pages(), session.storage()))
     }
+
+    fn prompt(
+        &self,
+        prompt: crate::templates::prompt::Prompt,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> futures::channel::oneshot::Receiver<Option<String>> {
+        let (picker, answer) = crate::templates::prompt::picker(prompt, window, cx);
+        self.window
+            .update(cx, |this, cx| this.show_template_prompt(picker, window, cx))
+            .ok();
+        answer
+    }
 }
 
 impl StoredWindow {

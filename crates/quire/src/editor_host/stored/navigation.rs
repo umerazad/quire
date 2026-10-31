@@ -26,6 +26,8 @@ mod reference_views;
 mod tag_views;
 #[path = "task_views.rs"]
 mod task_views;
+#[path = "template_views.rs"]
+mod template_views;
 
 pub(super) struct Navigation {
     file: WorkspaceFile,
@@ -52,6 +54,10 @@ pub(super) struct Navigation {
     pub(super) tasks: task_views::TaskViews,
     /// Linked reference panels by page, kept for the session so each keeps its filter.
     pub(super) references: HashMap<String, Entity<crate::navigation::references::ReferencesView>>,
+    /// The guide beside the Templates page, with the ID of the page it belongs to.
+    pub(super) templates_guide: Option<(String, Entity<crate::templates::guide::TemplatesGuide>)>,
+    /// A question a template asks while it is inserted.
+    pub(super) template_prompt: Option<Entity<Picker<crate::templates::prompt::TemplatePrompt>>>,
 }
 
 impl Navigation {
@@ -84,6 +90,8 @@ impl Navigation {
             tags: tag_views::TagViews::default(),
             tasks: task_views::TaskViews::default(),
             references: HashMap::new(),
+            templates_guide: None,
+            template_prompt: None,
         }
     }
 
@@ -671,7 +679,23 @@ impl StoredWindow {
             .min_w_0()
             .min_h_0()
             .child(self.render_tabs(cx))
-            .child(content)
+            .child(match self.shown_templates_guide(cx) {
+                Some(guide) => gpui::div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        gpui::div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(content),
+                    )
+                    .child(guide)
+                    .into_any_element(),
+                None => content,
+            })
             .when_some(self.shown_references(cx), |main, references| {
                 main.child(references)
             });
@@ -747,3 +771,11 @@ mod task_lists_tests;
 #[cfg(test)]
 #[path = "folder_tests.rs"]
 mod folder_tests;
+
+#[cfg(test)]
+#[path = "template_tests.rs"]
+mod template_tests;
+
+#[cfg(test)]
+#[path = "template_insert_tests.rs"]
+mod template_insert_tests;
