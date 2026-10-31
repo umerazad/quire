@@ -824,6 +824,25 @@ impl Render for PdfView {
                             .h(px(VIEWPORT))
                             .overflow_x_scroll()
                             .bg(colors.editor_background)
+                            // The pages took the scroll; the note around them stays put. At the
+                            // first or last page the scroll carries on to the note.
+                            .on_scroll(cx.listener(
+                                move |view, event: &gpui::ScrollEvent, _, cx| {
+                                    let up = match event.delta {
+                                        gpui::ScrollDelta::Pixels(delta) => delta.y > px(0.),
+                                        gpui::ScrollDelta::Lines(delta) => delta.y > 0.,
+                                    };
+                                    let top = view.list.logical_scroll_top();
+                                    let at_end = if up {
+                                        top.item_ix == 0 && top.offset_in_item <= px(0.)
+                                    } else {
+                                        top.item_ix + 1 >= pages
+                                    };
+                                    if !at_end {
+                                        cx.stop_propagation();
+                                    }
+                                },
+                            ))
                             .child(pages_list),
                     )
                     .into_any_element()
