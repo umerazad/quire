@@ -421,6 +421,7 @@ pub(super) fn migrate(
             database: PathBuf::from(&database),
             notebook,
             writer,
+            folder: Some(folder.to_owned()),
         }),
         report,
     ))

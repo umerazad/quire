@@ -919,3 +919,7 @@ mod answer_tests;
 #[cfg(test)]
 #[path = "lifecycle_tests.rs"]
 mod lifecycle_tests;
+
+#[cfg(test)]
+#[path = "live_tests.rs"]
+mod live_tests;

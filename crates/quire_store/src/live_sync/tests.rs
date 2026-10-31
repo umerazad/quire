@@ -293,12 +293,13 @@ fn a_save_wakes_the_outbox_watcher_and_publication_empties_the_outbox() -> Resul
     let mut watcher = store.watch_outbox();
     assert!(watcher.try_recv().is_err(), "nothing saved yet");
     store.save(&edit(vec![], "one"))?;
-    assert_eq!(watcher.try_recv()?, ());
+    assert_eq!(watcher.try_recv()?, 1);
     assert_eq!(
         store.publication_state()?,
         PublicationState {
             outbox: 1,
-            last_seq: 0
+            last_seq: 0,
+            saves: 1
         }
     );
     store.publish_to(&root, 2)?.expect("one batch");
@@ -306,7 +307,8 @@ fn a_save_wakes_the_outbox_watcher_and_publication_empties_the_outbox() -> Resul
         store.publication_state()?,
         PublicationState {
             outbox: 0,
-            last_seq: 1
+            last_seq: 1,
+            saves: 1
         }
     );
     drop(watcher);

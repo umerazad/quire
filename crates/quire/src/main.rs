@@ -57,6 +57,9 @@ mod backups;
 mod sync_status;
 
 #[cfg(feature = "full-editor")]
+mod live_sync;
+
+#[cfg(feature = "full-editor")]
 mod lifecycle;
 
 #[cfg(feature = "full-editor")]

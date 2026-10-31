@@ -51,7 +51,9 @@ pub struct NotebookStore {
     directory: PathBuf,
     clock: Clock,
     /// Told whenever a save adds to the outbox, so a scheduler can publish it.
-    outbox_watchers: RefCell<Vec<UnboundedSender<()>>>,
+    outbox_watchers: RefCell<Vec<UnboundedSender<u64>>>,
+    /// How many saves have added to the outbox since this store opened.
+    saves: Cell<u64>,
 }
 
 /// What a writer's status reports about its publication.
@@ -59,6 +61,9 @@ pub struct NotebookStore {
 pub struct PublicationState {
     pub outbox: u64,
     pub last_seq: u64,
+    /// The number carried by the last outbox message when this was read: a save with a larger
+    /// number is not counted in `outbox` yet.
+    pub saves: u64,
 }
 
 /// Milliseconds stamped on merge revisions that rescans make.
@@ -98,6 +103,7 @@ impl NotebookStore {
                 .to_owned(),
             clock,
             outbox_watchers: RefCell::default(),
+            saves: Cell::new(0),
         };
         store.preflight().context("Cannot open this notebook database. Preserve it and use a compatible Quire version or a verified backup.")?;
         database::configure(&store.connection).context("Cannot configure durable notebook storage. Keep the editor contents and check the database folder's write permissions and available space.")?;
@@ -118,18 +124,21 @@ impl NotebookStore {
         &self.device
     }
 
-    /// A message after each save that adds to the outbox, until the receiver is dropped. Messages
-    /// can arrive before the save commits; act on them with a later request to this store.
-    pub fn watch_outbox(&self) -> UnboundedReceiver<()> {
+    /// A numbered message after each save that adds to the outbox, until the receiver is dropped.
+    /// Messages can arrive before the save commits; act on them with a later request to this
+    /// store, whose [`PublicationState::saves`] says which saves it counted.
+    pub fn watch_outbox(&self) -> UnboundedReceiver<u64> {
         let (sender, receiver) = unbounded();
         self.outbox_watchers.borrow_mut().push(sender);
         receiver
     }
 
     fn outbox_grew(&self) {
+        let saves = self.saves.get() + 1;
+        self.saves.set(saves);
         self.outbox_watchers
             .borrow_mut()
-            .retain(|watcher| watcher.unbounded_send(()).is_ok());
+            .retain(|watcher| watcher.unbounded_send(saves).is_ok());
     }
 
     /// How many saves wait to publish and the last sequence this writer published.
@@ -143,6 +152,7 @@ impl NotebookStore {
             last_seq: self
                 .cursor(&self.device)?
                 .map_or(0, |cursor| u64::from(cursor.seq)),
+            saves: self.saves.get(),
         })
     }
 

@@ -456,7 +456,8 @@ impl Client<NotebookStore> {
     /// A message after each save that adds to the outbox; see [`NotebookStore::watch_outbox`].
     pub fn watch_outbox(
         &self,
-    ) -> std::result::Result<Reply<futures::channel::mpsc::UnboundedReceiver<()>>, QueueError> {
+    ) -> std::result::Result<Reply<futures::channel::mpsc::UnboundedReceiver<u64>>, QueueError>
+    {
         self.request(128, |store| Ok(store.watch_outbox()))
     }
     pub fn publication_state(&self) -> std::result::Result<Reply<PublicationState>, QueueError> {
