@@ -311,10 +311,6 @@ fn prepare(
     ))
 }
 
-fn new_id() -> String {
-    format!("b-{}", uuid::Uuid::new_v4().simple())
-}
-
 /// Expands the chosen template for the trigger line: the replacement text and the caret in it.
 async fn insert(
     notebook: &Rc<dyn Notebook>,
@@ -336,7 +332,7 @@ async fn insert(
         &body.addresses(&template.body),
         &trigger.path,
         &names,
-        new_id,
+        crate::references::new_block_id,
     );
     let parsed = super::parse(&copied, cx)
         .await

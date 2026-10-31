@@ -109,6 +109,22 @@ pub fn line_end(text: &str, position: usize) -> usize {
         .map_or(text.len(), |index| position + index)
 }
 
+/// The zero-based line holding `position`.
+pub fn row_of(text: &str, position: usize) -> usize {
+    text[..position].matches('\n').count()
+}
+
+/// Where line `row` starts, or the text's end past its last line.
+pub fn row_start(text: &str, row: usize) -> usize {
+    match row.checked_sub(1) {
+        None => 0,
+        Some(before) => text
+            .match_indices('\n')
+            .nth(before)
+            .map_or(text.len(), |(index, _)| index + 1),
+    }
+}
+
 fn blank(text: &str) -> bool {
     text.trim().is_empty()
 }

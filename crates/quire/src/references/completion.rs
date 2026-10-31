@@ -247,10 +247,6 @@ fn tag_completions(
     })
 }
 
-pub(crate) fn new_id() -> String {
-    format!("b-{}", uuid::Uuid::new_v4().simple())
-}
-
 fn plain_label(text: &str) -> String {
     let cleaned: String = text
         .chars()
@@ -375,7 +371,7 @@ impl CompletionProvider for References {
                                         page: choice.source.page.to_lossy_string(),
                                         key: choice.key,
                                         text: choice.text.clone(),
-                                        id: new_id(),
+                                        id: super::new_block_id(),
                                     };
                                     (chosen.id.clone(), Some(write_on_confirm(&host, chosen)))
                                 }

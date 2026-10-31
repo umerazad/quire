@@ -47,6 +47,21 @@ fn caret_item(
     Some((buffer, block, head))
 }
 
+/// Zooms into the list item whose bullet was clicked: the caret moves to its text and the
+/// window's zoom command runs, as Cmd-. does from there.
+pub(crate) fn zoom_from_bullet(
+    editor: &mut Editor,
+    text_start: multi_buffer::Anchor,
+    window: &mut Window,
+    cx: &mut gpui::Context<Editor>,
+) {
+    editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
+        selections.select_anchor_ranges([text_start..text_start])
+    });
+    window.focus(&gpui::Focusable::focus_handle(editor, cx), cx);
+    window.dispatch_action(Box::new(super::ZoomIn), cx);
+}
+
 impl Zoom {
     /// Zooms into the list item at the caret of `from`, a page editor or another zoom, giving
     /// the item an ID when it has none. The ID is its own undo step in `from`.

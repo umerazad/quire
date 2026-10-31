@@ -22,9 +22,14 @@ impl Links {
     pub(super) fn new(
         window: gpui::WeakEntity<StoredWindow>,
         session: std::rc::Weak<RefCell<NotebookSession>>,
+        folds: Rc<crate::outline::fold_store::FoldStore>,
         cx: &mut App,
     ) -> Self {
-        let notebook = WindowNotebook { window, session };
+        let notebook = WindowNotebook {
+            window,
+            session,
+            folds,
+        };
         Self {
             host: cx.new(|_| ReferenceHost::new(Rc::new(notebook))),
             following: None,
@@ -42,6 +47,7 @@ impl Links {
 struct WindowNotebook {
     window: gpui::WeakEntity<StoredWindow>,
     session: std::rc::Weak<RefCell<NotebookSession>>,
+    folds: Rc<crate::outline::fold_store::FoldStore>,
 }
 
 impl WindowNotebook {
@@ -85,6 +91,10 @@ impl Notebook for WindowNotebook {
 
     fn page_path(&self, buffer: &Entity<language::Buffer>, cx: &App) -> Option<String> {
         self.loaded(buffer, cx, |_, loaded| loaded.path.clone())
+    }
+
+    fn fold_store(&self) -> Option<Rc<crate::outline::fold_store::FoldStore>> {
+        Some(self.folds.clone())
     }
 
     fn show_page(&self, page: &str, beside: bool, window: &mut Window, cx: &mut App) {

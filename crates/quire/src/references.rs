@@ -15,7 +15,11 @@ use std::rc::Rc;
 
 mod completion;
 pub(crate) mod preview;
-pub(crate) use completion::new_id as new_block_id;
+
+/// A new block ID, as every block that gains one in this app gets it.
+pub(crate) fn new_block_id() -> String {
+    format!("b-{}", uuid::Uuid::new_v4().simple())
+}
 
 /// What a reference names.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -65,6 +69,10 @@ pub trait Notebook {
     fn page_id(&self, buffer: &Entity<Buffer>, cx: &App) -> Option<String>;
     /// The notebook path of the page whose buffer this is, when the notebook has it open.
     fn page_path(&self, buffer: &Entity<Buffer>, cx: &App) -> Option<String>;
+    /// Where this notebook keeps each page's collapsed blocks, when it keeps them.
+    fn fold_store(&self) -> Option<Rc<crate::outline::fold_store::FoldStore>> {
+        None
+    }
     /// Opens the page with this ID, beside the current one when asked.
     fn show_page(&self, page: &str, beside: bool, window: &mut Window, cx: &mut App);
     /// Opens the page with this ID with the caret where `jump` says.

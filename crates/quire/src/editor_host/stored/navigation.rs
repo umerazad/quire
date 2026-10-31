@@ -1020,5 +1020,9 @@ mod fresh_ids_tests;
 mod zoom_tests;
 
 #[cfg(test)]
+#[path = "fold_tests.rs"]
+mod fold_tests;
+
+#[cfg(test)]
 #[path = "live_tests.rs"]
 mod live_tests;

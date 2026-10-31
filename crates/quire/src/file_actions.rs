@@ -528,7 +528,7 @@ pub fn page_copy(
         &Addresses::scan(text),
         &destination,
         &[page_name(path), &source],
-        || format!("b-{}", uuid::Uuid::new_v4().simple()),
+        crate::references::new_block_id,
     );
     Ok((title, copied))
 }

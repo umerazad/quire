@@ -4,13 +4,15 @@
 //! propagate to the next key binding, so ordinary editing keeps its Zed behavior.
 
 use crate::markdown_blocks::Block;
-use editor::{Editor, FoldPlaceholder, SelectionEffects, display_map::Crease};
+use editor::{Editor, SelectionEffects};
 use gpui::{
     Action, App, Context, Entity, Focusable as _, Global, KeyBinding, SharedString, Window, actions,
 };
 use multi_buffer::{MultiBuffer, MultiBufferOffset, ToOffset, ViewEditIntent};
-use std::{any::TypeId, ops::Range};
+use std::ops::Range;
 
+pub(crate) mod fold_store;
+pub(crate) mod folds;
 mod fresh_ids;
 mod lists;
 mod model;
@@ -56,6 +58,10 @@ actions!(
         UnfoldBlock,
         /// Collapses or expands the children of the block at the cursor.
         ToggleBlockFold,
+        /// Collapses every block with children.
+        FoldAllBlocks,
+        /// Expands every collapsed block.
+        UnfoldAllBlocks,
         /// Numbers the list at the cursor, or turns a numbered list back into bullets.
         ToggleNumberedList,
         /// Numbers the list items at the cursor or in the selection.
@@ -101,9 +107,6 @@ pub(crate) fn set_notice(message: Option<&'static str>, cx: &mut App) {
     }
 }
 
-/// Marks folds that collapse a block's children, apart from the folds hiding Write syntax.
-struct OutlineFold;
-
 enum Handled {
     Done,
     Record,
@@ -114,6 +117,7 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|editor: &mut Editor, window, cx| {
         if let Some(window) = window {
             follow_edits(editor, window, cx);
+            folds::follow(window, cx);
         }
         cx.subscribe_self(|editor, event: &editor::EditorEvent, cx| {
             let progress = crate::code_format::formatting(editor)
@@ -179,6 +183,12 @@ pub fn init(cx: &mut App) {
         });
         register(editor, cx, |editor, _: &ToggleBlockFold, window, cx| {
             fold(editor, None, window, cx)
+        });
+        register(editor, cx, |editor, _: &FoldAllBlocks, window, cx| {
+            fold_all(editor, true, window, cx)
+        });
+        register(editor, cx, |editor, _: &UnfoldAllBlocks, window, cx| {
+            fold_all(editor, false, window, cx)
         });
         register(editor, cx, |editor, _: &ToggleNumberedList, window, cx| {
             number_list(editor, None, window, cx)
@@ -252,6 +262,18 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("z a", ToggleBlockFold, Some(WRITE_NORMAL)),
         KeyBinding::new("z c", FoldBlock, Some(WRITE_NORMAL)),
         KeyBinding::new("z o", UnfoldBlock, Some(WRITE_NORMAL)),
+        KeyBinding::new("z shift-m", FoldAllBlocks, Some(WRITE_NORMAL)),
+        KeyBinding::new("z shift-r", UnfoldAllBlocks, Some(WRITE_NORMAL)),
+        KeyBinding::new(
+            platform("cmd-k cmd-0", "ctrl-k ctrl-0"),
+            FoldAllBlocks,
+            Some(WRITE),
+        ),
+        KeyBinding::new(
+            platform("cmd-k cmd-j", "ctrl-k ctrl-j"),
+            UnfoldAllBlocks,
+            Some(WRITE),
+        ),
         KeyBinding::new(
             ">",
             IndentLine,
@@ -460,24 +482,6 @@ fn literal(buffer: &Entity<language::Buffer>, position: usize, cx: &App) -> bool
     })
 }
 
-/// The collapsed block children in the view, as source ranges.
-fn outline_folds(editor: &mut Editor, cx: &mut Context<Editor>) -> Vec<Range<usize>> {
-    let snapshot = editor.display_snapshot(cx);
-    let buffer = snapshot.buffer_snapshot();
-    let source =
-        |offset: MultiBufferOffset| buffer.point_to_buffer_offset(offset).map(|(_, at)| at.0);
-    snapshot
-        .folds_in_range(MultiBufferOffset(0)..buffer.len())
-        .filter(|fold| fold.placeholder.type_tag == Some(TypeId::of::<OutlineFold>()))
-        .filter_map(|fold| {
-            Some(
-                source(fold.range.start.to_offset(buffer))?
-                    ..source(fold.range.end.to_offset(buffer))?,
-            )
-        })
-        .collect()
-}
-
 /// Applies source edits that follow up an earlier edit, folding them into that edit's
 /// transaction `into` while it is still the latest, so one undo reverts both.
 fn amend(
@@ -492,6 +496,33 @@ fn amend(
     source_edit(buffer, edits, cx);
     buffer.update(cx, |buffer, _| {
         if let (Some(into), Some(added)) = (into, latest(buffer))
+            && added != into
+        {
+            buffer.merge_transactions(added, into);
+        }
+    });
+}
+
+/// Applies source edits that complete an earlier edit after other edits may have followed it,
+/// such as a fresh ID the index asked for, folding them into that edit's transaction `into`
+/// while its history still holds it. Undo reverts edits by their own operations, so the
+/// later edits stay intact when undo reaches `into`.
+fn amend_later(
+    buffer: &Entity<language::Buffer>,
+    edits: &[Edit],
+    into: Option<text::TransactionId>,
+    cx: &mut App,
+) {
+    let into = into.filter(|into| buffer.read(cx).get_transaction(*into).is_some());
+    let Some(into) = into else {
+        return source_edit(buffer, edits, cx);
+    };
+    buffer.update(cx, |buffer, _| {
+        buffer.finalize_last_transaction();
+    });
+    source_edit(buffer, edits, cx);
+    buffer.update(cx, |buffer, _| {
+        if let Some(added) = buffer.peek_undo_stack().map(|entry| entry.transaction_id())
             && added != into
         {
             buffer.merge_transactions(added, into);
@@ -618,14 +649,14 @@ fn numbered(text: &str, touched: &[Range<usize>]) -> bool {
     })
 }
 
-/// Applies the plan, then the plan `then` computes from the edited page and the caret, as one
-/// undo step. Numbered runs the edits touched keep counting. A plan reaching outside the block
-/// a zoom or an embed shows is refused.
+/// Applies the plan, then each plan `then` computes from the edited page and the caret until it
+/// returns None, as one undo step. Numbered runs the edits touched keep counting. A plan
+/// reaching outside the block a zoom or an embed shows is refused.
 fn apply_then(
     editor: &mut Editor,
     page: &Page,
     plan: Plan,
-    then: impl FnOnce(&str, &[Block], usize) -> Option<Plan>,
+    mut then: impl FnMut(&str, &[Block], usize) -> Option<Plan>,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
@@ -634,6 +665,7 @@ fn apply_then(
         return;
     }
     set_notice(None, cx);
+    let kept = folds::keep(editor, page, cx);
     let source = page.buffer.clone();
     let edited = |source: &Entity<language::Buffer>, cx: &App| {
         let snapshot = source.read(cx).snapshot();
@@ -644,18 +676,21 @@ fn apply_then(
     editor.transact(window, cx, |editor, window, cx| {
         let mut touched = changed_ranges(&plan.edits);
         let mut cursor = plan.cursor;
+        let mut shown_end = model::map_position(&plan.edits, page.shown.end, true);
         source_edit(&source, &plan.edits, cx);
-        let (text, blocks) = edited(&source, cx);
-        let next = blocks
-            .and_then(|blocks| then(&text, &blocks, cursor))
-            .filter(|next| {
-                let shown =
-                    page.shown.start..model::map_position(&plan.edits, page.shown.end, true);
-                next.edits
-                    .iter()
-                    .all(|(range, _)| shown.start <= range.start && range.end <= shown.end)
-            });
-        if let Some(next) = next {
+        loop {
+            let (text, blocks) = edited(&source, cx);
+            let Some(next) = blocks
+                .and_then(|blocks| then(&text, &blocks, cursor))
+                .filter(|next| {
+                    next.edits
+                        .iter()
+                        .all(|(range, _)| page.shown.start <= range.start && range.end <= shown_end)
+                })
+            else {
+                break;
+            };
+            shown_end = model::map_position(&next.edits, shown_end, true);
             touched = touched
                 .into_iter()
                 .map(|range| {
@@ -677,6 +712,7 @@ fn apply_then(
         }
     });
     editor.finalize_last_transaction(cx);
+    folds::reconcile(editor, &source, kept, window, cx);
 }
 
 /// The renumbering that keeps the numbered runs overlapping `touched` counting.
@@ -728,7 +764,7 @@ fn split(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) -> 
     if literal(&page.buffer, head, cx) {
         return None;
     }
-    let folds = outline_folds(editor, cx);
+    let folds = folds::collapsed_source(editor, cx);
     let outcome = model::split(&page.text, &page.blocks, head, page.zoom(), |at| {
         folds.iter().any(|fold| fold.start == at)
     })
@@ -753,15 +789,13 @@ fn indent(
     }
     let zoom = page.zoom.clone();
     if let Some(bullet) = model::bare_bullet(&page.text, head) {
-        let then = |text: &str, blocks: &[Block], cursor| match model::indent(
-            text,
-            blocks,
-            cursor,
-            outdent,
-            zoom.as_deref(),
-        ) {
-            Some(Outcome::Apply(next)) => Some(next),
-            _ => None,
+        let mut pending = true;
+        let then = |text: &str, blocks: &[Block], cursor| {
+            std::mem::take(&mut pending).then_some(())?;
+            match model::indent(text, blocks, cursor, outdent, zoom.as_deref()) {
+                Some(Outcome::Apply(next)) => Some(next),
+                _ => None,
+            }
         };
         apply_then(editor, &page, bullet, then, window, cx);
         return Some(Handled::Done);
@@ -770,9 +804,9 @@ fn indent(
     finish(editor, &page, outcome, window, cx)
 }
 
-/// Vim `>>` and `<<`, with a count, and `>` and `<` in a visual mode: the list items starting
-/// on the lines move one level with their children. Lines without list items keep Vim's
-/// indent.
+/// Vim `>>` and `<<`, with a count of lines, and `>` and `<` in a visual mode, with a count of
+/// levels: the list items starting on the lines move with their children. Lines without list
+/// items keep Vim's indent.
 fn indent_lines(
     editor: &mut Editor,
     page: &Page,
@@ -792,14 +826,28 @@ fn indent_lines(
         return None;
     }
     let count = vim::take_host_count(cx).unwrap_or(1);
+    let mut levels = 1;
     if lines.is_empty() {
         lines.end = (1..count).fold(lines.end, |at, _| {
             (model::line_end(&page.text, at) + 1).min(page.text.len())
         });
+    } else {
+        levels = count;
     }
+    let rows = model::row_of(&page.text, lines.start)..model::row_of(&page.text, lines.end);
+    let zoom = page.zoom.clone();
     match model::indent_lines(&page.text, &page.blocks, lines, outdent, page.zoom())? {
         Outcome::Apply(plan) => {
-            apply(editor, page, plan, window, cx);
+            let mut left = levels - 1;
+            let then = |text: &str, blocks: &[Block], _| {
+                left = left.checked_sub(1)?;
+                let lines = model::row_start(text, rows.start)..model::row_start(text, rows.end);
+                match model::indent_lines(text, blocks, lines, outdent, zoom.as_deref()) {
+                    Some(Outcome::Apply(next)) => Some(next),
+                    _ => None,
+                }
+            };
+            apply_then(editor, page, plan, then, window, cx);
             Some(Handled::Record)
         }
         Outcome::Refuse(message) => {
@@ -839,7 +887,7 @@ fn merge(
     }?;
     let line_from = model::line_start(&page.text, head);
     let line_to = model::line_end(&page.text, head);
-    let hidden = outline_folds(editor, cx).into_iter().any(|fold| {
+    let hidden = folds::collapsed_source(editor, cx).into_iter().any(|fold| {
         if forward {
             head <= fold.start && fold.start <= line_to
         } else {
@@ -873,7 +921,7 @@ fn join(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) -> O
 
 fn open_line(editor: &mut Editor, below: bool, cx: &mut Context<Editor>) -> Option<Handled> {
     let page = page(editor, cx)?;
-    let folds = outline_folds(editor, cx);
+    let folds = folds::collapsed_source(editor, cx);
     let above_root = !below
         && page.zoom.is_some()
         && model::list_line(&page.text, &page.blocks, page.head)
@@ -928,26 +976,21 @@ fn fold(
     cx: &mut Context<Editor>,
 ) -> Option<Handled> {
     let page = page(editor, cx)?;
-    let folds = outline_folds(editor, cx);
+    let collapsed = folds::collapsed_source(editor, cx);
     let folded = model::list_line(&page.text, &page.blocks, page.head)
         .map(|(block, _)| block)
-        .filter(|block| folds.iter().any(|fold| fold.start == block.content_to));
+        .filter(|block| collapsed.iter().any(|fold| fold.start == block.content_to));
     let target = fold_target(&page);
     match (collapse, folded, target) {
         (Some(false) | None, Some(block), _) => {
             let range = view_range(editor, &page.buffer, block.content_to..block.subtree_to, cx)?;
-            editor.remove_folds_with_type(&[range], TypeId::of::<OutlineFold>(), true, cx);
+            folds::set(editor, range, false, window, cx);
         }
         (Some(true) | None, _, Some(block)) => {
             let range = view_range(editor, &page.buffer, block.content_to..block.subtree_to, cx)?;
-            let placeholder = FoldPlaceholder {
-                type_tag: Some(TypeId::of::<OutlineFold>()),
-                merge_adjacent: false,
-                ..editor.default_fold_placeholder(cx)
-            };
             let end = model::bounds(&page.text, block).text_end;
             let end = view_anchor(editor, &page.buffer, end, cx);
-            editor.fold_creases(vec![Crease::simple(range, placeholder)], true, window, cx);
+            folds::set(editor, range, true, window, cx);
             if let Some(end) = end.filter(|_| page.head > block.content_to) {
                 editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
                     selections.select_anchor_ranges([end..end])
@@ -956,6 +999,17 @@ fn fold(
         }
         _ => {}
     }
+    Some(Handled::Done)
+}
+
+fn fold_all(
+    editor: &mut Editor,
+    collapse: bool,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> Option<Handled> {
+    let page = page(editor, cx)?;
+    folds::set_all(editor, &page, collapse, window, cx);
     Some(Handled::Done)
 }
 
@@ -1006,3 +1060,7 @@ fn select_block(
 #[cfg(test)]
 #[path = "outline/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "outline/editor_parity_tests.rs"]
+mod editor_parity_tests;
