@@ -38,6 +38,7 @@ impl StoredWindow {
         let help = self.help.clone()?;
         Some(
             gpui::div()
+                .tab_group()
                 .w(gpui::px(440.))
                 .flex_none()
                 .min_h_0()

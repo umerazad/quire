@@ -1,6 +1,7 @@
 //! The Help and shortcuts window: searchable topics, then the generated shortcut reference.
 
 use super::{Shortcut, content::SECTIONS, shortcuts};
+use crate::tab_order::{self, TabOrder};
 use editor::{Editor, EditorEvent};
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, ScrollHandle, Window, WindowOptions, prelude::*,
@@ -164,22 +165,26 @@ fn muted(text: impl Into<gpui::SharedString>) -> Label {
 }
 
 impl Render for HelpWindow {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut order = TabOrder::default();
+        let close = order.next();
+        let search = tab_order::field(&self.search, &mut order, window, cx).flex_1();
+        let capture = order.next();
         let topics = self.topics(cx);
         let rows = self.rows(cx);
         let empty = topics.is_empty() && rows.is_empty();
-        let colors = cx.theme().colors();
+        let colors = cx.theme().colors().clone();
         let nav = h_flex()
             .flex_wrap()
             .gap_1()
             .children(SECTIONS.iter().enumerate().map(|(index, section)| {
                 let scroll = self.scroll.clone();
-                Button::new(section.id, section.title).on_click(cx.listener(
-                    move |this, _, window, cx| {
+                Button::new(section.id, section.title)
+                    .tab_index(order.next())
+                    .on_click(cx.listener(move |this, _, window, cx| {
                         this.show_all(window, cx);
                         scroll.scroll_to_item(index);
-                    },
-                ))
+                    }))
             }));
         let sections = SECTIONS
             .iter()
@@ -234,10 +239,14 @@ impl Render for HelpWindow {
                     .child(gpui::div().flex_1().child(row.action.clone()))
                     .child(gpui::div().w(px(170.)).child(muted(row.scope.clone())))
             }));
-        v_flex()
+        let readme = order.next();
+        let settings = order.next();
+        let show_all = order.next();
+        let root = v_flex()
             .key_context(CONTEXT)
             .track_focus(&self.focus)
-            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::cancel));
+        tab_order::handle(root, cx)
             .size_full()
             .bg(colors.background)
             .text_color(colors.text)
@@ -252,6 +261,7 @@ impl Render for HelpWindow {
                             .when(self.pane, |this| {
                                 this.child(
                                     Button::new("close-help", "Close")
+                                        .tab_index(close)
                                         .tooltip(ui::Tooltip::text("Close help (Escape)"))
                                         .on_click(cx.listener(|_, _, _, cx| cx.emit(CloseHelp))),
                                 )
@@ -263,18 +273,10 @@ impl Render for HelpWindow {
                     .child(
                         h_flex()
                             .gap_2()
-                            .child(
-                                gpui::div()
-                                    .flex_1()
-                                    .px_2()
-                                    .py_1()
-                                    .border_1()
-                                    .border_color(colors.border)
-                                    .rounded_sm()
-                                    .child(self.search.clone()),
-                            )
+                            .child(search)
                             .child(
                                 Button::new("capture-task", "Capture a task")
+                                    .tab_index(capture)
                                     .style(ui::ButtonStyle::Filled)
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.capture_task(window, cx)
@@ -287,10 +289,12 @@ impl Render for HelpWindow {
                             .gap_1()
                             .child(
                                 Button::new("open-readme", "README.md rendering sample")
+                                    .tab_index(readme)
                                     .on_click(|_, _, cx| crate::showcase::open(cx)),
                             )
                             .child(
                                 Button::new("open-settings", "Settings")
+                                    .tab_index(settings)
                                     .on_click(|_, _, cx| crate::preferences::view::open(cx)),
                             ),
                     )
@@ -318,7 +322,9 @@ impl Render for HelpWindow {
                                 .child(muted(
                                     "Try \u{201c}task\u{201d}, \u{201c}Vim\u{201d}, \u{201c}embed\u{201d} or a shortcut such as \u{201c}Enter\u{201d}.",
                                 ))
-                                .child(Button::new("show-all", "Show all help").on_click(
+                                .child(Button::new("show-all", "Show all help")
+                                    .tab_index(show_all)
+                                    .on_click(
                                     cx.listener(|this, _, window, cx| this.show_all(window, cx)),
                                 )),
                         )

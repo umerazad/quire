@@ -3,6 +3,7 @@
 //! profile store; commands that need the open notebook run in that notebook's window, so Settings
 //! and the window's own buttons stay one set of actions.
 
+use crate::tab_order::{self, TabOrder};
 use crate::{
     backups::{BackUpNow, ChooseBackupFolder, ShowBackups},
     exchange::{ExportNotebookMarkdown, ExportRoamJson, ImportMarkdownFolder, ImportRoamData},
@@ -146,17 +147,25 @@ impl DataSection {
         label: &'static str,
         tooltip: &'static str,
         action: impl Action,
+        order: &mut TabOrder,
         cx: &mut Context<Self>,
     ) -> Button {
         let action = action.boxed_clone();
         Button::new(id, label)
+            .tab_index(order.next())
             .tooltip(Tooltip::text(tooltip))
             .on_click(cx.listener(move |this, _, _, cx| this.in_notebook(action.boxed_clone(), cx)))
     }
 
-    fn app_command(id: &'static str, label: &'static str, action: impl Action) -> Button {
+    fn app_command(
+        id: &'static str,
+        label: &'static str,
+        action: impl Action,
+        order: &mut TabOrder,
+    ) -> Button {
         let action = action.boxed_clone();
         Button::new(id, label)
+            .tab_index(order.next())
             .on_click(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx))
     }
 
@@ -172,7 +181,8 @@ impl DataSection {
 }
 
 impl Render for DataSection {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut order = TabOrder::default();
         let active = crate::profiles::active(cx);
         let profile = crate::profiles::get(active, cx);
         let profiles = ProfileId::ALL.map(|id| {
@@ -202,7 +212,9 @@ impl Render for DataSection {
             .pt_3()
             .child(Label::new("Notebooks and durability").size(LabelSize::Large))
             .child(Label::new("Active profile"))
-            .child(ToggleButtonGroup::single_row("active-profile", profiles).selected_index(selected))
+            .child(ToggleButtonGroup::single_row("active-profile", profiles)
+                    .selected_index(selected)
+                    .tab_index(order.counter()))
             .child(Self::hint(
                 "Work and Personal use separate notebooks. Current keeps your earlier notebook. Switching saves open pages first.",
             ))
@@ -215,11 +227,13 @@ impl Render for DataSection {
                         "choose-notebook-folder",
                         "Choose notebook folder",
                         OpenNotebookFolder,
+                        &mut order,
                     ))
                     .child(Self::app_command(
                         "choose-quire-notebook",
                         "Choose Quire notebook",
                         OpenNotebookDatabase,
+                        &mut order,
                     )),
             )
             .child(Self::hint(
@@ -235,6 +249,7 @@ impl Render for DataSection {
                         "Import a Markdown folder",
                         "Copy a folder of Markdown pages and their files into the open notebook",
                         ImportMarkdownFolder,
+                        &mut order,
                         cx,
                     ))
                     .child(self.command(
@@ -242,6 +257,7 @@ impl Render for DataSection {
                         "Export notebook as Markdown",
                         "Write every page and file of the open notebook into a folder",
                         ExportNotebookMarkdown,
+                        &mut order,
                         cx,
                     ))
                     .child(self.command(
@@ -249,6 +265,7 @@ impl Render for DataSection {
                         "Import Roam data",
                         "Read a Roam JSON or EDN export into a new folder notebook",
                         ImportRoamData,
+                        &mut order,
                         cx,
                     ))
                     .child(self.command(
@@ -256,6 +273,7 @@ impl Render for DataSection {
                         "Export Roam JSON",
                         "Write every page of the open notebook into a Roam JSON file",
                         ExportRoamJson,
+                        &mut order,
                         cx,
                     )),
             )
@@ -272,6 +290,7 @@ impl Render for DataSection {
                         "Choose backup destination",
                         "Choose the folder that receives this profile's backups",
                         ChooseBackupFolder,
+                        &mut order,
                         cx,
                     ))
                     .child(
@@ -280,6 +299,7 @@ impl Render for DataSection {
                             "Back up now",
                             "Back up the open notebook now",
                             BackUpNow,
+                            &mut order,
                             cx,
                         )
                         .disabled(!has_backup_folder),
@@ -290,6 +310,7 @@ impl Render for DataSection {
                             "Browse backups",
                             "List completed backups with Verify and Restore in the notebook window",
                             ShowBackups,
+                            &mut order,
                             cx,
                         )
                         .disabled(!has_backup_folder),
@@ -312,12 +333,7 @@ impl Render for DataSection {
                 this.child(Label::new("Personal Git").size(LabelSize::Large))
                     .child(Label::new("Private repository remote"))
                     .child(
-                        gpui::div()
-                            .px_2()
-                            .py_1()
-                            .border_1()
-                            .rounded_sm()
-                            .child(self.remote.clone()),
+                        tab_order::field(&self.remote, &mut order, window, cx),
                     )
                     .child(Self::hint(
                         "Use an empty remote for existing notes, or open a clone of your personal repository. Git must be installed with your identity and credentials configured. Git respects .gitignore. Sync backs up first when a backup folder is set, pulls safe fast-forwards, commits local files and pushes. Divergence requires review in Git.",
@@ -327,6 +343,7 @@ impl Render for DataSection {
                             .gap_2()
                             .child(
                                 Button::new("data-save-remote", "Save Git remote")
+                                    .tab_index(order.next())
                                     .on_click(cx.listener(|this, _, _, cx| this.save_remote(cx))),
                             )
                             .child(
@@ -335,6 +352,7 @@ impl Render for DataSection {
                                     "Sync Personal now",
                                     "Back up, commit, pull, and push the Personal notebook",
                                     SyncWithGit,
+                                    &mut order,
                                     cx,
                                 )
                                 .disabled(saved.is_none() || unsaved),
@@ -356,6 +374,7 @@ impl Render for DataSection {
                     "data-rt-migration",
                     "Move from rt or back",
                     crate::rt_migration::view::OpenMigration,
+                        &mut order,
                 )),
             )
             .child(Self::hint(

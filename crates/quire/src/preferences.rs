@@ -317,6 +317,7 @@ pub fn bind_keys(cx: &mut App) {
             Some(crate::rt_migration::view::CONTEXT),
         ),
     ]);
+    crate::tab_order::bind_keys(&[view::CONTEXT], cx);
 }
 
 /// Switches to the other of light and dark from what is shown, saved as an explicit choice.

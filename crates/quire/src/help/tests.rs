@@ -139,3 +139,41 @@ fn topics_follow_the_reference_order_without_ai() {
         ]
     );
 }
+
+#[gpui::test]
+fn tab_walks_help_from_search_to_capture_and_the_topics(cx: &mut TestAppContext) {
+    init_app(cx);
+    cx.update(view::open);
+    cx.run_until_parked();
+    let help = help_window(cx).unwrap();
+    let press =
+        |keys: &str, cx: &mut TestAppContext| crate::tab_order::press(help.into(), keys, cx);
+    let search_focused = |cx: &mut TestAppContext| {
+        help.update(cx, |view, window, cx| {
+            view.search().focus_handle(cx).is_focused(window)
+        })
+        .unwrap()
+    };
+    assert!(search_focused(cx), "Help opens with its search focused");
+    press("tab", cx);
+    assert!(!search_focused(cx));
+    press("shift-tab", cx);
+    assert!(search_focused(cx), "Capture a task follows the search");
+    help.update(cx, |view, window, cx| {
+        view.search().update(cx, |editor, cx| {
+            editor.set_text("no such help xyz", window, cx)
+        })
+    })
+    .unwrap();
+    let topics = content::SECTIONS.len();
+    press(&vec!["tab"; topics + 4].join(" "), cx);
+    press("enter", cx);
+    help.update(cx, |view, _, cx| {
+        assert_eq!(
+            view.topics(cx).len(),
+            topics,
+            "after Capture, each topic, README and Settings, Tab reaches Show all help"
+        )
+    })
+    .unwrap();
+}

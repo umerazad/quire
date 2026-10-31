@@ -43,6 +43,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", menu::Cancel, Some(view::CONTEXT)),
         KeyBinding::new("escape", menu::Cancel, Some(view::FIELD_CONTEXT)),
     ]);
+    crate::tab_order::bind_keys(&[view::CONTEXT], cx);
 }
 
 /// Every binding in the keymap, with its keys as this platform shows them, the action's own

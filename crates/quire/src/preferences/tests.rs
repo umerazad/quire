@@ -659,3 +659,96 @@ async fn format_tags_labels_write_by_tone_and_turns_off_live(cx: &mut TestAppCon
     cx.run_until_parked();
     assert_eq!(painted(page, cx), (Vec::new(), text.to_owned()));
 }
+
+#[gpui::test]
+async fn tab_walks_settings_in_reading_order_and_keys_work_the_focused_control(
+    cx: &mut TestAppContext,
+) {
+    init_app(cx);
+    let fs = fake_fs(cx).await;
+    fs.insert_file(paths::settings_file(), INITIAL_SETTINGS.into())
+        .await;
+    cx.update(view::open);
+    cx.run_until_parked();
+    let settings = settings_window(cx).unwrap();
+    let press =
+        |keys: &str, cx: &mut TestAppContext| crate::tab_order::press(settings.into(), keys, cx);
+    let focused_field = |cx: &mut TestAppContext| {
+        settings
+            .update(cx, |view, window, cx| {
+                [
+                    view::Field::FontFamily,
+                    view::Field::FontSize,
+                    view::Field::LineSpacing,
+                ]
+                .into_iter()
+                .find(|field| view.editor(*field).focus_handle(cx).is_focused(window))
+            })
+            .unwrap()
+    };
+    press("tab tab tab", cx);
+    press("enter", cx);
+    cx.update(|cx| {
+        assert_eq!(
+            Preferences::current(cx).appearance,
+            ThemeAppearanceMode::Dark,
+            "the third stop is the Dark appearance button"
+        )
+    });
+    let vim = cx.update(|cx| Preferences::current(cx).vim);
+    press("tab space", cx);
+    cx.update(|cx| assert_eq!(Preferences::current(cx).vim, !vim));
+    press("tab tab tab enter", cx);
+    cx.update(|cx| {
+        assert_eq!(
+            Preferences::current(cx).capture_target,
+            CaptureTarget::Today,
+            "Format tags, then Inbox page and Today's daily page follow Vim bindings"
+        )
+    });
+    press("tab", cx);
+    assert_eq!(focused_field(cx), Some(view::Field::FontFamily));
+    press("tab", cx);
+    assert_eq!(focused_field(cx), Some(view::Field::FontSize));
+    press("tab", cx);
+    assert_eq!(focused_field(cx), Some(view::Field::LineSpacing));
+    press("shift-tab shift-tab", cx);
+    assert_eq!(focused_field(cx), Some(view::Field::FontFamily));
+    press("shift-tab", cx);
+    assert_eq!(focused_field(cx), None);
+    press("tab", cx);
+    assert_eq!(focused_field(cx), Some(view::Field::FontFamily));
+    press("tab tab tab", cx);
+    assert_eq!(focused_field(cx), None, "Data follows Typography");
+    let ai_fields = |cx: &mut TestAppContext| {
+        settings
+            .update(cx, |view, window, cx| {
+                let ai = view.ai.read(cx);
+                (
+                    ai.binary_field().focus_handle(cx).is_focused(window),
+                    ai.model_field().focus_handle(cx).is_focused(window),
+                )
+            })
+            .unwrap()
+    };
+    let mut seen = Vec::new();
+    for _ in 0..60 {
+        press("tab", cx);
+        let (binary, model) = ai_fields(cx);
+        if binary {
+            seen.push("binary");
+        }
+        if model {
+            seen.push("model");
+        }
+        if focused_field(cx).is_some() {
+            seen.push("typography");
+            break;
+        }
+    }
+    assert_eq!(
+        seen,
+        ["binary", "model", "typography"],
+        "Tab reaches the AI fields in order, past Done, and wraps to the top"
+    );
+}

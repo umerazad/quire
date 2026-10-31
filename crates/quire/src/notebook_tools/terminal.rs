@@ -14,8 +14,8 @@ use std::{
     path::{Path, PathBuf},
 };
 use ui::{
-    Button, Clickable as _, Color, Disableable as _, Label, LabelCommon as _, LabelSize, h_flex,
-    v_flex,
+    Button, ButtonCommon as _, Clickable as _, Color, Disableable as _, Label, LabelCommon as _,
+    LabelSize, h_flex, v_flex,
 };
 
 /// How a terminal session starts the server: this app's binary in MCP mode, pointed at the bridge.
@@ -244,11 +244,13 @@ pub fn section(cx: &App) -> impl IntoElement {
                         },
                     )
                     .disabled(running || !on)
+                    .tab_index(0_isize)
                     .on_click(|_, _, cx| start(false, cx)),
                 )
                 .when(!terminal.is_empty(), |row| {
                     row.child(
                         Button::new("ai-terminal-remove", "Remove")
+                            .tab_index(0_isize)
                             .disabled(running)
                             .on_click(|_, _, cx| start(true, cx)),
                     )

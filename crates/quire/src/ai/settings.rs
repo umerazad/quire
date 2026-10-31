@@ -4,6 +4,7 @@
 //! folder, so a hand edit of the settings file cannot turn on an untested backend.
 
 use super::process::{self, Host};
+use crate::tab_order::{self, TabOrder};
 use editor::{Editor, EditorEvent};
 use gpui::{App, Context, Entity, Focusable as _, Global, SharedString, Task, Window, prelude::*};
 use quire_core::ai::{
@@ -548,6 +549,11 @@ impl AiSection {
         &self.binary
     }
 
+    #[cfg(test)]
+    pub fn model_field(&self) -> &Entity<Editor> {
+        &self.model
+    }
+
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current = AiSettings::get_global(cx).clone();
         if current == self.shown {
@@ -626,15 +632,18 @@ impl AiSection {
         }
     }
 
-    fn field(label: &'static str, editor: &Entity<Editor>) -> gpui::Div {
-        v_flex().gap_1().flex_1().child(Label::new(label)).child(
-            gpui::div()
-                .px_2()
-                .py_1()
-                .border_1()
-                .rounded_sm()
-                .child(editor.clone()),
-        )
+    fn field(
+        label: &'static str,
+        editor: &Entity<Editor>,
+        order: &mut TabOrder,
+        window: &Window,
+        cx: &App,
+    ) -> gpui::Div {
+        v_flex()
+            .gap_1()
+            .flex_1()
+            .child(Label::new(label))
+            .child(tab_order::field(editor, order, window, cx))
     }
 
     /// Use from a terminal, where the app serves the notebook tools.
@@ -651,7 +660,8 @@ impl AiSection {
 }
 
 impl Render for AiSection {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut order = TabOrder::default();
         let shown = self.shown.clone();
         let backend = shown.backend;
         let tested = is_tested(cx);
@@ -700,15 +710,18 @@ impl Render for AiSection {
                             .ok();
                     },
                 )
-                .disabled(!tested),
+                .disabled(!tested)
+                .tab_index(order.next()),
             )
             .child(Label::new("Backend"))
-            .child(ToggleButtonGroup::single_row("ai-backend", backends).selected_index(selected))
+            .child(ToggleButtonGroup::single_row("ai-backend", backends)
+                    .selected_index(selected)
+                    .tab_index(order.counter()))
             .child(
                 h_flex()
                     .gap_3()
-                    .child(Self::field("Binary path", &self.binary))
-                    .child(Self::field("Model", &self.model)),
+                    .child(Self::field("Binary path", &self.binary, &mut order, window, cx))
+                    .child(Self::field("Model", &self.model, &mut order, window, cx)),
             )
             .child(Label::new("AI writes"))
             .child(
@@ -723,7 +736,8 @@ impl Render for AiSection {
                         .iter()
                         .position(|(choice, ..)| *choice == shown.writes)
                         .unwrap_or_default(),
-                ),
+                )
+                .tab_index(order.counter()),
             )
             .child(Self::hint(
                 WRITES
@@ -736,6 +750,7 @@ impl Render for AiSection {
                     .gap_2()
                     .child(
                         Button::new("ai-test", label)
+                            .tab_index(order.next())
                             .style(if tested {
                                 ButtonStyle::Subtle
                             } else {
@@ -753,7 +768,7 @@ impl Render for AiSection {
                 backend.name(),
                 backend.isolation()
             )))
-            .child(Self::terminal(cx))
+            .child(order.group().child(Self::terminal(cx)))
             .when_some(self.error.clone(), |section, error| {
                 section.child(Label::new(error).color(Color::Error))
             })
