@@ -99,12 +99,16 @@ enum Handled {
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|editor: &mut Editor, _, cx| {
-        cx.subscribe_self(|_, event: &editor::EditorEvent, cx| {
-            if matches!(
-                event,
-                editor::EditorEvent::Edited { .. }
-                    | editor::EditorEvent::SelectionsChanged { local: true }
-            ) {
+        cx.subscribe_self(|editor, event: &editor::EditorEvent, cx| {
+            let progress = crate::code_format::formatting(editor)
+                && notice(cx).as_deref() == Some(crate::code_format::FORMATTING);
+            if !progress
+                && matches!(
+                    event,
+                    editor::EditorEvent::Edited { .. }
+                        | editor::EditorEvent::SelectionsChanged { local: true }
+                )
+            {
                 set_notice(None, cx);
             }
         })

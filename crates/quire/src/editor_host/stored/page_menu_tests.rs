@@ -23,7 +23,15 @@ fn text(editor: &Entity<Editor>, cx: &mut TestAppContext) -> String {
 }
 
 fn open(write: bool, cx: &mut TestAppContext) -> (Notebook, Entity<Editor>) {
-    let notebook = open_notebook(&WELCOME, "w", cx);
+    open_page(&WELCOME, write, cx)
+}
+
+fn open_page(
+    pages: &[(&str, &str, &str)],
+    write: bool,
+    cx: &mut TestAppContext,
+) -> (Notebook, Entity<Editor>) {
+    let notebook = open_notebook(pages, pages[0].0, cx);
     wait_until(cx, "the page editor", |cx| {
         read(&notebook, cx, |view, _| view.editor.is_some())
     });
@@ -272,4 +280,38 @@ fn source_menu_copies_block_references_and_a_right_click_moves_the_caret(cx: &mu
         caret >= text(&editor, cx).find("second item").unwrap(),
         "the caret stayed at {caret}"
     );
+}
+
+#[gpui::test]
+fn the_menu_formats_and_copies_the_code_block_at_the_caret(cx: &mut TestAppContext) {
+    let pages = [(
+        "c",
+        "Code.md",
+        "- Snippet\n  ```js\n  let  a=1\n  ```\n- After\n",
+    )];
+    for write in [true, false] {
+        let (notebook, editor) = open_page(&pages, write, cx);
+        select(&notebook, &editor, "a=1", 0, 0, cx);
+        let items = open_menu(&notebook, &editor, cx);
+        assert_eq!(
+            items[4..7],
+            strings(&["-", "Format code", "Copy code"]),
+            "write {write}: {items:?}"
+        );
+        choose(&notebook, &items, "Copy code", cx);
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some("let  a=1\n".to_owned())
+        );
+        select(&notebook, &editor, "After", 0, 0, cx);
+        let items = open_menu(&notebook, &editor, cx);
+        assert!(!items.iter().any(|item| item.contains("code")), "{items:?}");
+        cx.simulate_keystrokes(notebook.window.into(), "escape");
+        select(&notebook, &editor, "a=1", 0, 0, cx);
+        let items = open_menu(&notebook, &editor, cx);
+        choose(&notebook, &items, "Format code", cx);
+        wait_until(cx, "the formatted block", |cx| {
+            text(&editor, cx) == "- Snippet\n  ```js\n  let a = 1;\n  ```\n- After\n"
+        });
+    }
 }

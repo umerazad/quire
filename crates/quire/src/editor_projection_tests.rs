@@ -679,7 +679,7 @@ fn checkbox_projection_respects_code_marker_boundaries_and_source_mode(cx: &mut 
                     .snapshot(window, cx)
                     .display_snapshot
                     .text()),
-                "```md\n- [x] fake ^literal\n```\n\n☐ Task\n[x]body\n"
+                "md · Format code · Copy code\n- [x] fake ^literal\n```\n\n☐ Task\n[x]body\n"
             );
             let editor = view.second.clone();
             view.change_presentation(&editor, window, cx);
@@ -1103,7 +1103,7 @@ fn pending_parse_results_cannot_apply_obsolete_projection_spans(cx: &mut TestApp
                     .snapshot(window, cx)
                     .display_snapshot
                     .text()),
-                code
+                "md · Format code · Copy code\n- newest ^literal\n```\n",
             );
         })
         .unwrap();

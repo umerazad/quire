@@ -318,7 +318,19 @@ fn entries(editor: &Editor, cx: &mut App) -> Vec<Entry> {
             .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    [clipboard, marks, block_items]
+    let code = crate::code_format::fence_at_caret(editor, cx)
+        .map(|fence| {
+            let formattable = editable && quire_format::Parser::for_tag(&fence.tag).is_some();
+            vec![
+                Entry::Separator,
+                Item::action("Format code", crate::code_format::FormatCode)
+                    .disabled(!formattable)
+                    .done(),
+                Item::action("Copy code", crate::code_format::CopyCode).done(),
+            ]
+        })
+        .unwrap_or_default();
+    [clipboard, marks, code, block_items]
         .into_iter()
         .flatten()
         .collect()
