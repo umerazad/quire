@@ -93,6 +93,55 @@
       "destination": "../fixtures/sync-vectors/go-written/expected.json",
       "sha256": "1a104e981d18f44bd833c07a3f98de2b55c1ce289ef7bb6bb736d4e2139caa1c",
       "note": "The Go batch's file name and revision ID, as rt's tests/sync-go-batch.test.ts reads them; copied unchanged."
+    },
+    {
+      "source": "tests/fixtures/sync-vectors/quire-notebook.json",
+      "source_revision": "5ea5c22310ff",
+      "destination": "../fixtures/sync-vectors/quire-notebook.json",
+      "sha256": "b60b27b982082736cbc7d0c4fba52b28e333d0eca2bb7be3e8c1195f0d53a894",
+      "note": "The vector notebook's header, written by rt's scripts/sync-vectors.ts; copied unchanged."
+    },
+    {
+      "source": "tests/fixtures/sync-vectors/expected.json",
+      "source_revision": "5ea5c22310ff",
+      "destination": "../fixtures/sync-vectors/expected.json",
+      "sha256": "08d0756e9668cdafc328d61c7ddf4340037c9c1726de96b76e03a56dea63303e",
+      "note": "rt's scripts/sync-vectors.ts expectations (batches, revisions, heads, sorted heads, page IDs, strings, key order, numbers, frozen ID); copied unchanged and checked by crates/quire_store/tests/sync_vectors.rs."
+    },
+    {
+      "source": "tests/fixtures/sync-vectors/devices/office/log/000000001-950303f9507b2a4756c6ea72218e362a2254c9e0ffe382b495d51bf6068d0e69.qlog.zst",
+      "source_revision": "5ea5c22310ff",
+      "destination": "../fixtures/sync-vectors/devices/office/log/000000001-950303f9507b2a4756c6ea72218e362a2254c9e0ffe382b495d51bf6068d0e69.qlog.zst",
+      "sha256": "b21b24c35d11b2f12798dd23d773968821abcd31dfe7f575f5acd71a9e6d84b7",
+      "note": "A change file rt's scripts/sync-vectors.ts writes; copied unchanged, decoded, re-encoded byte for byte, and imported by crates/quire_store/tests/sync_vectors.rs."
+    },
+    {
+      "source": "tests/fixtures/sync-vectors/devices/home/log/000000001-8295b869c2c775e301a4667016cd92269d87dec87a45c949391c00624fd4e27e.qlog.zst",
+      "source_revision": "5ea5c22310ff",
+      "destination": "../fixtures/sync-vectors/devices/home/log/000000001-8295b869c2c775e301a4667016cd92269d87dec87a45c949391c00624fd4e27e.qlog.zst",
+      "sha256": "aa00a9acc057ac523e7ed4f5237fc02735b2f61bd2634ad7ef6de8b5f5934ffc",
+      "note": "A change file rt's scripts/sync-vectors.ts writes; copied unchanged, decoded, re-encoded byte for byte, and imported by crates/quire_store/tests/sync_vectors.rs."
+    },
+    {
+      "source": "tests/fixtures/sync-vectors/devices/office/log/000000002-53a91f143f1e1fe8ece7403f0ef43a989d4e06547ad7c6462b8cabff72b5341c.qlog.zst",
+      "source_revision": "5ea5c22310ff",
+      "destination": "../fixtures/sync-vectors/devices/office/log/000000002-53a91f143f1e1fe8ece7403f0ef43a989d4e06547ad7c6462b8cabff72b5341c.qlog.zst",
+      "sha256": "a9bdd51e26ed24c97ad0504fc1e60155babc8747b130e33417e819973d6597ac",
+      "note": "A change file rt's scripts/sync-vectors.ts writes; copied unchanged, decoded, re-encoded byte for byte, and imported by crates/quire_store/tests/sync_vectors.rs."
+    },
+    {
+      "source": "tests/fixtures/sync-vectors/devices/office/log/000000003-e22c7b2a8d9b9e7f89ed6ae8f69dd3e82ca14da58c343f7cea312b4e30fd9b6a.qlog.zst",
+      "source_revision": "5ea5c22310ff",
+      "destination": "../fixtures/sync-vectors/devices/office/log/000000003-e22c7b2a8d9b9e7f89ed6ae8f69dd3e82ca14da58c343f7cea312b4e30fd9b6a.qlog.zst",
+      "sha256": "dd628a0f510b2ee42cfadd97c7d91fb37e8e7a65c6c58cd157d89025bb040d64",
+      "note": "A change file rt's scripts/sync-vectors.ts writes; copied unchanged, decoded, re-encoded byte for byte, and imported by crates/quire_store/tests/sync_vectors.rs."
+    },
+    {
+      "source": "tests/fixtures/sync-vectors/devices/home/log/000000002-3a96256ec4eacde5a74312ddea7dcd49d56b400eaed4fd151f3ea653364309e5.qlog.zst",
+      "source_revision": "5ea5c22310ff",
+      "destination": "../fixtures/sync-vectors/devices/home/log/000000002-3a96256ec4eacde5a74312ddea7dcd49d56b400eaed4fd151f3ea653364309e5.qlog.zst",
+      "sha256": "d5d6c66cac3fc19167781076924210b1d6fa77d71e6e98fca56dd049d3e47a8c",
+      "note": "A change file rt's scripts/sync-vectors.ts writes; copied unchanged, decoded, re-encoded byte for byte, and imported by crates/quire_store/tests/sync_vectors.rs."
     }
   ],
   "merge_refresh": {
