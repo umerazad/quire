@@ -1,0 +1,22 @@
+{
+  "package": "prettier",
+  "version": "3.9.10",
+  "license": "MIT",
+  "repository": "https://github.com/prettier/prettier",
+  "tarball": "https://registry.npmjs.org/prettier/-/prettier-3.9.10.tgz",
+  "integrity": "sha512-skGHTH1Yb9QvaTC4hWnRTzEYtCpApF0UMBPz+t/0ZPzP8ihefo/btKd+QA7pUE0fEwA1SbS/NmhyEcstdXOIdA==",
+  "tarball_sha256": "9dc72045591793dff972432fb78722f7ab91aaa90a7fa8c1261ede55969246b7",
+  "note": "Unmodified files from the npm tarball's package/ directory. The integrity value matches spikes/nr06/format/bun.lock and rt's node_modules copy. quire_format embeds these files and its tests check every hash below; replace all of them together and rerun the corpus gate to upgrade.",
+  "files": {
+    "standalone.js": "dce9a9923a5957a8f9a9cdc8902167cd3061431790edcb2bccef55626500002b",
+    "plugins/babel.js": "5249a89653aae718f7a0fb94577a09768f18b865df832cfe68d8158c8207af5c",
+    "plugins/estree.js": "7af7b9e59af8113e22d9b25653a760c372fa8d7c04e9adf67d0037c6ebf862b4",
+    "plugins/typescript.js": "ad4ede6b3d28fd1ffa37bebcb6a9e7ab9db0dc045d16d0c65eb65496660f91f0",
+    "plugins/postcss.js": "8dd23dad68a8bb34d304e04b2b6493c187150dbaebdfb5b54061007f430e5058",
+    "plugins/html.js": "abb63e0b690ac15f0f8dc4aad63a2fcb9194892998c67714dc57b7d3257c0b46",
+    "plugins/markdown.js": "094090f86a08774f2dfa2a14bd36b346b9f96e5c5e9a49742c24797673ad2249",
+    "plugins/yaml.js": "48bbba2bad5d666425fc5b435ab80083c6a77825d614e9a72ff5e9bbb8d428bc",
+    "LICENSE": "b0f2417199889f1c0d28ec4e0244eacf1a15de5819d61f641dd7d8f45153ac9c",
+    "THIRD-PARTY-NOTICES.md": "3f58498bc5cc36173c44f33a33e2f7b30a2771274edf84bd75b8dc2d7a741dfd"
+  }
+}

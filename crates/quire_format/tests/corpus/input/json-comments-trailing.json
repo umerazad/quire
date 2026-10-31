@@ -1,0 +1,6 @@
+// settings
+{
+    "tabWidth" : 4, /* inline */
+  "items": [ 1,
+   2, ],
+}
