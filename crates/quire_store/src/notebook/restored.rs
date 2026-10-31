@@ -20,16 +20,9 @@ use std::path::Path;
 /// draft loses its base, so it opens for review and is never merged on its own.
 pub(crate) fn adopt_restored(path: &Path, notebook: &str, device: &str) -> Result<()> {
     let connection = database::open_writable(path)?;
-    connection.exec("BEGIN IMMEDIATE")?()?;
-    match rewrite(&connection, notebook, device) {
-        Ok(()) => connection.exec("COMMIT")?().context(
-            "Cannot commit the restored notebook's identity. The current notebook is unchanged; check free space where you restore and retry.",
-        ),
-        Err(error) => {
-            connection.exec("ROLLBACK")?()?;
-            Err(error)
-        }
-    }
+    database::immediate(&connection, || rewrite(&connection, notebook, device)).context(
+        "Cannot give the restored notebook its new identity. The current notebook is unchanged; check free space where you restore and retry.",
+    )
 }
 
 fn rewrite(connection: &Connection, notebook: &str, device: &str) -> Result<()> {

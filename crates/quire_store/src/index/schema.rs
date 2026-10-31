@@ -126,7 +126,7 @@ pub(super) fn open(path: &Path, notebook: Notebook<'_>, analyzer: i64) -> Result
 }
 
 /// Percent-encodes the characters SQLite URI filenames treat specially.
-fn uri_path(path: &str) -> String {
+pub(crate) fn uri_path(path: &str) -> String {
     path.chars()
         .map(|c| match c {
             '%' => "%25".into(),

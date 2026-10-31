@@ -45,6 +45,9 @@ mod page_writes;
 mod exchange;
 
 #[cfg(feature = "full-editor")]
+mod backups;
+
+#[cfg(feature = "full-editor")]
 mod file_actions;
 
 #[cfg(feature = "full-editor")]

@@ -85,7 +85,7 @@ impl Source {
     }
 
     /// Identifies this notebook's backups in a destination, from its location on this computer.
-    fn key(&self) -> Result<String> {
+    pub fn key(&self) -> Result<String> {
         let (kind, path) = match self {
             Self::Store { database } => ("store", database),
             Self::Folder { root, .. } => ("folder", root),
@@ -219,9 +219,8 @@ fn outside_live(source: &Source, folder: &Path, what: &str) -> Result<()> {
     Ok(())
 }
 
-/// Backs up `source` into `destination`, returning the completed backup. On any failure the
-/// unfinished copy is removed, earlier backups are untouched, and the error says what to do.
-pub fn create(source: &Source, destination: &Path, created: u64) -> Result<BackupInfo> {
+/// The usable form of a backup folder for `source`: an existing folder outside the notebook's data.
+pub fn check_destination(source: &Source, destination: &Path) -> Result<PathBuf> {
     let destination = fs::canonicalize(destination).with_context(|| {
         format!(
             "Cannot open the backup folder {}. Reconnect its drive or choose another backup folder.",
@@ -234,6 +233,13 @@ pub fn create(source: &Source, destination: &Path, created: u64) -> Result<Backu
         destination.display()
     );
     outside_live(source, &destination, "backup folder")?;
+    Ok(destination)
+}
+
+/// Backs up `source` into `destination`, returning the completed backup. On any failure the
+/// unfinished copy is removed, earlier backups are untouched, and the error says what to do.
+pub fn create(source: &Source, destination: &Path, created: u64) -> Result<BackupInfo> {
+    let destination = check_destination(source, destination)?;
     let parent = source.backups_in(&destination)?;
     create_dir_durable(&parent)?;
     let id = unique(created);
@@ -447,7 +453,7 @@ fn stage_folder(root: &Path, state: &Path, partial: &Path) -> Result<BTreeMap<St
 /// Lists this notebook's completed backups in `destination`, newest first. Unfinished copies and
 /// folders without a readable manifest are left out; [`verify`] checks a backup fully.
 pub fn list(source: &Source, destination: &Path) -> Result<Vec<BackupInfo>> {
-    let parent = source.backups_in(destination)?;
+    let parent = source.backups_in(&real(destination))?;
     let entries = match fs::read_dir(&parent) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),

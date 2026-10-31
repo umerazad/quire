@@ -11,6 +11,7 @@ use std::{
 };
 use theme::ActiveTheme;
 
+mod backups;
 mod exchange;
 mod folder;
 mod links;
@@ -137,6 +138,7 @@ struct StoredWindow {
     links: links::Links,
     folder: folder::FolderView,
     exchange: Entity<crate::exchange::Exchange>,
+    backups: Entity<crate::backups::Backups>,
 }
 
 impl StoredWindow {
@@ -169,6 +171,7 @@ impl StoredWindow {
             Ok(_) => Err("Reading notebook settings…".into()),
             Err(error) => Err(error.clone()),
         };
+        let backups = backups::new_backups(&session, &database, calendar.clone().ok(), cx);
         let nav =
             navigation::Navigation::new(&database, &notebook, calendar.ok(), cx.focus_handle());
         let id = page.read(cx).id().to_owned();
@@ -187,6 +190,7 @@ impl StoredWindow {
             links,
             folder: folder::FolderView::default(),
             exchange: cx.new(|_| crate::exchange::Exchange::default()),
+            backups,
         };
         let pages = this.session.borrow().open_pages();
         for observed in pages {
@@ -196,6 +200,7 @@ impl StoredWindow {
         if let Some(side) = this.nav.workspace.side.clone() {
             this.place_beside(side, false, window, cx);
         }
+        this.watch_backups(window, cx);
         this.load_settings(cx);
         this
     }
@@ -416,7 +421,11 @@ impl Render for StoredWindow {
                         )),
                     )
                 })
-                .child(self.render_exchange_buttons(cx));
+                .child(self.render_exchange_buttons(cx))
+                .child(
+                    Button::new("show-backups", "Backups…")
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_backups(cx))),
+                );
         let root = gpui::div()
             .track_focus(&self.nav.loading_focus)
             .size_full()
@@ -425,84 +434,88 @@ impl Render for StoredWindow {
             .on_action(cx.listener(|this, _: &SaveAndClosePage, window, cx| {
                 this.save_and_close(window, cx)
             }));
-        Self::register_exchange(Self::register_navigation(root, cx), cx)
-            .flex()
-            .flex_col()
-            .bg(cx.theme().colors().editor_background)
-            .child(header)
-            .child(self.exchange.clone())
-            .when_some(conflict, |div, conflict| div.child(conflict))
-            .when_some(self.close_error.clone(), |div, error| {
-                div.child(gpui::div().p_2().child(error))
-            })
-            .when_some(self.copy_error.clone(), |div, error| {
-                div.child(gpui::div().p_2().child(error))
-            })
-            .when_some(self.index_status(cx), |div, error| {
-                div.child(gpui::div().p_2().child(error))
-            })
-            .when_some(self.nav.error.clone(), |div, error| {
-                div.child(gpui::div().p_2().child(error))
-            })
-            .when_some(crate::outline::notice(cx), |div, notice| {
-                div.child(gpui::div().p_2().child(notice))
-            })
-            .when(loading, |div| {
-                div.child(gpui::div().p_2().child("Opening notebook storage…"))
-            })
-            .child(self.render_body(window, cx))
-            .when_some(self.nav.palette.clone(), |div, palette| {
-                div.child(
-                    gpui::div()
-                        .absolute()
-                        .top_16()
-                        .left_0()
-                        .right_0()
-                        .flex()
-                        .justify_center()
-                        .occlude()
-                        .child(palette),
-                )
-            })
-            .when_some(self.nav.template_prompt.clone(), |div, prompt| {
-                div.child(
-                    gpui::div()
-                        .absolute()
-                        .top_16()
-                        .left_0()
-                        .right_0()
-                        .flex()
-                        .justify_center()
-                        .occlude()
-                        .child(prompt),
-                )
-            })
-            .when_some(self.nav.dialog.clone(), |div, dialog| {
-                div.child(
-                    gpui::div()
-                        .absolute()
-                        .top_16()
-                        .left_0()
-                        .right_0()
-                        .flex()
-                        .justify_center()
-                        .occlude()
-                        .child(dialog),
-                )
-            })
-            .when_some(self.nav.page_history.clone(), |div, history| {
-                div.child(
-                    gpui::div()
-                        .absolute()
-                        .top_16()
-                        .left_0()
-                        .right_0()
-                        .flex()
-                        .justify_center()
-                        .occlude()
-                        .child(history),
-                )
-            })
+        Self::register_backups(
+            Self::register_exchange(Self::register_navigation(root, cx), cx),
+            cx,
+        )
+        .flex()
+        .flex_col()
+        .bg(cx.theme().colors().editor_background)
+        .child(header)
+        .child(self.exchange.clone())
+        .child(self.backups.clone())
+        .when_some(conflict, |div, conflict| div.child(conflict))
+        .when_some(self.close_error.clone(), |div, error| {
+            div.child(gpui::div().p_2().child(error))
+        })
+        .when_some(self.copy_error.clone(), |div, error| {
+            div.child(gpui::div().p_2().child(error))
+        })
+        .when_some(self.index_status(cx), |div, error| {
+            div.child(gpui::div().p_2().child(error))
+        })
+        .when_some(self.nav.error.clone(), |div, error| {
+            div.child(gpui::div().p_2().child(error))
+        })
+        .when_some(crate::outline::notice(cx), |div, notice| {
+            div.child(gpui::div().p_2().child(notice))
+        })
+        .when(loading, |div| {
+            div.child(gpui::div().p_2().child("Opening notebook storage…"))
+        })
+        .child(self.render_body(window, cx))
+        .when_some(self.nav.palette.clone(), |div, palette| {
+            div.child(
+                gpui::div()
+                    .absolute()
+                    .top_16()
+                    .left_0()
+                    .right_0()
+                    .flex()
+                    .justify_center()
+                    .occlude()
+                    .child(palette),
+            )
+        })
+        .when_some(self.nav.template_prompt.clone(), |div, prompt| {
+            div.child(
+                gpui::div()
+                    .absolute()
+                    .top_16()
+                    .left_0()
+                    .right_0()
+                    .flex()
+                    .justify_center()
+                    .occlude()
+                    .child(prompt),
+            )
+        })
+        .when_some(self.nav.dialog.clone(), |div, dialog| {
+            div.child(
+                gpui::div()
+                    .absolute()
+                    .top_16()
+                    .left_0()
+                    .right_0()
+                    .flex()
+                    .justify_center()
+                    .occlude()
+                    .child(dialog),
+            )
+        })
+        .when_some(self.nav.page_history.clone(), |div, history| {
+            div.child(
+                gpui::div()
+                    .absolute()
+                    .top_16()
+                    .left_0()
+                    .right_0()
+                    .flex()
+                    .justify_center()
+                    .occlude()
+                    .child(history),
+            )
+        })
     }
 }
 

@@ -8,16 +8,13 @@ use gpui::DismissEvent;
 impl StoredWindow {
     /// Save times in the notebook's time zone, as a date and a 24-hour time.
     fn history_label(&self) -> Rc<dyn Fn(i64) -> String> {
-        let calendar = self
-            .nav
-            .daily
-            .calendar
-            .clone()
-            .unwrap_or_else(quire_core::daily::DailyCalendar::utc);
-        Rc::new(move |saved_at| match calendar.clock_at(saved_at) {
-            Ok((date, hour, minute)) => format!("{date} {hour:02}:{minute:02}"),
-            Err(_) => format!("Saved at {saved_at}"),
-        })
+        super::backups::clock_label(
+            self.nav
+                .daily
+                .calendar
+                .clone()
+                .unwrap_or_else(quire_core::daily::DailyCalendar::utc),
+        )
     }
 
     pub(in crate::editor_host::stored) fn show_history(

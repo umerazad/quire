@@ -827,3 +827,7 @@ mod media_attach_tests;
 #[cfg(test)]
 #[path = "media_folder_tests.rs"]
 mod media_folder_tests;
+
+#[cfg(test)]
+#[path = "backups_tests.rs"]
+mod backups_tests;

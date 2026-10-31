@@ -15,16 +15,7 @@ fn uri(path: &Path) -> Result<String> {
     let path = path.to_str().context(
         "A notebook path is not valid Unicode. Move the notebook to a Unicode path and retry.",
     )?;
-    let escaped: String = path
-        .chars()
-        .map(|c| match c {
-            '%' => "%25".into(),
-            '?' => "%3f".into(),
-            '#' => "%23".into(),
-            c => c.to_string(),
-        })
-        .collect();
-    Ok(format!("file:{escaped}?mode=ro"))
+    Ok(format!("file:{}?mode=ro", crate::index::uri_path(path)))
 }
 
 /// A connection with the database at `path` attached read-only as [`ATTACHED`]. Nothing is ever

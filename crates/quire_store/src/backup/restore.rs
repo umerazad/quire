@@ -313,8 +313,7 @@ fn restore_folder(
 /// Points the restored state at its new folder and leaves every recovery draft for review.
 fn adopt_folder(file: &Path, root: &Path) -> Result<()> {
     let connection = crate::database::open_writable(file)?;
-    connection.exec("BEGIN IMMEDIATE")?()?;
-    let result = (|| -> Result<()> {
+    crate::database::immediate(&connection, || {
         connection.exec_bound("UPDATE meta SET root=? WHERE singleton=1")?(
             root.to_string_lossy().as_ref(),
         )?;
@@ -330,12 +329,5 @@ fn adopt_folder(file: &Path, root: &Path) -> Result<()> {
             ))?;
         }
         Ok(())
-    })();
-    match result {
-        Ok(()) => connection.exec("COMMIT")?(),
-        Err(error) => {
-            connection.exec("ROLLBACK")?()?;
-            Err(error)
-        }
-    }
+    })
 }
