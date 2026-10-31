@@ -531,3 +531,27 @@ fn native_analysis_matches_the_frozen_task_vectors(cx: &mut TestAppContext) {
             .join("\n\n")
     );
 }
+
+#[gpui::test]
+fn task_commands_act_at_every_caret_in_one_undo_step(cx: &mut TestAppContext) {
+    install(cx, None);
+    let page = "- [ ] One ^a\n- Two\n- [ ] Three ^c\n";
+    let window = view(&format!("|{page}"), true, false, cx);
+    window
+        .update(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges(
+                    [4, 9, 15, 30].map(|at| MultiBufferOffset(at)..MultiBufferOffset(at)),
+                )
+            })
+        })
+        .unwrap();
+    keys(window, &toggle(), cx);
+    assert_eq!(
+        text(window, cx),
+        format!("- [x] One ✅ 2026-10-29 ^a\n- [ ] Two{MADE}\n- [x] Three ✅ 2026-10-29 ^c\n"),
+        "two carets on one task change it once"
+    );
+    undo(window, false, cx);
+    assert_eq!(text(window, cx), page);
+}

@@ -4,6 +4,7 @@ use editor::{
 };
 use gpui::{Action, Context, Window};
 use language::{Bias, SelectionGoal};
+use multi_buffer::{MultiBufferRow, ViewEditIntent};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
@@ -110,6 +111,8 @@ impl Vim {
                 let mut original_indent_columns = Vec::new();
                 let mut start_offset = 0;
                 let mut mark_start_adjustments = Vec::new();
+                let source_lines = editor.buffer().read(cx).has_edit_filter();
+                let mut source_line_edits = source_lines;
 
                 for (ix, (selection, preserve)) in selections_to_process.iter().enumerate() {
                     let (mut to_insert, original_indent_column) =
@@ -180,8 +183,20 @@ impl Vim {
                         point..point
                     };
 
-                    let point_range = display_range.start.to_point(&display_map)
-                        ..display_range.end.to_point(&display_map);
+                    let point_range = if source_lines && line_mode && selection.is_empty() {
+                        let row = selection.start.to_point(&display_map).row;
+                        let column = if before {
+                            0
+                        } else {
+                            display_map.buffer_snapshot().line_len(MultiBufferRow(row))
+                        };
+                        let point = language::Point::new(row, column);
+                        point..point
+                    } else {
+                        source_line_edits = false;
+                        display_range.start.to_point(&display_map)
+                            ..display_range.end.to_point(&display_map)
+                    };
                     let anchor = if is_multiline || vim.mode == Mode::VisualLine {
                         display_map
                             .buffer_snapshot()
@@ -215,6 +230,12 @@ impl Vim {
                     })
                     .collect();
 
+                let intent = source_line_edits.then(|| {
+                    editor
+                        .buffer()
+                        .read(cx)
+                        .scoped_edit_intent(ViewEditIntent::Structural)
+                });
                 let cursor_offset = editor
                     .selections
                     .last::<MultiBufferOffset>(&display_map)
@@ -230,6 +251,7 @@ impl Vim {
                 } else {
                     editor.edit(edits, cx);
                 }
+                drop(intent);
 
                 // Set `[` and `]` marks to the pasted text range.
                 let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);

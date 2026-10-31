@@ -485,16 +485,18 @@ fn merging_never_edits_collapsed_children(cx: &mut TestAppContext) {
     expect(window, &[("backspace", "- Parent\n  - Kid|After\n")], cx);
 }
 
-/// Vim replays recorded insertions only through a workspace, which Quire's editors lack, so
-/// `.` repeats the outline command without its typed text.
 #[gpui::test]
-fn vim_dot_repeats_opening_a_block(cx: &mut TestAppContext) {
+fn vim_dot_repeats_opening_a_block_with_its_text(cx: &mut TestAppContext) {
     let window = write_view("- O|ne\n", true, cx);
     expect(
         window,
         &[
             ("o n e w escape", "- One\n- ne|w\n"),
-            (".", "- One\n- new\n- |\n"),
+            (".", "- One\n- new\n- ne|w\n"),
+            (
+                "k shift-o u p escape .",
+                "- One\n- u|p\n- up\n- new\n- new\n",
+            ),
         ],
         cx,
     );
@@ -519,5 +521,153 @@ fn moved_blocks_keep_the_caret_when_the_parse_lags(cx: &mut TestAppContext) {
             (&format!("{MOD}-shift-down"), "- A\n- C\n- B|\n  - B1\n"),
         ],
         cx,
+    );
+}
+
+#[gpui::test]
+fn numbered_lists_renumber_after_plain_edits(cx: &mut TestAppContext) {
+    let window = write_view("1. One\n2. T|wo\n3. Three\n", true, cx);
+    keys(window, "d d", cx);
+    assert_eq!(state(window, cx).replace('|', ""), "1. One\n2. Three\n");
+    keys(window, "u", cx);
+    assert_eq!(
+        state(window, cx).replace('|', ""),
+        "1. One\n2. Two\n3. Three\n"
+    );
+
+    let window = write_view("1. One\n2. Two\n|\n", false, cx);
+    keys(window, "1 . space c", cx);
+    assert_eq!(state(window, cx), "1. One\n2. Two\n3. c|\n");
+}
+
+/// The ID after `^` on each line of the view's text, or "" for lines without one.
+fn line_ids(window: WindowHandle<Editor>, cx: &mut TestAppContext) -> Vec<String> {
+    state(window, cx)
+        .replace('|', "")
+        .lines()
+        .map(|line| line.rsplit_once(" ^").map_or("", |(_, id)| id).to_owned())
+        .collect()
+}
+
+#[gpui::test]
+fn copied_block_ids_become_fresh_ids(cx: &mut TestAppContext) {
+    let window = write_view("- O|ne ^a\n- Two ^b\n", true, cx);
+    keys(window, "y y p", cx);
+    let ids = line_ids(window, cx);
+    assert_eq!(ids[0], "a");
+    assert!(ids[1].starts_with("b-"), "{ids:?}");
+    assert_eq!(ids[2], "b");
+    assert!(state(window, cx).starts_with("- One ^a\n- |One ^b-"));
+    keys(window, "u", cx);
+    assert_eq!(state(window, cx).replace('|', ""), "- One ^a\n- Two ^b\n");
+
+    let window = write_view("- Two ^b\n- |\n", false, cx);
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+        "X ^b\n- Y ^n\n- Z ^n".into(),
+    ));
+    keys(window, &format!("{MOD}-v"), cx);
+    let ids = line_ids(window, cx);
+    assert_eq!(ids[0], "b");
+    assert!(ids[1].starts_with("b-") && ids[1] != "b", "{ids:?}");
+    assert_eq!(ids[2], "n", "a new ID stays");
+    assert!(ids[3].starts_with("b-"), "{ids:?}");
+    keys(window, &undo(false), cx);
+    assert_eq!(state(window, cx).replace('|', ""), "- Two ^b\n- \n");
+}
+
+/// Write hides list markers and IDs, and Vim's linewise yank and put still copy and place
+/// whole source lines.
+#[gpui::test]
+fn vim_linewise_yank_and_put_keep_hidden_syntax(cx: &mut TestAppContext) {
+    let window = write_view("- O|ne\n- Two\n", true, cx);
+    expect(window, &[("y y p", "- One\n- |One\n- Two\n")], cx);
+    let window = write_view("- One\n- T|wo ^t\n", true, cx);
+    keys(window, "y y P", cx);
+    let ids = line_ids(window, cx);
+    assert!(
+        state(window, cx).starts_with("- One\n- |Two ^b-"),
+        "{ids:?}"
+    );
+    assert_eq!(ids[2], "t");
+}
+
+#[gpui::test]
+fn link_pairs_delete_together_and_enter_steps_out(cx: &mut TestAppContext) {
+    let window = write_view("- See |\n", false, cx);
+    expect(
+        window,
+        &[
+            ("[ [", "- See [[|]]\n"),
+            ("backspace", "- See |\n"),
+            ("( (", "- See ((|))\n"),
+            ("backspace", "- See |\n"),
+        ],
+        cx,
+    );
+    let window = write_view("- See [[Pa|]] and ((b))\n", false, cx);
+    keys(window, "enter", cx);
+    assert_eq!(state(window, cx), "- See [[Pa]]| and ((b))\n");
+    let window = write_view("- See [[Pa]] and ((b|))\n", false, cx);
+    keys(window, "enter", cx);
+    assert_eq!(state(window, cx), "- See [[Pa]] and ((b))|\n");
+    let window = write_view("- Closed [[Pa]]|]]\n", false, cx);
+    keys(window, "enter", cx);
+    assert_eq!(state(window, cx), "- Closed [[Pa]]\n- |]]\n");
+}
+
+#[cfg(target_os = "macos")]
+#[gpui::test]
+fn cmd_backspace_stops_at_the_text_start(cx: &mut TestAppContext) {
+    let window = write_view("- [ ] Hello wor|ld ^x\n- Next\n", false, cx);
+    expect(
+        window,
+        &[
+            ("cmd-backspace", "- [ ] |ld ^x\n- Next\n"),
+            ("cmd-backspace", "- [ ] |ld ^x\n- Next\n"),
+            ("cmd-z", "- [ ] Hello wor|ld ^x\n- Next\n"),
+        ],
+        cx,
+    );
+}
+
+#[gpui::test]
+fn vim_counts_and_visual_shifts_move_sibling_subtrees(cx: &mut TestAppContext) {
+    let page = "- One\n- T|wo\n  - Kid\n- Three\n- Four\n";
+    let window = write_view(page, true, cx);
+    expect(
+        window,
+        &[
+            ("3 > >", "- One\n  - |Two\n    - Kid\n  - Three\n- Four\n"),
+            ("u", page),
+            (
+                "shift-v j j >",
+                "- One\n  - |Two\n    - Kid\n  - Three\n- Four\n",
+            ),
+        ],
+        cx,
+    );
+    assert!(
+        window
+            .update(cx, |editor, _, cx| editor
+                .selections
+                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx)))
+            .unwrap()
+            .is_empty(),
+        "visual mode ends"
+    );
+    expect(
+        window,
+        &[("shift-v j j <", "- One\n- |Two\n  - Kid\n- Three\n- Four\n")],
+        cx,
+    );
+    keys(window, "j shift-v j j >", cx);
+    assert_eq!(
+        state(window, cx).replace('|', ""),
+        "- One\n- Two\n  - Kid\n- Three\n- Four\n"
+    );
+    assert_eq!(
+        cx.update(|cx| notice(cx)).as_deref(),
+        Some(model::NOT_SIBLINGS),
+        "a kid and its parent's siblings move only together with the parent"
     );
 }

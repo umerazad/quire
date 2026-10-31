@@ -8,7 +8,7 @@ use crate::{
     state::{Mode, Operator, RecordedSelection, ReplayableAction, VimGlobals},
 };
 use editor::Editor;
-use gpui::{Action, App, Context, Window, actions};
+use gpui::{Action, App, Context, Entity, Window, actions};
 use workspace::Workspace;
 
 actions!(
@@ -92,6 +92,18 @@ pub struct ReplayerState {
 #[derive(Clone)]
 pub struct Replayer(Rc<RefCell<ReplayerState>>);
 
+/// The editor a replay types into: the workspace's active editor, or, for an editor embedded
+/// without a workspace, the editor of the focused Vim session.
+fn replay_editor(window: &mut Window, cx: &mut App) -> Option<Entity<Editor>> {
+    match Workspace::for_window(window, cx) {
+        Some(workspace) => workspace
+            .read(cx)
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx)),
+        None => Vim::globals(cx).focused_vim()?.read(cx).editor(),
+    }
+}
+
 impl Replayer {
     pub fn new() -> Self {
         Self(Rc::new(RefCell::new(ReplayerState {
@@ -112,14 +124,7 @@ impl Replayer {
         let this = self.clone();
         window.defer(cx, move |window, cx| {
             this.next(window, cx);
-            let Some(workspace) = Workspace::for_window(window, cx) else {
-                return;
-            };
-            let Some(editor) = workspace
-                .read(cx)
-                .active_item(cx)
-                .and_then(|item| item.act_as::<Editor>(cx))
-            else {
+            let Some(editor) = replay_editor(window, cx) else {
                 return;
             };
             editor.update(cx, |editor, cx| {
@@ -165,14 +170,7 @@ impl Replayer {
                 text,
                 utf16_range_to_replace,
             } => {
-                let Some(workspace) = Workspace::for_window(window, cx) else {
-                    return;
-                };
-                let Some(editor) = workspace
-                    .read(cx)
-                    .active_item(cx)
-                    .and_then(|item| item.act_as::<Editor>(cx))
-                else {
+                let Some(editor) = replay_editor(window, cx) else {
                     return;
                 };
                 editor.update(cx, |editor, cx| {

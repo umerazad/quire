@@ -12,6 +12,7 @@ use std::{
 use theme::ActiveTheme;
 
 mod backups;
+mod block_move_views;
 mod document_export;
 mod exchange;
 mod folder;
@@ -712,7 +713,10 @@ impl Render for StoredWindow {
             Self::register_sync(
                 Self::register_backups(
                     Self::register_document_export(
-                        Self::register_exchange(Self::register_navigation(root, cx), cx),
+                        Self::register_exchange(
+                            Self::register_block_move(Self::register_navigation(root, cx), cx),
+                            cx,
+                        ),
                         cx,
                     ),
                     cx,

@@ -311,6 +311,9 @@ fn entries(editor: &Editor, cx: &mut App) -> Vec<Entry> {
                     Item::action("Copy block embed", CopyBlockEmbed)
                         .disabled(copy)
                         .done(),
+                    Item::action("Move block to page…", crate::block_move::MoveBlockToPage)
+                        .disabled(!editable)
+                        .done(),
                 ],
             ]
             .into_iter()

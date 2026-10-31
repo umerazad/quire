@@ -388,7 +388,53 @@ pub fn indent(
     let block = blocks
         .iter()
         .find(|item| item.kind == "list" && item.from <= head && head <= item.content_to)?;
-    let range = subtree_range(text, block);
+    indent_group(text, blocks, &[block], head, outdent, zoom)
+}
+
+/// Vim `>` and `<` over several lines, from a count or a visual selection, move the list items
+/// starting on those lines one level together, each with its children. They must be siblings.
+pub fn indent_lines(
+    text: &str,
+    blocks: &[Block],
+    lines: Range<usize>,
+    outdent: bool,
+    zoom: Option<&str>,
+) -> Option<Outcome> {
+    let from = line_start(text, lines.start);
+    let to = line_end(text, lines.end);
+    let selected: Vec<&Block> = blocks
+        .iter()
+        .filter(|item| item.kind == "list" && (from..=to).contains(&line_start(text, item.from)))
+        .collect();
+    let group: Vec<&Block> = selected
+        .iter()
+        .copied()
+        .filter(|item| {
+            !selected
+                .iter()
+                .any(|other| item.parent.as_deref() == Some(other.key.as_str()))
+        })
+        .collect();
+    let first = group.first()?;
+    if group.iter().any(|item| item.parent != first.parent) {
+        return Some(Outcome::Refuse(NOT_SIBLINGS));
+    }
+    let head = bounds(text, first).text_start;
+    indent_group(text, blocks, &group, head, outdent, zoom)
+}
+
+pub const NOT_SIBLINGS: &str = "Those list items sit at different levels. Select items under one parent to move them together.";
+
+fn indent_group(
+    text: &str,
+    blocks: &[Block],
+    group: &[&Block],
+    head: usize,
+    outdent: bool,
+    zoom: Option<&str>,
+) -> Option<Outcome> {
+    let (block, last) = (*group.first()?, *group.last()?);
+    let range = subtree_range(text, block).start..subtree_range(text, last).end;
     let old_indent = &text[range.start..block.from];
     let target = if outdent {
         block
@@ -403,7 +449,10 @@ pub fn indent(
     let Some(target) = target else {
         return apply(Plan::stay(head));
     };
-    if outdent && zoom.is_some() && (target.id.as_deref() == zoom || block.id.as_deref() == zoom) {
+    if outdent
+        && zoom.is_some()
+        && (target.id.as_deref() == zoom || group.iter().any(|item| item.id.as_deref() == zoom))
+    {
         return apply(Plan::stay(head));
     }
     if !outdent && !blank(text.get(target.subtree_to..range.start).unwrap_or("")) {
@@ -858,6 +907,43 @@ pub fn paste(text: &str, blocks: &[Block], head: usize, pasted: &str) -> Option<
         vec![(head..block.content_to, format!("{current}\n{rest}"))],
         cursor,
     ))
+}
+
+/// Cmd-Backspace in a list item deletes back to its text start and keeps the marker, the
+/// checkbox, and the ID, as deleting to the line start would not.
+pub fn delete_to_text_start(text: &str, blocks: &[Block], head: usize) -> Option<Plan> {
+    let (_, bounds) = list_line(text, blocks, head)?;
+    (head > bounds.text_start && head <= bounds.text_end).then(|| {
+        Plan::new(
+            vec![(bounds.text_start..head, String::new())],
+            bounds.text_start,
+        )
+    })
+}
+
+/// Backspace inside an empty `[[]]` or `(())` removes both pairs at once.
+pub fn delete_empty_link(text: &str, head: usize) -> Option<Plan> {
+    let around = text.get(head.checked_sub(2)?..head + 2)?;
+    matches!(around, "[[]]" | "(())")
+        .then(|| Plan::new(vec![(head - 2..head + 2, String::new())], head - 2))
+}
+
+/// Enter right before the `]]` or `))` closing a link on the caret's line steps past them
+/// instead of splitting the link: the caret position after the brackets.
+pub fn step_out_of_link(text: &str, head: usize) -> Option<usize> {
+    let before = &text[line_start(text, head)..head];
+    let after = &text[head..];
+    let open = |opening: &str, closing: char| {
+        before
+            .rfind(opening)
+            .is_some_and(|at| !before[at + 2..].contains(closing))
+    };
+    let closes = if after.starts_with("]]") {
+        open("[[", ']')
+    } else {
+        after.starts_with("))") && open("((", ')')
+    };
+    closes.then_some(head + 2)
 }
 
 #[cfg(test)]

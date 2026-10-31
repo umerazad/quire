@@ -54,6 +54,26 @@ impl SemanticExcerpt {
         this
     }
 
+    /// Whether the shown text still ends a line with the block's ID. A new empty child cannot
+    /// interrupt its parent's paragraph in Markdown, so until it gets text the parser reads the
+    /// parent's ID as plain text; the view keeps its range rather than losing the block.
+    fn still_holds_id(&self, cx: &App) -> bool {
+        if self.state != ExcerptState::Ready {
+            return false;
+        }
+        let marker = format!("^{}", self.id);
+        self.buffer
+            .read(cx)
+            .snapshot(cx)
+            .text()
+            .lines()
+            .any(|line| {
+                line.trim_end()
+                    .strip_suffix(marker.as_str())
+                    .is_some_and(|before| before.ends_with([' ', '\t']))
+            })
+    }
+
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let page = self.page.read(cx);
         let source = page.source.clone();
@@ -77,6 +97,10 @@ impl SemanticExcerpt {
         } else {
             (ExcerptState::Pending, Vec::new())
         };
+        if state == ExcerptState::Missing && self.still_holds_id(cx) {
+            cx.notify();
+            return;
+        }
         let snapshot = source.read(cx).snapshot();
         self.buffer.update(cx, |buffer, cx| {
             buffer.set_excerpt_ranges_for_path(PathKey::sorted(0), source, &snapshot, ranges, cx);
@@ -87,12 +111,22 @@ impl SemanticExcerpt {
 }
 
 struct BoundExcerpt {
-    _model: Entity<SemanticExcerpt>,
+    model: Entity<SemanticExcerpt>,
     _subscription: Subscription,
     saved_selections: Option<std::sync::Arc<[language::Selection<multi_buffer::Anchor>]>>,
 }
 
+/// The ID of the block an excerpt view shows, while the view shows it.
+pub fn root(editor: &Editor, cx: &App) -> Option<String> {
+    let model = editor.addon::<BoundExcerpt>()?.model.read(cx);
+    (model.state == ExcerptState::Ready).then(|| model.id.clone())
+}
+
 impl Addon for BoundExcerpt {
+    fn extend_key_context(&self, context: &mut gpui::KeyContext, _: &App) {
+        context.add("QuireExcerpt");
+    }
+
     fn to_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -163,7 +197,7 @@ pub fn attach(
         assert_eq!(editor.buffer(), &model.read(cx).buffer, "Construct the semantic editor from its model's shared-history buffer before attaching it");
         assert!(editor.addon::<BoundExcerpt>().is_none(), "A semantic editor must attach to exactly one block model");
         let subscription = cx.observe_in(model, window, |editor, model, window, cx| synchronize(editor, &model, window, cx));
-        editor.register_addon(BoundExcerpt { _model: model.clone(), _subscription: subscription, saved_selections: None });
+        editor.register_addon(BoundExcerpt { model: model.clone(), _subscription: subscription, saved_selections: None });
         synchronize(editor, model, window, cx);
     });
 }
