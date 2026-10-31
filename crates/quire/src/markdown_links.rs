@@ -146,7 +146,7 @@ pub fn alone_on_line(text: &str, range: &Range<usize>) -> bool {
 
 /// Whether a reference shows a whole block or page in place, as the reference `fullEmbed`.
 pub fn is_full_embed(text: &str, reference: &Reference) -> bool {
-    reference.media.is_none()
+    !crate::media::is_media_embed(reference)
         && (reference.kind == ReferenceKind::Embed
             || (reference.kind == ReferenceKind::Block && reference.label.is_none()))
         && alone_on_line(text, &reference.range)

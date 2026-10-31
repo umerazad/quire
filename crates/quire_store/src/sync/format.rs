@@ -223,13 +223,17 @@ pub fn attachment_hash(name: &str) -> Option<&str> {
     Some(hash)
 }
 pub fn attachment_file_name(data: &[u8], original: &str) -> String {
+    attachment_name_for_hash(&sha256(data), original)
+}
+
+/// The protocol name for content with this SHA-256, keeping a short alphanumeric extension.
+pub fn attachment_name_for_hash(hash: &str, original: &str) -> String {
     let extension = original.rsplit_once('.').map(|(_, ext)| ext).filter(|ext| {
         !ext.is_empty() && ext.len() <= 10 && ext.bytes().all(|b| b.is_ascii_alphanumeric())
     });
-    let hash = sha256(data);
     match extension {
         Some(ext) => format!("{hash}.{}", ext.to_ascii_lowercase()),
-        None => hash,
+        None => hash.to_owned(),
     }
 }
 

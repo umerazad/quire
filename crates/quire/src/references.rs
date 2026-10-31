@@ -26,7 +26,7 @@ pub enum Target {
 
 impl Target {
     pub fn of(reference: &Reference) -> Option<Self> {
-        if reference.media.is_some() {
+        if crate::media::is_media_embed(reference) {
             return None;
         }
         Some(match reference.kind {
@@ -80,6 +80,11 @@ pub trait Notebook {
         window: &mut Window,
         cx: &mut App,
     ) -> futures::channel::oneshot::Receiver<Option<String>>;
+
+    /// Where pages' notebook-relative media paths resolve.
+    fn media_files(&self) -> Option<quire_media::files::Files> {
+        None
+    }
 }
 
 /// Shares one notebook among a window's page editors and tells them when indexed answers may

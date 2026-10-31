@@ -779,3 +779,19 @@ mod template_tests;
 #[cfg(test)]
 #[path = "template_insert_tests.rs"]
 mod template_insert_tests;
+
+#[cfg(test)]
+#[path = "media_tests.rs"]
+mod media_tests;
+
+#[cfg(test)]
+#[path = "media_pdf_tests.rs"]
+mod media_pdf_tests;
+
+#[cfg(test)]
+#[path = "media_attach_tests.rs"]
+mod media_attach_tests;
+
+#[cfg(test)]
+#[path = "media_folder_tests.rs"]
+mod media_folder_tests;

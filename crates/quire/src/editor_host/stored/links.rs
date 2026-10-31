@@ -113,6 +113,10 @@ impl Notebook for WindowNotebook {
             .ok();
         answer
     }
+
+    fn media_files(&self) -> Option<quire_media::files::Files> {
+        self.session.upgrade()?.try_borrow().ok()?.media_files()
+    }
 }
 
 impl StoredWindow {
