@@ -1,6 +1,10 @@
-//! AI transforms through the Claude Code and Codex command line tools (NR28): the process host,
-//! the backend settings, the prompt, and the proposal shown under the text until it is accepted.
+//! AI through the Claude Code and Codex command line tools: the process host, the backend
+//! settings, the prompt, and the proposal shown under the text until it is accepted (NR28); the
+//! answer pane for questions and syntheses, keeping answers in today's page, and Tidy (NR30).
 
+pub mod answer;
+pub mod context;
+pub mod keep;
 pub mod process;
 pub mod prompt;
 pub mod proposal;
@@ -20,6 +24,14 @@ actions!(
         AcceptProposal,
         /// Rejects the AI proposal, or cancels the run still writing it.
         RejectProposal,
+        /// Opens the answer pane to ask the notebook a question.
+        AskNotebook,
+        /// Proposes links, task states, and due dates for the daily page, for review.
+        TidyDay,
+        /// Sends the question typed in the answer pane.
+        SubmitQuestion,
+        /// Runs the synthesis instruction typed in the answer pane.
+        RunSynthesis,
     ]
 );
 
@@ -66,6 +78,19 @@ pub fn init(cx: &mut App) {
             prompt::open(editor, None, window, cx)
         });
         register::<AskAiOnVisualLines>(editor, cx, ask_on_visual_lines);
+        register::<AskNotebook>(editor, cx, |editor, window, cx| {
+            proposal::start(
+                editor,
+                proposal::Invocation {
+                    args: String::new(),
+                    rows: None,
+                    verb: None,
+                },
+                window,
+                cx,
+            )
+        });
+        register::<TidyDay>(editor, cx, proposal::tidy);
         register::<AcceptProposal>(editor, cx, |editor, window, cx| {
             if !proposal::accept_key(editor, window, cx) {
                 cx.propagate();
@@ -107,5 +132,39 @@ pub fn bind_keys(cx: &mut App) {
         ),
         KeyBinding::new("enter", AcceptProposal, Some(proposal)),
         KeyBinding::new("escape", RejectProposal, Some(proposal)),
+        KeyBinding::new(
+            if cfg!(target_os = "macos") {
+                "cmd-alt-i"
+            } else {
+                "ctrl-alt-i"
+            },
+            AskNotebook,
+            Some(crate::editor_host::EDITOR_CONTEXT),
+        ),
+        KeyBinding::new(
+            "\\ q",
+            AskNotebook,
+            Some("Editor && VimControl && vim_mode == normal && !QuireControl"),
+        ),
+        KeyBinding::new("enter", SubmitQuestion, Some("QuireAnswerInput > Editor")),
+        KeyBinding::new(
+            "shift-enter",
+            editor::actions::Newline,
+            Some("QuireAnswerInput > Editor"),
+        ),
+        KeyBinding::new(
+            "enter",
+            editor::actions::Newline,
+            Some("QuireSynthesis > Editor"),
+        ),
+        KeyBinding::new(
+            if cfg!(target_os = "macos") {
+                "cmd-enter"
+            } else {
+                "ctrl-enter"
+            },
+            RunSynthesis,
+            Some("QuireSynthesis > Editor"),
+        ),
     ]);
 }

@@ -38,6 +38,17 @@ impl StoredWindow {
                         this.persist(cx);
                         view.update(cx, |view, cx| view.set_oldest_first(*oldest, cx));
                     }
+                    ReferencesEvent::Synthesize => {
+                        let Some(title) = this.nav.title(&page).map(str::to_owned) else {
+                            return;
+                        };
+                        let seed = crate::ai::answer::Seed {
+                            title: Some(format!("Linked references to {title}")),
+                            source: Some(quire_core::ai::ask::Source::References(title)),
+                            ..Default::default()
+                        };
+                        this.open_answer(seed, window, cx);
+                    }
                 },
             )
             .detach();

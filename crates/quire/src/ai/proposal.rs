@@ -5,6 +5,7 @@
 //! text they would replace, as page history does.
 
 use super::{
+    answer::Seed,
     process::{self, Host, Outcome, Request, Transcript, Update},
     settings::{self, AiSettings},
 };
@@ -23,6 +24,7 @@ use language::{Buffer, BufferSnapshot, Capability};
 use multi_buffer::{MultiBuffer, ToOffset as _};
 use quire_core::ai::{
     AiRange, Backend, Command, Placement, Verb,
+    ask::{Needs, Preset},
     backend::{AI_OFF, CANCELED, PROMPT_LIMIT, PROMPT_TOO_LONG},
     commands::{
         build_draft_prompt, build_prompt, clean_response, context_summary, drop_foreign_markers,
@@ -47,7 +49,16 @@ pub const STALE: &str =
 pub const NO_RANGE: &str =
     "Place the cursor on a block or a blank line, or select text, then run :ai again.";
 pub const READ_ONLY: &str = "This page is read-only. Reopen it to edit, then run :ai again.";
-pub const NO_PANE: &str = "Questions about the notebook open the answer pane, which Quire Native does not have yet. Select text or place the cursor on a block and give an instruction, such as :ai tighten.";
+pub const NO_PANE: &str = "Questions about the notebook open the answer pane beside a notebook page. Open the page from a notebook window, then run :ai again.";
+pub const NOT_DAILY: &str =
+    "Tidy works on a daily page. Open a day's page, then choose Tidy this day again.";
+pub const EMPTY_DAY: &str = "This day's page is empty, so there is nothing to tidy.";
+pub const NOTHING_TO_TIDY: &str =
+    "Tidy found nothing to add on this page. Press Retry to ask again, or Close.";
+pub const NO_INDEX: &str =
+    "Tidy needs the notebook index to find page titles. Wait for indexing to finish, then retry.";
+/// How many existing page titles Tidy offers the model.
+const TIDY_TITLES: usize = 200;
 /// How much text above a blank line goes with a draft request.
 const DRAFT_CONTEXT: usize = 6000;
 
@@ -97,6 +108,9 @@ pub struct ProposalView {
     invocation: Invocation,
     backend: Backend,
     context: Vec<String>,
+    tidy: Option<TidyRules>,
+    /// Proposed Tidy lines that broke its limits, left out of the proposal.
+    refused: Vec<quire_core::ai::tidy::Refusal>,
     started: Instant,
     finished: Option<Duration>,
     phase: Phase,
@@ -350,6 +364,8 @@ fn begin(
     let text = snapshot.text();
     let explicit = invocation.rows.is_some() || !selection.is_empty();
     let page = range_context(editor, &buffer, &(head..head), cx).title;
+    let daily =
+        notebook(editor, cx).is_some_and(|notebook| notebook.daily_date(&page, cx).is_some());
     let command = match invocation.verb {
         Some(verb) => parse_command(
             &format!("{} {}", verb.key(), invocation.args),
@@ -357,18 +373,33 @@ fn begin(
             None,
             false,
         ),
-        None => parse_command(&invocation.args, explicit, Some(&page), false),
+        None => parse_command(&invocation.args, explicit, Some(&page), daily),
     };
-    let Command::Run {
-        verb,
-        prompt,
-        placement,
-    } = command
-    else {
-        return Err(NO_PANE.into());
+    let (verb, prompt, placement) = match command {
+        Command::Pane { preset, argument } => {
+            return match preset.as_deref().and_then(Preset::find) {
+                Some(preset) if preset.needs == Needs::Daily => tidy_in(editor, window, cx),
+                Some(preset) => ask_in_pane(editor, Seed::preset(preset, &argument), window, cx),
+                None => ask_in_pane(editor, Seed::default(), window, cx),
+            };
+        }
+        Command::Run {
+            verb,
+            prompt,
+            placement,
+        } => (verb, prompt, placement),
     };
     if placement == Placement::Answer {
-        return Err(NO_PANE.into());
+        let range = explicit
+            .then(|| resolve_range(&snapshot, head, selection.clone(), invocation.rows.clone()))
+            .flatten()
+            .map(|range| range_context(editor, &buffer, &range, cx));
+        let seed = Seed {
+            question: Some(prompt),
+            range,
+            ..Seed::default()
+        };
+        return ask_in_pane(editor, seed, window, cx);
     }
     let line = line_start(&text, head)..line_end(&text, head);
     let blank = invocation.rows.is_none()
@@ -437,16 +468,196 @@ fn begin(
             context_summary(&context),
         )
     };
-    if request_prompt.len() > PROMPT_LIMIT {
-        return Err(PROMPT_TOO_LONG.into());
-    }
-    let settings = AiSettings::get_global(cx).clone();
     let target = Target {
         range: snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end),
         original: text[range.clone()].to_owned(),
         buffer: buffer.clone(),
         placement,
     };
+    show(
+        editor,
+        Shown {
+            target,
+            invocation,
+            summary,
+            prompt: request_prompt,
+            page: context.path,
+            tidy: None,
+        },
+        window,
+        cx,
+    )
+}
+
+/// The notebook an editor's references resolve in.
+fn notebook(editor: &Editor, cx: &App) -> Option<std::rc::Rc<dyn crate::references::Notebook>> {
+    crate::references::host(editor).map(|host| host.read(cx).notebook().clone())
+}
+
+/// Whether `editor` shows a daily page, which offers Tidy this day.
+pub fn on_daily_page(editor: &Editor, cx: &App) -> bool {
+    let Some((buffer, head, _)) = caret(editor, cx) else {
+        return false;
+    };
+    let title = range_context(editor, &buffer, &(head..head), cx).title;
+    notebook(editor, cx).is_some_and(|notebook| notebook.daily_date(&title, cx).is_some())
+}
+
+fn ask_in_pane(
+    editor: &mut Editor,
+    seed: Seed,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> Result<(), String> {
+    match notebook(editor, cx) {
+        Some(notebook) if notebook.ask(seed, window, cx) => Ok(()),
+        _ => Err(NO_PANE.into()),
+    }
+}
+
+/// What Tidy checks a proposal against: the existing page titles, lowercased.
+#[derive(Clone)]
+struct TidyRules {
+    titles: HashSet<String>,
+}
+
+/// A proposal ready to show: where it goes, what it was asked, and what was sent.
+struct Shown {
+    target: Target,
+    invocation: Invocation,
+    summary: Vec<String>,
+    prompt: String,
+    page: String,
+    tidy: Option<TidyRules>,
+}
+
+/// Tidy this day: asks for the whole daily page with only links, task states, and due dates
+/// added, then shows what passes Tidy's limits as a proposal over the page.
+pub fn tidy(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
+    editor.update(cx, |editor, cx| {
+        if let Err(message) = tidy_in(editor, window, cx) {
+            crate::outline::show_notice(message, cx);
+        }
+    });
+}
+
+fn tidy_in(
+    editor: &mut Editor,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> Result<(), String> {
+    let (buffer, head, _) = caret(editor, cx).ok_or(NO_RANGE)?;
+    let context = range_context(editor, &buffer, &(head..head), cx);
+    let notebook = notebook(editor, cx).ok_or(NOT_DAILY)?;
+    let date = notebook.daily_date(&context.title, cx).ok_or(NOT_DAILY)?;
+    if editor.read_only(cx) || buffer.read(cx).read_only() {
+        return Err(READ_ONLY.into());
+    }
+    if !settings::is_on(cx) {
+        return Err(if settings::is_tested(cx) {
+            AI_OFF.into()
+        } else {
+            settings::UNTESTED.into()
+        });
+    }
+    let index = crate::references::host(editor)
+        .and_then(|host| host.read(cx).index().cloned())
+        .ok_or(NO_INDEX)?;
+    let snapshot = buffer.read(cx).snapshot();
+    let text = snapshot.text();
+    if text.trim().is_empty() {
+        return Err(EMPTY_DAY.into());
+    }
+    let due_example = quire_core::tasks::add_days(&date, 1)
+        .and_then(|next| notebook.daily_title(&next, cx))
+        .unwrap_or_else(|| quire_core::tasks::add_days(&date, 1).unwrap_or(date));
+    let target = Target {
+        range: snapshot.anchor_before(0)..snapshot.anchor_after(text.len()),
+        original: text.clone(),
+        buffer,
+        placement: Placement::Replace,
+    };
+    let pages = index.with_generation(|index| index.pages());
+    let editor_handle = cx.entity().downgrade();
+    cx.spawn_in(window, async move |_, cx| {
+        let titles: Vec<String> = match crate::query_index::ask(pages).await {
+            Ok((_, pages)) => pages
+                .into_iter()
+                .filter(|listed| listed.date.is_none())
+                .map(|listed| listed.page.title)
+                .collect(),
+            Err(error) => {
+                cx.update(|_, cx| {
+                    crate::outline::show_notice(
+                        format!("Tidy could not list the notebook's pages: {error}. Wait for indexing to finish, then retry."),
+                        cx,
+                    )
+                })
+                .ok();
+                return;
+            }
+        };
+        let offered = quire_core::ai::tidy::mentioned_titles(
+            &text,
+            titles.iter().map(String::as_str),
+            TIDY_TITLES,
+        );
+        let prompt = quire_core::ai::tidy::prompt(&context.title, &text, &offered, &due_example);
+        let summary = vec![
+            format!("Page: {}", context.title),
+            format!(
+                "Whole page: {} lines, {} page title{}",
+                text.split('\n').count(),
+                offered.len(),
+                if offered.len() == 1 { "" } else { "s" }
+            ),
+        ];
+        let rules = TidyRules {
+            titles: titles.iter().map(|title| title.to_lowercase()).collect(),
+        };
+        editor_handle
+            .update_in(cx, |editor, window, cx| {
+                let shown = Shown {
+                    target,
+                    invocation: Invocation {
+                        args: "tidy".into(),
+                        rows: None,
+                        verb: None,
+                    },
+                    summary,
+                    prompt,
+                    page: context.path,
+                    tidy: Some(rules),
+                };
+                if let Err(message) = show(editor, shown, window, cx) {
+                    crate::outline::show_notice(message, cx);
+                }
+            })
+            .ok();
+    })
+    .detach();
+    Ok(())
+}
+
+/// Starts the run and shows its proposal in a block under the target.
+fn show(
+    editor: &mut Editor,
+    shown: Shown,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> Result<(), String> {
+    let Shown {
+        target,
+        invocation,
+        summary,
+        prompt: request_prompt,
+        page,
+        tidy,
+    } = shown;
+    if request_prompt.len() > PROMPT_LIMIT {
+        return Err(PROMPT_TOO_LONG.into());
+    }
+    let settings = AiSettings::get_global(cx).clone();
     let request = Request {
         backend: settings.backend,
         mode: process::Mode::Transform,
@@ -457,7 +668,7 @@ fn begin(
         transcript: transcript(editor, cx).map(|folder| Transcript {
             folder,
             id: format!("ai-{}", uuid::Uuid::new_v4().simple()),
-            page: context.path.clone(),
+            page,
         }),
     };
     dismiss(editor, cx);
@@ -470,6 +681,7 @@ fn begin(
                 invocation,
                 backend: settings.backend,
                 context: summary,
+                tidy,
             },
             request,
             window,
@@ -544,6 +756,7 @@ struct Proposed {
     invocation: Invocation,
     backend: Backend,
     context: Vec<String>,
+    tidy: Option<TidyRules>,
 }
 
 impl ProposalView {
@@ -559,6 +772,7 @@ impl ProposalView {
             invocation,
             backend,
             context,
+            tidy,
         } = proposed;
         let (cancel, canceled) = oneshot::channel::<()>();
         let (updates, mut received) = futures::channel::mpsc::unbounded();
@@ -609,6 +823,8 @@ impl ProposalView {
             invocation,
             backend,
             context,
+            tidy,
+            refused: Vec::new(),
             started: Instant::now(),
             finished: None,
             phase: Phase::Writing {
@@ -639,7 +855,15 @@ impl ProposalView {
         self.finished = Some(self.started.elapsed());
         self._cancel = None;
         match outcome {
-            Outcome::Done(text) => self.check(clean_response(&text), window, cx),
+            Outcome::Done(text) => match self.keep_tidy(clean_response(&text), cx) {
+                Ok(text) => self.check(text, window, cx),
+                Err(message) => {
+                    self.phase = Phase::Failed {
+                        message,
+                        retry: true,
+                    }
+                }
+            },
             Outcome::Failed { message, retry } => self.phase = Phase::Failed { message, retry },
             Outcome::Canceled => {
                 self.phase = Phase::Failed {
@@ -653,6 +877,39 @@ impl ProposalView {
 
     /// Finds which block IDs the model wrote that already name a block elsewhere, in this page
     /// or anywhere the index knows, before offering the proposal.
+    /// Keeps only the lines Tidy may change, recording the refused ones; other proposals pass
+    /// through.
+    fn keep_tidy(&mut self, text: String, cx: &mut Context<Self>) -> Result<String, String> {
+        let Some(rules) = &self.tidy else {
+            return Ok(text);
+        };
+        let notebook = self
+            .host
+            .upgrade()
+            .and_then(|host| notebook(host.read(cx), cx));
+        let tidied = quire_core::ai::tidy::filter(
+            &self.target.original,
+            &text,
+            |title| rules.titles.contains(&title.to_lowercase()),
+            |title| {
+                notebook
+                    .as_ref()
+                    .is_some_and(|notebook| notebook.daily_date(title, cx).is_some())
+            },
+        );
+        self.refused = tidied.refused;
+        if tidied.changed == 0 {
+            return Err(NOTHING_TO_TIDY.into());
+        }
+        Ok(tidied.text)
+    }
+
+    /// The proposed lines Tidy refused, for tests.
+    #[cfg(test)]
+    pub fn refused(&self) -> &[quire_core::ai::tidy::Refusal] {
+        &self.refused
+    }
+
     fn check(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
         let own: HashSet<String> = markers(&self.target.original).into_iter().collect();
         let candidates: Vec<String> = markers(&text)
@@ -845,7 +1102,11 @@ impl ProposalView {
             }
             Phase::Failed { .. } => 1,
         };
-        body + 4
+        let refused = match self.refused.len() {
+            0 => 0,
+            count => count.min(5) as u32 + 1,
+        };
+        body + 4 + refused
     }
 
     fn status(&self) -> String {
@@ -1054,6 +1315,22 @@ impl Render for ProposalView {
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )
+            .when(!self.refused.is_empty(), |view| {
+                view.child(
+                    Label::new(format!(
+                        "Left out {} line{} that broke Tidy's limits:",
+                        self.refused.len(),
+                        if self.refused.len() == 1 { "" } else { "s" }
+                    ))
+                    .size(LabelSize::Small)
+                    .color(Color::Warning),
+                )
+                .children(self.refused.iter().take(5).map(|refusal| {
+                    Label::new(format!("{} · {}", refusal.line.trim(), refusal.reason))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                }))
+            })
             .child(body)
             .child(actions)
     }

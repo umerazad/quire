@@ -27,8 +27,15 @@ const FACET_SOURCES: usize = 40;
 const FACETS: usize = 8;
 
 pub enum ReferencesEvent {
-    Open { page: String, beside: bool },
-    Order { oldest: bool },
+    Open {
+        page: String,
+        beside: bool,
+    },
+    Order {
+        oldest: bool,
+    },
+    /// Ask the AI to synthesize every linked reference.
+    Synthesize,
 }
 
 /// One query's answer: every reference counted, the ones the filter keeps, and chips.
@@ -337,6 +344,16 @@ impl Render for ReferencesView {
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )
+            .when(total > 0 && crate::ai::settings::is_on(cx), |header| {
+                header.child(
+                    Button::new("references-synthesize", "Synthesize")
+                        .style(ButtonStyle::Subtle)
+                        .tooltip(ui::Tooltip::text(
+                            "Ask AI for the themes across these references",
+                        ))
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(ReferencesEvent::Synthesize))),
+                )
+            })
             .when(dated && !self.collapsed, |header| {
                 let oldest = self.oldest_first;
                 header.child(

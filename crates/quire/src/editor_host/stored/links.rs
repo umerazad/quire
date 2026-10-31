@@ -127,6 +127,20 @@ impl Notebook for WindowNotebook {
         let window = self.window.upgrade()?;
         Some(window.read(cx).nav.database.with_file_name("quire-ai"))
     }
+
+    fn ask(&self, seed: crate::ai::answer::Seed, window: &mut Window, cx: &mut App) -> bool {
+        self.window
+            .update(cx, |this, cx| this.open_answer(seed, window, cx))
+            .is_ok()
+    }
+
+    fn daily_date(&self, title: &str, cx: &App) -> Option<String> {
+        self.window.upgrade()?.read(cx).daily_date_of(title)
+    }
+
+    fn daily_title(&self, date: &str, cx: &App) -> Option<String> {
+        self.window.upgrade()?.read(cx).daily_title_of(date)
+    }
 }
 
 impl StoredWindow {
