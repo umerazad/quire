@@ -51,6 +51,18 @@ mod backups;
 mod sync_status;
 
 #[cfg(feature = "full-editor")]
+mod lifecycle;
+
+#[cfg(feature = "full-editor")]
+mod profiles;
+
+#[cfg(feature = "full-editor")]
+mod app_menus;
+
+#[cfg(feature = "full-editor")]
+mod single_instance;
+
+#[cfg(feature = "full-editor")]
 mod file_actions;
 
 #[cfg(feature = "full-editor")]

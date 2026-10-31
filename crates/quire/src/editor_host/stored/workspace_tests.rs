@@ -29,8 +29,14 @@ pub(super) fn reopen(notebook: Notebook, first: &str, cx: &mut TestAppContext) -
     })
     .unwrap();
     cx.run_until_parked();
-    let mut session =
-        NotebookSession::open(notebook.path.clone(), "nb".into(), "local".into()).unwrap();
+    // Work the closed window started on storage threads may hold its session, and with it the
+    // notebook lock, a little longer.
+    let mut session = None;
+    wait_until(cx, "the closed window to release the notebook", |_| {
+        session = NotebookSession::open(notebook.path.clone(), "nb".into(), "local".into()).ok();
+        session.is_some()
+    });
+    let mut session = session.unwrap();
     let page = cx.update(|cx| session.open_page(first.into(), cx));
     let path = notebook.path.clone();
     let window = cx.add_window(|window, cx| {

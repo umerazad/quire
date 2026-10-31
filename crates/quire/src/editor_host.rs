@@ -114,6 +114,9 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     crate::references::init(cx);
     crate::page_menu::init(cx);
     crate::ai::init(cx);
+    crate::profiles::init(cx);
+    crate::app_menus::init(cx);
+    crate::app_menus::bind_keys(cx);
     stored::bind_keys(cx);
     crate::navigation::bind_keys(cx);
     crate::preferences::bind_keys(cx);
@@ -514,6 +517,83 @@ impl Render for NotebookWindow {
     }
 }
 
+/// Becomes the only Quire for this data folder, or hands this launch to the running one and
+/// returns None.
+fn claim_instance() -> Result<Option<crate::single_instance::Listener>, String> {
+    use crate::single_instance::{Claim, Launch, Reply, claim};
+    let folder = paths::data_dir();
+    std::fs::create_dir_all(folder).map_err(|error| {
+        format!(
+            "Cannot create Quire's application data folder {}: {error}. Check its permissions, then start Quire again.",
+            folder.display()
+        )
+    })?;
+    let launch = Launch {
+        version: env!("CARGO_PKG_VERSION").into(),
+        executable: std::env::current_exe().unwrap_or_default(),
+        args: std::env::args().collect(),
+    };
+    let socket = folder.join("quire.sock");
+    match claim(&socket, &launch, 50, std::time::Duration::from_millis(200)) {
+        Ok(Claim::First(listener)) => Ok(Some(listener)),
+        Ok(Claim::Running(Reply::Handover)) => {
+            println!("Quire is already running; it will save, quit, and start this newer build.");
+            Ok(None)
+        }
+        Ok(Claim::Running(_)) => {
+            println!("Quire is already running; it opened what this launch asked for.");
+            Ok(None)
+        }
+        Err(error) => Err(format!(
+            "Cannot reach the running Quire through {}: {error}. Quit the other Quire, then start Quire again.",
+            socket.display()
+        )),
+    }
+}
+
+/// Hands later launches to the window thread, and starts a newer build after quitting.
+fn serve_launches(listener: crate::single_instance::Listener, cx: &mut App) {
+    let quitting = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (sender, mut launches) = futures::channel::mpsc::unbounded();
+    if let Err(error) = listener.serve(
+        env!("CARGO_PKG_VERSION").into(),
+        quitting.clone(),
+        move |launch, reply| {
+            sender.unbounded_send((launch, reply)).ok();
+        },
+    ) {
+        eprintln!(
+            "Cannot listen for other Quire launches: {error}. A second launch may open a second Quire; restart Quire to retry."
+        );
+    }
+    cx.spawn(async move |cx| {
+        use futures::StreamExt as _;
+        while let Some((launch, reply)) = launches.next().await {
+            cx.update(|cx| stored::handle_launch(launch, reply, cx));
+        }
+    })
+    .detach();
+    cx.on_app_quit(move |cx| {
+        quitting.store(true, std::sync::atomic::Ordering::SeqCst);
+        let handover = cx
+            .try_global::<stored::Handover>()
+            .and_then(|handover| handover.0.clone());
+        async move {
+            if let Some(launch) = handover
+                && let Err(error) = std::process::Command::new(&launch.executable)
+                    .args(launch.args.iter().skip(1))
+                    .spawn()
+            {
+                eprintln!(
+                    "Cannot start the newer Quire at {}: {error}. Start it again yourself.",
+                    launch.executable.display()
+                );
+            }
+        }
+    })
+    .detach();
+}
+
 pub fn run() {
     let stored = match stored::OpenOptions::parse(std::env::args().skip(1).collect()) {
         Ok(options) => options,
@@ -539,6 +619,19 @@ pub fn run() {
         eprintln!("Choose one editor harness: pass --write-harness or --excerpt-harness.");
         std::process::exit(2);
     }
+    let harness = excerpt_demo || write_demo;
+    let listener = if harness {
+        None
+    } else {
+        match claim_instance() {
+            Ok(Some(listener)) => Some(listener),
+            Ok(None) => return,
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+    };
     gpui_platform::application().with_assets(assets::Assets).run(move |cx| {
         if let Err(error) = init(cx) {
             eprintln!("{error}");
@@ -548,6 +641,11 @@ pub fn run() {
         let fs = ::fs::RealFs::new(None, cx.background_executor().clone());
         <dyn ::fs::Fs>::set_global(fs.clone(), cx);
         crate::preferences::load(fs, cx);
+        crate::profiles::load(paths::data_dir().join("profiles.json"), cx);
+        crate::app_menus::refresh(cx);
+        if let Some(listener) = listener {
+            serve_launches(listener, cx);
+        }
         if let Err(error) = assets::Assets.load_fonts(cx) {
             eprintln!("Cannot load Quire's bundled fonts: {error}. Rebuild the application assets.");
             cx.quit();
@@ -571,6 +669,17 @@ pub fn run() {
                 cx.quit();
             }
             return;
+        }
+        if !harness
+            && let Some(notebook) = crate::profiles::get(crate::profiles::active(cx), cx).notebook
+        {
+            match stored::open_location(&notebook, cx) {
+                Ok(()) => return,
+                Err(error) => crate::outline::show_notice(
+                    format!("Quire could not reopen the {} notebook: {error}", crate::profiles::active(cx).label()),
+                    cx,
+                ),
+            }
         }
         let prefix = "# Welcome to Quire\n\n";
         let block = "- Edit this note in either pane. ^b-welcome\n  - Both panes share the same document.";

@@ -13,6 +13,7 @@ use quire_store::{
     folder_notebook::{DiskDocument, FolderChange, FolderWorker, Trash},
     notebook::PageCheckout,
     notebook_lock::{self, NotebookLock},
+    profiles::Notebook,
     sync::json::Json,
     worker::{QueueError, QueueLimits, StorageWorker},
 };
@@ -39,6 +40,8 @@ pub struct NotebookSession {
     media: Option<quire_media::files::Files>,
     /// Keeps every other session, in this process or another, out of this notebook's recovery.
     _lock: Option<NotebookLock>,
+    /// Where the notebook lives, which names its profile.
+    location: Option<Notebook>,
 }
 
 impl NotebookSession {
@@ -50,6 +53,11 @@ impl NotebookSession {
             .transpose()
             .map_err(|error| format!("{error:#}"))?;
         let media = quire_media::files::Files::for_store_database(&path);
+        let location = Notebook::Store {
+            database: path.clone(),
+            notebook: notebook.clone(),
+            writer: writer.clone(),
+        };
         let worker = StorageWorker::spawn(path, notebook, writer, QueueLimits::default())
             .map_err(|error| format!("{error:#}"))?;
         let ready = worker
@@ -60,6 +68,7 @@ impl NotebookSession {
         Ok(Self {
             media: Some(media),
             _lock: lock,
+            location: Some(location),
             ..Self::from_worker(worker.client, ready)
         })
     }
@@ -85,6 +94,7 @@ impl NotebookSession {
             .shared();
         Ok(Self {
             media: Some(quire_media::files::Files::Folder { root: root.clone() }),
+            location: Some(Notebook::Folder { root: root.clone() }),
             folder: Some((root, state)),
             _lock: Some(lock),
             ..Self::from_worker(worker.client, ready)
@@ -100,7 +110,13 @@ impl NotebookSession {
             folder: None,
             media: None,
             _lock: None,
+            location: None,
         }
+    }
+
+    /// Where this notebook lives, for profiles and reopening.
+    pub fn location(&self) -> Option<Notebook> {
+        self.location.clone()
     }
 
     /// Where this notebook keeps attachments that pages reference by relative path.

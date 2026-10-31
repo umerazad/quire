@@ -1,9 +1,10 @@
 use super::super::*;
 use super::folder_tests::{FolderNotebook, open_folder};
 use super::tests::{Notebook, open_notebook, read, wait_until};
-use crate::sync_status::{NO_FOLDER, PERSONAL, ShowSync, SyncStatus, SyncWithGit};
+use crate::sync_status::{NO_FOLDER, NOT_PERSONAL, ShowSync, SyncStatus, SyncWithGit};
 use gpui::TestAppContext;
 use quire_store::git_sync::{self, Profile, Target};
+use quire_store::profiles::ProfileId;
 use std::{fs, os::unix::fs::PermissionsExt as _, path::Path, process::Command};
 
 fn dispatch(notebook: &Notebook, action: impl gpui::Action, cx: &mut TestAppContext) {
@@ -15,7 +16,7 @@ fn status(notebook: &Notebook, cx: &mut TestAppContext) -> Entity<SyncStatus> {
 }
 
 fn lines(notebook: &Notebook, cx: &mut TestAppContext) -> Vec<String> {
-    status(notebook, cx).read_with(cx, |status, _| status.lines())
+    status(notebook, cx).read_with(cx, |status, cx| status.lines(cx))
 }
 
 /// The message shown once Git no longer runs.
@@ -35,8 +36,8 @@ fn settled_message(notebook: &Notebook, cx: &mut TestAppContext) -> String {
 fn wait_for_line(notebook: &Notebook, what: &str, cx: &mut TestAppContext) {
     let status = status(notebook, cx);
     wait_until(cx, what, |cx| {
-        status.read_with(cx, |status, _| {
-            status.lines().iter().any(|line| line.contains(what))
+        status.read_with(cx, |status, cx| {
+            status.lines(cx).iter().any(|line| line.contains(what))
         })
     });
 }
@@ -96,26 +97,11 @@ fn show(notebook: &Notebook, cx: &mut TestAppContext) {
     });
 }
 
-/// Types `remote` into the field and saves it, answering the Personal question with `answer`.
-fn save_remote(
-    opened: &FolderNotebook,
-    remote: &str,
-    answer: Option<&str>,
-    cx: &mut TestAppContext,
-) {
+/// Saves `remote` as the notebook's Git remote.
+fn save_remote(opened: &FolderNotebook, remote: &str, cx: &mut TestAppContext) {
     let status = status(&opened.notebook, cx);
     let remote = remote.to_owned();
-    opened
-        .notebook
-        .window
-        .update(cx, |_, window, cx| {
-            status.update(cx, |status, cx| status.set_remote(remote, window, cx))
-        })
-        .unwrap();
-    if let Some(answer) = answer {
-        wait_until(cx, "the Personal question", |cx| cx.has_pending_prompt());
-        cx.simulate_prompt_answer(answer);
-    }
+    status.update(cx, |status, cx| status.set_remote(remote, cx));
     cx.run_until_parked();
 }
 
@@ -168,8 +154,27 @@ fn the_panel_lists_cloud_only_notes_and_conflict_copies_until_they_are_resolved(
     wait_for_line(notebook, "Every note is on this computer", cx);
 }
 
+/// Makes the notebook Personal's, as choosing it under File > Profile > Personal does.
+fn make_personal(opened: &FolderNotebook, cx: &mut TestAppContext) {
+    let root = fs::canonicalize(opened.folder.path()).unwrap();
+    cx.update(|cx| {
+        crate::profiles::update(cx, |profiles| {
+            profiles.set_notebook(
+                ProfileId::Personal,
+                quire_store::profiles::Notebook::Folder { root },
+            )?;
+            profiles.activate(ProfileId::Personal)
+        })
+        .unwrap()
+    });
+}
+
+fn personal(cx: &mut TestAppContext) -> quire_store::profiles::Profile {
+    cx.update(|cx| crate::profiles::get(ProfileId::Personal, cx))
+}
+
 #[gpui::test]
-fn a_remote_needs_the_personal_confirmation_then_sync_pushes_and_rereads_pulled_notes(
+fn git_sync_is_personal_only_then_backs_up_pushes_and_rereads_pulled_notes(
     cx: &mut TestAppContext,
 ) {
     let opened = open_folder(&[("A.md", "- from here\n")], "A.md", cx);
@@ -177,22 +182,29 @@ fn a_remote_needs_the_personal_confirmation_then_sync_pushes_and_rereads_pulled_
     let elsewhere = tempfile::tempdir().unwrap();
     let remote = bare(elsewhere.path());
     show(notebook, cx);
-    wait_for_line(notebook, "Personal Git is off", cx);
-
-    save_remote(&opened, "https://me:secret@example.com/notes.git", None, cx);
-    assert!(settled_message(notebook, cx).contains("contains credentials"));
-    save_remote(&opened, &remote, Some("Cancel"), cx);
-    let status = status(notebook, cx);
+    wait_for_line(notebook, NOT_PERSONAL, cx);
+    save_remote(&opened, &remote, cx);
+    assert_eq!(settled_message(notebook, cx), NOT_PERSONAL);
+    dispatch(notebook, SyncWithGit, cx);
+    assert_eq!(settled_message(notebook, cx), NOT_PERSONAL);
     assert_eq!(
-        status.read_with(cx, |status, _| status.record().remote.clone()),
+        cx.update(|cx| crate::profiles::get(ProfileId::Current, cx).git_remote),
         None
     );
-    save_remote(&opened, &remote, Some(PERSONAL), cx);
-    let record = status.read_with(cx, |status, _| status.record().clone());
-    assert!(record.personal);
-    assert_eq!(record.remote.as_deref(), Some(remote.as_str()));
-    // A later remote change does not ask again.
-    save_remote(&opened, &format!(" {remote} "), None, cx);
+
+    make_personal(&opened, cx);
+    wait_for_line(notebook, "Personal Git is off", cx);
+    save_remote(&opened, "https://me:secret@example.com/notes.git", cx);
+    assert!(settled_message(notebook, cx).contains("contains credentials"));
+    save_remote(&opened, &format!(" {remote} "), cx);
+    assert_eq!(personal(cx).git_remote.as_deref(), Some(remote.as_str()));
+    let backups = tempfile::tempdir().unwrap();
+    cx.update(|cx| {
+        crate::profiles::update(cx, |profiles| {
+            profiles.set_backup_folder(ProfileId::Personal, backups.path())
+        })
+        .unwrap()
+    });
 
     dispatch(notebook, SyncWithGit, cx);
     let message = settled_message(notebook, cx);
@@ -200,7 +212,12 @@ fn a_remote_needs_the_personal_confirmation_then_sync_pushes_and_rereads_pulled_
         message.starts_with("Pushed ") && message.contains("once they sync"),
         "{message}"
     );
-    assert!(status.read_with(cx, |status, _| status.record().last_push_at.is_some()));
+    let profile = personal(cx);
+    assert!(profile.last_push_at.is_some());
+    assert!(profile.last_backup_at.is_some());
+    let made = profile.last_backup_path.unwrap();
+    assert!(made.starts_with(fs::canonicalize(backups.path()).unwrap()));
+    quire_store::backup::verify(&made).unwrap();
     assert!(
         lines(notebook, cx)
             .iter()
@@ -250,7 +267,8 @@ fn a_failed_push_shows_its_reason_until_a_later_sync_succeeds(cx: &mut TestAppCo
     fs::write(&hook, "#!/bin/sh\necho 'quota exceeded' >&2\nexit 1\n").unwrap();
     fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
     show(notebook, cx);
-    save_remote(&opened, &remote, Some(PERSONAL), cx);
+    make_personal(&opened, cx);
+    save_remote(&opened, &remote, cx);
 
     dispatch(notebook, SyncWithGit, cx);
     let message = settled_message(notebook, cx);
