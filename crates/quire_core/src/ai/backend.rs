@@ -65,6 +65,17 @@ pub const TOOL_SERVER: &str = "quire";
 /// The argument list of a transform run in `cwd`. User text never appears here: the prompt goes
 /// through standard input, and the model name is validated first.
 pub fn transform_args(backend: Backend, cwd: &str, model: &str) -> Vec<String> {
+    run_args(
+        backend,
+        &super::commands::transform_system_prompt(),
+        cwd,
+        model,
+    )
+}
+
+/// The argument list of a run with `system` rules and no tools. Transforms and questions both
+/// run this way; questions get their notebook context in the prompt.
+pub fn run_args(backend: Backend, system: &str, cwd: &str, model: &str) -> Vec<String> {
     let model = model.trim();
     let args: Vec<&str> = match backend {
         Backend::Claude => vec![
@@ -95,7 +106,7 @@ pub fn transform_args(backend: Backend, cwd: &str, model: &str) -> Vec<String> {
     let mut args: Vec<String> = args.into_iter().map(str::to_owned).collect();
     match backend {
         Backend::Claude => {
-            args.push(super::commands::transform_system_prompt());
+            args.push(system.to_owned());
             if !model.is_empty() {
                 args.extend(["--model".into(), model.into()]);
             }
@@ -118,11 +129,16 @@ pub fn transform_args(backend: Backend, cwd: &str, model: &str) -> Vec<String> {
     args
 }
 
-/// What goes to standard input. Codex has no system prompt flag, so its rules lead the prompt.
+/// What goes to standard input for a transform.
 pub fn backend_input(backend: Backend, prompt: &str) -> String {
+    run_input(backend, &super::commands::transform_system_prompt(), prompt)
+}
+
+/// What goes to standard input. Codex has no system prompt flag, so its rules lead the prompt.
+pub fn run_input(backend: Backend, system: &str, prompt: &str) -> String {
     match backend {
         Backend::Claude => prompt.to_owned(),
-        Backend::Codex => format!("{}\n\n{prompt}", super::commands::transform_system_prompt()),
+        Backend::Codex => format!("{system}\n\n{prompt}"),
     }
 }
 

@@ -169,7 +169,7 @@ async fn a_blank_line_offers_continue_only_and_commands_refuse_while_off(cx: &mu
 }
 
 #[gpui::test]
-async fn the_page_menu_offers_ask_ai(cx: &mut TestAppContext) {
+async fn the_page_menu_offers_ask_ai_and_the_notebook(cx: &mut TestAppContext) {
     let _ai = setup(false, cx).await;
     let window = page("- apples\n", cx);
     cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
@@ -177,8 +177,8 @@ async fn the_page_menu_offers_ask_ai(cx: &mut TestAppContext) {
     keys(window, "shift-f10", cx);
     let items = cx.update(|cx| cx.global::<crate::page_menu::LastMenu>().0.clone());
     assert_eq!(
-        items.last().map(String::as_str),
-        Some("Ask AI…"),
-        "{items:?}"
+        items[items.len().saturating_sub(2)..],
+        ["Ask AI…", "Ask the notebook"],
+        "a page outside a notebook offers no Tidy: {items:?}"
     );
 }

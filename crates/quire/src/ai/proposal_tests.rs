@@ -156,7 +156,7 @@ fn alive(pid: &str) -> bool {
 }
 
 /// Waits for the fake CLI's process IDs, then returns them.
-fn started(path: &std::path::Path, cx: &mut TestAppContext) -> Vec<String> {
+pub(crate) fn started(path: &std::path::Path, cx: &mut TestAppContext) -> Vec<String> {
     wait_until(cx, "the fake CLI to start", |_| path.exists());
     std::fs::read_to_string(path)
         .unwrap()
@@ -165,7 +165,7 @@ fn started(path: &std::path::Path, cx: &mut TestAppContext) -> Vec<String> {
         .collect()
 }
 
-fn ended(pids: &[String], cx: &mut TestAppContext) {
+pub(crate) fn ended(pids: &[String], cx: &mut TestAppContext) {
     for pid in pids {
         wait_until(cx, &format!("process {pid} to end"), |_| !alive(pid));
     }

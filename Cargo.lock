@@ -11601,6 +11601,7 @@ dependencies = [
  "image",
  "jiff",
  "language",
+ "markdown",
  "menu",
  "multi_buffer",
  "paths",

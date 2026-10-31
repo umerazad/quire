@@ -144,6 +144,7 @@ fn write_menu_restyles_lists_makes_tasks_and_toggles_marks_in_one_undo_step(
             "Copy block embed",
             "-",
             "Ask AI…",
+            "Ask the notebook",
         ])
     );
     choose(&notebook, &items, "Numbered list", cx);
@@ -186,6 +187,7 @@ fn write_menu_restyles_lists_makes_tasks_and_toggles_marks_in_one_undo_step(
             "Copy block embed",
             "-",
             "Ask AI…",
+            "Ask the notebook",
         ])
     );
     choose(&notebook, &items, "Bold", cx);
@@ -239,6 +241,7 @@ fn source_menu_copies_block_references_and_a_right_click_moves_the_caret(cx: &mu
             "Copy block embed",
             "-",
             "Ask AI…",
+            "Ask the notebook",
         ])
     );
     choose(&notebook, &items, "Copy block reference", cx);

@@ -1,6 +1,7 @@
 //! `:ai` arguments, transform prompts, and repair of the block markers a model drops or copies
 //! (reference `src/core/ai-commands.ts`).
 
+use super::ask::Needs;
 use regex::Regex;
 use std::{collections::HashSet, sync::LazyLock};
 
@@ -130,17 +131,6 @@ pub enum Placement {
     Answer,
 }
 
-/// Questions that lean on the notebook tools: `:ai <key>` with no selection asks one in the
-/// answer pane. `needs` is "page", "tag", "daily", or empty.
-pub const PRESETS: [(&str, &str); 6] = [
-    ("due", ""),
-    ("week", ""),
-    ("last", "page"),
-    ("yesterday", ""),
-    ("tidy", "daily"),
-    ("tagged", "tag"),
-];
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
     /// Opens the answer pane, with a preset and its argument when one was named.
@@ -177,23 +167,20 @@ pub fn parse_command(args: &str, has_range: bool, page: Option<&str>, daily: boo
     let first = words.next().unwrap_or_default();
     let rest = words.collect::<Vec<_>>().join(" ");
     let preset = (!has_range)
-        .then(|| {
-            PRESETS
-                .iter()
-                .find(|(key, _)| key.eq_ignore_ascii_case(first))
-        })
-        .flatten();
+        .then(|| super::ask::Preset::find(first))
+        .flatten()
+        .map(|preset| (preset.key, preset.needs));
     let pane = |key: &str, argument: String| Command::Pane {
         preset: Some(key.to_owned()),
         argument,
     };
     match preset {
-        Some((key, "tag")) if !rest.is_empty() => return pane(key, rest),
-        Some((key, "")) if rest.is_empty() => return pane(key, String::new()),
-        Some((key, "page")) if rest.is_empty() && page.is_some() => {
+        Some((key, Needs::Tag)) if !rest.is_empty() => return pane(key, rest),
+        Some((key, Needs::Nothing)) if rest.is_empty() => return pane(key, String::new()),
+        Some((key, Needs::Page)) if rest.is_empty() && page.is_some() => {
             return pane(key, page.unwrap_or_default().to_owned());
         }
-        Some((key, "daily")) if rest.is_empty() && page.is_some() && daily => {
+        Some((key, Needs::Daily)) if rest.is_empty() && page.is_some() && daily => {
             return pane(key, page.unwrap_or_default().to_owned());
         }
         _ => {}

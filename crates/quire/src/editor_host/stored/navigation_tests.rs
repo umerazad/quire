@@ -58,6 +58,15 @@ pub(super) fn open_notebook(
     cx: &mut TestAppContext,
 ) -> Notebook {
     cx.update(|cx| init(cx).unwrap());
+    open_initialized(pages, first, cx)
+}
+
+/// Opens a notebook in an app whose editor host is already initialized.
+pub(super) fn open_initialized(
+    pages: &[(&str, &str, &str)],
+    first: &str,
+    cx: &mut TestAppContext,
+) -> Notebook {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("local.sqlite");
     let store = NotebookStore::open(&path, "nb", "local").unwrap();

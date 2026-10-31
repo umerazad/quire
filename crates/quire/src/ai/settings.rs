@@ -87,6 +87,9 @@ struct Saved {
     tested: Option<Tested>,
     #[serde(default)]
     history: Vec<String>,
+    /// The writer's own synthesis instruction, kept for next time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    synthesis: Option<String>,
 }
 
 /// Quire's AI state file and what it holds.
@@ -178,6 +181,26 @@ pub fn remember(prompt: &str, cx: &mut App) {
     state.saved.history.retain(|item| item != prompt);
     state.saved.history.insert(0, prompt.to_owned());
     state.saved.history.truncate(HISTORY_LIMIT);
+    state.save().ok();
+}
+
+/// The synthesis instruction to start with: the writer's own, or the default.
+pub fn synthesis(cx: &App) -> String {
+    cx.try_global::<AiState>()
+        .and_then(|state| state.saved.synthesis.clone())
+        .unwrap_or_else(|| quire_core::ai::ask::DEFAULT_SYNTHESIS.to_owned())
+}
+
+/// Keeps an edited synthesis instruction; the default is not stored. Without a saved state the
+/// instruction still applies to this run.
+pub fn remember_synthesis(instruction: &str, cx: &mut App) {
+    if !cx.has_global::<AiState>() {
+        return;
+    }
+    let instruction = instruction.trim();
+    let state = cx.global_mut::<AiState>();
+    state.saved.synthesis =
+        (instruction != quire_core::ai::ask::DEFAULT_SYNTHESIS).then(|| instruction.to_owned());
     state.save().ok();
 }
 

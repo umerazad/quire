@@ -91,6 +91,21 @@ pub trait Notebook {
     fn transcripts(&self, _: &App) -> Option<std::path::PathBuf> {
         None
     }
+
+    /// Opens the answer pane beside the page with `seed`; false when this notebook has none.
+    fn ask(&self, _: crate::ai::answer::Seed, _: &mut Window, _: &mut App) -> bool {
+        false
+    }
+
+    /// The ISO date a page title names under the notebook's daily layout.
+    fn daily_date(&self, _: &str, _: &App) -> Option<String> {
+        None
+    }
+
+    /// The title of the daily page for an ISO date under the notebook's daily layout.
+    fn daily_title(&self, _: &str, _: &App) -> Option<String> {
+        None
+    }
 }
 
 /// Shares one notebook among a window's page editors and tells them when indexed answers may

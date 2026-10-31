@@ -331,10 +331,16 @@ fn entries(editor: &Editor, cx: &mut App) -> Vec<Entry> {
         })
         .unwrap_or_default();
     let ai = if editable {
-        vec![
+        let tidy = crate::ai::proposal::on_daily_page(editor, cx)
+            .then(|| Item::action("Tidy this day", crate::ai::TidyDay).done());
+        [
             Entry::Separator,
             Item::action("Ask AI…", crate::ai::AskAi).done(),
+            Item::action("Ask the notebook", crate::ai::AskNotebook).done(),
         ]
+        .into_iter()
+        .chain(tidy)
+        .collect()
     } else {
         Vec::new()
     };

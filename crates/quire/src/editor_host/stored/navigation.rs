@@ -16,6 +16,8 @@ use quire_core::workspace::{BrowserView, Destination, History, Workspace};
 use quire_store::index::{IndexClient, ListedPage};
 use std::collections::HashSet;
 
+#[path = "answer_views.rs"]
+mod answer_views;
 #[path = "chrome.rs"]
 mod chrome;
 #[path = "daily.rs"]
@@ -55,6 +57,8 @@ pub(super) struct Navigation {
     creating: Option<Task<()>>,
     pub(super) error: Option<SharedString>,
     pub(super) side: Option<SidePane>,
+    /// The answer pane beside the main page.
+    pub(super) answer: answer_views::AnswerState,
     pub(super) view: Option<BrowserView>,
     pub(super) browsers: chrome::Browsers,
     pub(super) daily: daily::DailyState,
@@ -98,6 +102,7 @@ impl Navigation {
             creating: None,
             error: None,
             side: None,
+            answer: answer_views::AnswerState::default(),
             view: None,
             browsers: chrome::Browsers::default(),
             daily: daily::DailyState::new(calendar),
@@ -760,12 +765,24 @@ impl StoredWindow {
                 main.child(references)
             });
         let side = self.nav.side.as_ref().and_then(|side| side.editor.clone());
+        let answer = self.nav.answer.pane.clone();
         gpui::div()
             .flex()
             .flex_1()
             .min_h_0()
             .child(self.render_sidebar(cx))
             .child(main)
+            .when_some(answer, |div, pane| {
+                div.child(
+                    gpui::div()
+                        .w(gpui::px(420.))
+                        .flex_none()
+                        .min_h_0()
+                        .border_l_1()
+                        .border_color(cx.theme().colors().border)
+                        .child(pane),
+                )
+            })
             .when_some(side, |div, editor| {
                 div.child(
                     gpui::div()
@@ -887,3 +904,7 @@ mod backups_tests;
 #[cfg(test)]
 #[path = "sync_tests.rs"]
 mod sync_tests;
+
+#[cfg(test)]
+#[path = "answer_tests.rs"]
+mod answer_tests;

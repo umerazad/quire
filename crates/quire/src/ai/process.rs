@@ -8,8 +8,8 @@ use futures::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, Futur
 use quire_core::ai::{
     Backend, Event, ParseState,
     backend::{
-        CANCELED, backend_input, drift_error, exit_error, missing_binary, stream_error,
-        timeout_error, transform_args, version_of,
+        CANCELED, drift_error, exit_error, missing_binary, run_args, run_input, stream_error,
+        timeout_error, version_of,
     },
     commands::transform_system_prompt,
     parse_line,
@@ -23,6 +23,7 @@ use std::{
 };
 
 pub const TRANSFORM_TIMEOUT: Duration = Duration::from_secs(120);
+pub const ASK_TIMEOUT: Duration = Duration::from_secs(300);
 pub const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 const VERSION_TIMEOUT: Duration = Duration::from_secs(10);
 const SHELL_TIMEOUT: Duration = Duration::from_secs(5);
@@ -40,10 +41,34 @@ pub struct Host {
 
 impl gpui::Global for Host {}
 
-/// One transform request.
+/// What a run does: rewrite a range, or answer a question from the excerpts in its prompt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Mode {
+    Transform,
+    Ask { today: String },
+}
+
+impl Mode {
+    pub fn system_prompt(&self) -> String {
+        match self {
+            Self::Transform => transform_system_prompt(),
+            Self::Ask { today } => quire_core::ai::ask::ask_system_prompt(today),
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Transform => "transform",
+            Self::Ask { .. } => "ask",
+        }
+    }
+}
+
+/// One run's request.
 #[derive(Clone, Debug)]
 pub struct Request {
     pub backend: Backend,
+    pub mode: Mode,
     /// The configured binary path, or empty to search for it.
     pub binary: String,
     pub model: String,
@@ -64,7 +89,18 @@ pub struct Transcript {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Update {
     Token(String),
-    Tool { name: String, detail: String },
+    /// A tool call started.
+    Tool {
+        id: Option<String>,
+        name: String,
+        detail: String,
+    },
+    /// A tool call returned, with its summary line.
+    ToolDone {
+        id: Option<String>,
+        summary: String,
+        failed: bool,
+    },
 }
 
 /// How a run ended.
@@ -249,10 +285,12 @@ impl Host {
         emit: &mut impl FnMut(Update),
     ) -> (Outcome, Option<String>) {
         let backend = request.backend;
+        let system = request.mode.system_prompt();
         let mut command = self.command(binary).await;
         command
-            .args(transform_args(
+            .args(run_args(
                 backend,
+                &system,
                 &folder.to_string_lossy(),
                 &request.model,
             ))
@@ -285,7 +323,7 @@ impl Host {
                 return (Outcome::failed(message), None);
             }
         };
-        let input = backend_input(backend, &request.prompt);
+        let input = run_input(backend, &system, &request.prompt);
         let stdin = child.stdin.take();
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
@@ -328,16 +366,27 @@ impl Host {
                             emit(Update::Token(text));
                         }
                         Event::Tool {
+                            id,
                             name,
                             detail,
                             result: None,
                             ..
-                        } => emit(Update::Tool { name, detail }),
+                        } => emit(Update::Tool { id, name, detail }),
+                        Event::Tool {
+                            id,
+                            result: Some(summary),
+                            failed,
+                            ..
+                        } => emit(Update::ToolDone {
+                            id,
+                            summary,
+                            failed,
+                        }),
                         Event::Done { text, .. } => return Some(Outcome::Done(text)),
                         Event::Error(message) => {
                             return Some(Outcome::failed(stream_error(backend, &message)));
                         }
-                        Event::Session(_) | Event::Tool { .. } => {}
+                        Event::Session(_) => {}
                     }
                 }
             }
@@ -496,7 +545,7 @@ fn write_transcript(
         Outcome::Canceled => format!("Error: {CANCELED}"),
     };
     let text = [
-        "# AI transform".to_owned(),
+        format!("# AI {}", request.mode.name()),
         String::new(),
         format!(
             "- Backend: {} {}",
@@ -510,7 +559,7 @@ fn write_transcript(
         String::new(),
         "## System prompt".into(),
         String::new(),
-        transform_system_prompt(),
+        request.mode.system_prompt(),
         String::new(),
         "## Prompt".into(),
         String::new(),
@@ -543,6 +592,7 @@ pub async fn test(
     let version = host.version(backend, &located).await?;
     let request = Request {
         backend,
+        mode: Mode::Transform,
         binary: located.to_string_lossy().into_owned(),
         model: model.to_owned(),
         prompt: "Reply with the single word OK.".into(),
