@@ -819,6 +819,7 @@ impl Editor {
 
     pub(super) fn folds_did_change(&mut self, cx: &mut Context<Self>) {
         use text::ToOffset as _;
+        cx.emit(EditorEvent::FoldsChanged);
 
         if self.mode.is_minimap()
             || WorkspaceSettings::get(None, cx).restore_on_startup
