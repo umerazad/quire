@@ -20,6 +20,9 @@ use ui::Disableable as _;
 
 /// Coalesces bursts of file events, such as an editor's save, into one reread.
 const WATCH_LATENCY: Duration = Duration::from_millis(100);
+/// How often the whole folder is reread in case the watcher missed a change, as the reference
+/// app does.
+const RESCAN_EVERY: Duration = Duration::from_secs(30);
 /// Recovered pages the notice offers to open.
 const LISTED_RECOVERED: usize = 10;
 /// Lines of the disk version the comparison shows.
@@ -183,10 +186,12 @@ pub(super) fn show_folder_window(
                 cx,
             );
             this.watch_folder(cx);
+            this.rescan_folder_backstop(window, cx);
             this.folder
                 .notices
                 .extend(notices.into_iter().map(SharedString::from));
             this.load_folder_notices(cx);
+            this.import_reference_history(cx);
             if roam {
                 this.visit(
                     quire_core::workspace::Destination::Browser {
@@ -281,6 +286,8 @@ pub(super) struct FolderView {
     /// Interrupted changes across notes that opening could not finish, to retry or set aside.
     pub(super) stuck: Vec<StuckChange>,
     pub(super) resolving: Option<Task<()>>,
+    /// The periodic reread and the reread on activating the window, kept for its lifetime.
+    backstop: Option<(Task<()>, gpui::Subscription)>,
 }
 
 /// How to resolve an interrupted change.
@@ -322,6 +329,36 @@ impl StoredWindow {
             }
         })
         .detach();
+    }
+
+    /// Rereads the whole folder every `RESCAN_EVERY` and whenever the window becomes active, a
+    /// backstop for changes the watcher missed, such as edits made while the computer slept or
+    /// on a network drive.
+    pub(super) fn rescan_folder_backstop(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.session.borrow().folder().is_none() {
+            return;
+        }
+        let activated = cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.folder_changed(None, cx);
+            }
+        });
+        let periodic = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(RESCAN_EVERY).await;
+                if this
+                    .update(cx, |this, cx| this.folder_changed(None, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        self.folder.backstop = Some((periodic, activated));
     }
 
     /// Files changed outside Quire: open pages take in their new versions and the index rescans.
@@ -475,6 +512,31 @@ impl StoredWindow {
                 cx.notify();
             })
             .ok();
+        })
+        .detach();
+    }
+
+    /// Takes in the reference app's saved history queued on opening, one bounded step per
+    /// request behind the first page's load, so a long history never delays opening or saving.
+    pub(super) fn import_reference_history(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(folder) = self.session.borrow().storage().folder().cloned() else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            loop {
+                match crate::query_index::ask(folder.import_reference_history()).await {
+                    Ok(true) => {}
+                    Ok(false) => break,
+                    Err(error) => {
+                        this.update(cx, |this, cx| {
+                            this.folder.notices.push(error.into());
+                            cx.notify();
+                        })
+                        .ok();
+                        break;
+                    }
+                }
+            }
         })
         .detach();
     }

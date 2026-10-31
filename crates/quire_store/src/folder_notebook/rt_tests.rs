@@ -1077,6 +1077,67 @@ fn a_change_the_reference_app_left_stuck_is_listed_and_set_aside_once() {
     );
 }
 
+#[test]
+fn a_long_reference_history_is_taken_in_after_opening_in_bounded_steps() {
+    let opened = fixture(&[("A.md", "- a\n")]);
+    let device = ReferenceDevice::create(&opened.folder);
+    let versions = 600;
+    device.connection.exec("BEGIN").unwrap()().unwrap();
+    for at in 0..versions {
+        device.history(
+            "A.md",
+            &format!("- a version {at}\n"),
+            "zstd",
+            at * 86_400_000,
+        );
+    }
+    device.connection.exec("COMMIT").unwrap()().unwrap();
+    device.pending("A.md", "- a typed in rt\n", Some("- a\n"), 10_000);
+    let deferred = || {
+        FolderNotebook::open_deferring_history(
+            &opened.folder,
+            &opened.state,
+            Box::new(super::system_clock),
+        )
+        .unwrap()
+    };
+
+    let first = deferred();
+    assert_eq!(
+        draft_text(&first, "A.md").unwrap().0,
+        "- a typed in rt\n",
+        "drafts come back on opening"
+    );
+    assert!(first.reference_tally().unwrap().history_present == 0);
+    assert!(first.import_reference_history(250).unwrap(), "more remains");
+    assert_eq!(first.reference_tally().unwrap().history_present, 250);
+    drop(first);
+
+    let second = deferred();
+    assert!(
+        second.recovered_drafts().is_empty(),
+        "drafts are imported once"
+    );
+    let mut steps = 0;
+    while second.import_reference_history(250).unwrap() {
+        steps += 1;
+    }
+    assert_eq!(steps, 2, "600 versions take three steps of 250");
+    assert_eq!(
+        second.reference_tally().unwrap().history_present,
+        versions as usize,
+        "an interrupted import resumes without repeating versions"
+    );
+    assert!(!second.import_reference_history(250).unwrap());
+    drop(second);
+
+    let third = deferred();
+    assert!(
+        !third.import_reference_history(250).unwrap(),
+        "nothing is queued once a source is fully imported"
+    );
+}
+
 impl ReferenceDevice {
     /// Records that this computer's reference app recovered `draft` from computer `origin` as the
     /// note at `recovered_path`, as `importCopiedData` does in vault.ts.

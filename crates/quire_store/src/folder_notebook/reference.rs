@@ -72,11 +72,29 @@ struct Records {
     /// Each draft with the computer it was typed on. A draft the reference app recovered from
     /// another computer and has not changed since counts as that computer's original.
     drafts: Vec<(String, Pending)>,
-    history: Vec<(String, String, String, i64)>,
     /// Import keys of drafts the reference app recovered from another computer and has since
     /// saved or discarded.
     settled: Vec<String>,
 }
+
+/// A source's database copied into Quire's state folder, removed when dropped.
+struct Copied {
+    connection: Connection,
+    _folder: tempfile::TempDir,
+}
+
+/// A source whose drafts are imported and whose history is still being taken in, in steps after
+/// the given row, so the first page of a notebook with years of history opens without waiting.
+pub(super) struct Backlog {
+    key: String,
+    fingerprint: String,
+    copied: Copied,
+    after: i64,
+}
+
+/// Saved versions taken in per step. A step of short notes took 22 ms in a debug build, so saves
+/// and page loads queued behind a step wait tens of milliseconds rather than the whole import.
+pub(super) const HISTORY_STEP: usize = 250;
 
 /// A page that gained a recovery draft from the reference app.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -234,8 +252,9 @@ impl FolderNotebook {
         Ok(adopted)
     }
 
-    /// Imports drafts and history the reference app left since the last open. Returns the pages
-    /// that gained a draft and notices for the user.
+    /// Imports the drafts the reference app left since the last open and queues its history for
+    /// `import_reference_history`. Returns the pages that gained a draft and notices for the
+    /// user.
     pub(super) fn import_reference(&self) -> (Vec<RecoveredDraft>, Vec<String>) {
         let sources = match self.reference_sources() {
             Ok(sources) => sources,
@@ -268,7 +287,7 @@ impl FolderNotebook {
         let settled = self.transaction(|| {
             changed
                 .iter()
-                .flat_map(|(_, (_, records))| &records.settled)
+                .flat_map(|(_, (_, (_, records)))| &records.settled)
                 .try_for_each(|key| {
                     self.connection
                         .exec_bound("INSERT OR IGNORE INTO reference_imports(key) VALUES (?)")?(
@@ -283,10 +302,18 @@ impl FolderNotebook {
             return (Vec::new(), notices);
         }
         let mut recovered = Vec::new();
-        for (source, (fingerprint, records)) in &changed {
-            match self.import_source(source, fingerprint, records) {
-                Ok(found) => recovered.extend(found),
-                Err(error) => notices.push(unreadable(source, error)),
+        for (source, (fingerprint, (copied, records))) in changed {
+            match self.import_drafts(&records) {
+                Ok(found) => {
+                    recovered.extend(found);
+                    self.backlog.borrow_mut().push(Backlog {
+                        key: source.key,
+                        fingerprint,
+                        copied,
+                        after: i64::MIN,
+                    });
+                }
+                Err(error) => notices.push(unreadable(&source, error)),
             }
         }
         if !recovered.is_empty() {
@@ -307,9 +334,9 @@ impl FolderNotebook {
         (recovered, notices)
     }
 
-    /// The source's records with its fingerprint, or None when it is missing or unchanged since
-    /// the last import.
-    fn changed_source(&self, source: &Source) -> Result<Option<(String, Records)>> {
+    /// The source's copy and drafts with its fingerprint, or None when it is missing or
+    /// unchanged since the last import.
+    fn changed_source(&self, source: &Source) -> Result<Option<(String, (Copied, Records))>> {
         let metadata = match fs::symlink_metadata(&source.database) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -332,91 +359,94 @@ impl FolderNotebook {
         if seen.as_deref() == Some(fingerprint.as_str()) {
             return Ok(None);
         }
-        Ok(Some((fingerprint, self.read_source(source)?)))
+        let copied = self.copy_source(source)?;
+        let records = records(&copied.connection, source)?;
+        Ok(Some((fingerprint, (copied, records))))
     }
 
-    /// Reads a source from a fresh copy in Quire's state folder, so the reference app's files
-    /// are never opened for writing.
-    fn read_source(&self, source: &Source) -> Result<Records> {
-        let copy = tempfile::tempdir_in(&self.state)
+    /// Copies a source into Quire's state folder, so the reference app's files are never opened
+    /// for writing.
+    fn copy_source(&self, source: &Source) -> Result<Copied> {
+        let folder = tempfile::tempdir_in(&self.state)
             .context("Cannot copy it into Quire's state folder; check free space")?;
-        let database = copy.path().join("reference.sqlite");
+        let database = folder.path().join("reference.sqlite");
         fs::copy(&source.database, &database)?;
-        match fs::copy(source.wal(), copy.path().join("reference.sqlite-wal")) {
+        match fs::copy(source.wal(), folder.path().join("reference.sqlite-wal")) {
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
-        let foreign = database::open_unconfigured(&database)?;
-        let check: Option<String> = foreign.select_row("PRAGMA integrity_check")?()?;
+        let connection = database::open_unconfigured(&database)?;
+        let check: Option<String> = connection.select_row("PRAGMA integrity_check")?()?;
         if check.as_deref() != Some("ok") {
             bail!(
                 "the copied database failed its integrity check, perhaps because the reference app was writing it"
             );
         }
-        let mut drafts = pending(&foreign)?;
-        if let Some(folder) = source.recovery.as_deref() {
-            for record in recovery_records(folder)? {
-                if !drafts.iter().any(|draft| draft.path == record.path) {
-                    drafts.push(record);
-                }
-            }
-        }
-        let origins = provenance(&foreign)?;
-        let history = reference_history(&foreign)?;
-        let mut used = vec![false; origins.len()];
-        let drafts = drafts
-            .into_iter()
-            .map(|draft| {
-                let origin = origins.iter().position(|origin| {
-                    origin.recovered_path == draft.path && origin.recovered_text == draft.text
-                });
-                match origin {
-                    Some(index) => {
-                        used[index] = true;
-                        (origins[index].device.clone(), origins[index].draft.clone())
-                    }
-                    None => (source.device.clone(), draft),
-                }
-            })
-            .collect();
-        let settled = origins
-            .iter()
-            .zip(used)
-            .filter(|(_, used)| !used)
-            .map(|(origin, _)| draft_key(&origin.device, &origin.draft))
-            .collect::<Result<_>>()?;
-        Ok(Records {
-            drafts,
-            history,
-            settled,
+        Ok(Copied {
+            connection,
+            _folder: folder,
         })
     }
 
-    fn import_source(
-        &self,
-        source: &Source,
-        fingerprint: &str,
-        records: &Records,
-    ) -> Result<Vec<RecoveredDraft>> {
+    fn import_drafts(&self, records: &Records) -> Result<Vec<RecoveredDraft>> {
         self.transaction(|| {
-            let now = (self.clock)();
-            for (path, text, revision, saved_at) in &records.history {
-                if files::validate(path).is_ok() {
-                    history::import(&self.connection, path, text, revision, *saved_at, now)?;
-                }
-            }
             let mut found = Vec::new();
             for (device, draft) in &records.drafts {
                 if let Some(page) = self.import_draft(device, draft)? {
                     found.push(page);
                 }
             }
-            self.connection.exec_bound(
-                "INSERT INTO reference_sources(source,fingerprint) VALUES (?,?) ON CONFLICT(source) DO UPDATE SET fingerprint=excluded.fingerprint",
-            )?((source.key.as_str(), fingerprint))?;
             Ok(found)
         })
+    }
+
+    /// Takes in up to `limit` more saved versions from the reference app's history queued on
+    /// opening. Returns whether any remain. A source is marked imported once all its versions
+    /// are in; one that fails is dropped from the queue and read again on the next open.
+    pub fn import_reference_history(&self, limit: usize) -> Result<bool> {
+        let Some(mut backlog) = self.backlog.borrow_mut().pop() else {
+            return Ok(false);
+        };
+        let rows = reference_history(&backlog.copied.connection, backlog.after, limit)
+            .with_context(|| format!("Cannot read the reference app's history in {}. It is kept unchanged; reopen the notebook to retry.", backlog.key))?;
+        let done = rows.len() < limit;
+        self.transaction(|| {
+            history::import_many(
+                &self.connection,
+                rows.iter()
+                    .filter(|(_, path, ..)| files::validate(path).is_ok())
+                    .map(|(_, path, text, revision, saved_at)| {
+                        (path.as_str(), text.as_str(), revision.as_str(), *saved_at)
+                    }),
+                (self.clock)(),
+            )?;
+            if done {
+                self.connection.exec_bound(
+                    "INSERT INTO reference_sources(source,fingerprint) VALUES (?,?) ON CONFLICT(source) DO UPDATE SET fingerprint=excluded.fingerprint",
+                )?((backlog.key.as_str(), backlog.fingerprint.as_str()))?;
+            }
+            Ok(())
+        })
+        .context("Cannot record the reference app's history in Quire's state folder. Check free space and reopen the notebook to retry.")?;
+        let mut queue = self.backlog.borrow_mut();
+        if let Some((last, ..)) = rows.last().filter(|_| !done) {
+            backlog.after = *last;
+            queue.push(backlog);
+        }
+        Ok(!queue.is_empty())
+    }
+
+    /// Takes in every queued saved version, collecting failures as notices.
+    pub(super) fn finish_reference_history(&self) -> Vec<String> {
+        let mut notices = Vec::new();
+        loop {
+            match self.import_reference_history(usize::MAX) {
+                Ok(true) => {}
+                Ok(false) => return notices,
+                Err(error) => notices.push(format!("{error:#}")),
+            }
+        }
     }
     /// Records one reference draft as a recovery draft, once. None when it needs nothing: it was
     /// imported before, the file already holds its text, or the page has the same draft.
@@ -511,7 +541,8 @@ impl FolderNotebook {
             if !source.database.is_file() {
                 continue;
             }
-            let records = self.read_source(&source)?;
+            let copied = self.copy_source(&source)?;
+            let records = records(&copied.connection, &source)?;
             for (device, draft) in &records.drafts {
                 // A computer's history snapshot repeats the drafts of its database, and a draft
                 // recovered from another computer repeats that computer's own.
@@ -527,7 +558,9 @@ impl FolderNotebook {
                 )?;
                 tally.drafts_accounted += usize::from(known.is_some());
             }
-            for (path, _, revision, saved_at) in records.history {
+            for (_, path, _, revision, saved_at) in
+                reference_history(&copied.connection, i64::MIN, usize::MAX)?
+            {
                 // A version can be in both a computer's database and its history snapshot.
                 if files::validate(&path).is_err()
                     || !versions.insert((path.clone(), revision.clone(), saved_at))
@@ -626,6 +659,42 @@ fn pending(connection: &Connection) -> Result<Vec<Pending>> {
         .collect())
 }
 
+/// A source's drafts, each with the computer it was typed on.
+fn records(connection: &Connection, source: &Source) -> Result<Records> {
+    let mut drafts = pending(connection)?;
+    if let Some(folder) = source.recovery.as_deref() {
+        for record in recovery_records(folder)? {
+            if !drafts.iter().any(|draft| draft.path == record.path) {
+                drafts.push(record);
+            }
+        }
+    }
+    let origins = provenance(connection)?;
+    let mut used = vec![false; origins.len()];
+    let drafts = drafts
+        .into_iter()
+        .map(|draft| {
+            let origin = origins.iter().position(|origin| {
+                origin.recovered_path == draft.path && origin.recovered_text == draft.text
+            });
+            match origin {
+                Some(index) => {
+                    used[index] = true;
+                    (origins[index].device.clone(), origins[index].draft.clone())
+                }
+                None => (source.device.clone(), draft),
+            }
+        })
+        .collect();
+    let settled = origins
+        .iter()
+        .zip(used)
+        .filter(|(_, used)| !used)
+        .map(|(origin, _)| draft_key(&origin.device, &origin.draft))
+        .collect::<Result<_>>()?;
+    Ok(Records { drafts, settled })
+}
+
 /// The drafts this computer's reference app recovered from other computers.
 fn provenance(connection: &Connection) -> Result<Vec<Origin>> {
     if !has_table(connection, "foreign_drafts")? {
@@ -655,23 +724,34 @@ fn provenance(connection: &Connection) -> Result<Vec<Origin>> {
         .collect())
 }
 
-/// Every saved version, from the current `history` table or the older `revisions` table.
-fn reference_history(connection: &Connection) -> Result<Vec<(String, String, String, i64)>> {
+/// One saved version: its row, path, text, revision, and when it was saved.
+type HistoryRow = (i64, String, String, String, i64);
+
+/// Up to `limit` saved versions after row `after`, from the current `history` table or the
+/// older `revisions` table.
+fn reference_history(connection: &Connection, after: i64, limit: usize) -> Result<Vec<HistoryRow>> {
+    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
     if has_table(connection, "history")? {
-        let rows: Vec<(String, String, Vec<u8>, String, i64)> = connection.select(
-            "SELECT h.path,c.codec,c.data,h.revision,h.saved_at FROM history h JOIN contents c ON c.hash=h.content ORDER BY h.id",
-        )?()?;
+        let rows: Vec<(i64, String, String, Vec<u8>, String, i64)> = connection.select_bound(
+            "SELECT h.id,h.path,c.codec,c.data,h.revision,h.saved_at FROM history h JOIN contents c ON c.hash=h.content WHERE h.id>? ORDER BY h.id LIMIT ?",
+        )?((after, limit))?;
         return rows
             .into_iter()
-            .map(|(path, codec, data, revision, saved_at)| {
-                Ok((path, history::decode(&codec, &data)?, revision, saved_at))
+            .map(|(id, path, codec, data, revision, saved_at)| {
+                Ok((
+                    id,
+                    path,
+                    history::decode(&codec, &data)?,
+                    revision,
+                    saved_at,
+                ))
             })
             .collect();
     }
     if has_table(connection, "revisions")? {
-        return connection
-            .select("SELECT path,text,revision,saved_at FROM revisions ORDER BY id")?(
-        );
+        return connection.select_bound(
+            "SELECT id,path,text,revision,saved_at FROM revisions WHERE id>? ORDER BY id LIMIT ?",
+        )?((after, limit));
     }
     Ok(Vec::new())
 }
