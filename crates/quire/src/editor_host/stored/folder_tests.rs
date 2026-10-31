@@ -7,9 +7,9 @@ use quire_core::workspace::Destination;
 use quire_store::sync::format::page_id_for_path;
 use std::{fs, time::Duration};
 
-struct FolderNotebook {
-    notebook: Notebook,
-    folder: tempfile::TempDir,
+pub(super) struct FolderNotebook {
+    pub(super) notebook: Notebook,
+    pub(super) folder: tempfile::TempDir,
     /// Stands in for the system Trash: deleted items move here, numbered in order.
     bin: tempfile::TempDir,
 }
@@ -24,7 +24,11 @@ impl FolderNotebook {
     }
 }
 
-fn open_folder(files: &[(&str, &str)], first: &str, cx: &mut TestAppContext) -> FolderNotebook {
+pub(super) fn open_folder(
+    files: &[(&str, &str)],
+    first: &str,
+    cx: &mut TestAppContext,
+) -> FolderNotebook {
     open_folder_with(files, &[], first, cx)
 }
 

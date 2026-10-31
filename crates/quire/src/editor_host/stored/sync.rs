@@ -1,0 +1,67 @@
+//! The window's sync commands, and rereading notes a Git sync changed.
+
+use super::*;
+use crate::sync_status::{CheckSyncFolder, Settings, ShowSync, SyncStatus, SyncWithGit, Synced};
+use quire_store::git_sync::Git;
+
+/// Where this computer remembers each notebook's Git remote and last push. Tests keep it in
+/// memory and run Git without the user's configuration, so they never read the real application
+/// data, identity, or credentials.
+fn settings() -> Settings {
+    if cfg!(test) {
+        Settings::new(None)
+    } else {
+        Settings::new(Some(paths::data_dir().join("personal-git.json")))
+    }
+}
+
+pub(super) fn git() -> Git {
+    if cfg!(test) {
+        [
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+            ("GIT_CONFIG_NOSYSTEM", "1"),
+            ("GIT_AUTHOR_NAME", "Quire Test"),
+            ("GIT_AUTHOR_EMAIL", "test@example.invalid"),
+            ("GIT_COMMITTER_NAME", "Quire Test"),
+            ("GIT_COMMITTER_EMAIL", "test@example.invalid"),
+        ]
+        .into_iter()
+        .fold(Git::default(), |git, (key, value)| git.env(key, value))
+    } else {
+        Git::default()
+    }
+}
+
+pub(super) fn new_sync_status(
+    session: &Rc<RefCell<NotebookSession>>,
+    calendar: Option<DailyCalendar>,
+    cx: &mut gpui::Context<StoredWindow>,
+) -> Entity<SyncStatus> {
+    let root = session.borrow().folder().map(|(root, _)| root.to_owned());
+    let label = backups::clock_label(calendar.unwrap_or_else(DailyCalendar::utc));
+    cx.new(|cx| SyncStatus::new(root, git(), settings(), label, cx))
+}
+
+impl StoredWindow {
+    pub(super) fn watch_sync(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        cx.subscribe_in(&self.sync, window, |this, _, _: &Synced, _, cx| {
+            this.folder_changed(None, cx);
+        })
+        .detach();
+    }
+
+    pub(super) fn toggle_sync(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        self.sync.update(cx, |sync, cx| sync.toggle(window, cx));
+    }
+
+    pub(super) fn register_sync(div: gpui::Div, cx: &mut gpui::Context<Self>) -> gpui::Div {
+        use gpui::InteractiveElement as _;
+        div.on_action(cx.listener(|this, _: &ShowSync, window, cx| this.toggle_sync(window, cx)))
+            .on_action(cx.listener(|this, _: &SyncWithGit, _, cx| {
+                this.sync.update(cx, |sync, cx| sync.sync(cx))
+            }))
+            .on_action(cx.listener(|this, _: &CheckSyncFolder, _, cx| {
+                this.sync.update(cx, |sync, cx| sync.check(cx))
+            }))
+    }
+}
