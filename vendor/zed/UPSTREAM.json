@@ -251,6 +251,10 @@
       "change": "Skip empty fold chunks when seeking tab stops, avoiding a zero-length subtraction overflow with empty replacement text. Add a focused UTF-8/tab regression with empty fold placeholders. Pass a fold placeholder with empty text and a renderer through as its own chunk, so its element still renders."
     },
     {
+      "path": "crates/editor/src/display_map/wrap_map.rs",
+      "change": "Wrap a rendered chunk, such as a fold placeholder, as one unbreakable element even before layout measures it, estimating its width from its text. Upstream split an unmeasured multi-character placeholder (LSP collapsed text, Write's code-block toolbar) at a soft wrap, and mapping that wrap row's start back to the fold map panicked in FoldPoint::to_offset. Add a focused regression with a long placeholder in a narrow wrap."
+    },
+    {
       "path": "crates/editor/src/test/editor_lsp_test_context.rs",
       "change": "Remove two stale wrong_self_convention lint expectations that fail the all-targets editor Clippy gate on the pinned Rust toolchain. Test helper behavior and lint enforcement are unchanged."
     },

@@ -131,6 +131,17 @@ impl LineFragmentBuilder {
         }
     }
 
+    /// Estimates a rendered element's width from its text until layout measures it, so a fold
+    /// placeholder wraps as one unit: a wrap inside it has no fold point to map back to.
+    fn text_width(&self, text: &str) -> Pixels {
+        text.chars()
+            .map(|ch| {
+                self.text_system
+                    .layout_width(self.font_id, self.font_size, ch)
+            })
+            .fold(Pixels::ZERO, |width, ch_width| width + ch_width)
+    }
+
     fn replacement_width(&mut self, ch: char) -> Option<Pixels> {
         let replacement_char = replacement(ch)?;
         let width = *self
@@ -664,9 +675,12 @@ impl WrapSnapshot {
                             });
                             break;
                         } else {
-                            if let Some(width) =
-                                chunk.renderer.as_ref().and_then(|r| r.measured_width)
-                            {
+                            if let Some(width) = chunk.renderer.as_ref().and_then(|renderer| {
+                                renderer.measured_width.or_else(|| {
+                                    (!chunk.text.is_empty())
+                                        .then(|| fragment_builder.text_width(chunk.text))
+                                })
+                            }) {
                                 line_fragments
                                     .push(gpui::LineFragment::element(width, chunk.text.len()));
                             } else {
@@ -1503,7 +1517,7 @@ mod tests {
     use crate::{
         MultiBuffer,
         display_map::{
-            fold_map::{FoldMap, FoldSnapshot},
+            fold_map::{FoldMap, FoldPlaceholder, FoldSnapshot},
             inlay_map::InlayMap,
             tab_map::TabMap,
         },
@@ -1511,6 +1525,7 @@ mod tests {
     };
     use futures::stream::StreamExt;
     use gpui::{LineFragment, px, test::observe};
+    use multi_buffer::MultiBufferOffset;
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::{cmp, env, num::NonZeroU32};
@@ -1784,6 +1799,47 @@ mod tests {
                  {wrap_width:?}: {row:?}"
             );
         }
+    }
+
+    #[gpui::test]
+    async fn test_unmeasured_fold_placeholder_is_never_split_by_a_wrap(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let font = test_font();
+        let font_size = px(14.0);
+        let placeholder_text = "typescript · Format code · Copy code";
+        let buffer = cx.new(|cx| language::Buffer::local("```typescript\nconst a = 1;\n```\n", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (mut fold_map, _) = FoldMap::new(inlay_snapshot.clone());
+        let (mut writer, _, _) = fold_map.write(inlay_snapshot.clone(), vec![]);
+        writer.fold(vec![(
+            MultiBufferOffset(0)..MultiBufferOffset(13),
+            FoldPlaceholder {
+                collapsed_text: Some(placeholder_text.into()),
+                ..FoldPlaceholder::test()
+            },
+        )]);
+        let (fold_snapshot, _) = fold_map.read(inlay_snapshot, vec![]);
+        let (mut tab_map, _) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let tabs_snapshot = tab_map.set_max_expansion_column(32);
+        let (_wrap_map, wrap_snapshot) =
+            cx.update(|cx| WrapMap::new(tabs_snapshot, font, font_size, Some(px(120.)), cx));
+
+        for row in 0..wrap_snapshot.max_point().row().0 {
+            wrap_snapshot.text_summary_for_range(WrapRow(row)..WrapRow(row + 1));
+        }
+        let rows = wrap_snapshot
+            .text()
+            .split('\n')
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows.first().map(String::as_str),
+            Some(placeholder_text),
+            "a fold placeholder wraps as one unit even before its element is measured"
+        );
     }
 
     #[gpui::test(iterations = 100)]
