@@ -5,7 +5,7 @@
 
 use super::super::*;
 use super::template_tests::stored_text;
-use super::tests::{Notebook, active, open_initialized, read, wait_until};
+use super::tests::{Notebook, active, draw, open_initialized, read, wait_until};
 use crate::ai::{
     answer::{AnswerPane, Status},
     process::tests::fixture,
@@ -114,6 +114,7 @@ async fn a_question_sends_matching_excerpts_and_citations_open_what_they_name(
     assert_eq!(cx.read(|cx| pane.read(cx).title()), "Ask the notebook");
     type_question(&notebook, "What about apples?", cx);
     wait_done(&notebook, 0, cx);
+    draw(&notebook, cx);
     assert_eq!(
         ai.sent(),
         [
@@ -236,19 +237,22 @@ async fn a_synthesis_waits_for_its_instruction_and_reruns_over_the_same_referenc
 ) {
     let (ai, notebook) = notebook(&FRUIT, "fruit", cx).await;
     ai.answer("Orchards.", &[], cx);
-    notebook
-        .window
-        .update(cx, |view, window, cx| {
-            let seed = crate::ai::answer::Seed {
-                title: Some("Linked references to Fruit".into()),
-                source: Some(quire_core::ai::ask::Source::References("Fruit".into())),
-                ..Default::default()
-            };
-            view.open_answer(seed, window, cx)
+    wait_until(cx, "the linked references", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.shown_references(cx).is_some()
         })
-        .unwrap();
+    });
+    let references = read(&notebook, cx, |view, cx| view.shown_references(cx).unwrap());
+    references.update(cx, |_, cx| {
+        cx.emit(crate::navigation::references::ReferencesEvent::Synthesize)
+    });
     cx.run_until_parked();
+    draw(&notebook, cx);
     let pane = pane(&notebook, cx);
+    assert_eq!(
+        cx.read(|cx| pane.read(cx).title()),
+        "Linked references to Fruit"
+    );
     let input = cx.read(|cx| pane.read(cx).input.clone());
     assert_eq!(cx.read(|cx| input.read(cx).text(cx)), DEFAULT_SYNTHESIS);
     cx.simulate_keystrokes(notebook.window.into(), "end enter");
