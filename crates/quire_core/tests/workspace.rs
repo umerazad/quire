@@ -220,3 +220,13 @@ fn task_choices_survive_save_and_load_and_forget_deleted_projects() {
     assert_eq!(pruned.tasks.project, None);
     assert_eq!(pruned.tasks.project_status, ProjectStatus::Inactive);
 }
+
+#[test]
+fn deleting_a_folder_forgets_it_and_the_folders_inside_it() {
+    let mut workspace = Workspace::default();
+    for folder in ["Projects", "Projects/Deep", "Projects2", "Other/Projects"] {
+        workspace.toggle_expanded(folder);
+    }
+    workspace.forget_folder("Projects");
+    assert_eq!(workspace.expanded, ["Projects2", "Other/Projects"]);
+}

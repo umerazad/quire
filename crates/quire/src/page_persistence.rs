@@ -98,6 +98,7 @@ pub struct PagePersistence {
     error: Option<SharedString>,
     warning: Option<SharedString>,
     removed: bool,
+    retired: bool,
     pending: Option<Frozen>,
     queued_save: Option<BufferSnapshot>,
     recover_requested: bool,
@@ -149,6 +150,7 @@ impl PagePersistence {
             error: None,
             warning: None,
             removed: false,
+            retired: false,
             pending: None,
             queued_save: None,
             recover_requested: false,
@@ -165,6 +167,9 @@ impl PagePersistence {
     }
 
     pub fn enable(&mut self, cx: &mut Context<Self>) {
+        if self.retired {
+            return;
+        }
         self.enabled = true;
         self.buffer.update(cx, |buffer, cx| {
             buffer.set_capability(language::Capability::ReadWrite, cx)
@@ -234,9 +239,13 @@ impl PagePersistence {
         } else {
             "Unsaved changes"
         };
-        let removed = self.removed.then_some(
-            "This page was deleted elsewhere. Your text stays open here; edit and save it to restore the page.",
-        );
+        let removed = if self.retired {
+            Some("This page was deleted. Its text stays open here, read-only.")
+        } else {
+            self.removed.then_some(
+                "This page was deleted elsewhere. Your text stays open here; edit and save it to restore the page.",
+            )
+        };
         [Some(state), removed, self.warning.as_deref()]
             .into_iter()
             .flatten()
@@ -605,6 +614,35 @@ impl PagePersistence {
         if self.queued_save.take().is_some() {
             self.save(cx);
         }
+    }
+
+    /// Records that the page now lives at `path`, so later saves keep it there.
+    pub fn relocate(&mut self, path: String, cx: &mut Context<Self>) {
+        if self.opened.path != path {
+            self.opened.path = path;
+            cx.notify();
+        }
+    }
+
+    /// Stops saving for good because the page was deleted here: no later save or recovery may
+    /// revive it. The buffer keeps its text, read-only.
+    pub fn retire(&mut self, cx: &mut Context<Self>) {
+        self.retired = true;
+        self.enabled = false;
+        self.held = false;
+        self.queued_save = None;
+        self.recover_requested = false;
+        self.autosave = None;
+        self.debounce = None;
+        self.save_by = None;
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.set_capability(language::Capability::ReadOnly, cx)
+        });
+        cx.notify();
+    }
+
+    pub fn is_retired(&self) -> bool {
+        self.retired
     }
 }
 

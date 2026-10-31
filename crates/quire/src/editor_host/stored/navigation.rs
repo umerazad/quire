@@ -3,9 +3,9 @@
 
 use super::*;
 use crate::navigation::{
-    CaptureTask, CloseTab, FindPage, FocusFiles, FocusReferences, GoBack, GoForward, NewPage,
-    NextTab, OpenToday, PreviousTab, ShowDaily, ShowPages, ShowTags, ShowTasks, ToggleFavorite,
-    ToggleSidePane, WorkspaceFile, create_page,
+    CaptureTask, CloseTab, DeleteFile, DeletePage, FindPage, FocusFiles, FocusReferences, GoBack,
+    GoForward, NewPage, NextTab, OpenToday, PreviousTab, RenameFile, RenamePage, ShowDaily,
+    ShowPages, ShowTags, ShowTasks, ToggleFavorite, ToggleSidePane, WorkspaceFile, create_page,
     palette::{PagePalette, PaletteChoice, PaletteMode},
 };
 use gpui::{DismissEvent, EntityId, SharedString, Task};
@@ -18,6 +18,8 @@ use std::collections::HashSet;
 mod chrome;
 #[path = "daily.rs"]
 mod daily;
+#[path = "file_views.rs"]
+mod file_views;
 #[path = "reference_views.rs"]
 mod reference_views;
 #[path = "tag_views.rs"]
@@ -32,6 +34,9 @@ pub(super) struct Navigation {
     editors: HashMap<EntityId, Entity<NotebookWindow>>,
     watched: HashSet<EntityId>,
     pub(super) palette: Option<Entity<Picker<PagePalette>>>,
+    pub(super) dialog: Option<Entity<crate::navigation::file_dialog::FileDialog>>,
+    /// A renamed page, until the page list shows its new path and title.
+    pub(super) renamed: Option<crate::file_actions::Renamed>,
     pub(super) pages: Vec<ListedPage>,
     catalogue: Option<Task<()>>,
     saving: Option<Task<()>>,
@@ -63,6 +68,8 @@ impl Navigation {
             editors: HashMap::new(),
             watched: HashSet::new(),
             palette: None,
+            dialog: None,
+            renamed: None,
             pages: Vec::new(),
             catalogue: None,
             saving: None,
@@ -262,11 +269,11 @@ impl StoredWindow {
     }
 
     pub(super) fn update_title(&self, window: &mut Window, cx: &App) {
-        let page = self.page.read(cx);
-        let title = page
-            .loaded()
-            .and_then(|loaded| loaded.path.as_deref())
-            .unwrap_or("Unsaved page");
+        let title = self
+            .page
+            .read(cx)
+            .path(cx)
+            .unwrap_or_else(|| "Unsaved page".into());
         window.set_window_title(&format!("{title} · Quire Native"));
     }
 
@@ -449,6 +456,22 @@ impl StoredWindow {
             }))
             .on_action(cx.listener(|this, _: &FocusFiles, window, cx| this.focus_files(window, cx)))
             .on_action(cx.listener(|this, _: &OpenToday, window, cx| this.open_today(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &DeletePage, window, cx| this.delete_shown_page(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &DeleteFile, window, cx| {
+                    this.delete_selected_file(window, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &RenamePage, window, cx| this.rename_shown_page(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &RenameFile, window, cx| {
+                    this.rename_selected_file(window, cx)
+                }),
+            )
     }
 
     /// Moves through history without recording recents, restoring a closed tab if needed.
@@ -712,3 +735,7 @@ mod rendered_links_tests;
 #[cfg(test)]
 #[path = "embeds_tests.rs"]
 mod embeds_tests;
+
+#[cfg(test)]
+#[path = "file_tests.rs"]
+mod file_tests;

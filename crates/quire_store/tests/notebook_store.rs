@@ -301,7 +301,7 @@ fn checked_multi_page_saves_write_nothing_when_any_page_moved() {
         CheckedSaves::HeadsChanged { page, heads } => {
             assert_eq!((page.as_str(), heads), ("p-one", vec![moved.clone()]));
         }
-        CheckedSaves::Saved(_) => panic!("a moved page must refuse the whole save"),
+        other => panic!("a moved page must refuse the whole save, got {other:?}"),
     }
     assert_eq!(store.heads("p-two").unwrap(), [two]);
     assert_eq!(store.outbox().unwrap().len(), outbox);

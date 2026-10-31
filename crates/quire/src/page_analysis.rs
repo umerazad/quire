@@ -189,6 +189,19 @@ pub(crate) fn references(snapshot: &BufferSnapshot) -> Option<Vec<Reference>> {
     Some(quire_core::markdown::references(&text, &excluded.code))
 }
 
+/// References and Markdown URL ranges, the links a rename or move rewrites, outside code.
+pub(crate) fn analyze_links(
+    snapshot: &BufferSnapshot,
+) -> Option<(Vec<Reference>, Vec<std::ops::Range<usize>>)> {
+    let text = snapshot.text();
+    let mut excluded = syntax::exclusions(snapshot, &text)?;
+    excluded.urls.sort_by_key(|url| (url.start, url.end));
+    Some((
+        quire_core::markdown::references(&text, &excluded.code),
+        excluded.urls,
+    ))
+}
+
 pub(crate) fn analyze_inline(snapshot: &BufferSnapshot) -> Option<InlineAnalysis> {
     let text = snapshot.text();
     let excluded = syntax::exclusions(snapshot, &text)?;

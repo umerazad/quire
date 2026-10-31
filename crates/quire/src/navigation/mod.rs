@@ -2,6 +2,7 @@
 //! that drive tabs, history, favorites, and the browsers.
 
 pub mod context_rows;
+pub mod file_dialog;
 pub mod live;
 pub mod palette;
 pub mod references;
@@ -52,8 +53,19 @@ gpui::actions!(
         CaptureTask,
         /// Adds the highlighted tag to the selection for bulk rename or delete, or takes it out.
         ToggleTagSelected,
+        /// Deletes the shown page after naming the links that break.
+        DeletePage,
+        /// Deletes the highlighted page or folder in Files after naming what goes.
+        DeleteFile,
+        /// Renames the shown page; its title and every link to it follow.
+        RenamePage,
+        /// Renames the highlighted page in Files.
+        RenameFile,
     ]
 );
+
+/// The Files tree's own keys, beside the list keys it shares.
+pub const FILES_CONTEXT: &str = "QuireFiles";
 
 /// Arrow, Home, End, Enter, and Shift-Enter for a virtualized list view: `step` moves the
 /// highlight and `confirm` opens the highlighted row, beside the page when `true`.
@@ -171,6 +183,13 @@ pub fn bind_keys(cx: &mut App) {
             Some("QuireTaskList"),
         ),
         KeyBinding::new(primary!("enter"), ToggleTagSelected, Some("QuireTags")),
+        KeyBinding::new("delete", DeleteFile, Some(FILES_CONTEXT)),
+        KeyBinding::new(primary!("backspace"), DeleteFile, Some(FILES_CONTEXT)),
+        KeyBinding::new("enter", menu::Confirm, Some(file_dialog::DIALOG_CONTEXT)),
+        KeyBinding::new("escape", menu::Cancel, Some(file_dialog::DIALOG_CONTEXT)),
+        KeyBinding::new("enter", menu::Confirm, Some("QuireDialog > Editor")),
+        KeyBinding::new("escape", menu::Cancel, Some("QuireDialog > Editor")),
+        KeyBinding::new("f2", RenameFile, Some(FILES_CONTEXT)),
         KeyBinding::new(
             primary!("enter"),
             ToggleTagSelected,

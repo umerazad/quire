@@ -7,6 +7,9 @@ pub(super) struct Exclusions {
     pub code: Vec<Range<usize>>,
     pub code_blocks: Vec<Range<usize>>,
     pub tags: Vec<Range<usize>>,
+    /// Markdown URLs as the reference parser marks them: link and image destinations, autolink
+    /// targets, bare URLs, and link reference definition destinations.
+    pub urls: Vec<Range<usize>>,
     #[cfg(test)]
     pub inline_reparses: usize,
 }
@@ -64,6 +67,37 @@ fn inline_spans(tree: &language::Tree, text: &str) -> Vec<Span> {
         }
     }
     result.sort_unstable_by_key(|span| span.range.start);
+    result
+}
+
+/// Destinations of inline links and images and the targets of valid angle autolinks, outside
+/// code spans and HTML.
+fn tree_urls(tree: &language::Tree, text: &str) -> Vec<Range<usize>> {
+    let mut result = Vec::new();
+    let mut stack = vec![tree.root_node()];
+    while let Some(node) = stack.pop() {
+        let range = node.byte_range();
+        match node.kind() {
+            "code_span" | "html_tag" => continue,
+            "uri_autolink" | "email_autolink" => {
+                if angle_autolink_end(text, range.start) == Some(range.end) {
+                    result.push(range.start + 1..range.end - 1);
+                }
+                continue;
+            }
+            kind => {
+                let mut cursor = node.walk();
+                for child in node.named_children(&mut cursor) {
+                    if matches!(kind, "inline_link" | "image") && child.kind() == "link_destination"
+                    {
+                        result.push(child.byte_range());
+                    } else {
+                        stack.push(child);
+                    }
+                }
+            }
+        }
+    }
     result
 }
 
@@ -132,8 +166,12 @@ fn inline_exclusions(
         let invalid_opener = span.is_some_and(|span| {
             span.range.start == position && matches!(span.kind, Kind::InvalidAutolink)
         });
+        let bare = angle
+            .is_none()
+            .then(|| bare_url_end(available, position, false))
+            .flatten();
         let end = angle
-            .or_else(|| bare_url_end(available, position, false))
+            .or(bare)
             .or_else(|| invalid_opener.then_some(position + 1));
         if let Some(end) = end {
             let first = spans.partition_point(|span| span.range.end <= position);
@@ -147,6 +185,9 @@ fn inline_exclusions(
                 });
             if angle.is_some() {
                 result.tags.push(base + position..base + end);
+                result.urls.push(base + position + 1..base + end - 1);
+            } else if bare.is_some() {
+                result.urls.push(base + position..base + end);
             }
             holes.push(position..end);
             position = end;
@@ -189,6 +230,12 @@ fn inline_exclusions(
         }
     }
     if let Some(tree) = tree {
+        for url in tree_urls(&tree, text) {
+            let index = holes.partition_point(|hole| hole.start <= url.start);
+            if index == 0 || url.start >= holes[index - 1].end {
+                result.urls.push(base + url.start..base + url.end);
+            }
+        }
         for span in inline_spans(&tree, text) {
             let index = holes.partition_point(|hole| hole.start <= span.range.start);
             if index > 0 && span.range.start < holes[index - 1].end {
@@ -253,7 +300,15 @@ pub(super) fn exclusions(snapshot: &BufferSnapshot, text: &str) -> Option<Exclus
                         result.tags.push(range);
                     }
                 }
-                "link_reference_definition" => result.tags.push(range),
+                "link_reference_definition" => {
+                    result.tags.push(range);
+                    let mut cursor = node.walk();
+                    result.urls.extend(
+                        node.named_children(&mut cursor)
+                            .filter(|child| child.kind() == "link_destination")
+                            .map(|child| child.byte_range()),
+                    );
+                }
                 _ => {
                     let mut cursor = node.walk();
                     stack.extend(node.named_children(&mut cursor));

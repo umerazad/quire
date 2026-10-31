@@ -39,6 +39,9 @@ mod tag_edit;
 mod page_writes;
 
 #[cfg(feature = "full-editor")]
+mod file_actions;
+
+#[cfg(feature = "full-editor")]
 mod task_edit;
 
 #[cfg(feature = "full-editor")]

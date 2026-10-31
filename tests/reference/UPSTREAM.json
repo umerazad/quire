@@ -145,5 +145,36 @@
       "bun": "1.4.2",
       "source": "48 handwritten pages (the rt tasks.test.ts inputs plus marker, stamp, inherited date, Roam, Unicode, quote, code and table edges) and 120 seeded pages, under the default and a {MMMM} {DD}, {YYYY} daily layout."
     }
+  },
+  "relocate_extractions": {
+    "repository": "rt",
+    "revision": "5ea5c22310fff0c3d97f069930500fd85067fa96",
+    "files": [
+      {
+        "source": "src/core/relocate.ts",
+        "source_sha256": "dc7f95a0201a2d0716b6739851e8f8f3ecfd556325010495f8c7a52c97e230bc",
+        "destination": "core/relocate.ts",
+        "sha256": "48d92196205f5e3a8ac3f82bbb65c0408d5c3ba151c2855a8c9b512ccb3404e9",
+        "change": "planRelocation is unchanged (last changed in 35e673677291). Imports point at the frozen markdown and file-paths copies; the Notebook and FileEdit types it imported are declared locally with exactly the members it reads."
+      },
+      {
+        "source": "src/core/file-paths.ts",
+        "source_sha256": "0a3a2a525ee4c21827bbae949375cff9c4437ca776bc74aef6bc1725d5ba8dcf",
+        "destination": "core/file-paths.ts",
+        "sha256": "6d40c8c7a6fa1cd2c3c7f982466a124f6b3ad54628f55284812cf73abbb91865",
+        "change": "Copied unchanged except the import path ../markdown/markdown."
+      }
+    ],
+    "test": {
+      "source": "tests/relocate.test.ts",
+      "destination": "relocate.test.ts",
+      "change": "The rename and move-keeps-title expectations rerun through the extraction over an in-memory notebook; journaling, retirement and interruption cases belong to folder notebooks (NR13)."
+    },
+    "vectors": {
+      "tool": "tools/relocate-vectors.ts",
+      "output": "tests/fixtures/relocate-vectors.json",
+      "bun": "1.4.2",
+      "source": "The rt relocate.test.ts notebooks, every link form from pages beside and away from four source pages for renames, moves, and CRLF pages, refusals, duplicate titles, and 120 seeded mixtures. Each page carries Lezer code ranges, URL node ranges, and how each reference target resolves."
+    }
   }
 }

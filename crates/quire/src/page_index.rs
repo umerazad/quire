@@ -206,6 +206,22 @@ mod tests {
     }
 }
 
+/// The references and Markdown URL ranges a rename or move rewrites in `text`, from the editor's
+/// own analysis, so links in code stay. Parsing happens in the returned future.
+pub fn relocation_links(
+    text: String,
+    cx: &mut App,
+) -> impl Future<
+    Output = Option<(
+        Vec<quire_core::markdown::Reference>,
+        Vec<std::ops::Range<usize>>,
+    )>,
+> + Send
++ use<> {
+    let snapshot = crate::markdown::detached_snapshot(&text, cx);
+    async move { crate::page_analysis::analyze_links(&snapshot.await) }
+}
+
 /// Plans a bulk tag edit for one page using the editor's own tag recognition, so tags in code
 /// and links stay. Parsing happens in the returned future.
 pub fn edit_tags(
@@ -378,5 +394,69 @@ mod tag_edit_tests {
             )
         };
         assert_eq!(changes, [expected("A.md"), expected("B.md")]);
+    }
+}
+
+#[cfg(test)]
+mod relocation_link_tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use serde_json::Value;
+    use std::collections::BTreeSet;
+
+    fn ranges(value: &Value) -> Vec<std::ops::Range<usize>> {
+        value
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|pair| pair[0].as_u64().unwrap() as usize..pair[1].as_u64().unwrap() as usize)
+            .collect()
+    }
+
+    /// The links a rename rewrites come from native analysis; they must be the ones the frozen
+    /// planner saw through Lezer on every page of the relocation vectors.
+    #[gpui::test]
+    async fn native_links_match_the_relocation_vectors(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let vectors: Vec<Value> = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/relocate-vectors.json"
+        ))
+        .unwrap();
+        let mut seen = BTreeSet::new();
+        let mut failures = Vec::new();
+        for page in vectors
+            .iter()
+            .flat_map(|vector| vector["pages"].as_array().unwrap())
+        {
+            let text = page["text"].as_str().unwrap();
+            if !seen.insert(text.to_owned()) {
+                continue;
+            }
+            let work = cx.update(|cx| relocation_links(text.to_owned(), cx));
+            let (references, urls) = cx.background_executor.spawn(work).await.unwrap();
+            let expected = quire_core::markdown::references(text, &ranges(&page["codeRanges"]));
+            if urls != ranges(&page["urls"]) || references != expected {
+                failures.push(format!(
+                    "{text:?}\n  urls {urls:?} expected {:?}\n  references {:?} expected {:?}",
+                    ranges(&page["urls"]),
+                    references
+                        .iter()
+                        .map(|reference| reference.range.clone())
+                        .collect::<Vec<_>>(),
+                    expected
+                        .iter()
+                        .map(|reference| reference.range.clone())
+                        .collect::<Vec<_>>()
+                ));
+            }
+        }
+        assert!(seen.len() > 100);
+        assert!(
+            failures.is_empty(),
+            "{} of {} pages differ from the frozen parse:\n{}",
+            failures.len(),
+            seen.len(),
+            failures.join("\n")
+        );
     }
 }

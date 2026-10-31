@@ -301,6 +301,16 @@ impl Workspace {
             self.expanded.push(folder.to_owned());
         }
     }
+
+    /// Forgets a deleted folder and every folder inside it.
+    pub fn forget_folder(&mut self, folder: &str) {
+        self.expanded.retain(|item| {
+            item != folder
+                && !item
+                    .strip_prefix(folder)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        });
+    }
 }
 
 /// One window's back/forward list. Not persisted: the reference resets it per notebook load.

@@ -13,7 +13,7 @@ mod schema;
 mod tasks;
 
 pub use blocks::{BlockChoice, BlockPreview};
-pub use catalog::{ListedPage, SETTINGS_PAGE};
+pub use catalog::{Deletion, DeletionTarget, ListedPage, RelocationFacts, SETTINGS_PAGE};
 pub use overlay::Overlay;
 pub use query::{Backlink, PageRef, SearchHit, TagCount, TaggedBlock};
 pub use references::{Facet, FacetKind, Outline, ReferenceBlock, SHOWN_CHILDREN};

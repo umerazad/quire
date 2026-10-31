@@ -38,6 +38,7 @@ impl gpui::EventEmitter<IndexChanged> for IndexSync {}
 struct Tracked {
     page: WeakEntity<OpenPage>,
     buffer: Option<EntityId>,
+    path: Option<String>,
     update: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -185,6 +186,7 @@ impl IndexSync {
             Tracked {
                 page: page.downgrade(),
                 buffer: None,
+                path: None,
                 update: None,
                 _subscriptions: subscriptions,
             },
@@ -196,17 +198,23 @@ impl IndexSync {
         let Some(tracked) = self.tracked.get_mut(&id) else {
             return;
         };
-        let Some(buffer) = tracked.page.upgrade().and_then(|page| {
-            page.read(cx)
-                .loaded()
-                .map(|loaded| loaded.analysis.read(cx).source.clone())
+        let Some((buffer, path)) = tracked.page.upgrade().and_then(|page| {
+            let page = page.read(cx);
+            let buffer = page.loaded()?.analysis.read(cx).source.clone();
+            Some((buffer, page.path(cx)))
         }) else {
             return;
         };
         if tracked.buffer == Some(buffer.entity_id()) {
+            // A rename moves the page without editing it; its overlay must follow.
+            if tracked.path != path {
+                tracked.path = path;
+                self.schedule(id, Duration::ZERO, cx);
+            }
             return;
         }
         tracked.buffer = Some(buffer.entity_id());
+        tracked.path = path;
         tracked
             ._subscriptions
             .push(cx.subscribe(&buffer, move |this, _, event, cx| {
@@ -232,7 +240,7 @@ impl IndexSync {
                     let text = loaded.analysis.read(cx).source.read(cx).text();
                     (
                         page.id().to_owned(),
-                        loaded.path.clone().unwrap_or_default(),
+                        page.path(cx).unwrap_or_default(),
                         text,
                     )
                 })
@@ -257,6 +265,27 @@ impl IndexSync {
             })
             .ok();
         }));
+    }
+
+    /// Stops feeding a deleted page's live analysis, so queries see its stored deletion.
+    pub fn forget(&mut self, page: &Entity<OpenPage>, cx: &mut Context<Self>) {
+        if self.tracked.remove(&page.entity_id()).is_none() {
+            return;
+        }
+        let release = self
+            .client
+            .release_overlay(JsString::from(page.read(cx).id()));
+        cx.spawn(async move |this, cx| {
+            let result = ask(release).await;
+            this.update(cx, |this, cx| {
+                if result.is_ok() {
+                    cx.emit(IndexChanged);
+                }
+                this.set_error(result.err(), cx)
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Progress for the window status, while pages are still being indexed.

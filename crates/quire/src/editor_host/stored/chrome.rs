@@ -245,7 +245,7 @@ impl StoredWindow {
         })
     }
 
-    fn page_at_path(&self, path: &str) -> Option<String> {
+    pub(in crate::editor_host::stored) fn page_at_path(&self, path: &str) -> Option<String> {
         self.nav
             .pages
             .iter()
@@ -368,7 +368,7 @@ impl StoredWindow {
         .flex_1();
         v_flex()
             .id("files-tree")
-            .key_context("QuireList")
+            .key_context("QuireList QuireFiles")
             .track_focus(&focus)
             .flex_1()
             .min_h_0()

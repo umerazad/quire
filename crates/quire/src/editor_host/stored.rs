@@ -371,6 +371,19 @@ impl Render for StoredWindow {
                     .on_click(cx.listener(|this, _, _, cx| this.copy_markdown(cx))),
                 )
             })
+            .when(
+                page.persistence().is_some() && self.shown_page(cx).is_some(),
+                |div| {
+                    div.child(Button::new("rename-page", "Rename…").on_click(
+                        cx.listener(|this, _, window, cx| this.rename_shown_page(window, cx)),
+                    ))
+                    .child(
+                        Button::new("delete-page", "Delete page…").on_click(
+                            cx.listener(|this, _, window, cx| this.delete_shown_page(window, cx)),
+                        ),
+                    )
+                },
+            )
             .when(page.can_retry(), |div| {
                 div.child(
                     Button::new("retry-page", "Retry page").on_click(cx.listener(
@@ -419,6 +432,19 @@ impl Render for StoredWindow {
                         .justify_center()
                         .occlude()
                         .child(palette),
+                )
+            })
+            .when_some(self.nav.dialog.clone(), |div, dialog| {
+                div.child(
+                    gpui::div()
+                        .absolute()
+                        .top_16()
+                        .left_0()
+                        .right_0()
+                        .flex()
+                        .justify_center()
+                        .occlude()
+                        .child(dialog),
                 )
             })
     }

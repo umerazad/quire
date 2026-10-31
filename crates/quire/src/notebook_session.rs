@@ -81,6 +81,11 @@ impl NotebookSession {
     pub fn open_pages(&self) -> Vec<Entity<OpenPage>> {
         self.pages.values().cloned().collect()
     }
+
+    /// Forgets a deleted page, so opening it again reads storage afresh.
+    pub fn forget(&mut self, page: &str) -> Option<Entity<OpenPage>> {
+        self.pages.remove(page)
+    }
     fn controllers(&self, cx: &App) -> Vec<Entity<PagePersistence>> {
         self.pages
             .values()
@@ -159,11 +164,18 @@ impl OpenPage {
     }
     pub fn status(&self, cx: &App) -> SharedString {
         if let Some(page) = self.persistence()
-            && page.read(cx).enabled()
+            && (page.read(cx).enabled() || page.read(cx).is_retired())
         {
             return page.read(cx).status(cx);
         }
         self.status.clone()
+    }
+    /// Where the page lives now: its saves follow renames made since it opened.
+    pub fn path(&self, cx: &App) -> Option<String> {
+        match self.persistence() {
+            Some(page) => Some(page.read(cx).path().to_owned()),
+            None => self.loaded()?.path.clone(),
+        }
     }
     pub fn persistence(&self) -> Option<&Entity<PagePersistence>> {
         self.loaded().and_then(|page| page.persistence.as_ref())
