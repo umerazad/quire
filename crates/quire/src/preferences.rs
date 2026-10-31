@@ -2,6 +2,7 @@
 //! Electron app's defaults over Zed's, the settings file is watched so edits apply live, and the
 //! Electron profile is imported once when no settings file exists yet.
 
+pub mod data;
 pub mod local_storage;
 pub mod rt_import;
 pub mod view;
@@ -305,6 +306,11 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", menu::Cancel, Some(view::CONTEXT)),
         KeyBinding::new("enter", menu::Confirm, Some(view::FIELD_CONTEXT)),
         KeyBinding::new("escape", menu::Cancel, Some(view::FIELD_CONTEXT)),
+        KeyBinding::new(
+            "escape",
+            menu::Cancel,
+            Some(crate::rt_migration::view::CONTEXT),
+        ),
     ]);
 }
 

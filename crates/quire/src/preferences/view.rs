@@ -30,6 +30,7 @@ pub struct PreferencesWindow {
     font_size: Entity<Editor>,
     line_spacing: Entity<Editor>,
     pub ai: Entity<crate::ai::settings::AiSection>,
+    pub data: Entity<super::data::DataSection>,
 }
 
 /// Opens Settings, or brings the open Settings window forward.
@@ -107,6 +108,7 @@ impl PreferencesWindow {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         let ai = cx.new(|cx| crate::ai::settings::AiSection::new(window, cx));
+        let data = cx.new(|cx| super::data::DataSection::new(window, cx));
         Self {
             focus,
             shown,
@@ -114,6 +116,7 @@ impl PreferencesWindow {
             font_size,
             line_spacing,
             ai,
+            data,
         }
     }
 
@@ -333,6 +336,7 @@ impl Render for PreferencesWindow {
                     "Daily notes: set the folder and title pattern in the Daily notes browser. The layout is saved in the notebook, so every device uses it.",
                 )),
             )
+            .child(self.data.clone())
             .child(self.ai.clone())
             .when_some(settings_error(cx), |this, error| {
                 this.child(Label::new(error).color(Color::Error))

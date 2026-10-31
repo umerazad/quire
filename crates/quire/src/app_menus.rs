@@ -9,7 +9,10 @@ use crate::{
     preferences::{
         OpenPreferences, Preferences, UseDarkAppearance, UseLightAppearance, UseSystemAppearance,
     },
-    profiles::{OpenNotebookFolder, UseCurrentProfile, UsePersonalProfile, UseWorkProfile},
+    profiles::{
+        OpenNotebookDatabase, OpenNotebookFolder, UseCurrentProfile, UsePersonalProfile,
+        UseWorkProfile,
+    },
     showcase::OpenShowcase,
 };
 use gpui::{App, KeyBinding, Menu, MenuItem, OsAction};
@@ -125,6 +128,7 @@ pub fn menus(cx: &App) -> Vec<Menu> {
         MenuItem::action("Today", OpenToday),
         MenuItem::separator(),
         MenuItem::action("Open Notebook Folder…", OpenNotebookFolder),
+        MenuItem::action("Open Quire Notebook…", OpenNotebookDatabase),
         MenuItem::submenu(Menu::new("Profile").items([
             profile_item("Current", Box::new(UseCurrentProfile), ProfileId::Current),
             profile_item("Work", Box::new(UseWorkProfile), ProfileId::Work),
@@ -136,8 +140,24 @@ pub fn menus(cx: &App) -> Vec<Menu> {
         ])),
         MenuItem::separator(),
         MenuItem::action("Save Locally", crate::editor_command::SavePage),
+        MenuItem::separator(),
+        MenuItem::submenu(Menu::new("Import").items([
+            MenuItem::action("Markdown Folder…", crate::exchange::ImportMarkdownFolder),
+            MenuItem::action("Roam Data…", crate::exchange::ImportRoamData),
+        ])),
+        MenuItem::submenu(Menu::new("Export").items([
+            MenuItem::action("Page as Markdown…", crate::exchange::ExportPageMarkdown),
+            MenuItem::action(
+                "Notebook as Markdown…",
+                crate::exchange::ExportNotebookMarkdown,
+            ),
+            MenuItem::action("Notebook as Roam JSON…", crate::exchange::ExportRoamJson),
+        ])),
+        MenuItem::separator(),
+        MenuItem::action("Backups…", crate::backups::ShowBackups),
         MenuItem::action("Back Up Now", crate::backups::BackUpNow),
         MenuItem::action("Sync with Git", crate::sync_status::SyncWithGit),
+        MenuItem::action("Move from rt…", crate::rt_migration::view::OpenMigration),
         MenuItem::separator(),
         MenuItem::action("Close Window", CloseWindow),
     ];

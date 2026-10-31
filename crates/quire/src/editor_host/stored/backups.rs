@@ -67,6 +67,42 @@ impl StoredWindow {
             }))
     }
 
+    /// Makes the restored notebook the notebook of the profile holding this one, as the reference
+    /// app opens a restore "as this profile"; the backup folder stays and the old notebook's
+    /// files stay where they are.
+    fn join_profile(&mut self, location: &Location, cx: &mut gpui::Context<Self>) {
+        let Some(id) = self
+            .location
+            .as_ref()
+            .and_then(|notebook| crate::profiles::holding(notebook, cx))
+        else {
+            return;
+        };
+        let restored = match location.clone() {
+            Location::Store {
+                database,
+                notebook,
+                writer,
+            } => Notebook::Store {
+                database,
+                notebook,
+                writer,
+            },
+            Location::Folder { root, .. } => Notebook::Folder { root },
+        };
+        if let Err(error) = crate::profiles::update(cx, |profiles| {
+            profiles.set_notebook(id, restored)?;
+            profiles.activate(id)
+        }) {
+            crate::outline::show_notice(
+                format!(
+                    "The restored notebook opens without a profile: {error} Choose it again from File > Profile to back it up."
+                ),
+                cx,
+            );
+        }
+    }
+
     /// Opens the restored notebook in a new window at the page shown here, then closes this
     /// window once its pages are secured. This notebook's data stays as it was.
     fn open_restored(
@@ -76,6 +112,7 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        self.join_profile(location, cx);
         let page = self.page.read(cx);
         let opened = match location.clone() {
             Location::Store {

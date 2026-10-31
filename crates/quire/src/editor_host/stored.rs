@@ -15,6 +15,7 @@ mod backups;
 mod document_export;
 mod exchange;
 mod folder;
+mod help_pane;
 mod instance;
 mod links;
 mod navigation;
@@ -24,6 +25,7 @@ mod sync;
 pub(super) use folder::FolderOptions;
 pub(super) use instance::{Handover, handle_launch};
 pub(super) use profiles::open_location;
+pub(crate) use profiles::{dispatch_to_notebook, notebook_windows, open_in_profile};
 
 pub(super) fn bind_keys(cx: &mut App) {
     profiles::init(cx);
@@ -226,6 +228,8 @@ struct StoredWindow {
     exchange: Entity<crate::exchange::Exchange>,
     backups: Entity<crate::backups::Backups>,
     sync: Entity<crate::sync_status::SyncStatus>,
+    /// Help beside the pages, while it is open.
+    help: Option<Entity<crate::help::view::HelpWindow>>,
 }
 
 impl StoredWindow {
@@ -317,6 +321,7 @@ impl StoredWindow {
             exchange: cx.new(|_| crate::exchange::Exchange::default()),
             backups,
             sync,
+            help: None,
         };
         let pages = this.session.borrow().open_pages();
         for observed in pages {
@@ -677,10 +682,13 @@ impl Render for StoredWindow {
             .on_action(cx.listener(|this, _: &SaveAndClosePage, window, cx| {
                 this.save_and_close(window, cx)
             }));
-        Self::register_sync(
-            Self::register_backups(
-                Self::register_document_export(
-                    Self::register_exchange(Self::register_navigation(root, cx), cx),
+        Self::register_help(
+            Self::register_sync(
+                Self::register_backups(
+                    Self::register_document_export(
+                        Self::register_exchange(Self::register_navigation(root, cx), cx),
+                        cx,
+                    ),
                     cx,
                 ),
                 cx,

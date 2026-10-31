@@ -769,6 +769,7 @@ impl StoredWindow {
             });
         let side = self.nav.side.as_ref().and_then(|side| side.editor.clone());
         let answer = self.nav.answer.pane.clone();
+        let help = self.help_pane(cx);
         gpui::div()
             .flex()
             .flex_1()
@@ -797,6 +798,7 @@ impl StoredWindow {
                         .child(editor),
                 )
             })
+            .when_some(help, |div, pane| div.child(pane))
     }
 }
 
@@ -919,3 +921,7 @@ mod answer_tests;
 #[cfg(test)]
 #[path = "lifecycle_tests.rs"]
 mod lifecycle_tests;
+
+#[cfg(test)]
+#[path = "data_tests.rs"]
+mod data_tests;

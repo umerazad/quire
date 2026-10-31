@@ -292,6 +292,97 @@ fn write(apply: impl 'static + Send + FnOnce(&mut settings::QuireAiSettingsConte
     );
 }
 
+/// The Electron app's AI choices (`ai-settings.json`): backend, binaries, model, and writes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RtAiChoices {
+    pub backend: Option<Backend>,
+    pub claude_path: Option<String>,
+    pub codex_path: Option<String>,
+    pub model: Option<String>,
+    pub writes: Option<Writes>,
+}
+
+impl RtAiChoices {
+    /// Reads the reference file's fields, keeping only values Quire accepts.
+    pub fn parse(value: &serde_json::Value) -> Self {
+        let text = |value: Option<&serde_json::Value>| {
+            value
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned)
+        };
+        let path = |backend: Backend, key: &str| {
+            text(value.get("paths").and_then(|paths| paths.get(key)))
+                .and_then(|path| validate_binary(backend, &path).ok())
+        };
+        Self {
+            backend: match value.get("backend").and_then(serde_json::Value::as_str) {
+                Some("claude") => Some(Backend::Claude),
+                Some("codex") => Some(Backend::Codex),
+                _ => None,
+            },
+            claude_path: path(Backend::Claude, "claude"),
+            codex_path: path(Backend::Codex, "codex"),
+            model: text(value.get("model")).and_then(|model| validate_model(&model).ok()),
+            writes: match value.get("writes").and_then(serde_json::Value::as_str) {
+                Some("off") => Some(Writes::Off),
+                Some("review") => Some(Writes::Review),
+                Some("apply") => Some(Writes::Apply),
+                _ => None,
+            },
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Whether AI is as Quire first set it: nothing chosen and nothing tested.
+pub fn is_unconfigured(cx: &App) -> bool {
+    let settings = AiSettings::get_global(cx);
+    !settings.enabled
+        && settings.backend == Backend::default()
+        && settings.claude_path.is_empty()
+        && settings.codex_path.is_empty()
+        && settings.model.is_empty()
+        && settings.writes == Writes::default()
+        && cx
+            .try_global::<AiState>()
+            .is_none_or(|state| state.saved.tested.is_none())
+}
+
+/// Takes up the Electron app's AI choices. AI stays off: a backend runs only after Quire's own
+/// Test passes, since the reference app's test says nothing about this build.
+pub fn import_rt(choices: RtAiChoices, cx: &mut App) {
+    write(
+        move |ai| {
+            if let Some(backend) = choices.backend {
+                ai.backend = Some(name_of(backend));
+            }
+            if let Some(path) = choices.claude_path {
+                ai.claude_path = Some(path);
+            }
+            if let Some(path) = choices.codex_path {
+                ai.codex_path = Some(path);
+            }
+            if let Some(model) = choices.model {
+                ai.model = Some(model);
+            }
+            if let Some(writes) = choices.writes {
+                ai.writes = Some(match writes {
+                    Writes::Off => AiWritesName::Off,
+                    Writes::Review => AiWritesName::Review,
+                    Writes::Apply => AiWritesName::Apply,
+                });
+            }
+            ai.enabled = Some(false);
+        },
+        cx,
+    );
+}
+
 /// Chooses the backend. A different backend has not been tested, so commands turn off.
 pub fn set_backend(backend: Backend, cx: &mut App) {
     if AiSettings::get_global(cx).backend == backend {

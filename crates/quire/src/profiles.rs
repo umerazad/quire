@@ -18,6 +18,8 @@ gpui::actions!(
         UsePersonalProfile,
         /// Chooses a folder of Markdown notes as the active profile's notebook and opens it.
         OpenNotebookFolder,
+        /// Chooses a Quire notebook database as the active profile's notebook and opens it.
+        OpenNotebookDatabase,
     ]
 );
 

@@ -223,6 +223,71 @@ impl NotebookStore {
     }
 }
 
+/// What a chosen Quire notebook database is, read without writing to it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DatabaseIdentity {
+    pub notebook: String,
+    pub writer: String,
+    /// The live page with the first path, to show when the notebook has no remembered page.
+    pub first_page: Option<String>,
+}
+
+impl NotebookStore {
+    /// Reads the notebook and writer identities of the database at `path` read-only, so a
+    /// notebook chosen in a file dialog opens with its original identities.
+    pub fn identity(path: &Path) -> Result<DatabaseIdentity> {
+        let text = path.to_str().context(
+            "The notebook database path is not valid Unicode. Move the notebook to a Unicode path and choose it again.",
+        )?;
+        ensure!(
+            path.is_file(),
+            "{} is not a Quire notebook database. Choose the notebook's local.sqlite file.",
+            path.display()
+        );
+        let connection = Connection::open_memory(None);
+        connection.exec_bound("ATTACH DATABASE ? AS chosen")?(format!(
+            "file:{}?mode=ro",
+            crate::index::uri_path(text)
+        ))
+        .with_context(|| {
+            format!(
+                "{} is not a readable Quire notebook database. Choose the notebook's local.sqlite file.",
+                path.display()
+            )
+        })?;
+        let application = connection
+            .select_row::<i32>("PRAGMA chosen.application_id")
+            .and_then(|mut read| read())
+            .ok()
+            .flatten();
+        ensure!(
+            application == Some(APPLICATION_ID),
+            "{} is not a Quire notebook database. Choose the local.sqlite file of a Quire notebook.",
+            path.display()
+        );
+        let (notebook, writer) = connection.select_row::<(String, String)>(
+            "SELECT notebook,device FROM chosen.meta WHERE singleton=1",
+        )?()?
+        .with_context(|| {
+            format!(
+                "{} has no notebook identity. Open it once with --notebook-db and its identities, or choose another notebook.",
+                path.display()
+            )
+        })?;
+        let first_page = connection.select_row::<String>(
+            "SELECT r.page FROM chosen.heads h JOIN chosen.revisions r ON r.id=h.revision WHERE r.deleted=0 ORDER BY r.path_key, r.path, r.page LIMIT 1",
+        )?()?
+        .map(|page| serde_json::from_str::<String>(&page))
+        .transpose()
+        .context("A page identity in the notebook database is damaged. Restore a verified backup.")?;
+        Ok(DatabaseIdentity {
+            notebook,
+            writer,
+            first_page,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,6 +350,47 @@ mod tests {
                 .as_str(),
             Some("acknowledged")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn identity_reads_a_chosen_database_without_writing_and_refuses_other_files() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let database = root.path().join("local.sqlite");
+        let store = NotebookStore::open(&database, "nb", "office")?;
+        assert_eq!(
+            NotebookStore::identity(&database)?,
+            DatabaseIdentity {
+                notebook: "nb".into(),
+                writer: "office".into(),
+                first_page: None,
+            }
+        );
+        for (page, path, deleted) in [("p-b", "B.md", false), ("p-a", "A.md", true)] {
+            store.save(&Edit {
+                page: page.into(),
+                base: vec![],
+                path: path.into(),
+                text: "text".into(),
+                deleted,
+                created: 1,
+                recovery: None,
+            })?;
+        }
+        drop(store);
+        let before = std::fs::read(&database)?;
+        let identity = NotebookStore::identity(&database)?;
+        assert_eq!(identity.first_page.as_deref(), Some("p-b"));
+        assert_eq!(std::fs::read(&database)?, before);
+        let other = root.path().join("other.sqlite");
+        Connection::open_file(other.to_str().unwrap()).exec("CREATE TABLE t(x)")?()?;
+        let error = NotebookStore::identity(&other).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("is not a Quire notebook database"),
+            "{error:#}"
+        );
+        let error = NotebookStore::identity(&root.path().join("missing.sqlite")).unwrap_err();
+        assert!(format!("{error:#}").contains("Choose the notebook's local.sqlite file"));
         Ok(())
     }
 }
