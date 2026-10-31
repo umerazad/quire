@@ -548,6 +548,70 @@ fn after_editing_in_quire_rt_sees_every_save_once_publication_is_confirmed() {
     let again = prepare_rollback(&fixture.quire_data, true, 5).unwrap();
     assert_eq!(again.published, 0);
     assert_eq!(diff(&before, &fixture.rt_tree()), changed);
+
+    // `QUIRE_WRITE_RT_ROLLBACK_VECTOR=1` refreshes the notebooks rt's own code reads back in
+    // tests/reference/rt-state.test.ts.
+    if std::env::var_os("QUIRE_WRITE_RT_ROLLBACK_VECTOR").is_some() {
+        let vector = rollback_vector();
+        let _ = fs::remove_dir_all(&vector);
+        for notebook in ["folder-notebook", "quire-notebook"] {
+            copy_dir(&fixture.rt.join(notebook), &vector.join(notebook));
+        }
+    }
+}
+
+fn rollback_vector() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/rt-state-rollback")
+}
+
+/// The committed notebooks after a Quire edit and confirmed publication: `rt`'s own files are
+/// the fixture's byte for byte, plus the edited note and one new writer's change file, which a
+/// replica that never saw the notebook reads as Quire saved it.
+#[test]
+fn the_committed_rollback_vector_adds_only_quire_edits_to_rt_notebooks() {
+    let original = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/rt-state");
+    let vector = rollback_vector();
+    let before = tree(&original);
+    let after = tree(&vector);
+    let added: Vec<&String> = after
+        .iter()
+        .filter(|(path, hash)| before.get(*path) != Some(*hash))
+        .map(|(path, _)| path)
+        .collect();
+    let [note, log] = added[..] else {
+        panic!("{added:#?}");
+    };
+    assert_eq!(note, "folder-notebook/Plans.md");
+    assert!(log.starts_with("quire-notebook/devices/") && log.contains("/log/000000001-"));
+    for path in before
+        .keys()
+        .filter(|path| path.starts_with("folder-notebook/") || path.starts_with("quire-notebook/"))
+    {
+        assert!(
+            after.contains_key(path),
+            "{path} is missing from the vector"
+        );
+    }
+
+    let copy = tempfile::tempdir().unwrap();
+    let folder = fs::canonicalize(copy.path())
+        .unwrap()
+        .join("quire-notebook");
+    copy_dir(&vector.join("quire-notebook"), &folder);
+    let notebook = quire_notebook::notebook_identity(&folder).unwrap();
+    let replica =
+        NotebookStore::open(&copy.path().join("replica.sqlite"), &notebook, "reader").unwrap();
+    let report = replica
+        .rescan(&folder, crate::notebook::RescanLimits::default(), None)
+        .unwrap();
+    assert!(report.problems.is_empty(), "{:?}", report.problems);
+    let (today, heads) = replica.page_at("Tasks/Today.md").unwrap().unwrap();
+    let head = replica.get(&heads[0]).unwrap().unwrap();
+    assert_eq!(
+        head.root().field("text").as_str(),
+        Some("- [x] Call back, done in Quire\n")
+    );
+    assert!(!today.is_empty());
 }
 
 /// Paths added or changed since `before`; nothing may disappear.

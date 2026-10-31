@@ -57,6 +57,37 @@ it("keeps both Quire notebooks' drafts; one still holds a save it never publishe
   pending.close();
 });
 
+// tests/fixtures/rt-state-rollback holds both notebooks after Quire migrated them, edited one
+// note in each, and published its Quire notebook save on confirmation (the Rust test
+// after_editing_in_quire_rt_sees_every_save_once_publication_is_confirmed writes it). rt, given
+// its own unchanged application data, sees both edits and keeps its own drafts.
+const withRollback = () => {
+  const root = copy();
+  for (const notebook of ["folder-notebook", "quire-notebook"])
+    cpSync(path.resolve("tests/fixtures/rt-state-rollback", notebook), path.join(root, notebook), { recursive: true });
+  return root;
+};
+
+it("reads a folder notebook note Quire edited, with rt's own draft still offered", async () => {
+  const root = withRollback();
+  const files = new VaultFiles(path.join(root, "folder-notebook"), path.join(root, "app-data"));
+  const snapshot = await files.snapshot();
+  const plans = snapshot.documents.find((d) => d.path === "Plans.md");
+  expect(plans?.text.endsWith("- Edited in Quire\n")).toBe(true);
+  expect(snapshot.recovery?.map((r) => r.path)).toEqual(["Ideas.md"]);
+  files.close();
+});
+
+it("imports a Quire notebook save Quire published under its own writer", async () => {
+  const root = withRollback();
+  const engine = await NotebookEngine.open({ folder: path.join(root, "quire-notebook"), appData: path.join(root, "app-data") });
+  const pages = Object.fromEntries(engine.snapshot().documents.map((d) => [d.path, d.text]));
+  expect(pages["Tasks/Today.md"]).toBe("- [x] Call back, done in Quire\n");
+  expect(pages["Welcome.md"]).toBe("- Welcome, typed but not saved\n");
+  expect(engine.pendingCount()).toBe(1);
+  engine.store.close();
+});
+
 it("settles the draft typed into a known version when rt opens the notebook", async () => {
   const root = copy();
   const engine = await NotebookEngine.open({ folder: path.join(root, "quire-notebook"), appData: path.join(root, "app-data") });
