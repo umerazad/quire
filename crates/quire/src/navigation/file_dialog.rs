@@ -26,8 +26,8 @@ pub enum FileDialogEvent {
         pages: Vec<String>,
         folder: Option<String>,
     },
-    /// The page now lives at `path`, and every link to it followed.
-    Renamed { page: String, path: String },
+    /// The page was renamed, and every link to it followed.
+    Renamed(file_actions::Renamed),
 }
 
 /// What the dialog shows about a planned deletion; it stays after a refused apply.
@@ -263,12 +263,12 @@ impl FileDialog {
         cx.spawn(async move |this, cx| {
             let result = match plan.await {
                 Ok(Some(plan)) => {
-                    let path = plan.target.clone();
+                    let renamed = plan.renamed.clone();
                     let written = cx.update(|cx| {
                         let (_, storage) = writers(cx);
                         file_actions::rename(plan, storage, cx)
                     });
-                    written.await.map(|_| Some(path))
+                    written.await.map(|_| Some(renamed))
                 }
                 Ok(None) => Ok(None),
                 Err(error) => Err(error),
@@ -277,8 +277,8 @@ impl FileDialog {
                 this.work = None;
                 match result {
                     Ok(renamed) => {
-                        if let Some(path) = renamed {
-                            cx.emit(FileDialogEvent::Renamed { page, path });
+                        if let Some(renamed) = renamed {
+                            cx.emit(FileDialogEvent::Renamed(renamed));
                         }
                         cx.emit(DismissEvent);
                     }

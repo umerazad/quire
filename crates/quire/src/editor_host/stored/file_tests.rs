@@ -413,3 +413,38 @@ fn renaming_refuses_taken_invalid_and_case_only_names_and_stale_pages(cx: &mut T
         "- [[Old name]] edited elsewhere\n"
     );
 }
+
+#[gpui::test]
+fn a_rename_is_followed_until_the_page_list_shows_its_new_title(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&PAGES, "o", cx);
+    let listed = |title: &str| quire_store::index::ListedPage {
+        page: quire_store::index::PageRef {
+            page: "o".into(),
+            revision: String::new(),
+            path: "New.md".into(),
+            title: title.into(),
+        },
+        date: None,
+    };
+    let renamed = crate::file_actions::Renamed {
+        page: "o".into(),
+        path: "New.md".into(),
+        title: "New".into(),
+    };
+    notebook
+        .window
+        .update(cx, |view, _, cx| {
+            // An overlay with the new path but the text from before the merge.
+            view.nav.pages = vec![listed("Old")];
+            view.nav.renamed = Some(renamed.clone());
+            view.nav.catalogue = None;
+            view.follow_rename(cx);
+            assert_eq!(view.nav.renamed.as_ref(), Some(&renamed));
+            assert!(view.nav.catalogue.is_some(), "the page list is asked again");
+
+            view.nav.pages = vec![listed("New")];
+            view.follow_rename(cx);
+            assert_eq!(view.nav.renamed, None);
+        })
+        .unwrap();
+}

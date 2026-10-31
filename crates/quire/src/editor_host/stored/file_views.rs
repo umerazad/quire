@@ -39,8 +39,8 @@ impl StoredWindow {
                 FileDialogEvent::Deleted { pages, folder } => {
                     this.pages_deleted(pages, folder.as_deref(), window, cx)
                 }
-                FileDialogEvent::Renamed { page, path } => {
-                    this.nav.renamed = Some((page.clone(), path.clone()));
+                FileDialogEvent::Renamed(renamed) => {
+                    this.nav.renamed = Some(renamed.clone());
                     this.follow_rename(cx);
                     this.update_title(window, cx);
                     cx.notify();
@@ -127,14 +127,17 @@ impl StoredWindow {
         }
     }
 
-    /// Refreshes the page list until it shows a renamed page at its new path. An open page's new
-    /// path reaches the index with its next overlay, which can land after the rename is written.
+    /// Refreshes the page list until it shows a renamed page at its new path with its new title.
+    /// An open page reaches the index through its overlays: the new path can arrive before the
+    /// merged text that carries the new title, and both can land after the rename is written.
     pub(in crate::editor_host::stored) fn follow_rename(&mut self, cx: &mut gpui::Context<Self>) {
-        let Some((page, path)) = &self.nav.renamed else {
+        let Some(renamed) = &self.nav.renamed else {
             return;
         };
         let listed = self.nav.pages.iter().any(|listed| {
-            listed.page.page.as_str() == Some(page.as_str()) && listed.page.path == *path
+            listed.page.page.as_str() == Some(renamed.page.as_str())
+                && listed.page.path == renamed.path
+                && listed.page.title == renamed.title
         });
         if listed {
             self.nav.renamed = None;

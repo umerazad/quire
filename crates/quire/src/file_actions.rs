@@ -9,6 +9,7 @@ use crate::{
 };
 use gpui::{App, AppContext as _, Entity, Task};
 use quire_core::{
+    markdown::page_title,
     relocate::{MISSING_SOURCE, Relocation, relocate_page, rename_target},
     source_text::SourceText,
 };
@@ -162,9 +163,17 @@ pub fn delete(
 pub const STALE_RENAME: &str =
     "A page changed while it was being renamed. Nothing was renamed; rename it again.";
 
+/// Where a renamed page now lives and the title the page list will show for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Renamed {
+    pub page: String,
+    pub path: String,
+    pub title: String,
+}
+
 /// A planned rename: the writes of the renamed page and every page whose links follow it.
 pub struct RenamePlan {
-    pub target: String,
+    pub renamed: Renamed,
     writes: Vec<PageWrite>,
 }
 
@@ -230,6 +239,7 @@ pub fn plan_rename(
         }))
         .await?;
         let mut writes = Vec::new();
+        let mut title = None;
         for (source, original, normalized, references, urls) in analyzed {
             let Some(planned) = relocate_page(
                 &relocation,
@@ -244,10 +254,20 @@ pub fn plan_rename(
             let text = original.apply(planned.edits).map_err(|error| {
                 format!("Could not rewrite links in {}: {error}. Rename again.", source.path)
             })?;
+            if source.page == page {
+                title = Some(page_title(&planned.path, &text).to_lossy_string());
+            }
             writes.push(source.write_at(planned.path, text));
         }
+        let Some(title) = title else {
+            return Err(MISSING_SOURCE.into());
+        };
         Ok(Some(RenamePlan {
-            target: relocation.target,
+            renamed: Renamed {
+                page,
+                path: relocation.target,
+                title,
+            },
             writes,
         }))
     })

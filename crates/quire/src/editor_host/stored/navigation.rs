@@ -35,8 +35,8 @@ pub(super) struct Navigation {
     watched: HashSet<EntityId>,
     pub(super) palette: Option<Entity<Picker<PagePalette>>>,
     pub(super) dialog: Option<Entity<crate::navigation::file_dialog::FileDialog>>,
-    /// A renamed page and its new path, until the page list shows it there.
-    pub(super) renamed: Option<(String, String)>,
+    /// A renamed page, until the page list shows its new path and title.
+    pub(super) renamed: Option<crate::file_actions::Renamed>,
     pub(super) pages: Vec<ListedPage>,
     catalogue: Option<Task<()>>,
     saving: Option<Task<()>>,
