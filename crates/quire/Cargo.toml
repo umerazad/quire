@@ -25,6 +25,17 @@ multi_buffer = { workspace = true, optional = true }
 grammars = { workspace = true, optional = true }
 tree-sitter-quire-markdown = { workspace = true, optional = true }
 tree-sitter = { workspace = true, optional = true }
+tree-sitter-bash = { workspace = true, optional = true }
+tree-sitter-cpp = { workspace = true, optional = true }
+tree-sitter-css = { workspace = true, optional = true }
+tree-sitter-html = { workspace = true, optional = true }
+tree-sitter-jsdoc = { workspace = true, optional = true }
+tree-sitter-json = { workspace = true, optional = true }
+tree-sitter-python = { workspace = true, optional = true }
+tree-sitter-regex = { workspace = true, optional = true }
+tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-typescript = { workspace = true, optional = true }
+tree-sitter-yaml = { workspace = true, optional = true }
 settings = { workspace = true, optional = true }
 theme = { workspace = true, optional = true }
 theme_settings = { workspace = true, optional = true }
@@ -52,4 +63,4 @@ tree-sitter-md.workspace = true
 [features]
 default = ["full-editor"]
 test-support = ["gpui/test-support", "gpui_platform/test-support"]
-full-editor = ["dep:quire_core", "dep:quire_store", "dep:futures", "dep:rope", "dep:uuid", "dep:editor", "dep:ui", "dep:http_client", "dep:search", "dep:workspace", "dep:language", "dep:multi_buffer", "dep:grammars", "dep:tree-sitter-quire-markdown", "dep:tree-sitter", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:assets", "dep:util", "dep:zed_actions", "dep:picker", "dep:menu", "dep:db", "dep:serde_json", "dep:project", "dep:anyhow", "dep:fs", "dep:paths"]
+full-editor = ["dep:quire_core", "dep:quire_store", "dep:futures", "dep:rope", "dep:uuid", "dep:editor", "dep:ui", "dep:http_client", "dep:search", "dep:workspace", "dep:language", "dep:multi_buffer", "dep:grammars", "dep:tree-sitter-quire-markdown", "dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-cpp", "dep:tree-sitter-css", "dep:tree-sitter-html", "dep:tree-sitter-jsdoc", "dep:tree-sitter-json", "dep:tree-sitter-python", "dep:tree-sitter-regex", "dep:tree-sitter-rust", "dep:tree-sitter-typescript", "dep:tree-sitter-yaml", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:assets", "dep:util", "dep:zed_actions", "dep:picker", "dep:menu", "dep:db", "dep:serde_json", "dep:project", "dep:anyhow", "dep:fs", "dep:paths"]
