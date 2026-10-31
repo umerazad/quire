@@ -236,6 +236,11 @@ impl NotebookWindow {
         &self.source
     }
 
+    #[cfg(test)]
+    pub(crate) fn analysis(&self) -> &Entity<crate::page_analysis::PageAnalysis> {
+        &self.analysis
+    }
+
     fn tag_summary(&self, cx: &App) -> gpui::SharedString {
         self.analysis
             .read(cx)

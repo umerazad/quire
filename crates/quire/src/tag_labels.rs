@@ -237,8 +237,6 @@ pub fn refresh(editor: &Entity<Editor>, page: &Entity<PageAnalysis>, cx: &mut Ap
         .map(|inline| inline.tags.to_vec())
         .unwrap_or_default();
     let tags = toned(&tokens);
-    let blocks = page.read(cx).current(cx);
-    let blocks = blocks.as_ref().map(|parsed| parsed.blocks.clone());
     let dark = !cx.theme().appearance.is_light();
     editor.update(cx, |editor, cx| {
         let keys = keys();
@@ -251,7 +249,16 @@ pub fn refresh(editor: &Entity<Editor>, page: &Entity<PageAnalysis>, cx: &mut Ap
             return;
         }
         let snapshot = buffer.snapshot(cx);
-        let links = TagLinks::anchored(&tokens, blocks.as_deref(), &snapshot);
+        // Blocks are parsed only for tags to link: parsing the whole page on every edit took
+        // most of each keystroke's work on a 1 MiB page without tags.
+        let blocks = (!tokens.is_empty())
+            .then(|| page.read(cx).current(cx))
+            .flatten();
+        let links = TagLinks::anchored(
+            &tokens,
+            blocks.as_ref().map(|parsed| &parsed.blocks[..]),
+            &snapshot,
+        );
         editor.register_addon(links);
         let anchored = |range: &Range<usize>| {
             snapshot.anchor_after(MultiBufferOffset(range.start))
@@ -468,6 +475,29 @@ mod tests {
         let mut visual = gpui::VisualTestContext::from_window(page.into(), cx);
         visual.update(|window, cx| window.draw(cx).clear(cx));
         visual.debug_bounds("quire-tag-pill").is_some()
+    }
+
+    #[gpui::test]
+    fn a_page_without_tags_is_not_parsed_into_blocks_to_link_them(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let page = cx.add_window(|window, cx| {
+            let mut view = crate::editor_host::NotebookWindow::new("- plain\n- text\n", window, cx);
+            view.show_written(window, cx);
+            view
+        });
+        cx.run_until_parked();
+        let parsed = |cx: &mut TestAppContext| {
+            page.update(cx, |view, _, cx| view.analysis().read(cx).blocks_parsed())
+                .unwrap()
+        };
+        assert!(!parsed(cx));
+        page.update(cx, |view, window, cx| {
+            view.second_editor()
+                .update(cx, |editor, cx| editor.insert(" #idea", window, cx))
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(parsed(cx), "a tag is linked to its block");
     }
 
     #[gpui::test]
