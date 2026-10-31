@@ -58,6 +58,9 @@ pub enum Exchange {
         label: SharedString,
         /// Present while stopping leaves nothing behind.
         cancel: Option<Arc<AtomicBool>>,
+        /// Wakes work that waits for Cancel rather than checking `cancel`; dropping it, as
+        /// closing the window does, stops that work too.
+        stop: Option<futures::channel::oneshot::Sender<()>>,
     },
     Finished {
         message: SharedString,
@@ -91,6 +94,22 @@ impl Exchange {
         *self = Self::Running {
             label: label.into(),
             cancel,
+            stop: None,
+        };
+        cx.notify();
+    }
+
+    /// Starts work that `stop` ends when the writer presses Cancel or the status line goes away.
+    pub fn start_stoppable(
+        &mut self,
+        label: impl Into<SharedString>,
+        stop: futures::channel::oneshot::Sender<()>,
+        cx: &mut Context<Self>,
+    ) {
+        *self = Self::Running {
+            label: label.into(),
+            cancel: Some(Arc::default()),
+            stop: Some(stop),
         };
         cx.notify();
     }
@@ -105,6 +124,7 @@ impl Exchange {
         if let Self::Running {
             label: shown,
             cancel,
+            ..
         } = self
         {
             *shown = label.into();
@@ -134,9 +154,13 @@ impl Exchange {
         if let Self::Running {
             cancel: Some(cancel),
             label,
+            stop,
         } = self
         {
             cancel.store(true, Ordering::Relaxed);
+            if let Some(stop) = stop.take() {
+                stop.send(()).ok();
+            }
             *label = "Canceling…".into();
             cx.notify();
         }
