@@ -4,8 +4,9 @@
 use super::*;
 use crate::navigation::{
     CaptureTask, CloseTab, DeleteFile, DeletePage, FindPage, FocusFiles, FocusReferences, GoBack,
-    GoForward, NewPage, NextTab, OpenToday, PreviousTab, RenameFile, RenamePage, ShowDaily,
-    ShowPages, ShowTags, ShowTasks, ToggleFavorite, ToggleSidePane, WorkspaceFile, create_page,
+    GoForward, MoveFile, MovePage, NewPage, NextTab, OpenToday, PreviousTab, RenameFile,
+    RenamePage, ShowDaily, ShowPages, ShowTags, ShowTasks, ToggleFavorite, ToggleSidePane,
+    WorkspaceFile, create_page,
     palette::{PagePalette, PaletteChoice, PaletteMode},
 };
 use gpui::{DismissEvent, EntityId, SharedString, Task};
@@ -37,8 +38,8 @@ pub(super) struct Navigation {
     watched: HashSet<EntityId>,
     pub(super) palette: Option<Entity<Picker<PagePalette>>>,
     pub(super) dialog: Option<Entity<crate::navigation::file_dialog::FileDialog>>,
-    /// A renamed page, until the page list shows its new path and title.
-    pub(super) renamed: Option<crate::file_actions::Renamed>,
+    /// Renamed or moved pages, until the page list shows each at its new path with its title.
+    pub(super) renamed: Vec<crate::file_actions::Renamed>,
     pub(super) pages: Vec<ListedPage>,
     catalogue: Option<Task<()>>,
     saving: Option<Task<()>>,
@@ -75,7 +76,7 @@ impl Navigation {
             watched: HashSet::new(),
             palette: None,
             dialog: None,
-            renamed: None,
+            renamed: Vec::new(),
             pages: Vec::new(),
             catalogue: None,
             saving: None,
@@ -480,6 +481,12 @@ impl StoredWindow {
                     this.rename_selected_file(window, cx)
                 }),
             )
+            .on_action(
+                cx.listener(|this, _: &MovePage, window, cx| this.move_shown_page(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &MoveFile, window, cx| this.move_selected_file(window, cx)),
+            )
     }
 
     /// Moves through history without recording recents, restoring a closed tab if needed.
@@ -763,6 +770,10 @@ mod embeds_tests;
 #[cfg(test)]
 #[path = "file_tests.rs"]
 mod file_tests;
+
+#[cfg(test)]
+#[path = "move_tests.rs"]
+mod move_tests;
 
 #[cfg(test)]
 #[path = "task_lists_tests.rs"]

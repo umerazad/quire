@@ -578,3 +578,30 @@ fn block_choices_and_previews_read_live_blocks_and_refuse_ambiguous_ids() -> Res
     );
     Ok(())
 }
+
+#[test]
+fn relocation_candidates_include_pages_not_analyzed_yet() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "o", "Old.md", "- old")?;
+    save(&store, "l", "Links.md", "- [o](Old.md)")?;
+    save(&store, "k", "Keep.md", "- keep")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    analyze_all(&index, &[])?;
+    let candidates = |index: &QueryIndex| -> Result<Vec<String>> {
+        Ok(index
+            .relocation(&JsString::from("o"))?
+            .unwrap()
+            .candidates
+            .into_iter()
+            .map(|page| page.path)
+            .collect())
+    };
+    assert_eq!(candidates(&index)?, ["Old.md"], "no analysis names a link");
+    // Another writer saves a page; until it is analyzed, its links are unknown, so it is read.
+    save(&store, "l", "Links.md", "- [o](Old.md) edited")?;
+    assert_eq!(candidates(&index)?, ["Old.md", "Links.md"]);
+    analyze_all(&index, &[])?;
+    assert_eq!(candidates(&index)?, ["Old.md"]);
+    Ok(())
+}

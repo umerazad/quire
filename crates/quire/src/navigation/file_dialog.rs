@@ -1,9 +1,10 @@
-//! The modal for deleting a page or folder and for renaming a page. Deleting names what goes and
-//! how many links stop resolving, and applies only when confirmed. Renaming takes the new name and
-//! applies it with every link that follows.
+//! The modal for deleting a page or folder, renaming a page, and moving a page or folder.
+//! Deleting names what goes and how many links stop resolving, and applies only when confirmed.
+//! Renaming takes the new name and applies it with every link that follows. Moving takes a path,
+//! previews every page and link that changes, and applies that preview or nothing.
 
 use crate::{
-    file_actions::{self, DeletionPlan, Target},
+    file_actions::{self, DeletionPlan, LinkUpdate, Relocate, RelocationPlan, Target},
     navigation::tag_edits::Writers,
 };
 use editor::{Editor, EditorEvent};
@@ -20,23 +21,28 @@ use ui::{
 
 pub const DIALOG_CONTEXT: &str = "QuireDialog";
 
+/// Pages and link changes a move preview lists before "Show more".
+pub const LISTED_CHANGES: usize = 20;
+
 pub enum FileDialogEvent {
     /// These pages were deleted, from `folder` when a folder went.
     Deleted {
         pages: Vec<String>,
         folder: Option<String>,
     },
-    /// The page was renamed, and every link to it followed.
-    Renamed(file_actions::Renamed),
+    /// These pages were renamed or moved, and every link to them followed.
+    Relocated(Vec<file_actions::Renamed>),
 }
 
-/// What the dialog shows about a planned deletion; it stays after a refused apply.
+/// What the dialog shows about a planned deletion or move; it stays after a refused apply.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Summary {
     pub heading: String,
     pub detail: String,
     pub listed: Vec<String>,
     pub more: usize,
+    /// The link changes a move makes, each as page, before, and after.
+    pub updates: Vec<LinkUpdate>,
 }
 
 impl Summary {
@@ -47,8 +53,26 @@ impl Summary {
             detail: plan.detail(),
             listed: listed.into_iter().map(str::to_owned).collect(),
             more,
+            updates: Vec::new(),
         }
     }
+
+    fn of_move(plan: &RelocationPlan) -> Self {
+        Self {
+            heading: plan.heading(),
+            detail: plan.detail(),
+            listed: plan.updated.iter().take(LISTED_CHANGES).cloned().collect(),
+            more: plan.updated.len().saturating_sub(LISTED_CHANGES),
+            updates: plan.updates.clone(),
+        }
+    }
+}
+
+/// What is moved: one page by identity, or a folder by path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Moving {
+    Page(String),
+    Folder(String),
 }
 
 enum Mode {
@@ -60,6 +84,14 @@ enum Mode {
         page: String,
         name: Entity<Editor>,
         index: IndexClient,
+    },
+    Move {
+        moving: Moving,
+        path: Entity<Editor>,
+        index: IndexClient,
+        plan: Option<RelocationPlan>,
+        /// How many link changes the preview shows.
+        shown: usize,
     },
 }
 
@@ -81,9 +113,19 @@ impl Focusable for FileDialog {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.mode {
             Mode::Rename { name, .. } => name.focus_handle(cx),
+            Mode::Move { path, .. } => path.focus_handle(cx),
             Mode::Delete { .. } => self.focus.clone(),
         }
     }
+}
+
+fn field(text: String, window: &mut Window, cx: &mut Context<FileDialog>) -> Entity<Editor> {
+    cx.new(|cx| {
+        let mut editor = Editor::single_line(window, cx);
+        editor.set_text(text, window, cx);
+        editor.select_all(&editor::actions::SelectAll, window, cx);
+        editor
+    })
 }
 
 impl FileDialog {
@@ -144,12 +186,7 @@ impl FileDialog {
         cx: &mut Context<Self>,
     ) -> Self {
         let current = page_name(path.rsplit('/').next().unwrap_or_default()).to_owned();
-        let name = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_text(current, window, cx);
-            editor.select_all(&editor::actions::SelectAll, window, cx);
-            editor
-        });
+        let name = field(current, window, cx);
         let subscriptions = vec![cx.subscribe(&name, |this, _, event: &EditorEvent, cx| {
             if matches!(event, EditorEvent::BufferEdited) && this.error.take().is_some() {
                 cx.notify();
@@ -167,22 +204,80 @@ impl FileDialog {
         }
     }
 
+    /// Asks where a page or folder goes, starting from where it is. Editing the path drops any
+    /// preview, so only a previewed move can be applied.
+    pub fn relocate(
+        moving: Moving,
+        path: String,
+        writers: Writers,
+        index: IndexClient,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let editor = field(path.clone(), window, cx);
+        let subscriptions = vec![cx.subscribe(&editor, |this, _, event: &EditorEvent, cx| {
+            if !matches!(event, EditorEvent::BufferEdited) {
+                return;
+            }
+            this.error = None;
+            this.summary = None;
+            if let Mode::Move { plan, .. } = &mut this.mode {
+                *plan = None;
+            }
+            cx.notify();
+        })];
+        Self {
+            focus: cx.focus_handle(),
+            writers,
+            mode: Mode::Move {
+                moving,
+                path: editor,
+                index,
+                plan: None,
+                shown: LISTED_CHANGES,
+            },
+            path: path.into(),
+            summary: None,
+            error: None,
+            work: None,
+            _subscriptions: subscriptions,
+        }
+    }
+
     #[cfg(test)]
-    /// The name typed so far, for a rename.
+    /// The name or path typed so far, for a rename or move.
     pub fn name(&self, cx: &App) -> Option<String> {
         match &self.mode {
             Mode::Rename { name, .. } => Some(name.read(cx).text(cx)),
+            Mode::Move { path, .. } => Some(path.read(cx).text(cx)),
             Mode::Delete { .. } => None,
         }
     }
 
     #[cfg(test)]
-    /// Selects the whole typed name, so typing replaces it.
+    /// Selects the whole typed name or path, so typing replaces it.
     pub fn select_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Mode::Rename { name, .. } = &self.mode {
-            name.update(cx, |name, cx| {
-                name.select_all(&editor::actions::SelectAll, window, cx)
+        if let Mode::Rename { name: field, .. } | Mode::Move { path: field, .. } = &self.mode {
+            field.update(cx, |field, cx| {
+                field.select_all(&editor::actions::SelectAll, window, cx)
             });
+        }
+    }
+
+    #[cfg(test)]
+    /// Whether a move preview is ready to apply.
+    pub fn previewed(&self) -> bool {
+        matches!(&self.mode, Mode::Move { plan: Some(_), .. })
+    }
+
+    #[cfg(test)]
+    /// The link changes the preview shows now.
+    pub fn shown_updates(&self) -> Vec<LinkUpdate> {
+        match (&self.mode, &self.summary) {
+            (Mode::Move { shown, .. }, Some(summary)) => {
+                summary.updates.iter().take(*shown).cloned().collect()
+            }
+            _ => Vec::new(),
         }
     }
 
@@ -194,15 +289,23 @@ impl FileDialog {
         !self.is_busy()
             && match &self.mode {
                 Mode::Delete { plan, .. } => plan.is_some(),
-                Mode::Rename { .. } => true,
+                Mode::Rename { .. } | Mode::Move { .. } => true,
             }
     }
 
     fn title(&self) -> &'static str {
-        match self.mode {
+        match &self.mode {
             Mode::Delete { folder: false, .. } => "Delete page",
             Mode::Delete { folder: true, .. } => "Delete folder",
             Mode::Rename { .. } => "Rename page",
+            Mode::Move {
+                moving: Moving::Page(_),
+                ..
+            } => "Move page",
+            Mode::Move {
+                moving: Moving::Folder(_),
+                ..
+            } => "Rename or move folder",
         }
     }
 
@@ -221,6 +324,32 @@ impl FileDialog {
             Mode::Rename { page, name, index } => {
                 let (page, name, index) = (page.clone(), name.read(cx).text(cx), index.clone());
                 self.rename_now(page, name, index, cx)
+            }
+            Mode::Move { plan, .. } if plan.is_some() => {
+                let Some(plan) = plan.take() else {
+                    return;
+                };
+                self.move_now(plan, cx)
+            }
+            Mode::Move {
+                moving,
+                path,
+                index,
+                ..
+            } => {
+                let path = path.read(cx).text(cx);
+                let request = match moving {
+                    Moving::Page(page) => Relocate::Move {
+                        page: page.clone(),
+                        path,
+                    },
+                    Moving::Folder(folder) => Relocate::Folder {
+                        folder: folder.clone(),
+                        path,
+                    },
+                };
+                let index = index.clone();
+                self.preview_now(request, index, cx)
             }
         };
         self.work = Some(work);
@@ -263,12 +392,12 @@ impl FileDialog {
         cx.spawn(async move |this, cx| {
             let result = match plan.await {
                 Ok(Some(plan)) => {
-                    let renamed = plan.renamed.clone();
+                    let moved = plan.moved.clone();
                     let written = cx.update(|cx| {
                         let (_, storage) = writers(cx);
                         file_actions::rename(plan, storage, cx)
                     });
-                    written.await.map(|_| Some(renamed))
+                    written.await.map(|_| Some(moved))
                 }
                 Ok(None) => Ok(None),
                 Err(error) => Err(error),
@@ -276,9 +405,9 @@ impl FileDialog {
             this.update(cx, |this, cx| {
                 this.work = None;
                 match result {
-                    Ok(renamed) => {
-                        if let Some(renamed) = renamed {
-                            cx.emit(FileDialogEvent::Renamed(renamed));
+                    Ok(moved) => {
+                        if let Some(moved) = moved {
+                            cx.emit(FileDialogEvent::Relocated(moved));
                         }
                         cx.emit(DismissEvent);
                     }
@@ -290,13 +419,86 @@ impl FileDialog {
         })
     }
 
+    /// Plans the move and shows what it changes; nothing is written yet.
+    fn preview_now(
+        &mut self,
+        request: Relocate,
+        index: IndexClient,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        let (open, storage) = (self.writers)(cx);
+        let plan = file_actions::plan_relocation(request, open, index, storage, cx);
+        cx.spawn(async move |this, cx| {
+            let plan = plan.await;
+            this.update(cx, |this, cx| {
+                this.work = None;
+                match plan {
+                    Ok(Some(plan)) => {
+                        this.summary = Some(Summary::of_move(&plan));
+                        if let Mode::Move {
+                            plan: planned,
+                            shown,
+                            ..
+                        } = &mut this.mode
+                        {
+                            *planned = Some(plan);
+                            *shown = LISTED_CHANGES;
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => this.error = Some(error.into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+    }
+
+    /// Applies the previewed move or nothing. A refusal drops the preview, so the next confirm
+    /// previews again from the pages as they are now.
+    fn move_now(&mut self, plan: RelocationPlan, cx: &mut Context<Self>) -> Task<()> {
+        let (_, storage) = (self.writers)(cx);
+        let moved = plan.moved.clone();
+        let work = file_actions::relocate(plan, storage, file_actions::STALE_MOVE, cx);
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            this.update(cx, |this, cx| {
+                this.work = None;
+                match result {
+                    Ok(_) => {
+                        cx.emit(FileDialogEvent::Relocated(moved));
+                        cx.emit(DismissEvent);
+                    }
+                    Err(error) => {
+                        this.summary = None;
+                        this.error = Some(error.into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+    }
+
+    /// Shows the next link changes of a long preview.
+    pub fn show_more(&mut self, cx: &mut Context<Self>) {
+        if let Mode::Move { shown, .. } = &mut self.mode {
+            *shown += LISTED_CHANGES;
+            cx.notify();
+        }
+    }
+
     pub fn cancel(&mut self, cx: &mut Context<Self>) {
         if !self.is_busy() {
             cx.emit(DismissEvent);
         }
     }
 
-    fn render_summary(&self, summary: &Summary) -> Section {
+    fn render_summary(&self, summary: &Summary, cx: &mut Context<Self>) -> Section {
+        let shown = match &self.mode {
+            Mode::Move { shown, .. } => *shown,
+            _ => 0,
+        };
         Section::new()
             .child(Label::new(summary.heading.clone()))
             .child(Label::new(summary.detail.clone()).color(Color::Muted))
@@ -312,6 +514,39 @@ impl FileDialog {
                         .color(Color::Muted),
                 )
             })
+            .when(!summary.updates.is_empty(), |section| {
+                section
+                    .child(Label::new(match summary.updates.len() {
+                        1 => "1 link change:".to_owned(),
+                        count => format!("{count} link changes:"),
+                    }))
+                    .children(summary.updates.iter().take(shown).map(|update| {
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Label::new(update.path.clone())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new(update.before.clone())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Deleted)
+                                    .strikethrough(),
+                            )
+                            .child(
+                                Label::new(update.after.clone())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Created),
+                            )
+                    }))
+                    .when(summary.updates.len() > shown, |section| {
+                        section.child(
+                            Button::new("file-dialog-more", "Show more link changes")
+                                .on_click(cx.listener(|this, _, _, cx| this.show_more(cx))),
+                        )
+                    })
+            })
     }
 
     fn confirm_label(&self) -> &'static str {
@@ -320,7 +555,23 @@ impl FileDialog {
             (Mode::Delete { .. }, _) => "Delete",
             (Mode::Rename { .. }, true) => "Renaming…",
             (Mode::Rename { .. }, false) => "Rename",
+            (Mode::Move { .. }, true) if self.summary.is_some() => "Moving…",
+            (Mode::Move { .. }, true) => "Previewing…",
+            (Mode::Move { plan: Some(_), .. }, false) => "Move",
+            (Mode::Move { .. }, false) => "Preview",
         }
+    }
+
+    fn render_field(field: &Entity<Editor>, help: &'static str, cx: &App) -> Section {
+        Section::new()
+            .child(
+                div()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .p_1()
+                    .child(field.clone()),
+            )
+            .child(Label::new(help).size(LabelSize::Small).color(Color::Muted))
     }
 }
 
@@ -329,7 +580,7 @@ impl Render for FileDialog {
         let busy = self.is_busy();
         let style = match self.mode {
             Mode::Delete { .. } => ButtonStyle::Tinted(ui::TintColor::Error),
-            Mode::Rename { .. } => ButtonStyle::Filled,
+            Mode::Rename { .. } | Mode::Move { .. } => ButtonStyle::Filled,
         };
         let mut modal = Modal::new("file-dialog", None)
             .header(
@@ -356,25 +607,29 @@ impl Render for FileDialog {
                 ),
             );
         match (&self.mode, &self.summary) {
-            (Mode::Rename { name, .. }, _) => modal = modal.section(
-                Section::new()
-                    .child(
-                        div()
-                            .border_1()
-                            .border_color(cx.theme().colors().border)
-                            .p_1()
-                            .child(name.clone()),
-                    )
-                    .child(
-                        Label::new(
-                            "The file name and title change together; links to this page follow.",
-                        )
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                    ),
-            ),
+            (Mode::Rename { name, .. }, _) => {
+                modal = modal.section(Self::render_field(
+                    name,
+                    "The file name and title change together; links to this page follow.",
+                    cx,
+                ))
+            }
+            (Mode::Move { path, moving, .. }, summary) => {
+                let help = match moving {
+                    Moving::Page(_) => {
+                        "Use / to separate folders. The page title and block IDs stay the same; this changes its filename or folder."
+                    }
+                    Moving::Folder(_) => {
+                        "Use / to separate folders. Every page inside moves and links to it follow; other files stay where they are."
+                    }
+                };
+                modal = modal.section(Self::render_field(path, help, cx));
+                if let Some(summary) = summary {
+                    modal = modal.section(self.render_summary(summary, cx));
+                }
+            }
             (Mode::Delete { .. }, Some(summary)) => {
-                modal = modal.section(self.render_summary(summary))
+                modal = modal.section(self.render_summary(summary, cx))
             }
             (Mode::Delete { .. }, None) if busy => {
                 modal = modal.section(

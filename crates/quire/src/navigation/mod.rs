@@ -58,8 +58,12 @@ gpui::actions!(
         DeleteFile,
         /// Renames the shown page; its title and every link to it follow.
         RenamePage,
-        /// Renames the highlighted page in Files.
+        /// Renames the highlighted page in Files, or renames or moves the highlighted folder.
         RenameFile,
+        /// Moves the shown page to another path after previewing every link that follows.
+        MovePage,
+        /// Moves the highlighted page or folder in Files after previewing every link change.
+        MoveFile,
     ]
 );
 
@@ -189,6 +193,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("enter", menu::Confirm, Some("QuireDialog > Editor")),
         KeyBinding::new("escape", menu::Cancel, Some("QuireDialog > Editor")),
         KeyBinding::new("f2", RenameFile, Some(FILES_CONTEXT)),
+        KeyBinding::new("shift-f2", MoveFile, Some(FILES_CONTEXT)),
         KeyBinding::new(
             primary!("enter"),
             ToggleTagSelected,

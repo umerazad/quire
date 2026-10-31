@@ -386,6 +386,9 @@ impl Render for StoredWindow {
                     div.child(Button::new("rename-page", "Rename…").on_click(
                         cx.listener(|this, _, window, cx| this.rename_shown_page(window, cx)),
                     ))
+                    .child(Button::new("move-page", "Move…").on_click(
+                        cx.listener(|this, _, window, cx| this.move_shown_page(window, cx)),
+                    ))
                     .child(
                         Button::new("delete-page", "Delete page…").on_click(
                             cx.listener(|this, _, window, cx| this.delete_shown_page(window, cx)),

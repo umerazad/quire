@@ -1,11 +1,11 @@
-//! Deleting and renaming the shown page or a Files item: the dialog, then closing everything the
-//! deleted pages leave behind, or showing the renamed page's new name.
+//! Deleting, renaming, and moving the shown page or a Files item: the dialog, then closing
+//! everything the deleted pages leave behind, or showing moved pages at their new paths.
 
 use super::*;
 use crate::{
     file_actions::Target,
     navigation::{
-        file_dialog::{FileDialog, FileDialogEvent},
+        file_dialog::{FileDialog, FileDialogEvent, Moving},
         tag_edits::Writers,
     },
 };
@@ -39,11 +39,13 @@ impl StoredWindow {
                 FileDialogEvent::Deleted { pages, folder } => {
                     this.pages_deleted(pages, folder.as_deref(), window, cx)
                 }
-                FileDialogEvent::Renamed(renamed) => {
-                    if renamed.previous != renamed.page {
-                        this.page_moved(&renamed.previous, &renamed.page, window, cx);
+                FileDialogEvent::Relocated(moved) => {
+                    for renamed in moved {
+                        if renamed.previous != renamed.page {
+                            this.page_moved(&renamed.previous, &renamed.page, window, cx);
+                        }
                     }
-                    this.nav.renamed = Some(renamed.clone());
+                    this.nav.renamed = moved.clone();
                     this.follow_rename(cx);
                     this.update_title(window, cx);
                     cx.notify();
@@ -89,19 +91,7 @@ impl StoredWindow {
             cx.notify();
             return;
         };
-        let open = self.session.borrow().open_pages();
-        let path = open
-            .iter()
-            .find(|open| open.read(cx).id() == page)
-            .and_then(|open| open.read(cx).path(cx))
-            .or_else(|| {
-                self.nav
-                    .pages
-                    .iter()
-                    .find(|listed| listed.page.page.as_str() == Some(page.as_str()))
-                    .map(|listed| listed.page.path.clone())
-            });
-        let Some(path) = path else {
+        let Some(path) = self.page_path(&page, cx) else {
             return;
         };
         let writers = self.writers();
@@ -119,31 +109,100 @@ impl StoredWindow {
         }
     }
 
-    /// F2 in Files renames the highlighted page; folders are not renamed.
+    /// F2 in Files renames the highlighted page in place, or renames or moves a folder.
     pub(in crate::editor_host::stored) fn rename_selected_file(
         &mut self,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        if let Some(Target::Page(page)) = self.selected_file() {
-            self.ask_rename(page, window, cx);
+        match self.selected_file() {
+            Some(Target::Page(page)) => self.ask_rename(page, window, cx),
+            Some(Target::Folder(folder)) => self.ask_move(Moving::Folder(folder), window, cx),
+            None => {}
         }
+    }
+
+    /// Shift-F2 in Files moves the highlighted page or folder.
+    pub(in crate::editor_host::stored) fn move_selected_file(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        match self.selected_file() {
+            Some(Target::Page(page)) => self.ask_move(Moving::Page(page), window, cx),
+            Some(Target::Folder(folder)) => self.ask_move(Moving::Folder(folder), window, cx),
+            None => {}
+        }
+    }
+
+    pub(in crate::editor_host::stored) fn move_shown_page(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if let Some(page) = self.shown_page(cx) {
+            self.ask_move(Moving::Page(page), window, cx);
+        }
+    }
+
+    /// Opens the move dialog at the page's or folder's current path.
+    pub(in crate::editor_host::stored) fn ask_move(
+        &mut self,
+        moving: Moving,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(index) = self.index_client(cx) else {
+            self.nav.error = Some(
+                "Moving needs the notebook index, which did not start. Reopen the notebook to retry."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        };
+        let path = match &moving {
+            Moving::Page(page) => self.page_path(page, cx),
+            Moving::Folder(folder) => Some(folder.clone()),
+        };
+        let Some(path) = path else {
+            return;
+        };
+        let writers = self.writers();
+        let dialog = cx.new(|cx| FileDialog::relocate(moving, path, writers, index, window, cx));
+        self.show_dialog(dialog, window, cx);
+    }
+
+    /// A page's path from its open buffer, or else from the page list.
+    fn page_path(&self, page: &str, cx: &App) -> Option<String> {
+        let open = self.session.borrow().open_pages();
+        open.iter()
+            .find(|open| open.read(cx).id() == page)
+            .and_then(|open| open.read(cx).path(cx))
+            .or_else(|| {
+                self.nav
+                    .pages
+                    .iter()
+                    .find(|listed| listed.page.page.as_str() == Some(page))
+                    .map(|listed| listed.page.path.clone())
+            })
     }
 
     /// Refreshes the page list until it shows a renamed page at its new path with its new title.
     /// An open page reaches the index through its overlays: the new path can arrive before the
     /// merged text that carries the new title, and both can land after the rename is written.
     pub(in crate::editor_host::stored) fn follow_rename(&mut self, cx: &mut gpui::Context<Self>) {
-        let Some(renamed) = &self.nav.renamed else {
+        if self.nav.renamed.is_empty() {
             return;
-        };
-        let listed = self.nav.pages.iter().any(|listed| {
-            listed.page.page.as_str() == Some(renamed.page.as_str())
-                && listed.page.path == renamed.path
-                && listed.page.title == renamed.title
+        }
+        let listed = self.nav.renamed.iter().all(|renamed| {
+            self.nav.pages.iter().any(|listed| {
+                listed.page.page.as_str() == Some(renamed.page.as_str())
+                    && listed.page.path == renamed.path
+                    && listed.page.title == renamed.title
+            })
         });
         if listed {
-            self.nav.renamed = None;
+            self.nav.renamed.clear();
         } else {
             self.refresh_catalogue(cx);
         }

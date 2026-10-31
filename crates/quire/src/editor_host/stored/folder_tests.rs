@@ -441,7 +441,7 @@ fn renaming_a_folder_page_moves_its_file_rewrites_links_and_keeps_its_tabs(
     });
     wait_until(cx, "the page list with the new name", |cx| {
         read(notebook, cx, |view, _| {
-            view.nav.renamed.is_none()
+            view.nav.renamed.is_empty()
                 && view.nav.title(&new) == Some("New name")
                 && view.nav.title(&old).is_none()
         })
@@ -701,4 +701,148 @@ fn newer_reference_settings_stay_read_only_and_unchanged(cx: &mut TestAppContext
         fs::read_to_string(opened.file(".quire/notebook.json")).unwrap(),
         newer
     );
+}
+
+const PROJECT: [(&str, &str); 5] = [
+    ("Projects/A.md", "- a [[B]] [b](B.md) ![i](img.png)\n"),
+    ("Projects/B.md", "- b [[Projects/A]]\n"),
+    ("Projects/img.png", "png"),
+    ("Top.md", "- [[Projects/A]] [p](Projects/B.md) [[A]]\n"),
+    ("Projects2/Z.md", "- z [[Projects/B]]\n"),
+];
+
+#[gpui::test]
+fn moving_a_folder_moves_each_note_journaled_and_keeps_tabs_and_other_files(
+    cx: &mut TestAppContext,
+) {
+    use super::move_tests::{preview, select_file, update};
+    let opened = open_folder(&PROJECT, "Projects/A.md", cx);
+    let notebook = &opened.notebook;
+    let (old, new) = (
+        page_id_for_path("Projects/A.md"),
+        page_id_for_path("Work/A.md"),
+    );
+    wait_until(cx, "A's editor", |cx| {
+        read(notebook, cx, |view, _| view.editor.is_some())
+    });
+    draw(notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "i y escape");
+    select_file(notebook, "Projects", cx);
+    cx.simulate_keystrokes(notebook.window.into(), "f2");
+    rename_to(notebook, "Work", cx);
+    assert_eq!(
+        preview(notebook, cx),
+        (
+            "Projects → Work".into(),
+            "2 pages move. 2 other pages need link updates. The original files and saved history are retained for recovery.".into(),
+            vec!["Projects2/Z.md".into(), "Top.md".into()],
+            vec![
+                update("Projects/A.md", "img.png", "../Projects/img.png"),
+                update("Projects/B.md", "[[Projects/A]]", "[[Work/A]]"),
+                update("Projects2/Z.md", "[[Projects/B]]", "[[Work/B]]"),
+                update("Top.md", "[[Projects/A]]", "[[Work/A]]"),
+                update("Top.md", "Projects/B.md", "Work/B.md"),
+            ]
+        )
+    );
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the folder move", |cx| {
+        read(notebook, cx, |view, _| view.nav.dialog.is_none())
+    });
+    for (path, text) in [
+        (
+            "Work/A.md",
+            "y- a [[B]] [b](B.md) ![i](../Projects/img.png)\n",
+        ),
+        ("Work/B.md", "- b [[Work/A]]\n"),
+        ("Top.md", "- [[Work/A]] [p](Work/B.md) [[A]]\n"),
+        ("Projects2/Z.md", "- z [[Work/B]]\n"),
+        ("Projects/img.png", "png"),
+    ] {
+        assert_eq!(
+            fs::read_to_string(opened.file(path)).unwrap(),
+            text,
+            "{path}"
+        );
+    }
+    assert!(!opened.file("Projects/A.md").exists());
+    assert!(!opened.file("Projects/B.md").exists());
+    let state = notebook.path.parent().unwrap().to_owned();
+    assert_eq!(fs::read_dir(state.join("retired")).unwrap().count(), 2);
+    assert_eq!(fs::read_dir(state.join("transactions")).unwrap().count(), 0);
+    wait_until(cx, "the moved page to open", |cx| {
+        active(notebook, cx) == new
+    });
+    read(notebook, cx, |view, _| {
+        assert!(view.nav.workspace.tabs.contains(&Destination::page(&new)));
+        assert!(!view.nav.workspace.tabs.contains(&Destination::page(&old)));
+    });
+    wait_until(cx, "the page list with the moved pages", |cx| {
+        read(notebook, cx, |view, _| view.nav.renamed.is_empty())
+    });
+}
+
+#[gpui::test]
+fn renaming_a_folder_page_in_place_from_files_follows_links_and_escape_keeps_it(
+    cx: &mut TestAppContext,
+) {
+    // rt tests/e2e/editor.spec.ts "renames a page in place from the Files menu and its links
+    // follow", with F2 in Files opening the rename dialog.
+    use super::move_tests::select_file;
+    let opened = open_folder(
+        &[
+            ("Old name.md", "- Linked page\n"),
+            (
+                "Welcome.md",
+                "A place for thoughts.\n\n- See [[Old name]] ^seed\n",
+            ),
+        ],
+        "Welcome.md",
+        cx,
+    );
+    let notebook = &opened.notebook;
+    select_file(notebook, "Old name.md", cx);
+    cx.simulate_keystrokes(notebook.window.into(), "f2");
+    wait_until(cx, "the rename field", |cx| {
+        read(notebook, cx, |view, cx| {
+            view.nav
+                .dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.read(cx).name(cx) == Some("Old name".into()))
+        })
+    });
+    rename_to(notebook, "New name", cx);
+    wait_until(cx, "the rename", |cx| {
+        read(notebook, cx, |view, _| view.nav.dialog.is_none())
+    });
+    assert_eq!(
+        fs::read_to_string(opened.file("New name.md")).unwrap(),
+        "- Linked page\n"
+    );
+    assert_eq!(
+        fs::read_to_string(opened.file("Welcome.md")).unwrap(),
+        "A place for thoughts.\n\n- See [[New name]] ^seed\n"
+    );
+    wait_until(cx, "Files to list the new name", |cx| {
+        read(notebook, cx, |view, _| {
+            view.file_rows().iter().any(|row| row.path == "New name.md")
+        })
+    });
+    // Escape leaves the name alone.
+    select_file(notebook, "New name.md", cx);
+    cx.simulate_keystrokes(notebook.window.into(), "f2");
+    wait_until(cx, "the rename field", |cx| {
+        read(notebook, cx, |view, cx| {
+            view.nav
+                .dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.read(cx).name(cx) == Some("New name".into()))
+        })
+    });
+    cx.simulate_keystrokes(notebook.window.into(), "escape");
+    assert!(read(notebook, cx, |view, _| view.nav.dialog.is_none()));
+    assert!(opened.file("New name.md").exists());
+    assert!(read(notebook, cx, |view, _| {
+        view.file_rows().iter().any(|row| row.path == "New name.md")
+    }));
 }
