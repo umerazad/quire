@@ -1,10 +1,9 @@
-//! Tidy this day (reference `checkTidyChange` in `src/core/ai-changes.ts` and `tidyQuestion` in
-//! `ai-commands.ts`): the request for one daily page, and the limits every proposed line must
+//! Tidy this day (reference `checkTidyChange` in `src/core/ai-changes.ts`, `tidyQuestion` and
+//! `tidyBlocked` in `ai-commands.ts`, and the Tidy limits of `notebook-host.ts`): the question
+//! for one daily page, and the limits every change it proposes through `replace_block` must
 //! meet. Tidy may only add links around words already there, a GTD state on an open task with
 //! none, and a 📅 date on an open task with none.
 
-use super::commands::marker_of;
-use crate::merge::diff_regions;
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -19,9 +18,10 @@ static OPEN_TASK: LazyLock<Regex> = LazyLock::new(|| pattern(r"^\[ \][ \t]"));
 static DUE: LazyLock<Regex> =
     LazyLock::new(|| pattern(r"[ \t]*📅[ \t]*(?:\[\[[^\]\n]+\]\]|[0-9]{4}-[0-9]{2}-[0-9]{2})"));
 static SPACES: LazyLock<Regex> = LazyLock::new(|| pattern(r"[ \t]+"));
-static PREFIX: LazyLock<Regex> =
-    LazyLock::new(|| pattern(r"^[ \t]*(?:(?:[-*+]|[0-9]+[.)])[ \t]+)?"));
-static SUFFIX: LazyLock<Regex> = LazyLock::new(|| pattern(r"(?:^|[ \t]+)\^[A-Za-z0-9_-]+[ \t]*$"));
+
+/// Tidy's tool calls may only replace blocks.
+pub const TIDY_ONLY: &str = "Tidy proposes only replace_block changes to blocks on the day's page. It cannot create pages, append blocks, capture tasks or change task states.";
+pub const WRITES_OFF: &str = "AI writes are Off. Set them to Review or Apply in Settings > AI to use Tidy; Tidy always asks before changing anything.";
 
 pub const OTHER_PAGE: &str =
     "Tidy only changes the day it was run on. Leave other pages as they are.";
@@ -34,12 +34,33 @@ pub const ONE_STATE: &str =
 pub const DATE_ON_TASK: &str = "Tidy adds a 📅 date only to an open task.";
 pub const REWRITE: &str =
     "Tidy cannot rewrite, move or delete text. Only add links, a task state or a 📅 date.";
-pub const CHANGED_ID: &str = "Tidy cannot change a block's ID. Keep each ^id as written.";
-pub const ADDED_LINE: &str = "Tidy cannot add lines. Only add to lines already on the page.";
-pub const REMOVED_LINE: &str = "Tidy cannot delete lines. Leave every line on the page.";
+
+/// The question Tidy this day asks about the daily page `page` (reference `tidyQuestion`);
+/// `due_example` is the title of the day after it, for the 📅 example.
+pub fn question(page: &str, due_example: &str) -> String {
+    [
+        format!(
+            "Tidy the daily page [[{page}]]. Read it with read_page, then propose replace_block changes, passing each block's key and the page, that only add to what is there:"
+        ),
+        "1. Links: turn plain-text mentions of existing people, meeting and project pages into [[links]]. Find each page with list_pages: contains matches a name anywhere in a title, and namespace matches a folder such as People. Check the exact titles before linking. Use [[Page|text]] when the wording on the page differs from the title. Never link a page that does not exist.".into(),
+        "2. States: give each open task with no state one of #next, #waiting or #someday.".into(),
+        format!(
+            "3. Dates: when a task's text names a date (such as \"by Thursday\"), add a due stamp such as 📅 [[{due_example}]], counting from the page's own date."
+        ),
+        "Do not change, move or delete any other text, do not touch other pages and do not create pages. Quire refuses anything else. Finish with a short list of what you proposed.".into(),
+    ]
+    .join("\n")
+}
 
 fn links(text: &str) -> Vec<&str> {
     LINK.find_iter(text).map(|found| found.as_str()).collect()
+}
+
+/// The page titles the links in `text` name.
+pub fn link_targets(text: &str) -> Vec<String> {
+    LINK.captures_iter(text)
+        .filter_map(|captures| Some(captures.get(1)?.as_str().trim().to_owned()))
+        .collect()
 }
 
 fn plain(text: &str) -> String {
@@ -109,162 +130,4 @@ pub fn check_change(
         rest = DUE.replace(&rest, "").into_owned();
     }
     (plain(&rest) != plain(before)).then(|| REWRITE.into())
-}
-
-/// A line's indentation and list marker, its text, and its trailing `^id` marker.
-fn parts(line: &str) -> (&str, &str, &str) {
-    let prefix = PREFIX.find(line).map_or(0, |found| found.end());
-    let suffix = SUFFIX
-        .find(&line[prefix..])
-        .map_or(line.len(), |found| prefix + found.start());
-    (&line[..prefix], &line[prefix..suffix], &line[suffix..])
-}
-
-/// The line Tidy may write in place of `before`, or why `after` is refused. A marker the model
-/// dropped is put back.
-pub fn check_line(
-    before: &str,
-    after: &str,
-    exists: impl Fn(&str) -> bool,
-    is_daily: impl Fn(&str) -> bool,
-) -> Result<String, String> {
-    let (prefix, text, suffix) = parts(before);
-    let (new_prefix, new_text, new_suffix) = parts(after);
-    if new_prefix != prefix {
-        return Err(REWRITE.into());
-    }
-    if !new_suffix.is_empty() && marker_of(new_suffix) != marker_of(suffix) {
-        return Err(CHANGED_ID.into());
-    }
-    match check_change(text, new_text.trim_end(), exists, is_daily) {
-        Some(reason) => Err(reason),
-        None => Ok(format!("{prefix}{}{suffix}", new_text.trim_end())),
-    }
-}
-
-/// A proposed line Tidy refused, with why.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Refusal {
-    pub line: String,
-    pub reason: String,
-}
-
-/// What Tidy may apply: the page with only the allowed changes, how many lines they change,
-/// and the refused lines.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Tidied {
-    pub text: String,
-    pub changed: usize,
-    pub refused: Vec<Refusal>,
-}
-
-/// Keeps the allowed changes of `proposed` to `original`, pairing changed lines in order. Lines
-/// added or deleted are refused, and blank lines are left as they were.
-pub fn filter(
-    original: &str,
-    proposed: &str,
-    exists: impl Fn(&str) -> bool,
-    is_daily: impl Fn(&str) -> bool,
-) -> Tidied {
-    let before: Vec<&str> = original.split('\n').collect();
-    let after: Vec<&str> = proposed.split('\n').collect();
-    let mut lines: Vec<String> = before.iter().map(|line| (*line).to_owned()).collect();
-    let mut changed = 0;
-    let mut refused = Vec::new();
-    let mut refuse = |line: &str, reason: &str| {
-        refused.push(Refusal {
-            line: line.to_owned(),
-            reason: reason.to_owned(),
-        })
-    };
-    for region in diff_regions(&before, &after) {
-        let written = |range: std::ops::Range<usize>, lines: &[&str]| -> Vec<usize> {
-            range.filter(|at| !lines[*at].trim().is_empty()).collect()
-        };
-        let removed = written(region.a_start..region.a_end, &before);
-        let added = written(region.b_start..region.b_end, &after);
-        let paired = removed.len().min(added.len());
-        for (&at, &new) in removed.iter().zip(&added) {
-            let new = after[new];
-            match check_line(before[at], new, &exists, &is_daily) {
-                Ok(line) if line != before[at] => {
-                    lines[at] = line;
-                    changed += 1;
-                }
-                Ok(_) => {}
-                Err(reason) => refuse(new, &reason),
-            }
-        }
-        for &at in &removed[paired..] {
-            refuse(before[at], REMOVED_LINE);
-        }
-        for &at in &added[paired..] {
-            refuse(after[at], ADDED_LINE);
-        }
-    }
-    Tidied {
-        text: lines.join("\n"),
-        changed,
-        refused,
-    }
-}
-
-/// The request for one daily page. `titles` are the existing pages its text may mention, and
-/// `due_example` the title of a day a 📅 stamp could name.
-pub fn prompt(page: &str, text: &str, titles: &[String], due_example: &str) -> String {
-    let listed = if titles.is_empty() {
-        "No existing page titles match words on this page, so add no links.".to_owned()
-    } else {
-        format!(
-            "Existing pages it may link:\n{}",
-            titles
-                .iter()
-                .map(|title| format!("- {title}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    };
-    [
-        format!(
-            "Tidy the daily page [[{page}]]. Reply with the whole page, line for line, changed only by these additions:"
-        ),
-        "1. Links: turn plain-text mentions of the existing pages listed below into [[links]]. Use [[Page|text]] when the wording on the page differs from the title. Never link a page that is not listed.".into(),
-        "2. States: give each open task with no state one of #next, #waiting or #someday.".into(),
-        format!(
-            "3. Dates: when a task's text names a date (such as \"by Thursday\"), add a due stamp such as 📅 [[{due_example}]], counting from the page's own date."
-        ),
-        "Do not change, move, add or delete any other text, and keep every block marker such as ^b-1a2b at the end of its line. Quire refuses anything else.".into(),
-        String::new(),
-        listed,
-        String::new(),
-        format!("Text:\n<text>\n{text}\n</text>"),
-    ]
-    .join("\n")
-}
-
-/// The titles worth offering Tidy: pages whose title, or a word of it, appears on the page.
-pub fn mentioned_titles<'a>(
-    text: &str,
-    titles: impl IntoIterator<Item = &'a str>,
-    limit: usize,
-) -> Vec<String> {
-    let words: std::collections::HashSet<String> = text
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|word| word.chars().count() >= 3)
-        .map(str::to_lowercase)
-        .collect();
-    let mut found: Vec<String> = titles
-        .into_iter()
-        .filter(|title| {
-            title
-                .split(|c: char| !c.is_alphanumeric())
-                .filter(|word| word.chars().count() >= 3)
-                .any(|word| words.contains(&word.to_lowercase()))
-        })
-        .map(str::to_owned)
-        .collect();
-    found.sort();
-    found.dedup();
-    found.truncate(limit);
-    found
 }

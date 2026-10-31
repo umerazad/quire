@@ -11588,6 +11588,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assets",
+ "async_zip",
  "base64",
  "buffer_diff",
  "db",
@@ -11608,6 +11609,7 @@ dependencies = [
  "paths",
  "picker",
  "project",
+ "quick-xml 0.41.0",
  "quire_core",
  "quire_format",
  "quire_media",

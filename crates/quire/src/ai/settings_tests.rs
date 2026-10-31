@@ -13,6 +13,13 @@ pub(crate) async fn init_ai(bench: &Bench, cx: &mut TestAppContext) -> Arc<fs::F
         crate::editor_host::init(cx).expect("editor initialization");
         cx.set_global(AiState::load(bench.folder.path().join("ai-state.json")));
         cx.set_global(bench.host("claude-transform.jsonl", &[]));
+        // Ask runs start the MCP server example, not the test binary, as their tool server.
+        #[cfg(unix)]
+        {
+            cx.global_mut::<crate::notebook_tools::terminal::Registration>()
+                .server
+                .command = crate::notebook_tools::stdio_tests::server();
+        }
     });
     let fs = fs::FakeFs::new(cx.executor());
     fs.insert_tree(paths::config_dir(), serde_json::json!({}))

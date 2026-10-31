@@ -8,14 +8,15 @@ use std::time::{Duration, Instant};
 pub const PATIENCE: Duration = Duration::from_secs(60);
 
 /// Runs `step`, then checks `done`, until it holds, sleeping `pause` of real time between looks
-/// so storage, index, and process threads can answer. Panics with `describe` once [`PATIENCE`]
+/// so storage, index, and process threads can answer. `cx` is the app under test, or `()` for
+/// work outside one. Panics with `describe` once [`PATIENCE`]
 /// passes, so a hang names what never arrived.
-pub fn until(
-    cx: &mut TestAppContext,
+pub fn until<C>(
+    cx: &mut C,
     pause: Duration,
-    mut step: impl FnMut(&mut TestAppContext),
-    mut done: impl FnMut(&mut TestAppContext) -> bool,
-    describe: impl FnOnce(&mut TestAppContext) -> String,
+    mut step: impl FnMut(&mut C),
+    mut done: impl FnMut(&mut C) -> bool,
+    describe: impl FnOnce(&mut C) -> String,
 ) {
     let deadline = Instant::now() + PATIENCE;
     loop {

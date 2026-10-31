@@ -54,16 +54,16 @@ fn rt_source(root: &Path) {
     );
 }
 
-fn dispatch(notebook: &Notebook, action: impl gpui::Action, cx: &mut TestAppContext) {
+pub(super) fn dispatch(notebook: &Notebook, action: impl gpui::Action, cx: &mut TestAppContext) {
     cx.dispatch_action(notebook.window.into(), action);
 }
 
-fn exchange(notebook: &Notebook, cx: &mut TestAppContext) -> Entity<Exchange> {
+pub(super) fn exchange(notebook: &Notebook, cx: &mut TestAppContext) -> Entity<Exchange> {
     read(notebook, cx, |view, _| view.exchange.clone())
 }
 
 /// The finished import or export message once nothing runs.
-fn finished(notebook: &Notebook, cx: &mut TestAppContext) -> String {
+pub(super) fn finished(notebook: &Notebook, cx: &mut TestAppContext) -> String {
     let status = exchange(notebook, cx);
     wait_until(cx, "the import or export to finish", |cx| {
         status.read_with(cx, |status, _| {
@@ -333,6 +333,15 @@ fn open_folder(
     cx: &mut TestAppContext,
 ) -> (Notebook, tempfile::TempDir) {
     cx.update(|cx| init(cx).unwrap());
+    open_folder_initialized(files, first, cx)
+}
+
+/// `open_folder` for a test that has already initialized the editor.
+pub(super) fn open_folder_initialized(
+    files: &[(&str, &str)],
+    first: &str,
+    cx: &mut TestAppContext,
+) -> (Notebook, tempfile::TempDir) {
     let folder = tempfile::tempdir().unwrap();
     write_files(folder.path(), files);
     let state = tempfile::tempdir().unwrap();

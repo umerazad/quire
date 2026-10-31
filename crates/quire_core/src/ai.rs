@@ -6,6 +6,7 @@
 pub mod ask;
 pub mod backend;
 pub mod commands;
+pub mod export;
 pub mod mcp;
 pub mod tidy;
 pub mod tools;

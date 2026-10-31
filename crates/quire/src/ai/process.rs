@@ -8,8 +8,8 @@ use futures::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, Futur
 use quire_core::ai::{
     Backend, Event, ParseState,
     backend::{
-        CANCELED, drift_error, exit_error, missing_binary, run_args, run_input, stream_error,
-        timeout_error, version_of,
+        CANCELED, ToolServer, ask_args, drift_error, exit_error, missing_binary, run_args,
+        run_input, stream_error, timeout_error, version_of,
     },
     commands::transform_system_prompt,
     parse_line,
@@ -25,6 +25,7 @@ use std::{
 pub const TRANSFORM_TIMEOUT: Duration = Duration::from_secs(120);
 pub const ASK_TIMEOUT: Duration = Duration::from_secs(300);
 pub const TEST_TIMEOUT: Duration = Duration::from_secs(60);
+pub const EXPORT_TIMEOUT: Duration = Duration::from_secs(600);
 const VERSION_TIMEOUT: Duration = Duration::from_secs(10);
 const EXECUTE_TIMEOUT: Duration = Duration::from_secs(30);
 const SHELL_TIMEOUT: Duration = Duration::from_secs(5);
@@ -42,18 +43,34 @@ pub struct Host {
 
 impl gpui::Global for Host {}
 
-/// What a run does: rewrite a range, or answer a question from the excerpts in its prompt.
+/// What a run does: rewrite a range, answer a question through the notebook tools, or turn the
+/// `page.md` in its folder into a PDF or Word file with the writer's document tools.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Mode {
     Transform,
-    Ask { today: String },
+    Ask { today: String, server: ToolServer },
+    Export { today: String },
 }
 
 impl Mode {
     pub fn system_prompt(&self) -> String {
         match self {
             Self::Transform => transform_system_prompt(),
-            Self::Ask { today } => quire_core::ai::ask::ask_system_prompt(today),
+            Self::Ask { today, server } => {
+                quire_core::ai::ask::ask_system_prompt(server.writes, today)
+            }
+            Self::Export { today } => quire_core::ai::export::export_system_prompt(today),
+        }
+    }
+
+    fn args(&self, backend: Backend, system: &str, folder: &Path, model: &str) -> Vec<String> {
+        let folder = folder.to_string_lossy();
+        match self {
+            Self::Transform => run_args(backend, system, &folder, model),
+            Self::Ask { server, .. } => ask_args(backend, system, &folder, model, server),
+            Self::Export { .. } => {
+                quire_core::ai::export::export_args(backend, system, &folder, model)
+            }
         }
     }
 
@@ -61,6 +78,7 @@ impl Mode {
         match self {
             Self::Transform => "transform",
             Self::Ask { .. } => "ask",
+            Self::Export { .. } => "export",
         }
     }
 }
@@ -278,6 +296,26 @@ impl Host {
         cancel: impl Future<Output = ()>,
         mut emit: impl FnMut(Update),
     ) -> Outcome {
+        let folder =
+            RunFolder(std::env::temp_dir().join(format!("quire-ai-{}", uuid::Uuid::new_v4())));
+        if let Err(error) = std::fs::create_dir_all(&folder.0) {
+            return Outcome::failed(format!(
+                "Quire could not make a working folder for {} at {}: {error}. Check that the temporary folder is writable, then retry.",
+                request.backend.name(),
+                folder.0.display()
+            ));
+        }
+        self.run_in(request, &folder.0, cancel, &mut emit).await
+    }
+
+    /// Runs one request with `folder` as its working folder, which the caller made and removes.
+    pub async fn run_in(
+        &self,
+        request: Request,
+        folder: &Path,
+        cancel: impl Future<Output = ()>,
+        mut emit: impl FnMut(Update),
+    ) -> Outcome {
         let cancel = cancel.shared();
         let started = Instant::now();
         let backend = request.backend;
@@ -288,19 +326,9 @@ impl Host {
         if cancel.clone().now_or_never().is_some() {
             return Outcome::Canceled;
         }
-        let folder =
-            RunFolder(std::env::temp_dir().join(format!("quire-ai-{}", uuid::Uuid::new_v4())));
-        if let Err(error) = std::fs::create_dir_all(&folder.0) {
-            return Outcome::failed(format!(
-                "Quire could not make a working folder for {} at {}: {error}. Check that the temporary folder is writable, then retry.",
-                backend.name(),
-                folder.0.display()
-            ));
-        }
         let (outcome, version) = self
-            .spawn_and_read(&request, &binary, &folder.0, cancel, &mut emit)
+            .spawn_and_read(&request, &binary, folder, cancel, &mut emit)
             .await;
-        drop(folder);
         if let Some(transcript) = &request.transcript {
             write_transcript(transcript, &request, version.as_deref(), &outcome, started).ok();
         }
@@ -319,12 +347,7 @@ impl Host {
         let system = request.mode.system_prompt();
         let mut command = self.command(binary).await;
         command
-            .args(run_args(
-                backend,
-                &system,
-                &folder.to_string_lossy(),
-                &request.model,
-            ))
+            .args(request.mode.args(backend, &system, folder, &request.model))
             .current_dir(folder);
         let mut child = match util::process::Child::spawn(
             command,

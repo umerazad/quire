@@ -75,6 +75,16 @@ impl Bench {
     }
 }
 
+fn ask_server() -> ToolServer {
+    ToolServer {
+        command: "/bin/quire".into(),
+        args: vec!["--mcp-server".into()],
+        bridge: "/data/bridge.json".into(),
+        run: "ask-1".into(),
+        writes: quire_core::ai::tools::Writes::Review,
+    }
+}
+
 fn request(backend: Backend) -> Request {
     Request {
         backend,
@@ -479,6 +489,7 @@ fn runs_a_question_with_the_ask_rules_and_reports_tool_activity() {
         Request {
             mode: Mode::Ask {
                 today: "2026-10-31".into(),
+                server: ask_server(),
             },
             prompt: "What fruit ideas do I have?".into(),
             timeout: ASK_TIMEOUT,
@@ -517,11 +528,16 @@ fn runs_a_question_with_the_ask_rules_and_reports_tool_activity() {
     assert_eq!(
         system,
         Mode::Ask {
-            today: "2026-10-31".into()
+            today: "2026-10-31".into(),
+            server: ask_server(),
         }
         .system_prompt()
     );
     assert!(!argv.iter().any(|arg| arg.contains("fruit ideas")));
+    assert!(
+        argv.iter()
+            .any(|arg| arg.contains(r#""QUIRE_RUN":"ask-1""#))
+    );
     let day = std::fs::read_dir(&folder).unwrap().next().unwrap().unwrap();
     let file = std::fs::read_dir(day.path())
         .unwrap()

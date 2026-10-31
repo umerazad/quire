@@ -2,6 +2,7 @@
 //! `src/desktop/ai-runner.ts`): argument lists that never carry user text, the prompt sent on
 //! standard input, one parser per JSON event stream, and the settings checks with their messages.
 
+use super::tools::{READ_TOOLS, WRITE_TOOLS, Writes};
 use regex::Regex;
 use serde_json::Value;
 use std::{collections::HashMap, sync::LazyLock};
@@ -73,8 +74,7 @@ pub fn transform_args(backend: Backend, cwd: &str, model: &str) -> Vec<String> {
     )
 }
 
-/// The argument list of a run with `system` rules and no tools. Transforms and questions both
-/// run this way; questions get their notebook context in the prompt.
+/// The argument list of a run with `system` rules and no tools, as transforms and Test run.
 pub fn run_args(backend: Backend, system: &str, cwd: &str, model: &str) -> Vec<String> {
     let model = model.trim();
     let args: Vec<&str> = match backend {
@@ -127,6 +127,143 @@ pub fn run_args(backend: Backend, system: &str, cwd: &str, model: &str) -> Vec<S
         }
     }
     args
+}
+
+/// How an ask run reaches the notebook (reference `ToolServer`): Quire's MCP server, started by
+/// the CLI with the bridge of this app launch and the run's ID, so its changes group under it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolServer {
+    pub command: String,
+    pub args: Vec<String>,
+    pub bridge: String,
+    pub run: String,
+    pub writes: Writes,
+}
+
+impl ToolServer {
+    /// The server's environment: the bridge file and the run its calls belong to.
+    pub fn env(&self) -> [(&'static str, &str); 2] {
+        [("QUIRE_BRIDGE", &self.bridge), ("QUIRE_RUN", &self.run)]
+    }
+}
+
+pub const NO_TOOL_SERVER: &str = "Quire's notebook tool server is not running, so questions cannot reach the notebook. Turn AI commands off and on in Settings > AI, then ask again.";
+
+/// The tools an ask run may call: every read tool, and the write tools unless AI writes is Off.
+pub fn allowed_tools(writes: Writes) -> Vec<&'static str> {
+    let writing: &[&'static str] = if writes == Writes::Off {
+        &[]
+    } else {
+        &WRITE_TOOLS
+    };
+    READ_TOOLS.iter().chain(writing).copied().collect()
+}
+
+/// TOML basic strings accept JSON string escapes.
+fn toml(value: &str) -> String {
+    Value::String(value.to_owned()).to_string()
+}
+
+fn toml_list<'a>(items: impl IntoIterator<Item = &'a str>) -> String {
+    let items: Vec<String> = items.into_iter().map(toml).collect();
+    format!("[{}]", items.join(","))
+}
+
+fn owned(parts: &[&str]) -> Vec<String> {
+    parts.iter().map(|part| (*part).to_owned()).collect()
+}
+
+/// The argument list of an ask run with the notebook tool server attached and every other tool
+/// off (reference `backendArgs` for ask). Follow-ups resend earlier turns, so no CLI session is
+/// kept.
+pub fn ask_args(
+    backend: Backend,
+    system: &str,
+    cwd: &str,
+    model: &str,
+    server: &ToolServer,
+) -> Vec<String> {
+    let model = model.trim();
+    let allowed = allowed_tools(server.writes);
+    match backend {
+        Backend::Claude => {
+            let env: serde_json::Map<String, Value> = server
+                .env()
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value.into()))
+                .collect();
+            let config = serde_json::json!({
+                "mcpServers": {
+                    TOOL_SERVER: {
+                        "type": "stdio",
+                        "command": server.command,
+                        "args": server.args,
+                        "env": env,
+                    }
+                }
+            });
+            let mut args = owned(&[
+                "-p",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--include-partial-messages",
+                "--restricted",
+                "--strict-mcp-config",
+                "--mcp-config",
+            ]);
+            args.push(config.to_string());
+            args.extend(owned(&["--tools", "", "--allowedTools"]));
+            let names: Vec<String> = allowed
+                .iter()
+                .map(|name| format!("mcp__{TOOL_SERVER}__{name}"))
+                .collect();
+            args.push(names.join(","));
+            args.extend(owned(&[
+                "--no-session-persistence",
+                "--append-system-prompt",
+                system,
+            ]));
+            if !model.is_empty() {
+                args.extend(["--model".into(), model.into()]);
+            }
+            args
+        }
+        Backend::Codex => {
+            let mut args = owned(&[
+                "exec",
+                "--json",
+                "--sandbox",
+                "read-only",
+                "--skip-git-repo-check",
+                "--ephemeral",
+                "-C",
+                cwd,
+            ]);
+            if !model.is_empty() {
+                args.extend(["-m".into(), model.into()]);
+            }
+            let env: Vec<String> = server
+                .env()
+                .iter()
+                .map(|(key, value)| format!("{key}={}", toml(value)))
+                .collect();
+            for (key, value) in [
+                ("command", toml(&server.command)),
+                ("args", toml_list(server.args.iter().map(String::as_str))),
+                ("env", format!("{{{}}}", env.join(","))),
+                ("default_tools_approval_mode", toml("approve")),
+                ("enabled_tools", toml_list(allowed)),
+            ] {
+                args.extend([
+                    "-c".into(),
+                    format!("mcp_servers.{TOOL_SERVER}.{key}={value}"),
+                ]);
+            }
+            args.push("-".into());
+            args
+        }
+    }
 }
 
 /// What goes to standard input for a transform.

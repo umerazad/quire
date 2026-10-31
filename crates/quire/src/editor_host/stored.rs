@@ -13,6 +13,7 @@ use theme::ActiveTheme;
 
 mod backups;
 mod bench;
+mod document_export;
 mod exchange;
 mod folder;
 mod instance;
@@ -680,7 +681,10 @@ impl Render for StoredWindow {
             }));
         Self::register_sync(
             Self::register_backups(
-                Self::register_exchange(Self::register_navigation(root, cx), cx),
+                Self::register_document_export(
+                    Self::register_exchange(Self::register_navigation(root, cx), cx),
+                    cx,
+                ),
                 cx,
             ),
             cx,

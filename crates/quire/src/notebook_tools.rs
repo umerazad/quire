@@ -15,6 +15,7 @@ pub mod write;
 use crate::ai::settings::{AiSettings, AiState, is_on};
 use bridge::{CALL_TIMEOUT, NotebookBridge, Options};
 use gpui::{App, Global, SharedString};
+use quire_core::ai::backend::{NO_TOOL_SERVER, ToolServer};
 use settings::{Settings as _, SettingsStore};
 use std::{path::PathBuf, rc::Rc};
 
@@ -92,6 +93,26 @@ pub fn init(directory: PathBuf, cx: &mut App) {
     sync(cx);
 }
 
+/// The tool server an ask run `run` attaches, while the bridge runs: this app's binary in MCP
+/// mode, pointed at the bridge, with the AI writes setting it runs under.
+pub fn ask_server(run: &str, cx: &App) -> Result<ToolServer, &'static str> {
+    let bridge = cx
+        .try_global::<Served>()
+        .and_then(|served| served.bridge.as_ref())
+        .ok_or(NO_TOOL_SERVER)?;
+    let command = cx
+        .try_global::<terminal::Registration>()
+        .map(|registration| registration.server.command.clone())
+        .ok_or(NO_TOOL_SERVER)?;
+    Ok(ToolServer {
+        command: command.to_string_lossy().into_owned(),
+        args: vec![SERVER_FLAG.into()],
+        bridge: bridge.file.to_string_lossy().into_owned(),
+        run: run.to_owned(),
+        writes: AiSettings::get_global(cx).writes,
+    })
+}
+
 /// Where the bridge lives: Quire's data folder, or a fresh temporary one in tests.
 pub fn directory() -> PathBuf {
     #[cfg(not(test))]
@@ -101,7 +122,10 @@ pub fn directory() -> PathBuf {
 }
 
 #[cfg(test)]
-mod stdio_tests;
+pub(crate) mod stdio_tests;
+
+#[cfg(test)]
+mod ask_tests;
 
 #[cfg(test)]
 mod read_tests;
