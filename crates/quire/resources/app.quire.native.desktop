@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Quire Native
+GenericName=Notes
+Comment=Local-first Markdown notebooks
+TryExec=quire-native
+Exec=quire-native
+Icon=app.quire.native
+StartupNotify=true
+Categories=Office;TextEditor;
+Keywords=notes;markdown;outline;
