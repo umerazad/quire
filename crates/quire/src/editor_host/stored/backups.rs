@@ -67,6 +67,22 @@ impl StoredWindow {
             }))
     }
 
+    /// Gives the restored notebook this window's tabs, favorites, recent pages, and expanded
+    /// folders. Pages keep their identities in a restore, and the restored window forgets the
+    /// ones its backup does not hold, as any window does when a page is gone.
+    fn carry_workspace(&self, location: &Location) -> Result<(), String> {
+        let file = match location {
+            Location::Store {
+                database, notebook, ..
+            } => crate::navigation::WorkspaceFile::beside(database, notebook),
+            Location::Folder { root, state } => crate::navigation::WorkspaceFile::beside(
+                &state.join("folder.sqlite"),
+                &format!("folder:{}", root.display()),
+            ),
+        };
+        file.save(&self.nav.workspace)
+    }
+
     /// Opens the restored notebook in a new window at the page shown here, then closes this
     /// window once its pages are secured. This notebook's data stays as it was.
     fn open_restored(
@@ -76,6 +92,12 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        if let Err(error) = self.carry_workspace(location) {
+            crate::outline::show_notice(
+                format!("{error} The restored notebook opens without this window's tabs."),
+                cx,
+            );
+        }
         let page = self.page.read(cx);
         let opened = match location.clone() {
             Location::Store {

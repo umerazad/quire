@@ -365,3 +365,119 @@ fn a_damaged_backup_is_not_restored_and_the_window_stays(cx: &mut TestAppContext
         "no safety backup for a refused restore"
     );
 }
+
+/// The tabs and favorites a window shows.
+fn workspace_pages(
+    window: gpui::WindowHandle<StoredWindow>,
+    cx: &mut TestAppContext,
+) -> (Vec<String>, Vec<String>) {
+    let ids = |destinations: &[quire_core::workspace::Destination]| {
+        destinations
+            .iter()
+            .filter_map(|destination| destination.page_id().map(str::to_owned))
+            .collect()
+    };
+    window
+        .update(cx, |view, _, _| {
+            (
+                ids(&view.nav.workspace.tabs),
+                ids(&view.nav.workspace.favorites),
+            )
+        })
+        .unwrap()
+}
+
+#[gpui::test]
+fn a_folder_notebook_backs_up_and_restores_through_the_window_with_its_tabs(
+    cx: &mut TestAppContext,
+) {
+    use quire_core::workspace::Destination;
+    use quire_store::sync::format::page_id_for_path;
+    let opened = super::folder_tests::open_folder(
+        &[("A.md", "- at backup time\n"), ("People/B.md", "- bee\n")],
+        "A.md",
+        cx,
+    );
+    let notebook = &opened.notebook;
+    let root = opened.folder.path().to_owned();
+    let states = tempfile::tempdir().unwrap();
+    let state_root = states.path().to_owned();
+    backups(notebook, cx).update(cx, |backups, _| {
+        backups.keep_restored_state(std::sync::Arc::new(move |root: &Path| {
+            state_root.join(quire_store::sync::format::sha256(
+                root.to_string_lossy().as_bytes(),
+            ))
+        }))
+    });
+    let destination = tempfile::tempdir().unwrap();
+    use_folder(notebook, destination.path(), cx);
+    dispatch(notebook, BackUpNow, cx);
+    let message = settled_message(notebook, cx);
+    let source = Source::Folder {
+        root: root.clone(),
+        state: notebook.path.parent().unwrap().to_owned(),
+    };
+    let made = backup::list(&source, destination.path()).unwrap();
+    assert_eq!(made.len(), 1, "{message}");
+    backup::verify(&made[0].path).unwrap();
+    fs::write(root.join("A.md"), "- changed after the backup\n").unwrap();
+    fs::write(root.join("Later.md"), "- written after the backup\n").unwrap();
+
+    let (a, b, later) = (
+        page_id_for_path("A.md"),
+        page_id_for_path("People/B.md"),
+        page_id_for_path("Later.md"),
+    );
+    restore_newest(notebook, cx);
+    notebook
+        .window
+        .update(cx, |view, _, _| {
+            view.nav.workspace.tabs = [&a, &b, &later]
+                .map(|id| Destination::page(id.clone()))
+                .into();
+            view.nav.workspace.favorites = vec![Destination::page(b.clone())];
+        })
+        .unwrap();
+    cx.simulate_prompt_answer("Restore as a new notebook");
+    let parent = tempfile::tempdir().unwrap();
+    choose_folder(parent.path(), cx);
+    wait_until(cx, "the restored notebook's window", |cx| {
+        let windows = stored_windows(cx);
+        windows.len() == 1 && windows[0] != notebook.window
+    });
+    let restored = stored_windows(cx)[0];
+    let restored_root = fs::read_dir(parent.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    assert_eq!(restored_root.len(), 1, "{restored_root:?}");
+    assert_eq!(
+        fs::read_to_string(restored_root[0].join("A.md")).unwrap(),
+        "- at backup time\n"
+    );
+    assert!(!restored_root[0].join("Later.md").exists());
+    assert_eq!(
+        fs::read_to_string(root.join("A.md")).unwrap(),
+        "- changed after the backup\n",
+        "the original folder is unchanged"
+    );
+    wait_until(cx, "the restored page", |cx| {
+        restored
+            .update(cx, |view, _, cx| view.page.read(cx).loaded().is_some())
+            .unwrap()
+    });
+    wait_until(
+        cx,
+        "the carried tabs without the page the backup lacks",
+        |cx| workspace_pages(restored, cx) == (vec![a.clone(), b.clone()], vec![b.clone()]),
+    );
+    assert_eq!(
+        backup::list(&source, destination.path()).unwrap().len(),
+        2,
+        "the safety backup joins the first"
+    );
+    assert!(
+        fs::read_dir(states.path()).unwrap().count() == 1,
+        "the restored state stays in the test's folder"
+    );
+}
