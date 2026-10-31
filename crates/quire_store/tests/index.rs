@@ -497,6 +497,7 @@ fn linked_tasks_come_from_other_pages_linking_by_any_name() -> Result<()> {
     let (store, database) = open(root.path())?;
     save(&store, "m", "Meeting.md", "m")?;
     save(&store, "w", "Work.md", "w")?;
+    save(&store, "d", "daily/2026-10-30.md", "d")?;
     let linked = |text: &str, state: &str, links: &[&str]| IndexedTask {
         links: links.iter().map(|link| link.to_string()).collect(),
         ..task(text, state, Default::default())
@@ -516,6 +517,8 @@ fn linked_tasks_come_from_other_pages_linking_by_any_name() -> Result<()> {
                     linked("Send notes", "next", &["meeting"]),
                     linked("Booked room", "done", &["Meeting.md"]),
                     linked("Unrelated", "next", &["Elsewhere"]),
+                    linked("Agenda item", "next", &["Elsewhere", "Meeting#Agenda"]),
+                    linked("On the day", "next", &["2026-10-30"]),
                 ],
                 ..Default::default()
             },
@@ -525,7 +528,18 @@ fn linked_tasks_come_from_other_pages_linking_by_any_name() -> Result<()> {
     analyze_all(&index, &analyses)?;
     let tasks = index.linked_tasks("m")?;
     let texts: Vec<&str> = tasks.iter().map(|task| task.text.as_str()).collect();
-    assert_eq!(texts, ["Send notes", "Booked room"]);
+    assert_eq!(texts, ["Send notes", "Booked room", "Agenda item"]);
+    let on_the_day: Vec<String> = index
+        .linked_tasks("d")?
+        .into_iter()
+        .map(|task| task.text)
+        .collect();
+    assert_eq!(
+        on_the_day,
+        ["On the day"],
+        "a date link names its daily page"
+    );
+    assert!(index.linked_tasks("missing")?.is_empty());
     let shown = |status| {
         tasks
             .iter()
@@ -534,7 +548,7 @@ fn linked_tasks_come_from_other_pages_linking_by_any_name() -> Result<()> {
     };
     assert_eq!(
         TaskStatus::ALL.map(shown),
-        [2, 1, 0, 1],
+        [3, 2, 0, 1],
         "All, Open, Due, Done"
     );
     Ok(())
