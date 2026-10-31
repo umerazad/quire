@@ -641,7 +641,7 @@ pub fn run() {
             }
         }
     };
-    gpui_platform::application().with_assets(assets::Assets).run(move |cx| {
+    gpui_platform::application().with_assets(crate::quire_assets::Assets).run(move |cx| {
         if let Err(error) = init(cx) {
             eprintln!("{error}");
             cx.quit();
@@ -658,7 +658,7 @@ pub fn run() {
         if let Some(listener) = listener {
             serve_launches(listener, cx);
         }
-        if let Err(error) = assets::Assets.load_fonts(cx) {
+        if let Err(error) = assets::Assets.load_fonts(cx).and_then(|()| crate::script_fonts::load(cx)) {
             eprintln!("Cannot load Quire's bundled fonts: {error}. Rebuild the application assets.");
             cx.quit();
             return;

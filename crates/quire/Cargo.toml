@@ -78,6 +78,9 @@ serde_json.workspace = true
 tree-sitter-md.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+gpui_apple.workspace = true
+
 [features]
 default = ["full-editor"]
 test-support = ["gpui/test-support", "gpui_platform/test-support"]

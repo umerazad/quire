@@ -38,7 +38,12 @@ actions!(
 );
 
 pub const DEFAULT_FONT_FAMILY: &str = "Pragmata Pro Mono Liga";
-pub const FONT_FALLBACKS: [&str; 2] = ["PragmataPro Mono Liga", ".ZedMono"];
+/// After the editor fonts, Arabic-script text falls back to the bundled Naskh.
+pub const FONT_FALLBACKS: [&str; 3] = [
+    "PragmataPro Mono Liga",
+    ".ZedMono",
+    crate::script_fonts::ARABIC,
+];
 pub const DEFAULT_FONT_SIZE: f32 = 16.;
 pub const DEFAULT_LINE_SPACING: f32 = 1.85;
 pub const FONT_SIZES: std::ops::RangeInclusive<f32> = 10.0..=40.0;
