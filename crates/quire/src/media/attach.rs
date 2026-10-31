@@ -159,6 +159,7 @@ fn choose(editor: WeakEntity<Editor>, window: &mut Window, cx: &mut App) -> bool
                 attach(
                     &entity,
                     paths.into_iter().map(Source::File).collect(),
+                    None,
                     window,
                     cx,
                 )
@@ -203,6 +204,7 @@ fn paste_image(editor: WeakEntity<Editor>, window: &mut Window, cx: &mut App) ->
             data: image.bytes,
             name: format!("pasted.{extension}"),
         }],
+        None,
         window,
         cx,
     )
@@ -275,7 +277,7 @@ pub(crate) fn drop_target(editor: &Entity<Editor>, cx: &App) -> Option<gpui::Any
                             };
                             cx.stop_active_drag(window);
                             cx.stop_propagation();
-                            drop_paths(&editor, &paths, window, cx);
+                            drop_paths(&editor, &paths, event.position, window, cx);
                         });
                     },
                 )
@@ -285,8 +287,15 @@ pub(crate) fn drop_target(editor: &Entity<Editor>, cx: &App) -> Option<gpui::Any
     )
 }
 
-/// Attaches dropped files to `editor`'s page at its caret.
-fn drop_paths(editor: &Entity<Editor>, paths: &ExternalPaths, window: &mut Window, cx: &mut App) {
+/// Attaches dropped files to `editor`'s page where they were dropped, or at the caret when the
+/// drop missed the text.
+fn drop_paths(
+    editor: &Entity<Editor>,
+    paths: &ExternalPaths,
+    position: gpui::Point<gpui::Pixels>,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let files = paths
         .paths()
         .iter()
@@ -294,15 +303,26 @@ fn drop_paths(editor: &Entity<Editor>, paths: &ExternalPaths, window: &mut Windo
         .cloned()
         .map(Source::File)
         .collect::<Vec<_>>();
-    if !files.is_empty() {
-        attach(editor, files, window, cx).detach();
+    if files.is_empty() {
+        return;
     }
+    let at = editor.update(cx, |editor, cx| {
+        use gpui::EntityInputHandler as _;
+        let index = editor.character_index_for_point(position, window, cx)?;
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let offset = snapshot.offset_utf16_to_offset(multi_buffer::MultiBufferOffsetUtf16(
+            text::OffsetUtf16(index),
+        ));
+        Some(snapshot.anchor_before(offset))
+    });
+    attach(editor, files, at, window, cx).detach();
 }
 
-/// Writes each file to the store, then inserts their links at the caret in one edit.
+/// Writes each file to the store, then inserts their links in one edit at `at`, or at the caret.
 fn attach(
     editor: &Entity<Editor>,
     files: Vec<Source>,
+    at: Option<multi_buffer::Anchor>,
     window: &mut Window,
     cx: &mut App,
 ) -> Task<()> {
@@ -352,7 +372,7 @@ fn attach(
             if !links.is_empty() {
                 editor
                     .update(cx, |editor, cx| {
-                        insert(editor, &links.join(" "), window, cx)
+                        insert(editor, &links.join(" "), at, window, cx)
                     })
                     .ok();
             }
@@ -364,11 +384,22 @@ fn attach(
     })
 }
 
-fn insert(editor: &mut Editor, text: &str, window: &mut Window, cx: &mut Context<Editor>) {
+fn insert(
+    editor: &mut Editor,
+    text: &str,
+    at: Option<multi_buffer::Anchor>,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
     if editor.read_only(cx) {
         return;
     }
     editor.transact(window, cx, |editor, window, cx| {
+        if let Some(at) = at {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_anchor_ranges([at..at])
+            });
+        }
         editor.insert(text, window, cx);
     });
 }

@@ -152,6 +152,36 @@ fn attachments(notebook: &Notebook) -> std::path::PathBuf {
 const GONE: &str = "attachments/gone.png";
 
 #[gpui::test]
+fn pictures_refit_their_blocks_when_the_window_narrows_and_widens(cx: &mut TestAppContext) {
+    let (notebook, _) = open_with_attachments(
+        &[("wide.png", png(1200, 400))],
+        |local| format!("- ![Wide]({})\n", local[0]),
+        cx,
+    );
+    let editor = open_in_write(&notebook, 1, cx);
+    let fitted = |cx: &mut TestAppContext| {
+        draw(&notebook, cx);
+        cx.update(|cx| crate::media::fitted(editor.read(cx), cx))[0]
+    };
+    let (wide_rows, wide_width) = fitted(cx);
+    cx.simulate_window_resize(
+        notebook.window.into(),
+        gpui::size(gpui::px(700.), gpui::px(1200.)),
+    );
+    wait_until(cx, "the picture to fit the narrow window", |cx| {
+        let (rows, width) = fitted(cx);
+        width < 700. && rows < wide_rows
+    });
+    cx.simulate_window_resize(
+        notebook.window.into(),
+        gpui::size(gpui::px(1600.), gpui::px(1200.)),
+    );
+    wait_until(cx, "the picture to fit the wide window again", |cx| {
+        fitted(cx) == (wide_rows, wide_width)
+    });
+}
+
+#[gpui::test]
 fn a_picture_another_computer_delivers_after_its_page_shows_without_retry(cx: &mut TestAppContext) {
     let synced = super::live_tests::open_synced("- a\n", cx);
     let notebook = &synced.notebook;

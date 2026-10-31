@@ -122,7 +122,7 @@ fn pasting_an_image_attaches_it_and_text_still_pastes(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn dropping_files_on_a_page_attaches_them(cx: &mut TestAppContext) {
+fn dropping_files_on_a_page_attaches_them_where_they_drop(cx: &mut TestAppContext) {
     serve(cx);
     let (notebook, _) = open_with_attachments(&[], |_| "- first\n".into(), cx);
     let editor = enter_write(&notebook, cx);
@@ -131,7 +131,9 @@ fn dropping_files_on_a_page_attaches_them(cx: &mut TestAppContext) {
     let notes = files.path().join("notes.txt");
     std::fs::write(&notes, "dropped").unwrap();
     let bounds = cx.update(|cx| *editor.read(cx).last_bounds().unwrap());
-    let position = bounds.center();
+    // Below the text, away from the caret after the first line: the link lands where the file
+    // drops, at the end of the page, as a click there would put the caret.
+    let position = gpui::point(bounds.center().x, bounds.bottom() - gpui::px(10.));
     let mut visual = VisualTestContext::from_window(notebook.window.into(), cx);
     visual.simulate_event(gpui::FileDropEvent::Entered {
         position,
@@ -146,6 +148,6 @@ fn dropping_files_on_a_page_attaches_them(cx: &mut TestAppContext) {
         name = attachment_file_name(b"dropped", "notes.txt")
     );
     wait_until(cx, "the dropped file link", |cx| {
-        cx.update(|cx| editor.read(cx).text(cx)) == format!("- first{link}\n")
+        cx.update(|cx| editor.read(cx).text(cx)) == format!("- first\n{link}")
     });
 }

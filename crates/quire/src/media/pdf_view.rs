@@ -232,6 +232,10 @@ impl PdfView {
         }
     }
 
+    pub(crate) fn width(&self) -> Pixels {
+        self.width
+    }
+
     pub(crate) fn set_width(&mut self, width: Pixels) {
         if width != self.width {
             self.width = width;

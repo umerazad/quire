@@ -120,6 +120,10 @@ impl ImageView {
         Some((px(w * scale), px(h * scale)))
     }
 
+    pub(crate) fn width(&self) -> Pixels {
+        self.width
+    }
+
     pub(crate) fn set_width(&mut self, width: Pixels) {
         self.width = width;
     }
