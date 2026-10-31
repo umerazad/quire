@@ -34,14 +34,14 @@ pub(super) fn version(stamp: &DraftStamp) -> Result<i64> {
         "Editor version exceeds the storage range. Preserve the buffer and reopen the page.",
     )
 }
-pub(super) fn pack(bytes: &[u8]) -> Result<(String, Vec<u8>)> {
+pub(crate) fn pack(bytes: &[u8]) -> Result<(String, Vec<u8>)> {
     ensure!(
         bytes.len() <= MAX_BATCH_BYTES,
         "Local record exceeds the storage limit. Preserve the buffer and split the page before saving."
     );
     Ok((sha256(bytes), zstd::stream::encode_all(bytes, 0)?))
 }
-pub(super) fn unpack(hash: &str, bytes: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn unpack(hash: &str, bytes: &[u8]) -> Result<Vec<u8>> {
     let text = compression::decompress(bytes, MAX_BATCH_BYTES).context(
         "Stored notebook record is damaged. Preserve the database and restore a verified backup.",
     )?;

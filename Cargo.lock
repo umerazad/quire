@@ -11701,6 +11701,7 @@ dependencies = [
  "sqlez",
  "tempfile",
  "unicode-normalization",
+ "uuid",
  "zstd",
 ]
 

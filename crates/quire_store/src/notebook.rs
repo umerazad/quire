@@ -31,6 +31,7 @@ pub(crate) use metadata::revision_metadata;
 pub use metadata::{MetadataLimits, PageMetadata};
 pub use publication::PendingPublication;
 pub use publisher::PublicationAck;
+pub(crate) use recovery::unpack;
 pub use recovery::{Draft, DraftStamp};
 pub(crate) use revision::read_revision;
 pub use revision::{CheckedSave, CheckedSaves, Cursor, Edit, SaveAck};

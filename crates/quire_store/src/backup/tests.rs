@@ -1,0 +1,527 @@
+use super::*;
+use crate::{
+    folder_notebook::FolderNotebook,
+    notebook::{DraftStamp, Edit, NotebookStore},
+    sync::format::page_id_for_path,
+};
+use sqlez::connection::Connection;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+    thread,
+};
+
+fn edit(page: &str, path: &str, text: &str, base: Vec<String>) -> Edit {
+    Edit {
+        page: page.into(),
+        base,
+        path: path.into(),
+        text: text.into(),
+        deleted: false,
+        created: 1,
+        recovery: None,
+    }
+}
+
+fn save(store: &NotebookStore, page: &str, path: &str, text: &str) -> String {
+    store
+        .save(&edit(page, path, text, store.heads(page).unwrap()))
+        .unwrap()
+        .revision_id()
+        .to_owned()
+}
+
+fn draft(page: &str, path: &str, text: &str, base: Vec<String>) -> Draft {
+    Draft {
+        page: page.into(),
+        path: path.into(),
+        text: text.into(),
+        base,
+        stamp: DraftStamp {
+            session: "editor".into(),
+            version: 1,
+        },
+        created: 2,
+    }
+}
+
+/// Every file below `root` with its bytes, by `/`-separated relative path.
+fn tree(root: &Path) -> BTreeMap<String, Vec<u8>> {
+    walk(root, &|_| false)
+        .unwrap()
+        .into_iter()
+        .map(|path| {
+            let bytes = fs::read(below(root, &path)).unwrap();
+            (path, bytes)
+        })
+        .collect()
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    for (path, bytes) in tree(from) {
+        let target = below(to, &path);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(target, bytes).unwrap();
+    }
+}
+
+fn names(folder: &Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(folder)
+        .map(|entries| {
+            entries
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+fn error_text(result: Result<impl std::fmt::Debug>) -> String {
+    format!("{:#}", result.expect_err("the operation must fail"))
+}
+
+struct StoreFixture {
+    _root: tempfile::TempDir,
+    database: PathBuf,
+    destination: tempfile::TempDir,
+    attachment: String,
+    unreferenced: String,
+}
+
+impl StoreFixture {
+    fn new() -> Self {
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("notebook").join("local.sqlite");
+        fs::create_dir_all(database.parent().unwrap()).unwrap();
+        let store = NotebookStore::open(&database, "nb", "office").unwrap();
+        let attachment = store.attach(b"png bytes", "photo.png").unwrap();
+        let unreferenced = store.attach(b"kept without a link", "notes.pdf").unwrap();
+        save(&store, "p-a", "A.md", "- first");
+        let first = save(
+            &store,
+            "p-a",
+            "A.md",
+            &format!("- second ![]({attachment})"),
+        );
+        save(&store, "p-b", "B.md", "- other");
+        store
+            .put_draft(&draft("p-a", "A.md", "- typed later", vec![first]), None)
+            .unwrap();
+        store
+            .put_draft(&draft("p-new", "New.md", "- never saved", vec![]), None)
+            .unwrap();
+        Self {
+            _root: root,
+            database,
+            destination: tempfile::tempdir().unwrap(),
+            attachment,
+            unreferenced,
+        }
+    }
+
+    fn source(&self) -> Source {
+        Source::Store {
+            database: self.database.clone(),
+        }
+    }
+
+    fn open(&self) -> NotebookStore {
+        NotebookStore::open(&self.database, "nb", "office").unwrap()
+    }
+}
+
+#[test]
+fn backups_of_an_open_store_stay_consistent_while_another_thread_writes() {
+    let fixture = StoreFixture::new();
+    let live = fixture.open();
+    let before = live.outbox().unwrap().len();
+    let stop = Arc::new(AtomicBool::new(false));
+    let saved = Arc::new(AtomicUsize::new(0));
+    let writer = thread::spawn({
+        let (database, stop, saved) = (fixture.database.clone(), stop.clone(), saved.clone());
+        move || -> Result<()> {
+            let store = NotebookStore::open(&database, "nb", "office")?;
+            let mut round = 0;
+            while !stop.load(Ordering::Relaxed) || round < 20 {
+                let page = format!("p-w{}", round % 7);
+                let base = store.heads(&page)?;
+                store.save(&edit(
+                    &page,
+                    &format!("W{}.md", round % 7),
+                    &format!("- round {round}"),
+                    base,
+                ))?;
+                saved.fetch_add(1, Ordering::Relaxed);
+                round += 1;
+            }
+            Ok(())
+        }
+    });
+    while saved.load(Ordering::Relaxed) < 5 {
+        thread::yield_now();
+    }
+    let backups: Vec<_> = (0..3)
+        .map(|index| create(&fixture.source(), fixture.destination.path(), 1_000 + index).unwrap())
+        .collect();
+    let during = saved.load(Ordering::Relaxed);
+    stop.store(true, Ordering::Relaxed);
+    writer.join().unwrap().unwrap();
+    let after = live.outbox().unwrap().len();
+    assert!(during >= 5, "the writer must save while backups run");
+    for backup in &backups {
+        let manifest = verify(&backup.path).unwrap();
+        assert!(
+            !tree(&backup.path)
+                .keys()
+                .any(|path| path.ends_with("-wal") || path.ends_with("-shm"))
+        );
+        let copy = tempfile::tempdir().unwrap();
+        fs::copy(
+            backup.path.join("local.sqlite"),
+            copy.path().join("local.sqlite"),
+        )
+        .unwrap();
+        let snapshot =
+            NotebookStore::open(&copy.path().join("local.sqlite"), "nb", "office").unwrap();
+        let revisions = snapshot.outbox().unwrap().len();
+        assert!(
+            (before..=after).contains(&revisions),
+            "{before} <= {revisions} <= {after}"
+        );
+        assert_eq!(
+            manifest.databases["local.sqlite"]["outbox"] as usize,
+            revisions
+        );
+        for round in 0..7 {
+            let page = format!("p-w{round}");
+            for head in snapshot.heads(&page).unwrap() {
+                assert!(
+                    snapshot.get(&head).unwrap().is_some(),
+                    "{page} head {head} is in the snapshot"
+                );
+            }
+        }
+        assert_eq!(
+            snapshot.draft("p-new").unwrap().unwrap().text,
+            "- never saved"
+        );
+    }
+    assert_eq!(
+        list(&fixture.source(), fixture.destination.path())
+            .unwrap()
+            .len(),
+        3
+    );
+}
+
+#[test]
+fn a_backup_holds_every_cataloged_attachment_and_verifying_changes_nothing() {
+    let fixture = StoreFixture::new();
+    let _live = fixture.open();
+    let backup = create(&fixture.source(), fixture.destination.path(), 5).unwrap();
+    let files = tree(&backup.path);
+    for reference in [&fixture.attachment, &fixture.unreferenced] {
+        assert_eq!(
+            files[reference.as_str()],
+            fs::read(fixture.database.parent().unwrap().join(reference)).unwrap()
+        );
+    }
+    assert!(!files.contains_key("query-index.sqlite"));
+    let manifest = verify(&backup.path).unwrap();
+    assert_eq!(manifest.kind, Kind::Store);
+    assert_eq!(manifest.notebook.as_deref(), Some("nb"));
+    assert_eq!(manifest.databases["local.sqlite"]["drafts"], 2);
+    assert_eq!(manifest.databases["local.sqlite"]["attachments"], 2);
+    assert_eq!(
+        tree(&backup.path),
+        files,
+        "verification must not change a backup"
+    );
+    assert!(
+        backup.id.starts_with("1970-01-01T00-00-00-005Z-"),
+        "{}",
+        backup.id
+    );
+}
+
+#[test]
+fn verification_reports_flipped_bytes_missing_or_extra_files_and_damaged_records() {
+    let fixture = StoreFixture::new();
+    let backup = create(&fixture.source(), fixture.destination.path(), 1).unwrap();
+    let damaged = |damage: &dyn Fn(&Path)| {
+        let copy = tempfile::tempdir().unwrap();
+        copy_tree(&backup.path, copy.path());
+        damage(copy.path());
+        error_text(verify(copy.path()))
+    };
+    let flip = |path: PathBuf, offset: usize| {
+        let mut bytes = fs::read(&path).unwrap();
+        bytes[offset] ^= 0x40;
+        fs::write(path, bytes).unwrap();
+    };
+    let attachment = fixture.attachment.clone();
+    let text = damaged(&|copy| flip(copy.join(&attachment), 0));
+    assert!(
+        text.contains(&format!("{attachment} in")) && text.contains("changed since"),
+        "{text}"
+    );
+    let text = damaged(&|copy| fs::remove_file(copy.join(&attachment)).unwrap());
+    assert!(text.contains(&format!("{attachment} is missing")), "{text}");
+    let text = damaged(&|copy| flip(copy.join("local.sqlite"), 3));
+    assert!(
+        text.contains("local.sqlite") && text.contains("changed since"),
+        "{text}"
+    );
+    let text = damaged(&|copy| fs::write(copy.join("attachments/stray.txt"), "x").unwrap());
+    assert!(
+        text.contains("unexpected file attachments/stray.txt"),
+        "{text}"
+    );
+    let text = damaged(&|copy| fs::remove_file(copy.join("manifest.json")).unwrap());
+    assert!(text.contains("has no manifest"), "{text}");
+
+    let rewrite_manifest = |copy: &Path, change: &dyn Fn(&mut Manifest)| {
+        let path = copy.join("manifest.json");
+        let mut manifest: Manifest = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        change(&mut manifest);
+        fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    };
+    let text = damaged(&|copy| {
+        rewrite_manifest(copy, &|manifest| {
+            *manifest
+                .databases
+                .get_mut("local.sqlite")
+                .unwrap()
+                .get_mut("revisions")
+                .unwrap() += 1
+        })
+    });
+    assert!(text.contains("rows in local.sqlite differ"), "{text}");
+    let text = damaged(&|copy| {
+        let database = copy.join("local.sqlite");
+        let connection = Connection::try_open_file(database.to_str().unwrap()).unwrap();
+        connection
+            .exec("UPDATE revisions SET body=x'28b52ffd00' WHERE page='\"p-b\"'")
+            .unwrap()()
+        .unwrap();
+        drop(connection);
+        let (hash, size) = hash_file(&database).unwrap();
+        rewrite_manifest(copy, &|manifest| {
+            let entry = manifest
+                .files
+                .iter_mut()
+                .find(|entry| entry.path == "local.sqlite")
+                .unwrap();
+            entry.hash = hash.clone();
+            entry.size = size;
+        })
+    });
+    assert!(
+        text.contains("revision") && text.contains("is damaged"),
+        "{text}"
+    );
+}
+
+#[test]
+fn failed_backups_keep_every_completed_backup_and_never_list_partial_copies() {
+    let fixture = StoreFixture::new();
+    let first = create(&fixture.source(), fixture.destination.path(), 1_000).unwrap();
+    let second = create(&fixture.source(), fixture.destination.path(), 2_000).unwrap();
+    let parent = fixture
+        .source()
+        .backups_in(&fs::canonicalize(fixture.destination.path()).unwrap())
+        .unwrap();
+    fs::create_dir(parent.join(".partial-crashed")).unwrap();
+    fs::create_dir(parent.join("no-manifest")).unwrap();
+    let cached = fixture.database.parent().unwrap().join(&fixture.attachment);
+    fs::write(&cached, b"damaged in the cache").unwrap();
+    let text = error_text(create(&fixture.source(), fixture.destination.path(), 3_000));
+    assert!(text.contains("differs from its catalog entry"), "{text}");
+    let listed = list(&fixture.source(), fixture.destination.path()).unwrap();
+    assert_eq!(
+        listed.iter().map(|backup| &backup.id).collect::<Vec<_>>(),
+        [&second.id, &first.id]
+    );
+    for backup in &listed {
+        verify(&backup.path).unwrap();
+    }
+    assert_eq!(
+        names(&parent),
+        [
+            ".partial-crashed".to_owned(),
+            first.id,
+            second.id,
+            "no-manifest".into()
+        ]
+    );
+}
+
+#[test]
+fn backup_folders_inside_the_notebook_are_refused() {
+    let fixture = StoreFixture::new();
+    let inside = fixture.database.parent().unwrap().join("backups");
+    fs::create_dir(&inside).unwrap();
+    let text = error_text(create(&fixture.source(), &inside, 1));
+    assert!(text.contains("overlaps the notebook's own data"), "{text}");
+    assert!(names(&inside).is_empty());
+}
+
+struct FolderFixture {
+    root: tempfile::TempDir,
+    state: tempfile::TempDir,
+    destination: tempfile::TempDir,
+}
+
+impl FolderFixture {
+    fn new() -> Self {
+        let fixture = Self {
+            root: tempfile::tempdir().unwrap(),
+            state: tempfile::tempdir().unwrap(),
+            destination: tempfile::tempdir().unwrap(),
+        };
+        for (path, bytes) in [
+            ("A.md", &b"- first"[..]),
+            ("People/B.md", b"- other"),
+            ("assets/photo.png", b"\x89PNG"),
+            (".git/HEAD", b"ref: refs/heads/main"),
+            (".quire/notebook.json", b"{\"version\":1}"),
+        ] {
+            let target = fixture.root.path().join(path);
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            fs::write(target, bytes).unwrap();
+        }
+        let notebook = fixture.open();
+        let base = notebook.heads(&page_id_for_path("A.md")).unwrap();
+        notebook
+            .save(&Edit {
+                page: page_id_for_path("A.md"),
+                base: base.clone(),
+                path: "A.md".into(),
+                text: "- second".into(),
+                deleted: false,
+                created: 1,
+                recovery: None,
+            })
+            .unwrap();
+        let base = notebook.heads(&page_id_for_path("A.md")).unwrap();
+        notebook
+            .put_draft(
+                &draft(&page_id_for_path("A.md"), "A.md", "- typed", base),
+                None,
+            )
+            .unwrap();
+        fixture
+    }
+
+    fn open(&self) -> FolderNotebook {
+        FolderNotebook::open(self.root.path(), self.state.path()).unwrap()
+    }
+
+    fn source(&self) -> Source {
+        Source::Folder {
+            root: self.root.path().to_owned(),
+            state: self.state.path().to_owned(),
+        }
+    }
+}
+
+#[test]
+fn folder_backups_copy_notes_state_and_live_reference_databases_consistently() {
+    let fixture = FolderFixture::new();
+    let device = fixture.root.path().join(".quire/devices/laptop");
+    fs::create_dir_all(&device).unwrap();
+    let reference =
+        Connection::try_open_file(device.join("durability.sqlite").to_str().unwrap()).unwrap();
+    reference.exec("PRAGMA journal_mode=WAL").unwrap()().unwrap();
+    reference.exec("PRAGMA wal_autocheckpoint=0").unwrap()().unwrap();
+    reference.exec("CREATE TABLE pending (path TEXT)").unwrap()().unwrap();
+    reference
+        .exec("INSERT INTO pending VALUES ('A.md')")
+        .unwrap()()
+    .unwrap();
+    assert!(
+        device.join("durability.sqlite-wal").exists(),
+        "the reference database is live in WAL mode"
+    );
+    let backup = create(&fixture.source(), fixture.destination.path(), 1).unwrap();
+    let manifest = verify(&backup.path).unwrap();
+    let files = tree(&backup.path);
+    for path in [
+        "notebook/A.md",
+        "notebook/People/B.md",
+        "notebook/assets/photo.png",
+        "notebook/.quire/notebook.json",
+        "state/folder.sqlite",
+    ] {
+        assert!(files.contains_key(path), "{path} is backed up");
+    }
+    assert_eq!(files["notebook/A.md"], b"- second");
+    assert!(!files.keys().any(|path| path.contains(".git/")
+        || path.ends_with("-wal")
+        || path.contains("query-index")));
+    assert_eq!(
+        manifest.databases["notebook/.quire/devices/laptop/durability.sqlite"]["pending"],
+        1
+    );
+    assert_eq!(manifest.databases["state/folder.sqlite"]["drafts"], 1);
+    assert_eq!(manifest.notebook, None);
+    drop(reference);
+}
+
+#[test]
+fn folder_backups_fail_rather_than_mix_versions_when_a_note_changes_meanwhile() {
+    let fixture = FolderFixture::new();
+    let stop = Arc::new(AtomicBool::new(false));
+    let note = fixture.root.path().join("Busy.md");
+    let writer = thread::spawn({
+        let (note, stop) = (note.clone(), stop.clone());
+        move || {
+            let mut round = 0u64;
+            while !stop.load(Ordering::Relaxed) {
+                fs::write(&note, format!("- {}", round.to_string().repeat(4096))).unwrap();
+                round += 1;
+            }
+        }
+    });
+    let results: Vec<_> = (0..6)
+        .map(|index| create(&fixture.source(), fixture.destination.path(), index))
+        .collect();
+    stop.store(true, Ordering::Relaxed);
+    writer.join().unwrap();
+    for result in results {
+        match result {
+            Ok(backup) => {
+                verify(&backup.path).unwrap();
+                let text =
+                    String::from_utf8(tree(&backup.path)["notebook/Busy.md"].clone()).unwrap();
+                let digits = text.trim_start_matches("- ");
+                assert!(
+                    digits.len().is_multiple_of(4096) && !digits.is_empty(),
+                    "a whole version"
+                );
+            }
+            Err(error) => assert!(
+                format!("{error:#}").contains("changed while it was being backed up"),
+                "{error:#}"
+            ),
+        }
+    }
+    let parent = fixture
+        .source()
+        .backups_in(&fs::canonicalize(fixture.destination.path()).unwrap())
+        .unwrap();
+    assert!(
+        !names(&parent).iter().any(|name| name.starts_with('.')),
+        "no partial copy is left"
+    );
+}
+
+#[test]
+fn stamps_are_utc_dates_that_sort_by_time() {
+    assert_eq!(stamp(0), "1970-01-01T00-00-00-000Z");
+    assert_eq!(stamp(1_793_455_385_123), "2026-10-31T14-03-05-123Z");
+    assert_eq!(stamp(951_782_400_000), "2000-02-29T00-00-00-000Z");
+}

@@ -1,3 +1,4 @@
+pub mod backup;
 mod compression;
 pub mod database;
 mod durable_files;
