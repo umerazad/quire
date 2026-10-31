@@ -130,6 +130,26 @@ struct Saved {
     tested: Option<Tested>,
     #[serde(default)]
     history: Vec<String>,
+    /// The registration command Use from a terminal ran, by CLI binary name.
+    #[serde(default)]
+    terminal: std::collections::BTreeMap<String, String>,
+}
+
+/// The registration commands Use from a terminal ran, by CLI binary name.
+pub fn registered(cx: &App) -> std::collections::BTreeMap<String, String> {
+    cx.try_global::<AiState>()
+        .map(|state| state.saved.terminal.clone())
+        .unwrap_or_default()
+}
+
+/// Records the registration commands Use from a terminal ran.
+pub fn set_registered(
+    terminal: std::collections::BTreeMap<String, String>,
+    cx: &mut App,
+) -> Result<(), String> {
+    let state = cx.global_mut::<AiState>();
+    state.saved.terminal = terminal;
+    state.save()
 }
 
 /// Quire's AI state file and what it holds.
@@ -380,6 +400,10 @@ impl AiSection {
             this.refresh(window, cx)
         })
         .detach();
+        #[cfg(unix)]
+        cx.observe_global::<crate::notebook_tools::terminal::Registration>(|_, cx| cx.notify())
+            .detach();
+        cx.observe_global::<AiState>(|_, cx| cx.notify()).detach();
         Self {
             binary,
             model,
@@ -499,6 +523,14 @@ impl AiSection {
         )
     }
 
+    /// Use from a terminal, where the app serves the notebook tools.
+    fn terminal(cx: &App) -> gpui::AnyElement {
+        #[cfg(unix)]
+        return crate::notebook_tools::terminal::section(cx).into_any_element();
+        #[cfg(not(unix))]
+        gpui::Empty.into_any_element()
+    }
+
     fn hint(text: impl Into<SharedString>) -> Label {
         Label::new(text).size(LabelSize::Small).color(Color::Muted)
     }
@@ -607,6 +639,7 @@ impl Render for AiSection {
                 backend.name(),
                 backend.isolation()
             )))
+            .child(Self::terminal(cx))
             .when_some(self.error.clone(), |section, error| {
                 section.child(Label::new(error).color(Color::Error))
             })

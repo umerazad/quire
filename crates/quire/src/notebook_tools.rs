@@ -9,6 +9,7 @@ pub mod live;
 pub mod read;
 pub mod review;
 pub mod stdio;
+pub mod terminal;
 pub mod write;
 
 use crate::ai::settings::{AiSettings, AiState, is_on};
@@ -70,6 +71,7 @@ fn sync(cx: &mut App) {
 /// the AI settings are registered.
 pub fn init(directory: PathBuf, cx: &mut App) {
     changes::init(cx);
+    terminal::init(&directory.join(bridge::FILE_NAME), cx);
     cx.on_action(|_: &crate::ai::ReviewAiChanges, cx| review::open(cx));
     cx.bind_keys([gpui::KeyBinding::new(
         "escape",
@@ -103,3 +105,6 @@ mod stdio_tests;
 
 #[cfg(test)]
 mod read_tests;
+
+#[cfg(test)]
+mod terminal_tests;

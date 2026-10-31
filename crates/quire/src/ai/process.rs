@@ -25,6 +25,7 @@ use std::{
 pub const TRANSFORM_TIMEOUT: Duration = Duration::from_secs(120);
 pub const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 const VERSION_TIMEOUT: Duration = Duration::from_secs(10);
+const EXECUTE_TIMEOUT: Duration = Duration::from_secs(30);
 const SHELL_TIMEOUT: Duration = Duration::from_secs(5);
 const STDERR_KEPT: usize = 4000;
 
@@ -174,6 +175,36 @@ impl Host {
         }
         command.envs(self.env.iter().map(|(key, value)| (key, value)));
         command
+    }
+
+    /// Runs `binary` with `args` and nothing on standard input (reference `execute`), returning
+    /// its output, or the first line of what it reported when it fails.
+    pub async fn execute(&self, binary: &Path, args: &[String]) -> Result<String, String> {
+        let mut command = self.command(binary).await;
+        command.args(args);
+        let output = smol::process::Command::from(command)
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
+            .output()
+            .map(|output| output.map_err(|error| error.to_string()))
+            .or(async {
+                smol::Timer::after(EXECUTE_TIMEOUT).await;
+                Err("it did not finish within 30 seconds".into())
+            })
+            .await?;
+        if output.status.success() {
+            return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(stderr
+            .trim()
+            .lines()
+            .next()
+            .filter(|line| !line.is_empty())
+            .map_or_else(
+                || format!("it exited with {}", output.status),
+                str::to_owned,
+            ))
     }
 
     /// `binary --version`, as the version number it prints.
