@@ -11,6 +11,7 @@ use std::{
 };
 use theme::ActiveTheme;
 
+mod exchange;
 mod folder;
 mod links;
 mod navigation;
@@ -135,6 +136,7 @@ struct StoredWindow {
     nav: navigation::Navigation,
     links: links::Links,
     folder: folder::FolderView,
+    exchange: Entity<crate::exchange::Exchange>,
 }
 
 impl StoredWindow {
@@ -183,6 +185,7 @@ impl StoredWindow {
             nav,
             links,
             folder: folder::FolderView::default(),
+            exchange: cx.new(|_| crate::exchange::Exchange::default()),
         };
         let pages = this.session.borrow().open_pages();
         for observed in pages {
@@ -401,7 +404,8 @@ impl Render for StoredWindow {
                         },
                     )),
                 )
-            });
+            })
+            .child(self.render_exchange_buttons(cx));
         let root = gpui::div()
             .size_full()
             .relative()
@@ -409,11 +413,12 @@ impl Render for StoredWindow {
             .on_action(cx.listener(|this, _: &SaveAndClosePage, window, cx| {
                 this.save_and_close(window, cx)
             }));
-        Self::register_navigation(root, cx)
+        Self::register_exchange(Self::register_navigation(root, cx), cx)
             .flex()
             .flex_col()
             .bg(cx.theme().colors().editor_background)
             .child(header)
+            .child(self.exchange.clone())
             .when_some(conflict, |div, conflict| div.child(conflict))
             .when_some(self.close_error.clone(), |div, error| {
                 div.child(gpui::div().p_2().child(error))

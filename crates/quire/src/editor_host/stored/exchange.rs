@@ -1,0 +1,536 @@
+//! The window's Markdown import and export commands: choosing folders and files, running the
+//! work off the UI thread with progress and Cancel, and refreshing the notebook afterwards.
+
+use super::StoredWindow;
+use crate::{
+    exchange::{
+        BUSY, CancelExchange, Exchange, ExportNotebookMarkdown, ExportPageMarkdown,
+        ImportMarkdownFolder, flatten_page, now,
+    },
+    notebook_backend::NotebookBackend,
+    query_index::ask,
+};
+use futures::{StreamExt as _, channel::mpsc};
+use gpui::{AppContext as _, AsyncApp, Entity, PathPromptOptions, WeakEntity, Window};
+use quire_core::exchange::{
+    import::import_summary,
+    notebook_export::{ExportReport, export_target, replace_question},
+    page_export::{export_name, localize_attachments},
+};
+use quire_store::markdown_import::{CANCELED, copy_files, read_source, remove_files};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
+
+/// Quire imports at most this many bytes of pages in one checked write.
+const MAX_IMPORT_BYTES: usize = 48 * 1024 * 1024;
+
+pub(super) const EXPORT_CANCELED: &str = "The export was canceled. Nothing was written.";
+
+fn folder_prompt(prompt: &str) -> PathPromptOptions {
+    PathPromptOptions {
+        files: false,
+        directories: true,
+        multiple: false,
+        prompt: Some(prompt.to_owned().into()),
+    }
+}
+
+fn describe(error: anyhow::Error) -> String {
+    format!("{error:#}")
+}
+
+/// The notebook file a `quire-vault:` link names, when it is an ordinary file inside `root`.
+fn notebook_file(root: &Path, relative: &str) -> Option<String> {
+    let base = fs::canonicalize(root).ok()?;
+    let file = fs::canonicalize(base.join(relative)).ok()?;
+    (file.starts_with(&base) && file.is_file()).then(|| file.to_string_lossy().into_owned())
+}
+
+impl StoredWindow {
+    fn exchange_busy(&mut self, cx: &mut gpui::Context<Self>) -> bool {
+        let busy = self.exchange.read(cx).is_running();
+        if busy {
+            self.nav.error = Some(BUSY.into());
+            cx.notify();
+        }
+        busy
+    }
+
+    fn notebook_root(&self) -> Option<PathBuf> {
+        self.session
+            .borrow()
+            .folder()
+            .map(|(root, _)| root.to_path_buf())
+    }
+
+    /// Asks for a folder of Markdown pages and copies it into this notebook.
+    pub(super) fn import_markdown_folder(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.exchange_busy(cx) {
+            return;
+        }
+        let storage = self.session.borrow().storage();
+        let root = self.notebook_root();
+        let exchange = self.exchange.clone();
+        let chosen = cx.prompt_for_paths(folder_prompt("Import"));
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(source))) = chosen
+                .await
+                .map(|chosen| chosen.map(|paths| paths.and_then(|paths| paths.into_iter().next())))
+            else {
+                return;
+            };
+            let result = import(source, root, storage, &exchange, cx).await;
+            exchange.update(cx, |exchange, cx| {
+                exchange.finish(result.map(|message| (message, None)), cx)
+            });
+            this.update(cx, |this, cx| this.notebook_changed(cx)).ok();
+        })
+        .detach();
+    }
+
+    /// Pages were added or files written: the index and page list catch up.
+    fn notebook_changed(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.notebook_root().is_some()
+            && let Some(index) = self.index_client(cx)
+        {
+            index
+                .invalidate()
+                .map(|reply| cx.background_spawn(reply).detach())
+                .ok();
+        }
+        self.refresh_catalogue(cx);
+    }
+
+    /// Saves the shown page as standalone Markdown in a file the user chooses.
+    pub(super) fn export_shown_page(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.exchange_busy(cx) {
+            return;
+        }
+        let Some(page) = self.shown_page(cx) else {
+            return;
+        };
+        let Some(index) = self.index_client(cx) else {
+            self.nav.error = Some(
+                "Export needs the notebook index, which is still starting. Export again in a moment."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        };
+        let storage = self.session.borrow().storage();
+        let open = self.session.borrow().open_pages();
+        let root = self.notebook_root();
+        let exchange = self.exchange.clone();
+        exchange.update(cx, |exchange, cx| {
+            exchange.start("Exporting the page…", None, cx)
+        });
+        cx.spawn(async move |_, cx| {
+            let result = export_page(page, open, storage, index, root, cx).await;
+            exchange.update(cx, |exchange, cx| match result {
+                Ok(None) => *exchange = Exchange::Idle,
+                Ok(Some(done)) => exchange.finish(Ok(done), cx),
+                Err(error) => exchange.finish(Err(error), cx),
+            });
+        })
+        .detach();
+    }
+
+    /// Asks for a folder and writes every page and file of this notebook into it.
+    pub(super) fn export_notebook(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        if self.exchange_busy(cx) {
+            return;
+        }
+        let Some(index) = self.index_client(cx) else {
+            self.nav.error = Some(
+                "Export needs the notebook index, which is still starting. Export again in a moment."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        };
+        let storage = self.session.borrow().storage();
+        let root = self.notebook_root();
+        let exchange = self.exchange.clone();
+        let chosen = cx.prompt_for_paths(folder_prompt("Export"));
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(folder))) = chosen
+                .await
+                .map(|chosen| chosen.map(|paths| paths.and_then(|paths| paths.into_iter().next())))
+            else {
+                return;
+            };
+            let result = export_all(folder, storage, index, root, &exchange, this, cx).await;
+            exchange.update(cx, |exchange, cx| {
+                exchange.finish(result.map(|message| (message, None)), cx)
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn cancel_exchange(&mut self, cx: &mut gpui::Context<Self>) {
+        self.exchange.update(cx, |exchange, cx| exchange.cancel(cx));
+    }
+
+    pub(super) fn register_exchange(div: gpui::Div, cx: &mut gpui::Context<Self>) -> gpui::Div {
+        use gpui::InteractiveElement as _;
+        div.on_action(
+            cx.listener(|this, _: &ImportMarkdownFolder, _, cx| this.import_markdown_folder(cx)),
+        )
+        .on_action(cx.listener(|this, _: &ExportPageMarkdown, _, cx| this.export_shown_page(cx)))
+        .on_action(cx.listener(|this, _: &ExportNotebookMarkdown, window, cx| {
+            this.export_notebook(window, cx)
+        }))
+        .on_action(cx.listener(|this, _: &CancelExchange, _, cx| this.cancel_exchange(cx)))
+    }
+
+    /// Export as Markdown for the shown page, and the notebook-wide import and export.
+    pub(super) fn render_exchange_buttons(&self, cx: &mut gpui::Context<Self>) -> gpui::Div {
+        use gpui::{ParentElement as _, Styled as _};
+        use ui::{Button, Clickable as _, prelude::FluentBuilder as _};
+        gpui::div()
+            .flex()
+            .gap_2()
+            .when(self.shown_page(cx).is_some(), |div| {
+                div.child(
+                    Button::new("export-page-markdown", "Export as Markdown…")
+                        .on_click(cx.listener(|this, _, _, cx| this.export_shown_page(cx))),
+                )
+            })
+            .child(
+                Button::new("import-markdown-folder", "Import a Markdown folder…")
+                    .on_click(cx.listener(|this, _, _, cx| this.import_markdown_folder(cx))),
+            )
+            .child(
+                Button::new("export-notebook-markdown", "Export notebook as Markdown…")
+                    .on_click(cx.listener(|this, _, window, cx| this.export_notebook(window, cx))),
+            )
+    }
+}
+
+async fn import(
+    source: PathBuf,
+    root: Option<PathBuf>,
+    storage: NotebookBackend,
+    exchange: &Entity<Exchange>,
+    cx: &mut AsyncApp,
+) -> Result<String, String> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    exchange.update(cx, |exchange, cx| {
+        exchange.start(
+            "Importing pages: reading the folder…",
+            Some(cancel.clone()),
+            cx,
+        )
+    });
+    let (counts, mut counted) = mpsc::unbounded();
+    let reading = cx.background_spawn({
+        let (source, root, cancel) = (source.clone(), root.clone(), cancel.clone());
+        async move {
+            read_source(&source, root.as_deref(), &cancel, |count| {
+                counts.unbounded_send(count).ok();
+            })
+        }
+    });
+    while let Some(count) = counted.next().await {
+        exchange.update(cx, |exchange, cx| {
+            exchange.progress(format!("Importing pages: read {count} pages…"), true, cx)
+        });
+    }
+    let folder = reading.await.map_err(describe)?;
+    if cancel.load(Ordering::Relaxed) {
+        return Err(CANCELED.into());
+    }
+    let bytes: usize = folder
+        .pages
+        .iter()
+        .map(|page| 256 + page.path.len() + page.text.len())
+        .sum();
+    if bytes > MAX_IMPORT_BYTES {
+        return Err(format!(
+            "The folder holds {} MB of pages; Quire imports at most {} MB at a time. Split the folder and import each part; nothing was imported.",
+            bytes.div_ceil(1024 * 1024),
+            MAX_IMPORT_BYTES / (1024 * 1024)
+        ));
+    }
+    exchange.update(cx, |exchange, cx| {
+        exchange.progress(
+            format!("Importing pages: saving {} pages…", folder.pages.len()),
+            false,
+            cx,
+        )
+    });
+    let files = folder.files.len();
+    match storage {
+        NotebookBackend::Folder(client) => {
+            let root =
+                root.ok_or("This folder notebook has no folder. Reopen it and import again.")?;
+            let copying = folder.files.clone();
+            let copied = cx
+                .background_spawn(async move { copy_files(&source, &root, &copying) })
+                .await
+                .map_err(describe)?;
+            match ask(client.import_pages(folder.pages, now())).await {
+                Ok(imported) => Ok(import_summary(
+                    imported.saved.len(),
+                    files,
+                    imported.skipped.len(),
+                )),
+                Err(error) => {
+                    cx.background_spawn(async move { remove_files(&copied) })
+                        .await;
+                    Err(error)
+                }
+            }
+        }
+        NotebookBackend::Store(client) => {
+            let imported = ask(client.import_pages(folder.pages, now())).await?;
+            let summary = import_summary(imported.saved.len(), 0, imported.skipped.len());
+            Ok(match files {
+                0 => summary,
+                files => format!(
+                    "{summary} {files} other files were not copied: Quire notebooks cannot import attachments yet. Keep the source folder; links to those files stay as written."
+                ),
+            })
+        }
+    }
+}
+
+async fn export_page(
+    page: String,
+    open: Vec<Entity<crate::notebook_session::OpenPage>>,
+    storage: NotebookBackend,
+    index: quire_store::index::IndexClient,
+    root: Option<PathBuf>,
+    cx: &mut AsyncApp,
+) -> Result<Option<(String, Option<PathBuf>)>, String> {
+    let (title, text) = flatten_page(page, open, storage, index, cx).await?;
+    let directory = util::paths::home_dir().clone();
+    let chosen = cx
+        .update(|cx| cx.prompt_for_new_path(&directory, Some(&export_name(&title, "md"))))
+        .await
+        .map_err(|_| "The save dialog closed unexpectedly. Export again.".to_owned())?
+        .map_err(describe)?;
+    let Some(target) = chosen else {
+        return Ok(None);
+    };
+    let written = target.clone();
+    cx.background_spawn(async move {
+        let text = localize_attachments(&text, |relative| {
+            root.as_deref()
+                .and_then(|root| notebook_file(root, relative))
+        });
+        fs::write(&written, text).map_err(|error| {
+            format!(
+                "Cannot write {}: {error}. Choose a folder you can write to and export again.",
+                written.display()
+            )
+        })
+    })
+    .await?;
+    Ok(Some((
+        format!("Exported {title} as Markdown."),
+        Some(target),
+    )))
+}
+
+/// One file a notebook export writes, at its path inside the chosen folder.
+enum Exported {
+    Page(String),
+    File(PathBuf),
+}
+
+async fn export_all(
+    folder: PathBuf,
+    storage: NotebookBackend,
+    index: quire_store::index::IndexClient,
+    root: Option<PathBuf>,
+    exchange: &Entity<Exchange>,
+    window: WeakEntity<StoredWindow>,
+    cx: &mut gpui::AsyncWindowContext,
+) -> Result<String, String> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    exchange.update(cx, |exchange, cx| {
+        exchange.start(
+            "Exporting the notebook: listing pages…",
+            Some(cancel.clone()),
+            cx,
+        )
+    });
+    let pages = ask(index.pages()).await?;
+    let mut outputs: Vec<(String, Exported)> = Vec::new();
+    let mut report = ExportReport {
+        folder: folder.display().to_string(),
+        ..ExportReport::default()
+    };
+    let total = pages.len();
+    for (count, listed) in pages.into_iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(EXPORT_CANCELED.into());
+        }
+        let page = listed.page.page.to_lossy_string();
+        let checkout = ask(storage.checkout(page.clone(), None)).await?;
+        let Some(head) = checkout.selected else {
+            continue;
+        };
+        let root_field = head.root();
+        let (Some(path), Some(text)) = (
+            root_field.field("path").as_str(),
+            root_field.field("text").as_str(),
+        ) else {
+            return Err(format!(
+                "Page {page} has an unreadable stored version. Open it, save it again, and export again; nothing was written."
+            ));
+        };
+        if checkout.heads.len() > 1 {
+            report.competing.push(path.to_owned());
+        }
+        let draft = match &storage {
+            NotebookBackend::Store(client) => ask(client.draft(page)).await?,
+            NotebookBackend::Folder(client) => ask(client.draft(page)).await?,
+        };
+        if draft.is_some() {
+            report.drafts.push(path.to_owned());
+        }
+        outputs.push((export_target(path)?, Exported::Page(text.to_owned())));
+        exchange.update(cx, |exchange, cx| {
+            exchange.progress(
+                format!(
+                    "Exporting the notebook: read {} of {total} pages…",
+                    count + 1
+                ),
+                true,
+                cx,
+            )
+        });
+    }
+    report.pages = outputs.len();
+    match (&storage, &root) {
+        (NotebookBackend::Folder(client), Some(root)) => {
+            for file in ask(client.listing()).await?.others {
+                outputs.push((export_target(&file)?, Exported::File(root.join(&file))));
+                report.files += 1;
+            }
+        }
+        _ => {
+            report.uncopied = linked_attachments(&outputs);
+        }
+    }
+    let targets: Vec<String> = outputs.iter().map(|(target, _)| target.clone()).collect();
+    let checked = folder.clone();
+    let existing: Vec<String> = cx
+        .background_spawn(async move {
+            targets
+                .into_iter()
+                .filter(|target| fs::symlink_metadata(checked.join(target)).is_ok())
+                .collect()
+        })
+        .await;
+    if !existing.is_empty() {
+        let (question, detail) = replace_question(&report.folder, &existing);
+        let answer = window
+            .update_in(cx, |_, window, cx| {
+                window.prompt(
+                    gpui::PromptLevel::Warning,
+                    &question,
+                    Some(&detail),
+                    &["Replace", "Cancel"],
+                    cx,
+                )
+            })
+            .map_err(|_| EXPORT_CANCELED.to_owned())?;
+        if answer.await != Ok(0) {
+            return Err(EXPORT_CANCELED.into());
+        }
+    }
+    exchange.update(cx, |exchange, cx| {
+        exchange.progress(
+            format!("Exporting the notebook: writing {} files…", outputs.len()),
+            true,
+            cx,
+        )
+    });
+    let writing = cancel.clone();
+    cx.background_spawn(async move { write_export(&folder, outputs, &writing) })
+        .await?;
+    Ok(report.summary())
+}
+
+/// Attachment links (`attachments/…`) in exported pages, which a Quire notebook export cannot
+/// copy yet.
+fn linked_attachments(outputs: &[(String, Exported)]) -> Vec<String> {
+    let mut linked: Vec<String> = outputs
+        .iter()
+        .filter_map(|(_, output)| match output {
+            Exported::Page(text) => Some(text),
+            Exported::File(_) => None,
+        })
+        .flat_map(|text| {
+            text.match_indices("attachments/").map(|(start, _)| {
+                text[start..]
+                    .split(|character: char| {
+                        character.is_whitespace() || ")]>\"'".contains(character)
+                    })
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+        })
+        .filter(|link| link.len() > "attachments/".len())
+        .collect();
+    linked.sort();
+    linked.dedup();
+    linked
+}
+
+/// Writes every output into a hidden folder inside `folder`, then moves each into place, so a
+/// canceled or failed export leaves nothing behind.
+fn write_export(
+    folder: &Path,
+    outputs: Vec<(String, Exported)>,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    let staging = folder.join(format!(".quire-export-{}", now()));
+    fs::create_dir(&staging).map_err(|error| {
+        format!(
+            "Cannot write into {}: {error}. Choose a folder you can write to and export again.",
+            folder.display()
+        )
+    })?;
+    let staged = (|| {
+        for (target, output) in &outputs {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(EXPORT_CANCELED.to_owned());
+            }
+            let path = staging.join(target);
+            let failed = |error: std::io::Error| {
+                format!(
+                    "Cannot write {target}: {error}. Check free space and write access, then export again; nothing was written."
+                )
+            };
+            fs::create_dir_all(path.parent().unwrap_or(&staging)).map_err(failed)?;
+            match output {
+                Exported::Page(text) => fs::write(&path, text).map_err(failed)?,
+                Exported::File(source) => fs::copy(source, &path).map(drop).map_err(failed)?,
+            }
+        }
+        Ok(())
+    })();
+    let moved = staged.and_then(|()| {
+        outputs.iter().try_for_each(|(target, _)| {
+            let path = folder.join(target);
+            fs::create_dir_all(path.parent().unwrap_or(folder))
+                .and_then(|()| fs::rename(staging.join(target), &path))
+                .map_err(|error| {
+                    format!("Cannot place {target} in {}: {error}. Check write access; files already placed stay.", folder.display())
+                })
+        })
+    });
+    fs::remove_dir_all(&staging).ok();
+    moved
+}
