@@ -96,7 +96,8 @@ fn notice(cx: &mut TestAppContext) -> Option<String> {
 
 /// Waits for the formatter thread's answer to reach the view.
 fn settle(window: WindowHandle<Editor>, cx: &mut TestAppContext) {
-    for _ in 0..2000 {
+    let start = std::time::Instant::now();
+    while start.elapsed() < crate::test_patience::PATIENCE {
         cx.executor().run_until_parked();
         if !window
             .update(cx, |editor, _, _| formatting(editor))
@@ -106,7 +107,10 @@ fn settle(window: WindowHandle<Editor>, cx: &mut TestAppContext) {
         }
         std::thread::sleep(Duration::from_millis(5));
     }
-    panic!("Format code did not finish within 10 seconds");
+    panic!(
+        "Format code did not finish within {:?}",
+        crate::test_patience::PATIENCE
+    );
 }
 
 fn format(window: WindowHandle<Editor>, cx: &mut TestAppContext) {
