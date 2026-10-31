@@ -8,6 +8,7 @@
     "test:reference": "node node_modules/vitest/vitest.mjs run tests/reference",
     "test:storage-crash": "node tools/test-storage-crash.ts",
     "test:sync-schedules": "bun tools/run-sync-schedules.ts",
+    "bench": "bun tools/bench/run.ts",
     "test:vim-search": "cargo test -p vim --locked --features util/debug-embed --lib normal::search::test::",
     "test:vim-command": "cargo test -p vim --locked --features util/debug-embed --lib command::test:: -- --test-threads=1",
     "test:vim-mark": "cargo test -p vim --locked --features util/debug-embed --lib normal::mark::test::"

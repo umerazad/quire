@@ -30,6 +30,8 @@ const TYPING_PAUSE: Duration = Duration::from_millis(80);
 const PAGE_OPENS: usize = 20;
 /// How long a measure waits for a painted frame before settling for state; see [`paint`].
 const UNPAINTED: Duration = Duration::from_millis(250);
+/// Index queries that found the queue full and were retried; see [`timed`].
+static BUSY: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 const QUERIES: [&str; 10] = [
     "budget",
     "design storage",
@@ -253,12 +255,26 @@ async fn open(
     Ok(ms(shown.saturating_duration_since(started)))
 }
 
+/// Times one index query from the foreground, as a view waits for it. A full queue is retried
+/// every millisecond, as the views retry, and the wait counts toward the time and in `BUSY`.
 async fn timed<T>(
     what: &str,
-    request: impl FnOnce() -> Result<quire_store::worker::Reply<T>, quire_store::worker::QueueError>,
+    request: impl Fn() -> Result<quire_store::worker::Reply<T>, quire_store::worker::QueueError>,
+    cx: &mut AsyncWindowContext,
 ) -> Result<f64, String> {
     let started = Instant::now();
-    request()
+    let reply = loop {
+        match request() {
+            Err(quire_store::worker::QueueError::Busy) => {
+                BUSY.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                cx.background_executor()
+                    .timer(Duration::from_millis(1))
+                    .await;
+            }
+            reply => break reply,
+        }
+    };
+    reply
         .map_err(|error| format!("The index refused the {what} query: {error}. Retry the run."))?
         .await
         .map_err(|error| format!("The {what} query failed: {error:#}. Retry the run."))?;
@@ -323,12 +339,12 @@ async fn run(
     stage(launched, "querying the index");
     let mut search = Vec::new();
     for query in QUERIES {
-        search.push(timed("search", || client.search(query.to_owned())).await?);
+        search.push(timed("search", || client.search(query.to_owned()), cx).await?);
     }
     let mut backlinks = Vec::new();
     for page in &listed[..listed.len().min(PAGE_OPENS)] {
         let page = page.page.page.clone();
-        backlinks.push(timed("backlinks", || client.backlinks(page)).await?);
+        backlinks.push(timed("backlinks", || client.backlinks(page.clone()), cx).await?);
     }
     let mut tasks = Vec::new();
     for view in [
@@ -344,9 +360,9 @@ async fn run(
             project: None,
             limit: 200,
         };
-        tasks.push(timed("tasks", || client.task_board(query)).await?);
+        tasks.push(timed("tasks", || client.task_board(query.clone()), cx).await?);
     }
-    let tags = vec![timed("tags", || client.tag_names()).await?];
+    let tags = vec![timed("tags", || client.tag_names(), cx).await?];
 
     stage(launched, "typing in the large page");
     let large = client
@@ -402,6 +418,7 @@ async fn run(
         "large_page": large,
         "counts": counts,
         "unpainted": unpainted,
+        "busy_retries": BUSY.load(std::sync::atomic::Ordering::Relaxed),
         "pages": listed.len(),
     }))
 }
