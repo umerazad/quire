@@ -52,6 +52,32 @@ struct Source {
     recovery: Option<PathBuf>,
 }
 
+impl Source {
+    fn wal(&self) -> PathBuf {
+        PathBuf::from(format!("{}-wal", self.database.display()))
+    }
+}
+
+/// A draft the reference app recovered from another computer's records, as its
+/// `foreign_drafts` table keeps it: the original draft, its computer, and the recovered note.
+struct Origin {
+    device: String,
+    draft: Pending,
+    recovered_path: String,
+    recovered_text: String,
+}
+
+/// What one source holds.
+struct Records {
+    /// Each draft with the computer it was typed on. A draft the reference app recovered from
+    /// another computer and has not changed since counts as that computer's original.
+    drafts: Vec<(String, Pending)>,
+    history: Vec<(String, String, String, i64)>,
+    /// Import keys of drafts the reference app recovered from another computer and has since
+    /// saved or discarded.
+    settled: Vec<String>,
+}
+
 /// A page that gained a recovery draft from the reference app.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecoveredDraft {
@@ -155,14 +181,45 @@ impl FolderNotebook {
                 );
             }
         };
-        let mut recovered = Vec::new();
+        let unreadable = |source: &Source, error: anyhow::Error| {
+            format!(
+                "The reference app's recovery data in {} could not be read: {error:#}. It is kept unchanged; reopen the notebook to retry.",
+                source.database.display()
+            )
+        };
         let mut notices = Vec::new();
+        let mut changed = Vec::new();
         for source in sources {
-            if let Err(error) = self.import_source(&source, &mut recovered) {
-                notices.push(format!(
-                    "The reference app's recovery data in {} could not be read: {error:#}. It is kept unchanged; reopen the notebook to retry.",
-                    source.database.display()
-                ));
+            match self.changed_source(&source) {
+                Ok(Some(found)) => changed.push((source, found)),
+                Ok(None) => {}
+                Err(error) => notices.push(unreadable(&source, error)),
+            }
+        }
+        // Drafts the reference app already recovered from another computer are settled before
+        // any computer's own records, so that computer's copy is not imported a second time.
+        let settled = self.transaction(|| {
+            changed
+                .iter()
+                .flat_map(|(_, (_, records))| &records.settled)
+                .try_for_each(|key| {
+                    self.connection
+                        .exec_bound("INSERT OR IGNORE INTO reference_imports(key) VALUES (?)")?(
+                        key.as_str(),
+                    )
+                })
+        });
+        if let Err(error) = settled {
+            notices.push(format!(
+                "The reference app's recovered drafts could not be recorded: {error:#}. Check free space for Quire's application data and reopen the notebook to retry."
+            ));
+            return (Vec::new(), notices);
+        }
+        let mut recovered = Vec::new();
+        for (source, (fingerprint, records)) in &changed {
+            match self.import_source(source, fingerprint, records) {
+                Ok(found) => recovered.extend(found),
+                Err(error) => notices.push(unreadable(source, error)),
             }
         }
         if !recovered.is_empty() {
@@ -183,19 +240,20 @@ impl FolderNotebook {
         (recovered, notices)
     }
 
-    fn import_source(&self, source: &Source, recovered: &mut Vec<RecoveredDraft>) -> Result<()> {
+    /// The source's records with its fingerprint, or None when it is missing or unchanged since
+    /// the last import.
+    fn changed_source(&self, source: &Source) -> Result<Option<(String, Records)>> {
         let metadata = match fs::symlink_metadata(&source.database) {
             Ok(metadata) => metadata,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         };
         if !metadata.is_file() || metadata.file_type().is_symlink() {
             bail!("the database is a link or not a file");
         }
-        let wal = PathBuf::from(format!("{}-wal", source.database.display()));
         let fingerprint = [
             stamp(&source.database),
-            stamp(&wal),
+            stamp(&source.wal()),
             source.recovery.as_deref().map(stamp).unwrap_or_default(),
         ]
         .join(":");
@@ -205,13 +263,19 @@ impl FolderNotebook {
             source.key.as_str(),
         )?;
         if seen.as_deref() == Some(fingerprint.as_str()) {
-            return Ok(());
+            return Ok(None);
         }
+        Ok(Some((fingerprint, self.read_source(source)?)))
+    }
+
+    /// Reads a source from a fresh copy in Quire's state folder, so the reference app's files
+    /// are never opened for writing.
+    fn read_source(&self, source: &Source) -> Result<Records> {
         let copy = tempfile::tempdir_in(&self.state)
             .context("Cannot copy it into Quire's state folder; check free space")?;
         let database = copy.path().join("reference.sqlite");
         fs::copy(&source.database, &database)?;
-        match fs::copy(&wal, copy.path().join("reference.sqlite-wal")) {
+        match fs::copy(source.wal(), copy.path().join("reference.sqlite-wal")) {
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
@@ -231,40 +295,62 @@ impl FolderNotebook {
                 }
             }
         }
-        let rows = reference_history(&foreign)?;
-        drop(foreign);
-        self.connection.exec("BEGIN IMMEDIATE")?()?;
-        let imported = (|| -> Result<Vec<RecoveredDraft>> {
+        let origins = provenance(&foreign)?;
+        let history = reference_history(&foreign)?;
+        let mut used = vec![false; origins.len()];
+        let drafts = drafts
+            .into_iter()
+            .map(|draft| {
+                let origin = origins.iter().position(|origin| {
+                    origin.recovered_path == draft.path && origin.recovered_text == draft.text
+                });
+                match origin {
+                    Some(index) => {
+                        used[index] = true;
+                        (origins[index].device.clone(), origins[index].draft.clone())
+                    }
+                    None => (source.device.clone(), draft),
+                }
+            })
+            .collect();
+        let settled = origins
+            .iter()
+            .zip(used)
+            .filter(|(_, used)| !used)
+            .map(|(origin, _)| draft_key(&origin.device, &origin.draft))
+            .collect::<Result<_>>()?;
+        Ok(Records {
+            drafts,
+            history,
+            settled,
+        })
+    }
+
+    fn import_source(
+        &self,
+        source: &Source,
+        fingerprint: &str,
+        records: &Records,
+    ) -> Result<Vec<RecoveredDraft>> {
+        self.transaction(|| {
             let now = (self.clock)();
-            for (path, text, revision, saved_at) in &rows {
+            for (path, text, revision, saved_at) in &records.history {
                 if files::validate(path).is_ok() {
                     history::import(&self.connection, path, text, revision, *saved_at, now)?;
                 }
             }
             let mut found = Vec::new();
-            for draft in &drafts {
-                if let Some(page) = self.import_draft(&source.device, draft)? {
+            for (device, draft) in &records.drafts {
+                if let Some(page) = self.import_draft(device, draft)? {
                     found.push(page);
                 }
             }
             self.connection.exec_bound(
                 "INSERT INTO reference_sources(source,fingerprint) VALUES (?,?) ON CONFLICT(source) DO UPDATE SET fingerprint=excluded.fingerprint",
-            )?((source.key.as_str(), fingerprint.as_str()))?;
+            )?((source.key.as_str(), fingerprint))?;
             Ok(found)
-        })();
-        match imported {
-            Ok(found) => {
-                self.connection.exec("COMMIT")?()?;
-                recovered.extend(found);
-                Ok(())
-            }
-            Err(error) => {
-                self.connection.exec("ROLLBACK")?()?;
-                Err(error)
-            }
-        }
+        })
     }
-
     /// Records one reference draft as a recovery draft, once. None when it needs nothing: it was
     /// imported before, the file already holds its text, or the page has the same draft.
     fn import_draft(&self, device: &str, draft: &Pending) -> Result<Option<RecoveredDraft>> {
@@ -358,26 +444,11 @@ impl FolderNotebook {
             if !source.database.is_file() {
                 continue;
             }
-            let copy = tempfile::tempdir_in(&self.state)
-                .context("Cannot copy it into Quire's state folder; check free space")?;
-            let database = copy.path().join("reference.sqlite");
-            fs::copy(&source.database, &database)?;
-            let wal = PathBuf::from(format!("{}-wal", source.database.display()));
-            if wal.is_file() {
-                fs::copy(&wal, copy.path().join("reference.sqlite-wal"))?;
-            }
-            let foreign = database::open_unconfigured(&database)?;
-            let mut drafts = pending(&foreign)?;
-            if let Some(folder) = source.recovery.as_deref() {
-                for record in recovery_records(folder)? {
-                    if !drafts.iter().any(|draft| draft.path == record.path) {
-                        drafts.push(record);
-                    }
-                }
-            }
-            for draft in &drafts {
-                // A computer's history snapshot repeats the drafts of its database.
-                let key = draft_key(&source.device, draft)?;
+            let records = self.read_source(&source)?;
+            for (device, draft) in &records.drafts {
+                // A computer's history snapshot repeats the drafts of its database, and a draft
+                // recovered from another computer repeats that computer's own.
+                let key = draft_key(device, draft)?;
                 if !keys.insert(key.clone()) {
                     continue;
                 }
@@ -389,7 +460,7 @@ impl FolderNotebook {
                 )?;
                 tally.drafts_accounted += usize::from(known.is_some());
             }
-            for (path, _, revision, saved_at) in reference_history(&foreign)? {
+            for (path, _, revision, saved_at) in records.history {
                 // A version can be in both a computer's database and its history snapshot.
                 if files::validate(&path).is_err()
                     || !versions.insert((path.clone(), revision.clone(), saved_at))
@@ -485,6 +556,35 @@ fn pending(connection: &Connection) -> Result<Vec<Pending>> {
             expected_revision,
             saved_at,
         })
+        .collect())
+}
+
+/// The drafts this computer's reference app recovered from other computers.
+fn provenance(connection: &Connection) -> Result<Vec<Origin>> {
+    if !has_table(connection, "foreign_drafts")? {
+        return Ok(Vec::new());
+    }
+    type Row = (String, String, String, Option<String>, i64, String, String);
+    let rows: Vec<Row> = connection.select(
+        "SELECT device,path,text,expected_revision,saved_at,recovered_path,recovered_text FROM foreign_drafts ORDER BY fingerprint",
+    )?()?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(device, path, text, expected_revision, saved_at, recovered_path, recovered_text)| {
+                Origin {
+                    device,
+                    draft: Pending {
+                        path,
+                        text,
+                        expected_revision,
+                        saved_at,
+                    },
+                    recovered_path,
+                    recovered_text,
+                }
+            },
+        )
         .collect())
 }
 

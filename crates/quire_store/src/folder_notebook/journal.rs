@@ -449,7 +449,7 @@ impl FolderNotebook {
         }
     }
 
-    fn transaction<T>(&self, work: impl FnOnce() -> Result<T>) -> Result<T> {
+    pub(super) fn transaction<T>(&self, work: impl FnOnce() -> Result<T>) -> Result<T> {
         self.connection.exec("BEGIN IMMEDIATE")?()?;
         match work() {
             Ok(value) => {

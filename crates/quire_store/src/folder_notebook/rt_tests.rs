@@ -744,7 +744,11 @@ struct ReferenceDevice {
 
 impl ReferenceDevice {
     fn create(root: &Path) -> Self {
-        let folder = root.join(".quire/devices").join(DEVICE);
+        Self::named(root, DEVICE)
+    }
+
+    fn named(root: &Path, device: &str) -> Self {
+        let folder = root.join(".quire/devices").join(device);
         fs::create_dir_all(&folder).unwrap();
         let connection = crate::database::open_writable(&folder.join("durability.sqlite")).unwrap();
         for sql in [
@@ -984,4 +988,103 @@ fn unreadable_reference_data_is_reported_and_left_alone() {
     assert!(notices[0].contains("reopen the notebook to retry"));
     assert_eq!(snapshot(&opened.folder), before);
     assert!(reopened.recovered_drafts().is_empty());
+}
+
+impl ReferenceDevice {
+    /// Records that this computer's reference app recovered `draft` from computer `origin` as the
+    /// note at `recovered_path`, as `importCopiedData` does in vault.ts.
+    fn recovered_from(
+        &self,
+        origin: &str,
+        (path, text, saved_at): (&str, &str, i64),
+        recovered_path: &str,
+        recovered_text: &str,
+    ) {
+        self.connection
+            .exec_bound("INSERT INTO foreign_drafts VALUES (?,?,?,?,?,?,?,?)")
+            .unwrap()((
+            format!("draft:{path}"),
+            origin,
+            path,
+            text,
+            None::<String>,
+            saved_at,
+            recovered_path,
+            recovered_text,
+        ))
+        .unwrap();
+    }
+}
+
+#[test]
+fn a_draft_the_reference_app_recovered_from_another_computer_is_imported_once() {
+    // The third computer sorts first, so its own records are read before the provenance.
+    const THIRD: &str = "0c0c0c0c-1111-4222-8333-444455556666";
+    let opened = fixture(&[
+        ("A.md", "- a\n"),
+        ("Recovered drafts/Draft 0c0c0c0c saved.md", "- s kept\n"),
+    ]);
+    let third = ReferenceDevice::named(&opened.folder, THIRD);
+    third.pending("N.md", "- n typed on the third computer\n", None, 30);
+    third.pending("S.md", "- s typed on the third computer\n", None, 31);
+    let here = ReferenceDevice::create(&opened.folder);
+    // Still waiting in this computer's reference app, unchanged since it was recovered.
+    let waiting = "---\ntitle: \"Recovered draft: N\"\n---\n\n- n typed on the third computer\n";
+    here.recovered_from(
+        THIRD,
+        ("N.md", "- n typed on the third computer\n", 30),
+        "Recovered drafts/Draft 0c0c0c0c waiting.md",
+        waiting,
+    );
+    here.pending(
+        "Recovered drafts/Draft 0c0c0c0c waiting.md",
+        waiting,
+        None,
+        40,
+    );
+    // Already saved there as its own note.
+    here.recovered_from(
+        THIRD,
+        ("S.md", "- s typed on the third computer\n", 31),
+        "Recovered drafts/Draft 0c0c0c0c saved.md",
+        "- s kept\n",
+    );
+    here.pending("A.md", "- a typed here\n", Some("- a\n"), 41);
+
+    let reopened = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    let recovered: Vec<String> = reopened
+        .recovered_drafts()
+        .into_iter()
+        .map(|draft| draft.path)
+        .collect();
+    assert_eq!(
+        recovered,
+        ["N.md", "A.md"],
+        "each draft comes back once, under its own page"
+    );
+    assert_eq!(
+        draft_text(&reopened, "N.md").unwrap().0,
+        "- n typed on the third computer\n"
+    );
+    assert_eq!(
+        draft_text(&reopened, "S.md"),
+        None,
+        "already saved as a note"
+    );
+    assert_eq!(
+        draft_text(&reopened, "Recovered drafts/Draft 0c0c0c0c waiting.md"),
+        None
+    );
+    let tally = reopened.reference_tally().unwrap();
+    assert_eq!(
+        (tally.drafts, tally.drafts_accounted),
+        (3, 3),
+        "the waiting copy counts as the third computer's draft"
+    );
+    assert!(
+        FolderNotebook::open(&opened.folder, &opened.state)
+            .unwrap()
+            .recovered_drafts()
+            .is_empty()
+    );
 }
