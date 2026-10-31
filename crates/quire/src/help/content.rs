@@ -17,7 +17,7 @@ pub const SECTIONS: &[HelpSection] = &[
         steps: &[
             "Vim is on by default. Click the editor and press i to type. Press Escape to return to Normal mode. Turn Vim off in Settings (Command/Ctrl-,) if you prefer ordinary editing.",
             "File > Open Notebook Folder… opens a vault or Git working tree; File > Open Quire Notebook… opens a Quire notebook's local.sqlite. The profile buttons above the page, or File > Profile, switch between Current, Work and Personal. Files shows the physical folders; Pages browses logical page titles.",
-            "Open destinations become tabs. Right-click a tab, or press Shift-F10 on a focused tab, for Close, Close others, Close tabs to the left or right, Close all, favorites, and, for pages, Open beside, Copy link and Reveal in Finder / Explorer. Middle-click closes a tab.",
+            "Open destinations become tabs. Right-click a tab, or press Shift-F10 while focus is outside the page and Files, for Close, Close others, Close tabs to the left or right, Close all, favorites, and, for pages, Open beside, Copy link and Reveal in Finder / Explorer. Middle-click closes a tab.",
             "Edits save automatically. Check the bottom status bar and resolve any save or recovery warning. F1 opens Help beside the page and Escape closes it; Tab moves through its controls. Help is available offline and does not add files to your notebook.",
         ],
         example: None,
@@ -45,7 +45,7 @@ pub const SECTIONS: &[HelpSection] = &[
     HelpSection {
         id: "blocks",
         title: "Blocks, nesting and folding",
-        description: "Build an outline with list blocks. Every block has the same dot, and vertical guides show nesting depth. A ring around a dot means its children are folded.",
+        description: "Build an outline with list blocks. Every list block has the same dot, or its number in a numbered list. A ring around a dot means its children are folded.",
         steps: &[
             "Plain text stays plain text when you press Enter. To start an outline, type - followed by a space. In a full-page Write editor, Enter then creates a sibling list block; at the start of a block it adds an empty block above, and in a block with open children it starts the first child. Tab nests the block and its children under the previous sibling. Shift-Tab moves the subtree out after the parent's remaining children. With Vim enabled, use Insert mode for these editing keys.",
             "Enter on an empty list item moves it out one level; at the top level it exits the outline. Ordinary paragraphs, headings, code and tables keep their Markdown editing behavior. Embedded roots retain their existing editing boundary.",
@@ -99,6 +99,31 @@ pub const SECTIONS: &[HelpSection] = &[
         ],
         example: Some(
             "- Meeting\n  - [[{ask: Meeting with?}]] {time} #meeting\n    - Agenda\n      - {cursor}\n![Diagram](assets/diagram.png)\n![[assets/report.pdf]]\n`inline code`\n```typescript\nconst next = 'one small step';\n```",
+        ),
+    },
+    HelpSection {
+        id: "ai",
+        title: "AI commands",
+        description: "Rewrite, extend and question your notes with the Claude Code or Codex command line tool already signed in on this computer. Every change is a proposal until you accept it.",
+        steps: &[
+            "Turn it on: open Settings, go to AI, choose Claude Code or Codex and press Test. AI commands stay off until the chosen tool and binary pass Test, and changing either turns them off again. Leave Binary path empty to find the tool automatically.",
+            "In Vim Normal mode, type :ai tighten to rewrite the block at the caret and its children. Select lines in Visual mode first, or type a range such as :3,8ai, to choose the text.",
+            "Press Command/Ctrl-I, or \\a in Vim Normal or Visual mode, to open the AI prompt under the text it will use. It says whether that is a block, a selection or a blank line, offers the verbs that fit, and lists earlier prompts; Up and Down recall them. Type an instruction and press Enter, or choose a verb. Escape closes the prompt.",
+            "On a blank line, :ai followed by what you want, such as :ai list three questions to ask, drafts new text right there, using the text above the cursor as context. :ai continue on a blank line continues from that text. Verbs that rework text, such as tighten, need a block or a selection.",
+            "Verbs: tighten, prose, outline, continue, check and ask. Any other words are an instruction for the text, such as :ai make it formal. continue, and instructions starting with draft, write, add, list, brainstorm, generate, suggest or propose, insert new text below instead of replacing it.",
+            "The proposal streams in under the text, then shows as a diff. Press Enter or Accept to apply it as one undo step; Escape or Reject leaves the page unchanged. Lines whose text did not change keep their block IDs. A range edited while the AI worked is refused.",
+            "With Vim off, press Command/Ctrl-K and type AI: to run the same verbs on the selection or the current block.",
+            "Questions: :ai alone, Command-Option-I (Ctrl-Alt-I elsewhere), \\q in Vim Normal mode, Ask the notebook in the page menu, or AI: Ask the notebook in Find open the answer pane beside the page. The model reads the notebook through Quire's tools, unsaved edits included, and each call shows as a row such as Tasks due today · 6. Citations such as [[Page]] and ((id)) open on click. Keep in today's note adds the answer as a block on today's daily page; quoted citations become block references only then.",
+            "Ready-made questions: the empty answer pane offers Due today, This week, Summarize the last occurrence of the open page, What changed yesterday and Tagged with…. They are also AI: entries in Find, and in Vim :ai due, :ai week, :ai yesterday, :ai last and :ai tagged reading ask them directly.",
+            "Synthesize under Linked references, or on a tag page, opens the answer pane with an editable instruction. Enter adds a line; press Command/Ctrl-Enter or Synthesize to run it over those blocks. Revise instruction brings it back to edit and run again. Your edited instruction is kept for next time, and Use default restores the original.",
+            "Tidy this day, in the page menu, the answer pane on a daily page, AI: Tidy this day in Find, or :ai tidy, proposes links to existing pages, a state for open tasks without one, and 📅 dates for tasks that name a day. Quire refuses anything that edits another page, creates a page, links a missing page, or rewrites, moves or deletes text.",
+            "Changes: Settings > AI > AI writes chooses Off, Review or Apply. In Review, a change the AI proposes waits under its question with a diff; Apply makes it one undo step, Reject drops it, and Apply all applies the rest. In Apply, changes happen at once and stay listed with Undo. A change to a block edited since is refused.",
+            "Export as PDF and Export as Word, named for the chosen tool and beside Export as Markdown in the page header, have the command line tool format the page with your own document tools in a temporary folder. The status line shows progress and Cancel.",
+            "Terminal: Register under Use from a terminal in Settings > AI adds Quire's tools to Claude Code and Codex, so a claude or codex session in a terminal can use the notebook open here while Quire runs. Its changes appear under Changes from a terminal in the answer pane. Remove undoes the registration.",
+            "Each run's prompt and answer are kept in Quire's own data beside the notebook, never in its pages. Questions, Tidy and the terminal tools need macOS or Linux.",
+        ],
+        example: Some(
+            ":ai tighten\n:'<,'>ai outline\n:ai list three counterarguments\n:ai ask what is still undecided here?\n:ai due\n:ai tagged reading",
         ),
     },
     HelpSection {
