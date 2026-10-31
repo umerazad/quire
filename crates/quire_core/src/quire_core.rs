@@ -8,6 +8,7 @@ pub mod reference_filter;
 pub mod relocate;
 pub mod source_text;
 pub mod tag_edits;
+pub mod tag_tones;
 pub mod task_query;
 pub mod tasks;
 pub mod templates;

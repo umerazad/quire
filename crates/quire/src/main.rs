@@ -104,6 +104,18 @@ mod markdown_links;
 #[cfg(feature = "full-editor")]
 mod page_menu;
 
+#[cfg(feature = "full-editor")]
+mod preferences;
+
+#[cfg(feature = "full-editor")]
+mod help;
+
+#[cfg(feature = "full-editor")]
+mod showcase;
+
+#[cfg(feature = "full-editor")]
+mod tag_labels;
+
 #[path = "example_support/fonts.rs"]
 mod example_support;
 

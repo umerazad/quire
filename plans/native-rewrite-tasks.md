@@ -1397,8 +1397,32 @@ Constraints: Apply appearance before first draw; sample content never enters rea
 Write set: preferences/theme/help/showcase modules and bundled assets.
 Dependencies: NR16, NR19, NR20, NR21, NR22, NR30.
 Verify: Native preference persistence, theme switching, script fallbacks, platform shortcut labels, help navigation, sample reset/isolation, and screenshots at multiple sizes/scales.
-Proof notes: pending.
-Status: pending
+Proof notes: Preferences are Zed settings, not a bespoke store. `preferences.rs` registers `QuirePreferences`, layers rt's defaults over Zed's with `SettingsStore::update_default_settings`, and saves each change through `update_settings_file`, so the Settings window and a hand edit of `settings.json` take the same path. `watch_config_file` applies later saves live; an unparsable file keeps the last good values and shows "Fix the file". The first settings read happens before the first window opens, so the saved appearance applies before first draw. Vendored `settings_content` gained a typed `quire` section (`QuireSettingsContent`, three fork entries in `UPSTREAM.json`).
+
+Inventory of rt preferences, with the quire key and status:
+
+| rt setting (storage) | Default | Quire setting | Status |
+| --- | --- | --- | --- |
+| Appearance `quire.appearance` (local storage) and `appearance.json` (`{"appearance":"dark"}`) | system | `theme.mode` (`system`/`light`/`dark`, One Light/One Dark) | Done: Settings radio, sidebar Light / Dark toggle, live system follow per window, rt import |
+| `vim` in `quire.editor.settings`; legacy `quire.editor.vim` | true | `vim_mode` | Done: live in open editors, import of both keys |
+| `formatTags` | true | `quire.format_tags` | Done: tone labels in Write, live on/off |
+| `captureTarget` | inbox | `quire.capture_target` (`inbox`/`today`) | Done: Tasks capture to today's daily page without ➕ date |
+| `fontFamily` (1 to 150 UTF-16 units, trimmed) | Pragmata Pro Mono Liga | `buffer_font_family`, fallbacks PragmataPro Mono Liga, .ZedMono | Done |
+| `fontSize` (10 to 40) | 16 | `buffer_font_size` | Done |
+| `lineHeight` (1.2 to 2.5) | 1.85 | `buffer_line_height: {"custom": n}` | Done |
+| Daily layout (`.quire/notebook.json` or `s-notebook`) | `{YYYY}-{MM}-{DD}` at root | unchanged, per notebook | Already rt-compatible (NR16); Settings points to the Daily notes browser |
+| AI settings (`ai-settings.json`) | off | none | Not ported: AI is NR28 to NR31 |
+| Profiles, backups, Git (`profiles.sqlite`, legacy `settings.json` root) | Current | none | Not ported: NR26, NR27, NR33 |
+| `quire-workspace:<root>`, AI history, synthesis instruction (local storage) | | | Not preferences; workspace migration belongs to NR36 |
+
+rt has no time-zone, reduced-motion, or line-width preference. Validation and its messages follow `editor-preferences.ts`; an invalid typed number returns to the saved value beside the reason, as rt's `NumberSetting` does. Import runs once, when `settings.json` is missing: `rt_import.rs` reads `QUIRE_DATA_DIR`, then `Quire`, then `Threadnote` under the platform data folder, takes the newest `file://` value of each key from Chromium's leveldb (`local_storage.rs`: log records, tables, Snappy blocks; read-only), applies rt's rule that one invalid field discards all, and writes only values that differ from the defaults. A failed import writes nothing and retries next launch. Against this machine's real rt 0.9.57 profile (read-only, not committed), the reader found `{"appearance":"dark"}` and `fontSize: 20` and produced exactly those two changes.
+
+Settings opens with Cmd-, / Ctrl-, (Zed's key; rt had only a gear button) or the sidebar, in its own window following rt's sections and texts; Restore defaults clears only the keys it edits. Help (`help.rs`) opens with F1 or the sidebar: rt's topics minus AI, searchable, then a shortcut reference built from `cx.key_bindings()` with each action's doc comment and a readable scope, so it lists every bound action and follows keymap changes. The README sample (`showcase.rs`, rt's `src/content/README.md` verbatim) opens from the sidebar or Help in a buffer owned by no notebook; edits last for the session and Reset sample is one undo step. `quire_core::tag_tones` holds rt's 24 tones and neutral look; `tag_labels.rs` paints them in Write.
+
+Tests: `preferences/tests.rs` (17: defaults, validation, rt storage formats including corrupt values and the legacy keys, leveldb log/table/Snappy/deletion, import once and retry, live font, theme, Vim, capture, and tag changes, file watching, the Settings window by keys), `help/tests.rs` (5, including every keymap action listed and a new binding appearing), `showcase/tests.rs` (3), `tag_tones` unit test, and `capture_follows_the_settings_choice_to_todays_page_without_a_date`. Gates on the final tree: both Clippy commands, `cargo fmt --check`, Vitest reference (103 passed), `bun tools/verify-upstream.ts /Users/umer/code/zed` (3,004 files, 34 documented forks), and the full test command twice (quire 387 passed each run, all other binaries passing).
+
+Remaining: external-link styling and rendered bare URLs (`42de3c8949e1`) live in `editor_projection.rs`, which another task was changing, so they are not done. Tag labels are coloured highlights without rt's icons and pill shape. The script font fallbacks (rt's "Quire Arabic") are not bundled. Help is a window rather than rt's right-hand pane, lacks rt's "Capture a task" button, and its prose is rt's, so it describes some features other tasks still owe. Native View > Appearance menu and Find entries for appearance wait for NR33's menus. Settings and Help are not yet checked for reduced motion, keyboard focus order, or with screenshots at several sizes and scales; native desktop acceptance remains unavailable here.
+Status: in_progress
 
 ### NR33: Complete profiles and application lifecycle
 

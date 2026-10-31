@@ -576,7 +576,23 @@ impl StoredWindow {
                                 cx,
                             )
                         },
-                    ))),
+                    )))
+                    .child(
+                        Button::new("help", "Help & shortcuts")
+                            .on_click(|_, _, cx| crate::help::view::open(cx)),
+                    )
+                    .child(
+                        Button::new("readme", "README.md")
+                            .on_click(|_, _, cx| crate::showcase::open(cx)),
+                    )
+                    .child(
+                        Button::new("settings", "Settings")
+                            .on_click(|_, _, cx| crate::preferences::view::open(cx)),
+                    )
+                    .child(
+                        Button::new("appearance", "Light / Dark")
+                            .on_click(|_, _, cx| crate::preferences::toggle_appearance(cx)),
+                    ),
             )
             .child(
                 gpui::div()

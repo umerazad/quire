@@ -168,6 +168,35 @@ impl StoredWindow {
         calendar.date_at((self.nav.daily.now)())
     }
 
+    /// Where quick capture goes under the Settings choice: Inbox, or today's daily page at its
+    /// layout path.
+    pub(in crate::editor_host::stored) fn capture_to(
+        &self,
+        cx: &App,
+    ) -> Result<crate::task_edit::CaptureTo, String> {
+        use settings::Settings as _;
+        let target = crate::preferences::QuirePreferences::get_global(cx).capture_target;
+        if target == settings::CaptureTarget::Inbox {
+            return Ok(crate::task_edit::CaptureTo::Inbox);
+        }
+        let date = self.today()?;
+        let calendar = self.nav.daily.calendar.as_ref().ok_or_else(|| {
+            "Daily notes need the system time zone. Set a valid time zone and reopen the notebook."
+                .to_owned()
+        })?;
+        let layout = &self.nav.daily.layout;
+        let unusable = |error: &str| {
+            format!(
+                "Cannot capture to today's page: {error}. Fix the daily layout in Daily notes, or capture to Inbox in Settings."
+            )
+        };
+        Ok(crate::task_edit::CaptureTo::Today {
+            title: format_daily(&layout.title, &date, calendar).map_err(unusable)?,
+            folder: layout.folder(&date, calendar).map_err(unusable)?,
+            date,
+        })
+    }
+
     /// The reference `openDaily`: today's existing page, else a new one from the layout.
     pub(in crate::editor_host::stored) fn open_today(
         &mut self,

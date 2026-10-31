@@ -55,6 +55,17 @@ impl StoredWindow {
         });
         let choices = self.nav.workspace.tasks.clone();
         let list = cx.new(|cx| TasksView::new(choices, writers, window, cx));
+        let this = cx.weak_entity();
+        list.update(cx, |list, _| {
+            list.set_destination(Rc::new(move |cx| {
+                this.upgrade()
+                    .ok_or_else(|| {
+                        "The notebook window closed. Reopen it, then capture again.".to_owned()
+                    })?
+                    .read(cx)
+                    .capture_to(cx)
+            }))
+        });
         cx.subscribe_in(
             &list,
             window,

@@ -3,7 +3,7 @@
 //! through `task_edit`, which writes every touched page or none.
 
 use super::{list_keys, live::Live, tag_edits::Writers};
-use crate::task_edit::{self, CaptureProject, TaskChange, TaskRef};
+use crate::task_edit::{self, CaptureProject, CaptureTo, TaskChange, TaskRef};
 use crate::tasks::{CycleTask, ToggleTask};
 use editor::{Editor, EditorEvent};
 use gpui::{
@@ -23,7 +23,7 @@ use ui::{
 gpui::actions!(
     quire_tasks_view,
     [
-        /// Adds the typed task to Inbox.
+        /// Adds the typed task to Inbox, or to today's page when Settings says so.
         SubmitCapture,
         /// Adds the highlighted task to the selection, or takes it out.
         ToggleTaskSelected,
@@ -146,10 +146,14 @@ pub struct TasksView {
     today: String,
     client: Option<IndexClient>,
     writers: Writers,
+    destination: Destination,
     focus: FocusHandle,
     scroll: UniformListScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
+
+/// Where the next capture goes, read when it is submitted so a Settings change applies at once.
+pub type Destination = std::rc::Rc<dyn Fn(&App) -> Result<CaptureTo, String>>;
 
 impl EventEmitter<TasksEvent> for TasksView {}
 
@@ -201,6 +205,7 @@ impl TasksView {
             today: String::new(),
             client: None,
             writers,
+            destination: std::rc::Rc::new(|_| Ok(CaptureTo::Inbox)),
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
             _subscriptions: vec![filtered],
@@ -232,6 +237,10 @@ impl TasksView {
             |this| &mut this.board,
             |error| format!("Cannot list tasks: {error}. Wait for indexing to finish, then retry."),
         );
+    }
+
+    pub fn set_destination(&mut self, destination: Destination) {
+        self.destination = destination;
     }
 
     pub fn focus_capture(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -616,7 +625,7 @@ impl TasksView {
         cx.notify();
     }
 
-    /// Captures the typed task into Inbox, then shows the list it went to.
+    /// Captures the typed task where Settings sends it, then shows the list it went to.
     pub fn submit_capture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let value = self.capture.read(cx).text(cx);
         let Some(client) = self.client.clone() else {
@@ -637,8 +646,16 @@ impl TasksView {
                 title: project.page.title.clone(),
                 path: project.page.path.clone(),
             });
+        let to = match (self.destination)(cx) {
+            Ok(to) => to,
+            Err(error) => {
+                self.error = Some(error.into());
+                cx.notify();
+                return;
+            }
+        };
         let (open, storage) = (self.writers)(cx);
-        let work = task_edit::capture(value, project, open, client, storage, cx);
+        let work = task_edit::capture(value, project, to, open, client, storage, cx);
         self.error = None;
         self.work = Some(cx.spawn_in(window, async move |this, cx| {
             let result = work.await;

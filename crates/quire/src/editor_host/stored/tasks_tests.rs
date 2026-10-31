@@ -393,6 +393,43 @@ fn capture_creates_the_inbox_page_then_appends_and_links_projects(cx: &mut TestA
     );
 }
 
+#[gpui::test]
+fn capture_follows_the_settings_choice_to_todays_page_without_a_date(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&[("a", "Alpha.md", "- start\n")], "a", cx);
+    cx.update(|cx| {
+        crate::preferences::apply_user_settings(r#"{"quire":{"capture_target":"today"}}"#, cx)
+    });
+    set_clock(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), &key("shift-t"));
+    set_clock(&notebook, cx);
+    settle_tasks(&notebook, cx);
+    cx.simulate_input(notebook.window.into(), "Call Jane");
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    let today = wait_for_page(&notebook, "2026-10-30", cx);
+    wait_stored(&notebook, &today, "- [ ] Call Jane #inbox\n", cx);
+    cx.simulate_keystrokes(notebook.window.into(), &key("shift-t"));
+    cx.simulate_input(notebook.window.into(), "Book room #next");
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_stored(
+        &notebook,
+        &today,
+        "- [ ] Call Jane #inbox\n- [ ] Book room #next\n",
+        cx,
+    );
+
+    cx.update(|cx| crate::preferences::apply_user_settings("{}", cx));
+    cx.simulate_keystrokes(notebook.window.into(), &key("shift-t"));
+    cx.simulate_input(notebook.window.into(), "File taxes");
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    let inbox = wait_for_page(&notebook, "Inbox", cx);
+    wait_stored(
+        &notebook,
+        &inbox,
+        &format!("- [ ] File taxes #inbox{STAMP}\n"),
+        cx,
+    );
+}
+
 fn wait_for_page(notebook: &Notebook, title: &str, cx: &mut TestAppContext) -> String {
     let mut found = None;
     wait_until(cx, "the created page", |cx| {
