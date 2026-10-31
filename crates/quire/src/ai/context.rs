@@ -1,7 +1,7 @@
-//! The notebook excerpts sent with a question, read from the query index, which includes unsaved
-//! edits of open pages. Each source stands in for the reference's notebook tools: tasks for
-//! what is due, mentions for the last occurrence, tagged blocks, linked references for a
-//! synthesis, and search for anything else.
+//! The notebook excerpts sent with a question, read from the query index. Each source stands in
+//! for the reference's notebook tools: tasks for what is due, mentions for the last occurrence,
+//! tagged blocks, linked references for a synthesis, and search for anything else. All but
+//! search include unsaved edits of open pages; search covers saved text.
 
 use crate::query_index::ask;
 use quire_core::ai::ask::{Excerpt, Gathered, Source, search_terms};
