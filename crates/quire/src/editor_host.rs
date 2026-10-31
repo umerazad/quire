@@ -213,6 +213,8 @@ pub(crate) struct NotebookWindow {
     semantic_excerpt: Option<Entity<crate::semantic_excerpt::SemanticExcerpt>>,
     /// A zoom into one list item, per pane: the page editor first, then the second.
     zooms: [Option<crate::outline::zoom::Zoom>; 2],
+    /// What the stored window shows at the end of the status bar: the page's path and words.
+    pub(crate) status: Option<gpui::AnyView>,
 }
 
 impl NotebookWindow {
@@ -530,6 +532,7 @@ impl NotebookWindow {
             presentation_error: None,
             semantic_excerpt: None,
             zooms: [None, None],
+            status: None,
         }
     }
 
@@ -642,7 +645,8 @@ impl Render for NotebookWindow {
                             .flex_1()
                             .min_w_0()
                             .child(Label::new(self.tag_summary(cx)).truncate()),
-                    ),
+                    )
+                    .children(self.status.clone()),
             )
     }
 }

@@ -21,6 +21,7 @@ mod instance;
 mod links;
 mod live;
 mod navigation;
+mod page_views;
 mod profiles;
 mod sync;
 
@@ -247,6 +248,8 @@ struct StoredWindow {
     sync: Entity<crate::sync_status::SyncStatus>,
     /// Help beside the pages, while it is open.
     help: Option<Entity<crate::help::view::HelpWindow>>,
+    /// The page details panel, page figures, and README.md beside the pages.
+    chrome: page_views::PageChrome,
     /// Publishing and importing for a Quire notebook with a synced folder.
     live: Option<Entity<crate::live_sync::LiveSync>>,
     live_view: Option<Entity<crate::live_sync::LiveSyncView>>,
@@ -356,6 +359,7 @@ impl StoredWindow {
             backups,
             sync,
             help: None,
+            chrome: page_views::PageChrome::default(),
             live,
             live_view,
         };
@@ -423,6 +427,8 @@ impl StoredWindow {
         if let Some(previous) = previous {
             window.focus(&previous, cx);
         }
+        self.attach_page_info(page, &editor, cx);
+        Self::invite_writing(&editor, window, cx);
         self.cache_editor(page, editor.clone());
         self.keep_reading_position(&editor, page, false, window, cx);
         Some(editor)
@@ -645,7 +651,13 @@ impl StoredWindow {
 
 impl Render for StoredWindow {
     fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        window.set_rem_size(
+            <theme_settings::ThemeSettings as settings::Settings>::get_global(cx).ui_font_size(cx),
+        );
         let conflict = self.render_folder_conflict(cx);
+        let sidebar_toggle = self.render_sidebar_toggle();
+        let save_status = self.render_save_status(cx);
+        let tools = self.render_page_tools(cx);
         let page = self.page.read(cx);
         let loading = page.is_loading();
         let header =
@@ -654,7 +666,8 @@ impl Render for StoredWindow {
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(Label::new(page.status(cx)))
+                .child(sidebar_toggle)
+                .children(save_status)
                 .when(page.persistence().is_some(), |div| {
                     div.child(
                         Button::new("save-page", "Save locally")
@@ -710,7 +723,8 @@ impl Render for StoredWindow {
                 .child(
                     Button::new("show-sync", "Sync…")
                         .on_click(cx.listener(|this, _, window, cx| this.toggle_sync(window, cx))),
-                );
+                )
+                .child(tools);
         let profile = self.render_profile(cx);
         let root = gpui::div()
             .track_focus(&self.nav.loading_focus)
@@ -725,12 +739,15 @@ impl Render for StoredWindow {
             .on_action(cx.listener(|this, _: &SaveAndClosePage, window, cx| {
                 this.save_and_close(window, cx)
             }));
-        Self::register_help(
-            Self::register_sync(
-                Self::register_backups(
-                    Self::register_document_export(
-                        Self::register_exchange(
-                            Self::register_block_move(Self::register_navigation(root, cx), cx),
+        Self::register_page_views(
+            Self::register_help(
+                Self::register_sync(
+                    Self::register_backups(
+                        Self::register_document_export(
+                            Self::register_exchange(
+                                Self::register_block_move(Self::register_navigation(root, cx), cx),
+                                cx,
+                            ),
                             cx,
                         ),
                         cx,

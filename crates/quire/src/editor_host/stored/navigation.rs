@@ -778,6 +778,8 @@ impl StoredWindow {
             (false, Some(previous)) => window.focus(&previous, cx),
             (false, None) => window.blur(cx),
         }
+        self.attach_page_info(&page, &editor, cx);
+        Self::invite_writing(&editor, window, cx);
         self.keep_reading_position(&editor, &page, true, window, cx);
         if let Some(side) = &mut self.nav.side {
             side.editor = Some(editor);
@@ -810,17 +812,27 @@ impl StoredWindow {
 
     pub(super) fn render_body(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> gpui::Div {
         let content = match (self.nav.view, self.tag_content().or(self.task_content())) {
             (Some(BrowserView::Tags | BrowserView::Tasks), Some(view)) | (None, Some(view)) => view,
-            (Some(view), _) => self.render_browser(view, cx).into_any_element(),
+            (Some(view), _) => self.render_browser(view, window, cx).into_any_element(),
             (None, None) => match self.editor.clone() {
                 Some(editor) => gpui::div()
+                    .flex()
                     .flex_1()
                     .min_h_0()
-                    .child(editor)
+                    .child(
+                        gpui::div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .child(self.render_page_header(&self.page, cx))
+                            .child(gpui::div().flex_1().min_h_0().child(editor)),
+                    )
+                    .children(self.render_details(cx))
                     .into_any_element(),
                 None => gpui::div().into_any_element(),
             },
@@ -854,14 +866,20 @@ impl StoredWindow {
                 main.child(tasks)
                     .when(!listing, |main| main.children(self.shown_references(cx)))
             });
-        let side = self.nav.side.as_ref().and_then(|side| side.editor.clone());
+        let side = self.nav.side.as_ref().and_then(|side| {
+            let editor = side.editor.clone()?;
+            Some((self.render_page_header(&side.page, cx), editor))
+        });
+        let showcase = self.showcase_pane(cx);
         let answer = self.nav.answer.pane.clone();
         let help = self.help_pane(cx);
         gpui::div()
             .flex()
             .flex_1()
             .min_h_0()
-            .child(self.render_sidebar(cx))
+            .when(!self.nav.workspace.chrome.sidebar_hidden, |div| {
+                div.child(self.render_sidebar(cx))
+            })
             .child(main)
             .when_some(answer, |div, pane| {
                 div.child(
@@ -874,7 +892,7 @@ impl StoredWindow {
                         .child(pane),
                 )
             })
-            .when_some(side, |div, editor| {
+            .when_some(side, |div, (header, editor)| {
                 div.child(
                     gpui::div()
                         .flex()
@@ -884,11 +902,13 @@ impl StoredWindow {
                         .min_h_0()
                         .border_l_1()
                         .border_color(cx.theme().colors().border)
+                        .child(header)
                         .child(gpui::div().flex_1().min_h_0().child(editor))
                         .children(self.render_side_references(cx)),
                 )
             })
             .when_some(help, |div, pane| div.child(pane))
+            .when_some(showcase, |div, pane| div.child(pane))
     }
 }
 
@@ -1035,3 +1055,7 @@ mod fold_tests;
 #[cfg(test)]
 #[path = "live_tests.rs"]
 mod live_tests;
+
+#[cfg(test)]
+#[path = "page_views_tests.rs"]
+mod page_views_tests;

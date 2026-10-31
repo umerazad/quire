@@ -1,5 +1,6 @@
 //! Quire's asset source: Zed's bundled assets, plus the reference app's tag icons (Lucide, ISC;
-//! `assets/icons/tags/LICENSE`) under `quire/icons/tags/<tone>.svg`.
+//! `assets/icons/tags/LICENSE`) under `quire/icons/tags/<tone>.svg` and the page toolbar's save
+//! states under `quire/icons/save/`.
 
 use gpui::{AssetSource, Result, SharedString};
 use std::borrow::Cow;
@@ -50,6 +51,28 @@ pub fn tag_icon_path(name: &str) -> Option<SharedString> {
         .then(|| format!("{PREFIX}{name}.svg").into())
 }
 
+/// The save indicator's shapes: a circle when saved, a diamond while saving, a warning triangle.
+pub const SAVE_ICONS: &[(&str, &[u8])] = &[
+    (
+        "quire/icons/save/saved.svg",
+        include_bytes!("../assets/icons/save/saved.svg"),
+    ),
+    (
+        "quire/icons/save/pending.svg",
+        include_bytes!("../assets/icons/save/pending.svg"),
+    ),
+    (
+        "quire/icons/save/failed.svg",
+        include_bytes!("../assets/icons/save/failed.svg"),
+    ),
+];
+
+fn save_icon(path: &str) -> Option<&'static [u8]> {
+    SAVE_ICONS
+        .iter()
+        .find_map(|(icon, bytes)| (*icon == path).then_some(*bytes))
+}
+
 fn tag_icon(path: &str) -> Option<&'static [u8]> {
     let name = path.strip_prefix(PREFIX)?.strip_suffix(".svg")?;
     TAG_ICONS
@@ -59,7 +82,7 @@ fn tag_icon(path: &str) -> Option<&'static [u8]> {
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
-        match tag_icon(path) {
+        match tag_icon(path).or_else(|| save_icon(path)) {
             Some(bytes) => Ok(Some(Cow::Borrowed(bytes))),
             None => assets::Assets.load(path),
         }
@@ -73,6 +96,13 @@ impl AssetSource for Assets {
                 .map(|(name, _)| format!("{PREFIX}{name}.svg"))
                 .filter(|icon| icon.starts_with(path))
                 .map(SharedString::from),
+        );
+        paths.extend(
+            SAVE_ICONS
+                .iter()
+                .map(|(icon, _)| *icon)
+                .filter(|icon| icon.starts_with(path))
+                .map(SharedString::new_static),
         );
         Ok(paths)
     }
@@ -90,6 +120,18 @@ mod tests {
             let bytes = Assets.load(&path).unwrap().unwrap();
             assert!(bytes.starts_with(b"<svg"), "{path}");
             assert!(Assets.list("quire/icons/").unwrap().contains(&path));
+        }
+        for (path, _) in SAVE_ICONS {
+            assert!(
+                Assets.load(path).unwrap().unwrap().starts_with(b"<svg"),
+                "{path}"
+            );
+            assert!(
+                Assets
+                    .list("quire/icons/")
+                    .unwrap()
+                    .contains(&SharedString::from(*path))
+            );
         }
         assert_eq!(TAG_ICONS.len(), TONES.len());
         assert!(

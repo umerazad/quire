@@ -1,6 +1,7 @@
 //! The window's navigation surfaces: sidebar (Favorites, Recent, Files), tab strip, and the
 //! Pages and Daily notes browsers. Every list is a virtualized `uniform_list`.
 
+use super::super::page_views::SaveState;
 use super::*;
 use editor::{Editor, EditorEvent};
 use gpui::{ClickEvent, FocusHandle, ScrollStrategy, UniformListScrollHandle, uniform_list};
@@ -10,8 +11,8 @@ use quire_core::workspace::{
 };
 use std::collections::BTreeSet;
 use ui::{
-    Color, Disableable, IconButton, IconName, LabelSize, ListItem, ListItemSpacing, Tab, TabBar,
-    Toggleable, h_flex, v_flex,
+    Color, ContextMenu, Disableable, DropdownMenu, IconButton, IconName, LabelSize, ListItem,
+    ListItemSpacing, Tab, TabBar, Toggleable, h_flex, v_flex,
 };
 
 #[derive(Default)]
@@ -34,6 +35,51 @@ pub(in crate::editor_host::stored) struct BrowserRow {
 
 fn shift(event: &ClickEvent) -> bool {
     event.modifiers().shift
+}
+
+/// The icon before a tab's label, by what the tab shows.
+fn tab_icon(destination: &Destination) -> IconName {
+    match destination {
+        Destination::Page { .. } => IconName::FileTextOutlined,
+        Destination::Tag { .. }
+        | Destination::Browser {
+            view: BrowserView::Tags,
+        } => IconName::Hash,
+        Destination::Browser {
+            view: BrowserView::Tasks,
+        } => IconName::ListTodo,
+        Destination::Browser {
+            view: BrowserView::Daily,
+        } => IconName::Book,
+        Destination::Browser {
+            view: BrowserView::Pages,
+        } => IconName::FileMultiple,
+    }
+}
+
+/// "October 2026" for `2026-10`, or the text itself when it is not a month.
+fn month_name(month: &str) -> String {
+    const NAMES: [&str; 12] = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
+    month
+        .split_once('-')
+        .and_then(|(year, number)| {
+            let name = NAMES.get(number.parse::<usize>().ok()?.checked_sub(1)?)?;
+            Some(format!("{name} {year}"))
+        })
+        .unwrap_or_else(|| month.to_owned())
 }
 
 impl StoredWindow {
@@ -160,8 +206,10 @@ impl StoredWindow {
                         .then_with(|| a.1.page.path.cmp(&b.1.page.path))
                 });
                 let primary = |date: &str| self.primary_daily(date);
+                let month = &self.nav.workspace.chrome.daily_month;
                 dated
                     .into_iter()
+                    .filter(|(date, _)| date.starts_with(month.as_str()))
                     .filter(|(date, listed)| {
                         format!("{date}{}", listed.page.title)
                             .to_lowercase()
@@ -331,7 +379,99 @@ impl StoredWindow {
         cx.notify();
     }
 
-    fn render_files(&mut self, tab_index: isize, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+    /// How far the page a tab shows is saved, when it is open in this window.
+    pub(in crate::editor_host::stored) fn tab_save_state(
+        &self,
+        tab: &Destination,
+        cx: &App,
+    ) -> Option<SaveState> {
+        let id = tab.page_id()?;
+        let open = self.session.try_borrow().ok()?.open_pages();
+        let page = open.iter().find(|page| page.read(cx).id() == id)?;
+        SaveState::of(page.read(cx), cx)
+    }
+
+    pub(in crate::editor_host::stored) fn toggle_files(&mut self, cx: &mut gpui::Context<Self>) {
+        self.remember(
+            |workspace| workspace.chrome.files_collapsed = !workspace.chrome.files_collapsed,
+            cx,
+        );
+        cx.notify();
+    }
+
+    /// Reads the page list again, and for a folder notebook rereads its folder first, for
+    /// changes the file watcher has not reported yet.
+    pub(in crate::editor_host::stored) fn refresh_files(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.session.borrow().folder().is_some() {
+            self.folder_changed(None, cx);
+        }
+        self.refresh_catalogue(cx);
+    }
+
+    /// Shows only `month` (`YYYY-MM`) in Daily notes, or every month when it is empty.
+    pub(in crate::editor_host::stored) fn set_daily_month(
+        &mut self,
+        month: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.remember(|workspace| workspace.chrome.daily_month = month, cx);
+        self.nav.browsers.selected = 0;
+        cx.notify();
+    }
+
+    /// The months with daily pages, newest first, with how many pages each has.
+    fn daily_months(&self) -> Vec<(String, usize)> {
+        let mut months = std::collections::BTreeMap::<String, usize>::new();
+        for date in self
+            .nav
+            .pages
+            .iter()
+            .filter_map(|listed| listed.date.as_ref())
+        {
+            if let Some(month) = date.get(..7) {
+                *months.entry(month.to_owned()).or_default() += 1;
+            }
+        }
+        months.into_iter().rev().collect()
+    }
+
+    fn daily_month_menu(&self, window: &mut Window, cx: &mut gpui::Context<Self>) -> DropdownMenu {
+        let chosen = self.nav.workspace.chrome.daily_month.clone();
+        let months = self.daily_months();
+        let label = if chosen.is_empty() {
+            "All months".to_owned()
+        } else {
+            month_name(&chosen)
+        };
+        let view = cx.entity().downgrade();
+        let menu = ContextMenu::build(window, cx, move |menu, _, _| {
+            std::iter::once((String::new(), "All months".to_owned()))
+                .chain(months.into_iter().map(|(month, count)| {
+                    let name = format!("{} ({count})", month_name(&month));
+                    (month, name)
+                }))
+                .fold(menu, |menu, (month, name)| {
+                    let view = view.clone();
+                    let toggled = month == chosen;
+                    menu.toggleable_entry(name, toggled, ui::IconPosition::Start, None, {
+                        move |_, cx| {
+                            let month = month.clone();
+                            view.update(cx, |this, cx| this.set_daily_month(month, cx))
+                                .ok();
+                        }
+                    })
+                })
+        });
+        DropdownMenu::new("daily-month", label, menu)
+            .trigger_tooltip(ui::Tooltip::text("Show the daily notes of one month"))
+    }
+
+    fn render_files(
+        &mut self,
+        [heading, refresh, tab_index]: [isize; 3],
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        let open = !self.nav.workspace.chrome.files_collapsed;
         let focus = self
             .nav
             .browsers
@@ -339,7 +479,7 @@ impl StoredWindow {
             .get_or_insert_with(|| cx.focus_handle())
             .clone()
             .tab_index(tab_index)
-            .tab_stop(true);
+            .tab_stop(open);
         let count = self.file_rows().len();
         let list = uniform_list(
             "files",
@@ -437,14 +577,37 @@ impl StoredWindow {
                 }),
             )
             .child(
-                Label::new("FILES")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
+                h_flex()
+                    .justify_between()
+                    .child(
+                        Button::new("files-heading", "FILES")
+                            .start_icon(
+                                ui::Icon::new(if open {
+                                    IconName::ChevronDown
+                                } else {
+                                    IconName::ChevronRight
+                                })
+                                .size(ui::IconSize::XSmall)
+                                .color(Color::Muted),
+                            )
+                            .label_size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .aria_expanded(open)
+                            .tab_index(heading)
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_files(cx))),
+                    )
+                    .child(
+                        IconButton::new("refresh-files", IconName::RotateCw)
+                            .icon_size(ui::IconSize::XSmall)
+                            .tab_index(refresh)
+                            .tooltip(ui::Tooltip::text("Refresh files"))
+                            .on_click(cx.listener(|this, _, _, cx| this.refresh_files(cx))),
+                    ),
             )
-            .when(count == 0, |div| {
+            .when(open && count == 0, |div| {
                 div.child(Label::new("A fresh notebook. Add your first page.").color(Color::Muted))
             })
-            .child(list)
+            .when(open, |div| div.child(list))
     }
 
     fn destination_item(
@@ -580,7 +743,7 @@ impl StoredWindow {
                 self.destination_stop(("recent-entry", index), entry, row, item, cx)
             })
             .collect();
-        let files = order.next();
+        let files = [order.next(), order.next(), order.next()];
         v_flex()
             .id("sidebar")
             .key_context("QuireSidebar")
@@ -652,7 +815,9 @@ impl StoredWindow {
         .chain([
             Button::new("help", "Help & shortcuts")
                 .on_click(|_, _, cx| crate::help::view::open(cx)),
-            Button::new("readme", "README.md").on_click(|_, _, cx| crate::showcase::open(cx)),
+            Button::new("readme", "README.md").on_click(|_, window, cx| {
+                window.dispatch_action(Box::new(crate::showcase::OpenShowcase), cx)
+            }),
             Button::new("settings", "Settings")
                 .on_click(|_, _, cx| crate::preferences::view::open(cx)),
             Button::new("appearance", "Light / Dark")
@@ -675,10 +840,39 @@ impl StoredWindow {
                 let target = tab.clone();
                 let closing = tab.clone();
                 let middle = tab.clone();
+                let saving = self
+                    .tab_save_state(tab, cx)
+                    .filter(|state| state.dot().is_some());
+                let tooltip = match saving {
+                    Some(SaveState::Failed) => {
+                        format!("{label} · Needs attention")
+                    }
+                    Some(_) => format!("{label} · Saving changes"),
+                    None => label.to_string(),
+                };
                 Tab::new(("tab", index))
                     .debug_selector(move || format!("quire-tab-{index}"))
                     .toggle_state(self.nav.workspace.active.as_ref() == Some(tab))
-                    .child(Label::new(label).truncate())
+                    .tooltip(ui::Tooltip::text(tooltip))
+                    .start_slot(
+                        ui::Icon::new(tab_icon(tab))
+                            .size(ui::IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .min_w_0()
+                            .child(Label::new(label).truncate())
+                            .children(saving.and_then(|state| state.dot()).map(|color| {
+                                gpui::div()
+                                    .debug_selector(move || format!("quire-tab-dot-{index}"))
+                                    .size_1p5()
+                                    .flex_none()
+                                    .rounded_full()
+                                    .bg(color.color(cx))
+                            })),
+                    )
                     .end_slot(
                         IconButton::new(("close-tab", index), IconName::Close)
                             .icon_size(ui::IconSize::XSmall)
@@ -751,6 +945,7 @@ impl StoredWindow {
     pub(in crate::editor_host::stored) fn render_browser(
         &mut self,
         view: BrowserView,
+        window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let count = self.browser_rows(cx).len();
@@ -821,7 +1016,10 @@ impl StoredWindow {
                     .into_any_element()
             })
             .collect(),
-            BrowserView::Daily => vec![self.render_daily_settings(cx).into_any_element()],
+            BrowserView::Daily => vec![
+                self.daily_month_menu(window, cx).into_any_element(),
+                self.render_daily_settings(cx).into_any_element(),
+            ],
             BrowserView::Tags | BrowserView::Tasks => Vec::new(),
         };
         let rows =
