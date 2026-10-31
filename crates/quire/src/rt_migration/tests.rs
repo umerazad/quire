@@ -111,7 +111,9 @@ fn fixture() -> Fixture {
             {"kind": "browser", "view": "ai"}
         ],
         "active": {"kind": "page", "path": "Plans.md"},
-        "positions": {"page:Plans.md": 120}
+        "positions": {"page:Plans.md": 120},
+        "filesOpen": false,
+        "browsers": {"daily": {"query": "", "limit": 60, "month": "2026-09"}}
     });
     let quire = serde_json::json!({
         "expanded": [],
@@ -190,10 +192,17 @@ fn migration_imports_tabs_favorites_and_prompt_history_once_and_reads_rt_only() 
             Destination::Browser {
                 view: BrowserView::Tasks
             },
-        ],
-        "the AI browser has no Quire counterpart"
+            Destination::Browser {
+                view: BrowserView::Ai
+            },
+        ]
     );
     assert_eq!(folder.active, Some(plans));
+    assert!(
+        folder.chrome.files_collapsed,
+        "rt's closed Files stays closed"
+    );
+    assert_eq!(folder.chrome.daily_month, "2026-09");
     assert_eq!(
         folder.favorites,
         [Destination::page(page_id_for_path("Ideas.md"))]
@@ -267,6 +276,21 @@ fn a_renamed_page_and_unknown_destinations_are_dropped_from_converted_tabs() {
         convert_workspace(&Value::Null, |_| None),
         Workspace::default()
     );
+    for (files_open, month) in [
+        (serde_json::json!(true), "2026-13"),
+        (serde_json::json!("no"), "26-10"),
+        (Value::Null, "October"),
+    ] {
+        let rt = serde_json::json!({
+            "filesOpen": files_open,
+            "browsers": {"daily": {"month": month}}
+        });
+        assert_eq!(
+            convert_workspace(&rt, |_| None).chrome,
+            quire_core::workspace::ChromeChoices::default(),
+            "{files_open} {month}"
+        );
+    }
 }
 
 #[test]
