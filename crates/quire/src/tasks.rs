@@ -171,9 +171,10 @@ impl Analysis {
 const NOT_READY: &str = "This page is still being read. Try the task command again in a moment.";
 const OUTSIDE: &str = "This task reaches outside the embedded block. Open its page to change it.";
 
-/// Runs a task command on the Markdown page under the newest selection, which may be a whole
-/// page or an embedded excerpt of one. `at` (a view offset) replaces the selection, for the
-/// checkbox. Returns false when no Markdown page is there, so the key propagates.
+/// Runs a task command at every caret and across every selection on the Markdown page under
+/// the newest selection, which may be a whole page or an embedded excerpt of one. `at` (a view
+/// offset) replaces the selections, for the checkbox. Returns false when no Markdown page is
+/// there, so the key propagates.
 fn run(
     editor: &mut Editor,
     shortcut: Shortcut,
@@ -182,27 +183,41 @@ fn run(
     cx: &mut Context<Editor>,
 ) -> bool {
     let multi = editor.buffer().read(cx).snapshot(cx);
+    let offset = |anchor: &multi_buffer::Anchor| anchor.to_offset(&multi).0;
     let newest = editor.selections.newest_anchor();
-    let (tail, head) = match at {
+    let mut ranges = vec![match at {
         Some(at) => (at, at),
-        None => (
-            newest.tail().to_offset(&multi).0,
-            newest.head().to_offset(&multi).0,
-        ),
-    };
+        None => (offset(&newest.tail()), offset(&newest.head())),
+    }];
+    if at.is_none() {
+        ranges.extend(
+            editor
+                .selections
+                .disjoint_anchors_arc()
+                .iter()
+                .filter(|selection| selection.id != newest.id)
+                .map(|selection| (offset(&selection.tail()), offset(&selection.head()))),
+        );
+    }
     let source = |offset: usize| {
         editor
             .buffer()
             .read(cx)
             .point_to_buffer_offset(MultiBufferOffset(offset), cx)
     };
-    let Some((buffer, head)) = source(head) else {
+    let Some((buffer, _)) = source(ranges[0].1) else {
         return false;
     };
-    let head = head.0;
-    let tail = source(tail)
-        .filter(|(other, _)| *other == buffer)
-        .map_or(head, |(_, offset)| offset.0);
+    let ranges: Vec<(usize, usize)> = ranges
+        .into_iter()
+        .filter_map(|(tail, head)| {
+            let (_, head) = source(head).filter(|(other, _)| *other == buffer)?;
+            let tail = source(tail)
+                .filter(|(other, _)| *other == buffer)
+                .map_or(head, |(_, offset)| offset);
+            Some((tail.0, head.0))
+        })
+        .collect();
     let snapshot = buffer.read(cx).snapshot();
     if snapshot
         .language()
@@ -220,30 +235,81 @@ fn run(
         crate::outline::set_notice(Some(NOT_READY), cx);
         return true;
     };
-    let planned = analysis.with_page(&title, |page| {
+    let planned: Vec<Result<TaskEdit, &'static str>> = analysis.with_page(&title, |page| {
         let tasks: Vec<Task> = page.tasks(&days);
-        if tail == head {
-            quire_core::tasks::task_at(page, &tasks, &days, &today, head, (tail, head), shortcut)
-        } else {
-            quire_core::tasks::tasks_in(
-                page,
-                &tasks,
-                &days,
-                &today,
-                tail.min(head)..tail.max(head),
-                shortcut,
-            )
-            .map(|edits| TaskEdit {
-                edits,
-                selection: None,
+        ranges
+            .iter()
+            .map(|&(tail, head)| {
+                if tail == head {
+                    quire_core::tasks::task_at(
+                        page,
+                        &tasks,
+                        &days,
+                        &today,
+                        head,
+                        (tail, head),
+                        shortcut,
+                    )
+                } else {
+                    quire_core::tasks::tasks_in(
+                        page,
+                        &tasks,
+                        &days,
+                        &today,
+                        tail.min(head)..tail.max(head),
+                        shortcut,
+                    )
+                    .map(|edits| TaskEdit {
+                        edits,
+                        selection: None,
+                    })
+                }
             })
-        }
+            .collect()
     });
-    match planned {
+    match combine(planned) {
         Ok(plan) => apply(editor, &buffer, plan, at.is_none(), window, cx),
         Err(message) => crate::outline::set_notice(Some(message), cx),
     }
     true
+}
+
+/// One plan from each caret's: their edits once each, in order, skipping any that overlap an
+/// earlier caret's, so two carets on one task change it once. Only a lone caret is placed. The
+/// command fails only when every caret's plan does.
+fn combine(plans: Vec<Result<TaskEdit, &'static str>>) -> Result<TaskEdit, &'static str> {
+    let single = plans.len() == 1;
+    let mut failure = None;
+    let mut edits: Vec<quire_core::tasks::Edit> = Vec::new();
+    let mut selection = None;
+    for plan in plans {
+        let plan = match plan {
+            Ok(plan) => plan,
+            Err(message) => {
+                failure.get_or_insert(message);
+                continue;
+            }
+        };
+        selection = selection.or(plan.selection.filter(|_| single));
+        let fresh: Vec<_> = plan
+            .edits
+            .into_iter()
+            .filter(|edit| {
+                !edits.iter().any(|kept| {
+                    kept.range.start < edit.range.end && edit.range.start < kept.range.end
+                        || kept.range == edit.range
+                })
+            })
+            .collect();
+        edits.extend(fresh);
+    }
+    match failure {
+        Some(message) if edits.is_empty() => Err(message),
+        _ => {
+            edits.sort_by_key(|edit| (edit.range.start, edit.range.end));
+            Ok(TaskEdit { edits, selection })
+        }
+    }
 }
 
 /// A source offset as an offset in the editor's view of it, if the view shows it.
