@@ -1,0 +1,1 @@
+export function List({items,onPick}){return <ul className="list">{items.map(item=><li key={item.id} onClick={()=>onPick(item)}>{item.label} <span className="count">{item.count}</span></li>)}</ul>}

@@ -11355,6 +11355,7 @@ dependencies = [
  "picker",
  "project",
  "quire_core",
+ "quire_format",
  "quire_store",
  "release_channel",
  "rope",
@@ -11368,8 +11369,19 @@ dependencies = [
  "theme",
  "theme_settings",
  "tree-sitter",
+ "tree-sitter-bash",
+ "tree-sitter-cpp",
+ "tree-sitter-css",
+ "tree-sitter-html",
+ "tree-sitter-jsdoc",
+ "tree-sitter-json",
  "tree-sitter-md",
+ "tree-sitter-python",
  "tree-sitter-quire-markdown",
+ "tree-sitter-regex",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+ "tree-sitter-yaml",
  "ui",
  "unicode-segmentation",
  "util",
@@ -11390,6 +11402,17 @@ dependencies = [
  "serde",
  "serde_json",
  "unicode-normalization",
+]
+
+[[package]]
+name = "quire_format"
+version = "0.1.0"
+dependencies = [
+ "futures 0.3.34",
+ "hex",
+ "rquickjs",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -11748,6 +11771,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "relative-path"
+version = "2.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38540a682c6e9bca04a8bca9e5ec5a6ba168dfbb04c9998fe517a9befb92eb68"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
 name = "release_channel"
 version = "0.1.0"
 dependencies = [
@@ -12021,6 +12053,35 @@ dependencies = [
  "tracing",
  "zlog",
  "zstd",
+]
+
+[[package]]
+name = "rquickjs"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0a22bf72f515cc4189dd7c63d016f6de92a11eee98ddf7dd64794198f6eb34e"
+dependencies = [
+ "rquickjs-core",
+]
+
+[[package]]
+name = "rquickjs-core"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6657979a24d543e5fc66f32cef2f47ca82ce8eb55cec5f7d59a12b7b570bbf24"
+dependencies = [
+ "hashbrown 0.17.1",
+ "relative-path",
+ "rquickjs-sys",
+]
+
+[[package]]
+name = "rquickjs-sys"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cee271d0eeba64f0915b846cb7ae02e16faf3dfdffdca91731101d9d30fe3423"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

@@ -1,0 +1,2 @@
+import {useState} from 'react'
+export const Counter: React.FC<{start?:number}> = ({start=0}) => { const [n,setN]=useState<number>(start); return <button type="button" onClick={()=>setN(v=>v+1)} disabled={n>=10}>Clicked {n} times</button> }

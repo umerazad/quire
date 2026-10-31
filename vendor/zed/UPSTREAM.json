@@ -191,6 +191,10 @@
       "files": 32
     },
     {
+      "path": "crates/grammars/src/html",
+      "change": "Add the HTML language config and queries, copied unchanged from extensions/html/languages/html at the same revision, so fenced html and xml code highlights with the native tree-sitter-html 0.23 grammar. Zed ships HTML as an extension; Quire registers it natively."
+    },
+    {
       "path": "crates/paths/src/paths.rs",
       "change": "Use QuireNative for native development data/config/cache directories, isolated from Zed and Electron Quire."
     },

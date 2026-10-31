@@ -7,7 +7,7 @@ const vendor = resolve(process.argv[3] ?? "vendor/zed");
 const manifest = JSON.parse(readFileSync(join(vendor, "UPSTREAM.json"), "utf8"));
 const revision = execFileSync("git", ["-C", source, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 if (revision !== manifest.revision) throw new Error("The upstream checkout is at a different revision. Use the pinned snapshot before comparing vendored files.");
-const modified = new Set(manifest.modifications.flatMap((item: { path?: string }) => item.path ? [item.path] : []));
+const modified: string[] = manifest.modifications.flatMap((item: { path?: string }) => item.path ? [item.path] : []);
 let checked = 0;
 function verify(path: string) {
   const info = lstatSync(path);
@@ -17,9 +17,9 @@ function verify(path: string) {
     return;
   }
   const name = relative(vendor, path).replaceAll("\\", "/");
-  if (name === "UPSTREAM.json" || modified.has(name)) return;
+  if (name === "UPSTREAM.json" || modified.some((path) => name === path || name.startsWith(`${path}/`))) return;
   if (!readFileSync(path).equals(readFileSync(join(source, name)))) throw new Error(`Undocumented upstream modification: ${name}. Review the change and update UPSTREAM.json.`);
   checked++;
 }
 verify(vendor);
-console.log(`Verified ${checked} copied files against ${revision}; ${modified.size} documented fork modifications need diff review.`);
+console.log(`Verified ${checked} copied files against ${revision}; ${modified.length} documented fork modifications need diff review.`);

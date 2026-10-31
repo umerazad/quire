@@ -1,0 +1,1 @@
+{"name":"quire","scripts":{"test":"vitest run","build":"vite build"},"keywords":["notes","markdown","outliner","sync","native","desktop","electron","gpui"],"empty":{},"emptyArr":[]}

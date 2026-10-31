@@ -66,6 +66,9 @@ mod markdown;
 mod outline;
 
 #[cfg(feature = "full-editor")]
+mod code_format;
+
+#[cfg(feature = "full-editor")]
 mod markdown_blocks;
 
 #[cfg(feature = "full-editor")]

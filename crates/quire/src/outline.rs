@@ -74,8 +74,9 @@ pub fn notice(cx: &App) -> Option<SharedString> {
         .and_then(|notice| notice.0.clone())
 }
 
-/// Shows a notice composed at run time, such as a template error naming its input.
-pub(crate) fn show_notice(message: SharedString, cx: &mut App) {
+/// Shows a notice composed at run time, such as an error that names or quotes its input.
+pub(crate) fn show_notice(message: impl Into<SharedString>, cx: &mut App) {
+    let message = message.into();
     if notice(cx).as_ref() != Some(&message) {
         cx.set_global(Notice(Some(message)));
     }
