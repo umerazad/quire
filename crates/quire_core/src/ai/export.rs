@@ -146,22 +146,16 @@ pub fn has_signature(format: Format, bytes: &[u8]) -> bool {
     }
 }
 
-/// The message for a run that finished without a valid file.
-pub fn invalid_file(backend: Backend, format: Format) -> String {
+/// The message for a run that finished without a valid file, with what opening it found.
+pub fn invalid_file(backend: Backend, format: Format, reason: Option<&str>) -> String {
     format!(
-        "{} finished but did not write a valid {name} file named {file}. Export again, or check that your {name} tools work in a terminal.",
+        "{} finished but did not write a valid {name} file named {file}{}. Export again, or check that your {name} tools work in a terminal.",
         backend.name(),
+        reason
+            .map(|reason| format!(": {reason}"))
+            .unwrap_or_default(),
         name = format.name(),
         file = format.file()
-    )
-}
-
-/// The message for a run that ended without reporting completion.
-pub fn unfinished(backend: Backend, format: Format) -> String {
-    format!(
-        "{} stopped without finishing the {} file. Export again.",
-        backend.name(),
-        format.name()
     )
 }
 

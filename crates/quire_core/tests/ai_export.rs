@@ -5,7 +5,7 @@ use quire_core::ai::{
     Backend,
     export::{
         EXPORT_RULES, Format, export_args, export_prompt, export_system_prompt, has_signature,
-        invalid_file, unfinished,
+        invalid_file,
     },
 };
 
@@ -89,11 +89,15 @@ fn only_files_that_start_as_their_format_pass() {
         b"PK\x03\x04....word/document.xml"
     ));
     assert_eq!(
-        invalid_file(Backend::Claude, Format::Docx),
+        invalid_file(Backend::Claude, Format::Docx, None),
         "Claude Code finished but did not write a valid Word file named export.docx. Export again, or check that your Word tools work in a terminal."
     );
     assert_eq!(
-        unfinished(Backend::Codex, Format::Pdf),
-        "Codex stopped without finishing the PDF file. Export again."
+        invalid_file(
+            Backend::Claude,
+            Format::Pdf,
+            Some("it opens as a PDF with no pages")
+        ),
+        "Claude Code finished but did not write a valid PDF file named export.pdf: it opens as a PDF with no pages. Export again, or check that your PDF tools work in a terminal."
     );
 }
