@@ -111,6 +111,7 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     crate::editor_search::bind_keys(cx);
     crate::editor_command::bind_keys(cx);
     crate::outline::init(cx);
+    crate::block_move::init(cx);
     crate::code_format::init(cx);
     crate::tasks::init(cx);
     crate::references::init(cx);

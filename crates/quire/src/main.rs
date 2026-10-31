@@ -45,6 +45,9 @@ mod tag_edit;
 mod page_writes;
 
 #[cfg(feature = "full-editor")]
+mod block_move;
+
+#[cfg(feature = "full-editor")]
 mod exchange;
 
 #[cfg(feature = "full-editor")]
