@@ -335,6 +335,59 @@ async fn a_synthesis_waits_for_its_instruction_and_reruns_over_the_same_referenc
 }
 
 #[gpui::test]
+async fn synthesize_on_a_tag_page_sends_every_block_carrying_the_tag(cx: &mut TestAppContext) {
+    let pages = [
+        (
+            "ideas",
+            "Ideas.md",
+            "- Grow herbs #garden\n  - basil first\n- Unrelated\n",
+        ),
+        ("log", "Log.md", "- Pruned the roses #Garden ^b-roses\n"),
+    ];
+    let (ai, notebook) = notebook(&pages, "ideas", cx).await;
+    ai.answer("Herbs and roses.", &[], cx);
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.visit(
+                quire_core::workspace::Destination::Tag {
+                    tag: "#garden".into(),
+                },
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    wait_until(cx, "the tag page", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.shown_tag_page()
+                .is_some_and(|page| page.read(cx).blocks.value.len() == 2)
+        })
+    });
+    let page = read(&notebook, cx, |view, _| view.shown_tag_page().unwrap());
+    page.update(cx, |_, cx| {
+        cx.emit(crate::navigation::tag_page::TagPageEvent::Synthesize)
+    });
+    cx.run_until_parked();
+    draw(&notebook, cx);
+    let pane = pane(&notebook, cx);
+    assert_eq!(cx.read(|cx| pane.read(cx).title()), "Blocks tagged #garden");
+    assert!(cx.read(|cx| pane.read(cx).editing_synthesis));
+    cx.simulate_keystrokes(notebook.window.into(), &super::tests::key("enter"));
+    wait_done(&notebook, 0, cx);
+    assert_eq!(
+        ai.sent(),
+        [format!(
+            "{DEFAULT_SYNTHESIS}\n\nLinked references:\n<excerpt page=\"Ideas\">\nGrow herbs #garden\n  - basil first\n</excerpt>\n<excerpt page=\"Log\" id=\"b-roses\">\nPruned the roses #Garden\n</excerpt>"
+        )]
+    );
+    assert_eq!(
+        cx.read(|cx| pane.read(cx).turns[0].context.clone()),
+        ["Linked references: 2 blocks from 2 pages"]
+    );
+}
+
+#[gpui::test]
 async fn keeping_an_answer_marks_quoted_blocks_only_then(cx: &mut TestAppContext) {
     let (ai, notebook) = notebook(&FRUIT, "trees", cx).await;
     ai.answer("Pears [[Fruit]] \"are gritty\" and ((b-apple)).", &[], cx);
@@ -714,6 +767,92 @@ async fn questions_explain_why_they_cannot_run_while_ai_is_off(cx: &mut TestAppC
     assert!(ai.sent().is_empty());
 }
 
+fn palette_commands(notebook: &Notebook, query: &str, cx: &mut TestAppContext) -> Vec<String> {
+    use crate::navigation::palette::PaletteItem;
+    cx.simulate_keystrokes(notebook.window.into(), &super::tests::key("k"));
+    cx.run_until_parked();
+    super::tests::type_in_palette(notebook, query, cx);
+    super::tests::palette_items(notebook, cx)
+        .into_iter()
+        .filter_map(|item| match item {
+            PaletteItem::Command(row) => Some(row.label),
+            _ => None,
+        })
+        .collect()
+}
+
+#[gpui::test]
+async fn the_find_palette_runs_ai_and_appearance_commands(cx: &mut TestAppContext) {
+    let (ai, notebook) = notebook(&FRUIT, "fruit", cx).await;
+    page_editor(&notebook, cx);
+    assert_eq!(
+        palette_commands(&notebook, "ai:", cx),
+        [
+            "AI: Tighten wording",
+            "AI: Rewrite as prose",
+            "AI: Rewrite as an outline",
+            "AI: Continue writing",
+            "AI: Check facts and logic",
+            "AI: Ask about this text",
+            "AI: Ask the notebook",
+            "AI: Due today",
+            "AI: This week",
+            "AI: Summarize the last occurrence of Fruit",
+            "AI: What changed yesterday",
+            "AI: Tagged with…",
+        ]
+    );
+    cx.simulate_keystrokes(notebook.window.into(), "escape");
+    assert_eq!(
+        palette_commands(&notebook, "tighten", cx),
+        ["AI: Tighten wording"]
+    );
+    ai.answer("apples are tasty ^b-apple", &[], cx);
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the verb to run", |_| !ai.sent().is_empty());
+    assert!(
+        ai.sent()[0].starts_with(quire_core::ai::Verb::Tighten.instruction()),
+        "the verb runs on the block at the caret: {:?}",
+        ai.sent()
+    );
+    assert!(ai.sent()[0].contains("apples are good and tasty"));
+
+    palette_commands(&notebook, "ask the notebook", cx);
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the answer pane", |cx| {
+        read(&notebook, cx, |view, _| view.nav.answer.pane.is_some())
+    });
+    let asked = pane(&notebook, cx);
+    assert_eq!(cx.read(|cx| asked.read(cx).title()), "Ask the notebook");
+
+    assert_eq!(
+        palette_commands(&notebook, "appearance: d", cx),
+        ["Appearance: Dark"]
+    );
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the dark appearance", |cx| {
+        cx.read(|cx| crate::preferences::Preferences::current(cx).appearance)
+            == settings::ThemeAppearanceMode::Dark
+    });
+
+    cx.update(|cx| crate::preferences::change(crate::preferences::Change::Vim(true), cx));
+    cx.run_until_parked();
+    let with_vim = palette_commands(&notebook, "ai:", cx);
+    assert_eq!(
+        with_vim.first().map(String::as_str),
+        Some("AI: Ask the notebook"),
+        "with Vim on, :ai runs the verbs and the palette offers only questions"
+    );
+    cx.simulate_keystrokes(notebook.window.into(), "escape");
+    cx.update(|cx| crate::ai::settings::set_enabled(false, cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert!(
+        palette_commands(&notebook, "ai:", cx).is_empty(),
+        "AI commands are offered only while AI is on"
+    );
+}
+
 const DAY: [(&str, &str, &str); 4] = [
     (
         "day",
@@ -872,4 +1011,62 @@ async fn tidy_needs_ai_writes_and_runs_only_on_days(cx: &mut TestAppContext) {
     tidy(&notebook, cx);
     assert_eq!(notice(cx), proposal::NOT_DAILY);
     assert!(ai.sent().is_empty());
+}
+
+/// rt `AiPage.tsx` 339-343: Open as tab moves the answers into an "Ask the notebook" tab. Quire
+/// moves the pane itself, so the conversation survives the move, where rt starts afresh.
+#[gpui::test]
+async fn open_as_tab_moves_the_conversation_into_an_ask_the_notebook_tab(cx: &mut TestAppContext) {
+    use super::file_tests::visit;
+    use quire_core::workspace::{BrowserView, Destination};
+    let (ai, notebook) = notebook(&FRUIT, "trees", cx).await;
+    ai.answer("Pears are gritty.", &[], cx);
+    run_ai(&notebook, "", cx);
+    let side = pane(&notebook, cx);
+    type_question(&notebook, "What about pears?", cx);
+    wait_done(&notebook, 0, cx);
+    super::template_tests::click(&notebook, "quire-ai-open-tab", cx);
+    wait_until(cx, "the answer tab", |cx| {
+        read(&notebook, cx, |view, _| {
+            view.nav.view == Some(BrowserView::Ai)
+        })
+    });
+    let tab = Destination::Browser {
+        view: BrowserView::Ai,
+    };
+    read(&notebook, cx, |view, cx| {
+        assert!(view.nav.answer.pane.is_none(), "the pane leaves the side");
+        let shown = view.nav.answer.tab.clone().unwrap();
+        assert_eq!(shown.entity_id(), side.entity_id());
+        assert!(shown.read(cx).in_tab);
+        assert_eq!(shown.read(cx).turns[0].answer, "Pears are gritty.");
+        assert_eq!(view.nav.workspace.active, Some(tab.clone()));
+        assert!(view.nav.workspace.tabs.contains(&tab));
+        assert_eq!(view.destination_label(&tab, cx), "Ask the notebook");
+    });
+    draw(&notebook, cx);
+    let mut visual = gpui::VisualTestContext::from_window(notebook.window.into(), cx);
+    assert!(
+        visual.debug_bounds("quire-ai-open-tab").is_none(),
+        "the tab offers no Open as tab"
+    );
+
+    visit(&notebook, Destination::page("fruit"), cx);
+    visit(&notebook, tab.clone(), cx);
+    read(&notebook, cx, |view, cx| {
+        let shown = view.nav.answer.tab.clone().unwrap();
+        assert_eq!(shown.entity_id(), side.entity_id());
+        assert_eq!(shown.read(cx).turns.len(), 1, "the tab keeps its answers");
+    });
+
+    super::workspace_tests::saved(&notebook, cx);
+    let notebook = super::workspace_tests::reopen(notebook, "trees", cx);
+    read(&notebook, cx, |view, _| {
+        assert!(view.nav.workspace.tabs.contains(&tab), "the tab is kept");
+    });
+    visit(&notebook, tab, cx);
+    read(&notebook, cx, |view, cx| {
+        let fresh = view.nav.answer.tab.clone().unwrap();
+        assert!(fresh.read(cx).in_tab && fresh.read(cx).turns.is_empty());
+    });
 }

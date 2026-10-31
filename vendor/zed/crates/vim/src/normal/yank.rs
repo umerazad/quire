@@ -28,6 +28,8 @@ impl Vim {
                 editor.set_clip_at_line_ends(false, cx);
                 let mut original_positions: HashMap<_, _> = Default::default();
                 let mut kind = None;
+                let source_lines = editor.buffer().read(cx).has_edit_filter();
+                let mut source_ranges = Vec::new();
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(&mut |map, selection| {
                         let original_position = (selection.head(), selection.goal);
@@ -38,6 +40,15 @@ impl Vim {
                             &text_layout_details,
                             forced_motion,
                         );
+                        if source_lines && kind == Some(MotionKind::Linewise) {
+                            let (_, copy_range) = Self::source_linewise_selection(
+                                map,
+                                selection,
+                                selection.start.to_point(map).row,
+                                selection.end.to_point(map).row,
+                            );
+                            source_ranges.push(copy_range);
+                        }
                         if kind == Some(MotionKind::Exclusive) {
                             original_positions
                                 .insert(selection.id, (selection.start, selection.goal));
@@ -47,7 +58,11 @@ impl Vim {
                     })
                 });
                 let Some(kind) = kind else { return };
-                vim.yank_selections_content(editor, kind, window, cx);
+                if source_lines && kind == MotionKind::Linewise {
+                    vim.copy_ranges(editor, kind, true, source_ranges, window, cx);
+                } else {
+                    vim.yank_selections_content(editor, kind, window, cx);
+                }
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(&mut |_, selection| {
                         let (head, goal) = original_positions.remove(&selection.id).unwrap();

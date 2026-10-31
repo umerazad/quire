@@ -11,6 +11,9 @@ export type Destination =
   | { kind: "browser"; view: BrowserKind };
 export const tagSorts = ["name", "most", "fewest"] as const;
 export type TagSort = (typeof tagSorts)[number];
+// Projects with an open action are active; the rest are inactive.
+export const projectStatuses = ["active", "inactive", "all"] as const;
+export type ProjectStatus = (typeof projectStatuses)[number];
 export type BrowserView = {
   query: string;
   limit: number;
@@ -21,6 +24,7 @@ export type BrowserView = {
   taskView?: import("./tasks").TaskState | "projects" | "due" | "upcoming";
   taskProject?: string;
   taskDraft?: string;
+  projectStatus?: ProjectStatus;
 };
 export type TaskStatus = "all" | "open" | "due" | "done";
 export type Workspace = {
@@ -91,6 +95,8 @@ export function loadWorkspace(root: string): Workspace {
       (!("tagSort" in item) ||
         (tagSorts as readonly unknown[]).includes(item.tagSort)) &&
       (!("taskProject" in item) || typeof item.taskProject === "string") &&
+      (!("projectStatus" in item) ||
+        (projectStatuses as readonly unknown[]).includes(item.projectStatus)) &&
       (!("taskView" in item) ||
         [
           "inbox",
@@ -205,8 +211,28 @@ export function folderRows(
   visit("", 0);
   return result;
 }
+// A title's namespace is what comes before its last "/", as in Roam:
+// "C/Social Proof" is in C, "roam/js/heatmap" in roam/js and so in roam.
+// A slash in ordinary text does not make one, so each part before the last
+// slash must be a name of letters, digits, spaces and - _ . & ' ( ),
+// starting with a letter or digit, not only digits, with no space beside
+// a slash. "20/20", "TCP / IP", URLs,
+// "tweets: 1/…" and "[[roam/js]]" have none.
+const namespacePart = /^[\p{L}\p{N}][\p{L}\p{N} _.&'()-]*$/u;
 export function namespaceOf(title: string) {
-  return title.includes("/") ? title.split("/").slice(0, -1).join("/") : "";
+  const parts = title.split("/"),
+    name = parts.pop()!;
+  return parts.length &&
+    name &&
+    name.trimStart() === name &&
+    parts.every(
+      (part) =>
+        namespacePart.test(part) &&
+        part.trimEnd() === part &&
+        !/^\d+$/.test(part),
+    )
+    ? parts.join("/")
+    : "";
 }
 // The date a daily page title names: ISO (2026-10-27), ISO with its
 // weekday (2026-10-27-Tuesday), Roam (October 27th, 2026), or the open

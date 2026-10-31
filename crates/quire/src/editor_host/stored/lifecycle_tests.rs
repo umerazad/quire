@@ -124,6 +124,46 @@ fn an_unavailable_service_is_explained_after_patience_and_close_anyway_closes(
 }
 
 #[gpui::test]
+fn closing_during_a_conflict_with_unrecorded_typing_names_the_conflict(cx: &mut TestAppContext) {
+    let opened = open_folder(&[("A.md", "- a\n")], "A.md", cx);
+    let notebook = &opened.notebook;
+    wait_until(cx, "A's editor", |cx| {
+        read(notebook, cx, |view, _| view.editor.is_some())
+    });
+    let persistence = read(notebook, cx, |view, cx| {
+        view.page.read(cx).persistence().cloned().unwrap()
+    });
+    let edit = |text: &'static str, cx: &mut TestAppContext| {
+        persistence.update(cx, |page, cx| {
+            page.buffer()
+                .update(cx, |buffer, cx| buffer.edit([(0..0, text)], None, cx))
+        })
+    };
+    edit("- mine\n", cx);
+    fs::write(opened.folder.path().join("A.md"), "- theirs\n").unwrap();
+    notebook
+        .window
+        .update(cx, |view, _, cx| {
+            view.folder_changed(Some(vec!["A.md".into()]), cx)
+        })
+        .unwrap();
+    wait_until(cx, "the conflict", |cx| {
+        read(notebook, cx, |view, cx| view.conflicted(cx).is_some())
+    });
+    edit("- more\n", cx);
+    request_close(notebook, cx);
+    let (message, detail) = cx.pending_prompt().unwrap();
+    assert_eq!(message, FAILED);
+    assert!(
+        detail.starts_with(&crate::lifecycle::unrecorded_conflict("A.md")),
+        "{detail}"
+    );
+    assert!(!detail.contains("storage reported an error"), "{detail}");
+    cx.simulate_prompt_answer(KEEP_EDITING);
+    cx.run_until_parked();
+}
+
+#[gpui::test]
 fn a_failed_service_asks_at_once_and_keep_editing_keeps_the_window_and_its_text(
     cx: &mut TestAppContext,
 ) {

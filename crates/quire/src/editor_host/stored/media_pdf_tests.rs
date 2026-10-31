@@ -194,6 +194,127 @@ fn find_and_selection_read_the_stored_pdf_text(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_mouse_drag_selects_across_pdf_pages_and_copies_with_a_break_between_them(
+    cx: &mut TestAppContext,
+) {
+    serve(cx);
+    let (notebook, _) = open_with_attachments(
+        &[(
+            "three.pdf",
+            simple_pdf(&["First page", "Second page", "Third page"]),
+        )],
+        |files| format!("- ![[{}]]\n", files[0]),
+        cx,
+    );
+    let editor = enter_write(&notebook, cx);
+    let view = wait_open(&notebook, &editor, 1, cx).remove(0);
+    view.update(cx, |view, cx| view.set_zoom(0.5, cx));
+    wait_until(cx, "every page's text laid out at 50%", |cx| {
+        draw(&notebook, cx);
+        view.read_with(cx, |view, _| {
+            view.texts_read() == 3 && (0..3).all(|page| view.char_center(page, 0).is_some())
+        })
+    });
+    let mut visual = VisualTestContext::from_window(notebook.window.into(), cx);
+    let drag = |from: (usize, usize), to: (usize, usize), visual: &mut VisualTestContext| {
+        let (from, to) = view.read_with(visual, |view, _| {
+            (
+                view.char_center(from.0, from.1).unwrap(),
+                view.char_center(to.0, to.1).unwrap(),
+            )
+        });
+        visual.simulate_mouse_down(from, MouseButton::Left, Modifiers::none());
+        visual.simulate_mouse_move(to, MouseButton::Left, Modifiers::none());
+        visual.simulate_mouse_up(to, MouseButton::Left, Modifiers::none());
+        view.read_with(visual, |view, _| view.selected_text())
+    };
+    assert_eq!(
+        drag((0, 0), (0, 4), &mut visual),
+        Some("First".into()),
+        "a press on the first page selects there"
+    );
+    assert_eq!(
+        drag((2, 4), (0, 6), &mut visual),
+        Some("page\nSecond page\nThird".into()),
+        "dragging backwards from the third page's \"Third\" to the first page's \"page\""
+    );
+    assert_eq!(drag((1, 0), (1, 5), &mut visual), Some("Second".into()));
+    visual.dispatch_action(editor::actions::Copy);
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("Second".into())
+    );
+}
+
+#[gpui::test]
+fn the_scroll_wheel_over_a_pdf_scrolls_its_pages_not_the_page_around_it(cx: &mut TestAppContext) {
+    serve(cx);
+    let (notebook, _) = open_with_attachments(
+        &[("paper.pdf", long_pdf())],
+        |files| format!("- ![[{}]]\n", files[0]),
+        cx,
+    );
+    let editor = enter_write(&notebook, cx);
+    let view = wait_open(&notebook, &editor, 1, cx).remove(0);
+    wait_until(cx, "the first page's layout", |cx| {
+        draw(&notebook, cx);
+        view.read_with(cx, |view, _| {
+            view.texts_read() > 0 && view.char_center(0, 0).is_some()
+        })
+    });
+    let inside = view.read_with(cx, |view, _| view.char_center(0, 0).unwrap());
+    let page_scroll =
+        |cx: &mut TestAppContext| editor.update(cx, |editor, cx| editor.scroll_position(cx));
+    let before = page_scroll(cx);
+    let mut visual = VisualTestContext::from_window(notebook.window.into(), cx);
+    visual.simulate_event(gpui::ScrollEvent {
+        position: inside,
+        delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(-3000.))),
+        ..Default::default()
+    });
+    draw(&notebook, cx);
+    assert!(
+        view.read_with(cx, |view, _| view.top_page()) > 0,
+        "the PDF moved on to later pages"
+    );
+    assert_eq!(page_scroll(cx), before, "the note itself stayed put");
+}
+
+#[gpui::test]
+fn find_reads_the_text_of_a_pdf_hayro_renders(cx: &mut TestAppContext) {
+    use base64::Engine as _;
+    let data = base64::engine::general_purpose::STANDARD.encode(long_pdf());
+    let (notebook, _) = open_with_attachments(
+        &[],
+        |_| format!("- ![Paper](data:application/pdf;base64,{data})\n"),
+        cx,
+    );
+    let editor = enter_write(&notebook, cx);
+    let view = wait_open(&notebook, &editor, 1, cx).remove(0);
+    assert_eq!(
+        view.read_with(cx, |view, _| view.shows()),
+        PdfShows::Open {
+            engine: Engine::Hayro,
+            pages: 30
+        }
+    );
+    wait_until(cx, "every page's text", |cx| {
+        view.read_with(cx, |view, _| view.texts_read()) == 30
+    });
+    let find = view.read_with(cx, |view, _| view.find_editor());
+    notebook
+        .window
+        .update(cx, |_, window, cx| {
+            find.update(cx, |find, cx| find.set_text("page 2", window, cx))
+        })
+        .unwrap();
+    draw(&notebook, cx);
+    assert_eq!(view.read_with(cx, |view, _| view.matches()), (11, Some(0)));
+    view.update(cx, |view, cx| view.next_match(true, cx));
+    assert_eq!(view.read_with(cx, |view, _| view.top_page()), 19);
+}
+
+#[gpui::test]
 fn remote_and_data_pdfs_render_with_hayro_and_missing_ones_say_what_to_do(cx: &mut TestAppContext) {
     use base64::Engine as _;
     serve(cx);

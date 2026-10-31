@@ -188,6 +188,9 @@ static const uint8_t STATE_PIPE_CHECKED = 0x1 << 5;
 // The first line of the open paragraph has an unescaped pipe, so no table can
 // interrupt it (Lezer attaches its table parser to such a paragraph)
 static const uint8_t STATE_FIRST_LINE_PIPE = 0x1 << 6;
+// A list marker ended at EOF, so its item still needs the empty line Lezer
+// sees there
+static const uint8_t STATE_EMPTY_ITEM_AT_EOF = 0x1 << 2;
 
 static size_t roundup_32(size_t x) {
     x--;
@@ -371,11 +374,14 @@ static bool table_rows_interrupt(const TableRows *rows) {
 }
 
 typedef struct {
-    // A stack of open blocks in the current parse state
+    // A stack of open blocks in the current parse state. `ordered` runs
+    // parallel to `items` and marks list items opened by an ordered marker, so
+    // the scanner knows the kind of every enclosing list like Lezer's `inList`.
     struct {
         size_t size;
         size_t capacity;
         Block *items;
+        bool *ordered;
     } open_blocks;
 
     // Parser state flags
@@ -399,22 +405,67 @@ typedef struct {
     TableRows rows;
 } Scanner;
 
-static void push_block(Scanner *s, Block b) {
-    if (s->open_blocks.size == s->open_blocks.capacity) {
-        s->open_blocks.capacity =
-            s->open_blocks.capacity ? s->open_blocks.capacity << 1 : 8;
-        void *tmp = realloc(s->open_blocks.items,
-                            sizeof(Block) * s->open_blocks.capacity);
-        assert(tmp != NULL);
-        s->open_blocks.items = tmp;
+static void reserve_blocks(Scanner *s, size_t count) {
+    if (s->open_blocks.capacity >= count) {
+        return;
     }
+    size_t capacity = roundup_32(count < 8 ? 8 : count);
+    void *items = realloc(s->open_blocks.items, sizeof(Block) * capacity);
+    assert(items != NULL);
+    s->open_blocks.items = items;
+    void *ordered = realloc(s->open_blocks.ordered, sizeof(bool) * capacity);
+    assert(ordered != NULL);
+    s->open_blocks.ordered = ordered;
+    s->open_blocks.capacity = capacity;
+}
 
+static void push_kind(Scanner *s, Block b, bool ordered) {
+    reserve_blocks(s, s->open_blocks.size + 1);
+    s->open_blocks.ordered[s->open_blocks.size] = ordered;
     s->open_blocks.items[s->open_blocks.size++] = b;
 }
+
+static void push_block(Scanner *s, Block b) { push_kind(s, b, false); }
 
 static inline Block pop_block(Scanner *s) {
     return s->open_blocks.items[--s->open_blocks.size];
 }
+
+// A marker line ends at a line break or at the end of the file, as in Lezer.
+static bool at_line_end(TSLexer *lexer) {
+    return lexer->lookahead == '\n' || lexer->lookahead == '\r' ||
+           lexer->eof(lexer);
+}
+
+static bool is_list_item(Block block) {
+    return block >= LIST_ITEM && block <= LIST_ITEM_MAX_INDENTATION;
+}
+
+// Lezer's `inList`: whether any open block, matched on this line or not, is an
+// item of a list of the given kind.
+static bool in_list(const Scanner *s, bool ordered) {
+    for (size_t i = 0; i < s->open_blocks.size; i++) {
+        if (is_list_item(s->open_blocks.items[i]) &&
+            s->open_blocks.ordered[i] == ordered) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void open_list_item(Scanner *s, TSLexer *lexer, Block b,
+                           bool ordered) {
+    if (s->simulate) {
+        return;
+    }
+    push_kind(s, b, ordered);
+    if (lexer->eof(lexer)) {
+        s->state |= STATE_EMPTY_ITEM_AT_EOF;
+    }
+}
+
+// Bytes of the packed list kind bits that follow the serialized blocks.
+static size_t kind_bytes(size_t blocks_count) { return (blocks_count + 7) / 8; }
 
 // Write the whole state of a Scanner to a byte buffer
 static unsigned serialize(Scanner *s, char *buffer) {
@@ -426,17 +477,27 @@ static unsigned serialize(Scanner *s, char *buffer) {
     buffer[size++] = (char)s->fenced_code_block_delimiter_length;
     size_t blocks_count = s->open_blocks.size;
     // The buffer is fixed-size (TREE_SITTER_SERIALIZATION_BUFFER_SIZE), and deep
-    // nesting (255+ open blocks) doesn't fit; writing past the end corrupts the
+    // nesting (240+ open blocks) doesn't fit; writing past the end corrupts the
     // parser. Serialize nothing instead: restoring the empty state surfaces the
     // pathological input as ERROR nodes - visible and safe, unlike truncated
-    // state (silently wrong trees) or the overflow (memory corruption).
-    if (size + blocks_count * sizeof(Block) > TREE_SITTER_SERIALIZATION_BUFFER_SIZE) {
+    // state (silently wrong trees) or the overflow (memory corruption). The
+    // guard also keeps the block count within its one byte.
+    if (size + 1 + blocks_count * sizeof(Block) + kind_bytes(blocks_count) >
+        TREE_SITTER_SERIALIZATION_BUFFER_SIZE) {
         return 0;
     }
+    buffer[size++] = (char)blocks_count;
     if (blocks_count > 0) {
         memcpy(&buffer[size], s->open_blocks.items,
                blocks_count * sizeof(Block));
         size += blocks_count * sizeof(Block);
+        memset(&buffer[size], 0, kind_bytes(blocks_count));
+        for (size_t i = 0; i < blocks_count; i++) {
+            if (s->open_blocks.ordered[i]) {
+                buffer[size + i / 8] |= (char)(1 << (i % 8));
+            }
+        }
+        size += kind_bytes(blocks_count);
     }
     return size;
 }
@@ -445,7 +506,6 @@ static unsigned serialize(Scanner *s, char *buffer) {
 // `serizalize` and `deserialize` should be fully symmetric.
 static void deserialize(Scanner *s, const char *buffer, unsigned length) {
     s->open_blocks.size = 0;
-    s->open_blocks.capacity = 0;
     s->state = 0;
     s->matched = 0;
     s->indentation = 0;
@@ -458,20 +518,16 @@ static void deserialize(Scanner *s, const char *buffer, unsigned length) {
         s->indentation = (uint8_t)buffer[size++];
         s->column = (uint8_t)buffer[size++];
         s->fenced_code_block_delimiter_length = (uint8_t)buffer[size++];
-        size_t blocks_size = length - size;
-        if (blocks_size > 0) {
-            size_t blocks_count = blocks_size / sizeof(Block);
-
-            // ensure open blocks has enough room
-            if (s->open_blocks.capacity < blocks_count) {
-              size_t capacity = roundup_32(blocks_count);
-              void *tmp = realloc(s->open_blocks.items,
-                            sizeof(Block) * capacity);
-              assert(tmp != NULL);
-              s->open_blocks.items = tmp;
-              s->open_blocks.capacity = capacity;
+        size_t blocks_count = (uint8_t)buffer[size++];
+        if (blocks_count > 0) {
+            reserve_blocks(s, blocks_count);
+            memcpy(s->open_blocks.items, &buffer[size],
+                   blocks_count * sizeof(Block));
+            size += blocks_count * sizeof(Block);
+            for (size_t i = 0; i < blocks_count; i++) {
+                s->open_blocks.ordered[i] =
+                    (((uint8_t)buffer[size + i / 8]) >> (i % 8)) & 1;
             }
-            memcpy(s->open_blocks.items, &buffer[size], blocks_size);
             s->open_blocks.size = blocks_count;
         }
     }
@@ -728,12 +784,12 @@ static bool parse_star(Scanner *s, TSLexer *lexer, const bool *valid_symbols) {
             break;
         }
     }
-    bool line_end = lexer->lookahead == '\n' || lexer->lookahead == '\r';
+    bool line_end = at_line_end(lexer);
     bool dont_interrupt = false;
     if (star_count == 1 && line_end) {
         extra_indentation = 1;
         // line is empty so don't interrupt paragraphs if this is a list marker
-        dont_interrupt = s->matched == s->open_blocks.size;
+        dont_interrupt = !in_list(s, false);
     }
     // If there were at least 3 stars then this could be a thematic break
     bool thematic_break = star_count >= 3 && line_end;
@@ -773,8 +829,7 @@ static bool parse_star(Scanner *s, TSLexer *lexer, const bool *valid_symbols) {
             s->indentation = extra_indentation;
             extra_indentation = temp;
         }
-        if (!s->simulate)
-            push_block(s, (Block)(LIST_ITEM + extra_indentation));
+        open_list_item(s, lexer, (Block)(LIST_ITEM + extra_indentation), false);
         lexer->result_symbol =
             dont_interrupt ? LIST_MARKER_STAR_DONT_INTERRUPT : LIST_MARKER_STAR;
         return true;
@@ -797,7 +852,7 @@ static bool parse_thematic_break_underscore(Scanner *s, TSLexer *lexer,
             break;
         }
     }
-    bool line_end = lexer->lookahead == '\n' || lexer->lookahead == '\r';
+    bool line_end = at_line_end(lexer);
     if (underscore_count >= 3 && line_end && valid_symbols[THEMATIC_BREAK]) {
         lexer->result_symbol = THEMATIC_BREAK;
         mark_end(s, lexer);
@@ -937,12 +992,10 @@ static bool parse_plus(Scanner *s, TSLexer *lexer, const bool *valid_symbols) {
                 extra_indentation += advance(s, lexer);
             }
             bool dont_interrupt = false;
-            if (lexer->lookahead == '\r' || lexer->lookahead == '\n') {
+            if (at_line_end(lexer)) {
                 extra_indentation = 1;
-                dont_interrupt = true;
+                dont_interrupt = !in_list(s, false);
             }
-            dont_interrupt =
-                dont_interrupt && s->matched == s->open_blocks.size;
             if (extra_indentation >= 1 &&
                 (dont_interrupt ? valid_symbols[LIST_MARKER_PLUS_DONT_INTERRUPT]
                                 : valid_symbols[LIST_MARKER_PLUS])) {
@@ -958,8 +1011,7 @@ static bool parse_plus(Scanner *s, TSLexer *lexer, const bool *valid_symbols) {
                     s->indentation = extra_indentation;
                     extra_indentation = temp;
                 }
-                if (!s->simulate)
-                    push_block(s, (Block)(LIST_ITEM + extra_indentation));
+                open_list_item(s, lexer, (Block)(LIST_ITEM + extra_indentation), false);
                 return true;
             }
         }
@@ -997,14 +1049,11 @@ static bool parse_ordered_list_marker(Scanner *s, TSLexer *lexer,
                 while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
                     extra_indentation += advance(s, lexer);
                 }
-                bool line_end =
-                    lexer->lookahead == '\n' || lexer->lookahead == '\r';
-                if (line_end) {
+                if (at_line_end(lexer)) {
                     extra_indentation = 1;
                     dont_interrupt = true;
                 }
-                dont_interrupt =
-                    dont_interrupt && s->matched == s->open_blocks.size;
+                dont_interrupt = dont_interrupt && !in_list(s, true);
                 if (extra_indentation >= 1 &&
                     (dot ? (dont_interrupt
                                 ? valid_symbols[LIST_MARKER_DOT_DONT_INTERRUPT]
@@ -1024,9 +1073,9 @@ static bool parse_ordered_list_marker(Scanner *s, TSLexer *lexer,
                         s->indentation = extra_indentation;
                         extra_indentation = temp;
                     }
-                    if (!s->simulate)
-                        push_block(
-                            s, (Block)(LIST_ITEM + extra_indentation + digits));
+                    open_list_item(
+                            s, lexer,
+                            (Block)(LIST_ITEM + extra_indentation + digits), true);
                     return true;
                 }
             }
@@ -1066,13 +1115,12 @@ static bool parse_minus(Scanner *s, TSLexer *lexer, const bool *valid_symbols) {
                 break;
             }
         }
-        bool line_end = lexer->lookahead == '\n' || lexer->lookahead == '\r';
+        bool line_end = at_line_end(lexer);
         bool dont_interrupt = false;
         if (minus_count == 1 && line_end) {
             extra_indentation = 1;
-            dont_interrupt = true;
+            dont_interrupt = !in_list(s, false);
         }
-        dont_interrupt = dont_interrupt && s->matched == s->open_blocks.size;
         bool thematic_break = minus_count >= 3 && line_end;
         bool underline =
             minus_count >= 1 && !minus_after_whitespace && line_end &&
@@ -1109,15 +1157,14 @@ static bool parse_minus(Scanner *s, TSLexer *lexer, const bool *valid_symbols) {
                 s->indentation = extra_indentation;
                 extra_indentation = temp;
             }
-            if (!s->simulate)
-                push_block(s, (Block)(LIST_ITEM + extra_indentation));
+            open_list_item(s, lexer, (Block)(LIST_ITEM + extra_indentation), false);
             lexer->result_symbol = dont_interrupt
                                        ? LIST_MARKER_MINUS_DONT_INTERRUPT
                                        : LIST_MARKER_MINUS;
             return true;
         }
-        if (minus_count == 3 && (!minus_after_whitespace) && line_end &&
-            valid_symbols[MINUS_METADATA]) {
+        if (minus_count == 3 && (!minus_after_whitespace) &&
+            !lexer->eof(lexer) && line_end && valid_symbols[MINUS_METADATA]) {
             for (;;) {
                 // advance over newline
                 if (lexer->lookahead == '\r') {
@@ -1575,6 +1622,12 @@ static bool scan(Scanner *s, TSLexer *lexer, const bool *valid_symbols) {
             lexer->result_symbol = TOKEN_EOF;
             return true;
         }
+        if ((s->state & STATE_EMPTY_ITEM_AT_EOF) &&
+            valid_symbols[BLANK_LINE_START]) {
+            s->state &= ~STATE_EMPTY_ITEM_AT_EOF;
+            lexer->result_symbol = BLANK_LINE_START;
+            return true;
+        }
         if (s->open_blocks.size > 0) {
             lexer->result_symbol = BLOCK_CLOSE;
             if (!s->simulate)
@@ -1840,7 +1893,9 @@ static bool scan(Scanner *s, TSLexer *lexer, const bool *valid_symbols) {
 
 void *tree_sitter_quire_markdown_external_scanner_create(void) {
     Scanner *s = (Scanner *)malloc(sizeof(Scanner));
-    s->open_blocks.items = (Block *)calloc(1, sizeof(Block));
+    s->open_blocks.items = NULL;
+    s->open_blocks.ordered = NULL;
+    s->open_blocks.capacity = 0;
 #if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
     _Static_assert(ATX_H6_MARKER == ATX_H1_MARKER + 5, "");
 #else
@@ -1878,5 +1933,6 @@ void tree_sitter_quire_markdown_external_scanner_deserialize(void *payload,
 void tree_sitter_quire_markdown_external_scanner_destroy(void *payload) {
     Scanner *scanner = (Scanner *)payload;
     free(scanner->open_blocks.items);
+    free(scanner->open_blocks.ordered);
     free(scanner);
 }

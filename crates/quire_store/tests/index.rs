@@ -491,6 +491,56 @@ fn task_rows_keep_date_sources_through_layout_changes_and_overlays() -> Result<(
 }
 
 #[test]
+fn linked_tasks_come_from_other_pages_linking_by_any_name() -> Result<()> {
+    use quire_core::workspace::TaskStatus;
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "m", "Meeting.md", "m")?;
+    save(&store, "w", "Work.md", "w")?;
+    let linked = |text: &str, state: &str, links: &[&str]| IndexedTask {
+        links: links.iter().map(|link| link.to_string()).collect(),
+        ..task(text, state, Default::default())
+    };
+    let analyses = [
+        (
+            "Meeting.md",
+            PageIndex {
+                tasks: vec![linked("Own task", "next", &["Meeting"])],
+                ..Default::default()
+            },
+        ),
+        (
+            "Work.md",
+            PageIndex {
+                tasks: vec![
+                    linked("Send notes", "next", &["meeting"]),
+                    linked("Booked room", "done", &["Meeting.md"]),
+                    linked("Unrelated", "next", &["Elsewhere"]),
+                ],
+                ..Default::default()
+            },
+        ),
+    ];
+    let index = QueryIndex::open(&database, config(1))?;
+    analyze_all(&index, &analyses)?;
+    let tasks = index.linked_tasks("m")?;
+    let texts: Vec<&str> = tasks.iter().map(|task| task.text.as_str()).collect();
+    assert_eq!(texts, ["Send notes", "Booked room"]);
+    let shown = |status| {
+        tasks
+            .iter()
+            .filter(|task| task.has_status(status, "2026-10-30"))
+            .count()
+    };
+    assert_eq!(
+        TaskStatus::ALL.map(shown),
+        [2, 1, 0, 1],
+        "All, Open, Due, Done"
+    );
+    Ok(())
+}
+
+#[test]
 fn block_choices_and_previews_read_live_blocks_and_refuse_ambiguous_ids() -> Result<()> {
     use quire_store::index::Overlay;
     let root = tempfile::tempdir()?;
@@ -528,14 +578,24 @@ fn block_choices_and_previews_read_live_blocks_and_refuse_ambiguous_ids() -> Res
     let pair = |path: &str, key: &str| (path.to_owned(), key.to_owned());
     assert_eq!(
         choices("ZEBRA", 10)?,
-        [pair("Alpha.md", "zebra"), pair("Alpha.md", "at-10")],
-        "code blocks are left out"
+        [pair("Alpha.md", "at-10"), pair("Alpha.md", "zebra")],
+        "code blocks are left out, and the shorter of two openings ranks first"
     );
     assert_eq!(
         choices("dawn", 10)?,
-        [pair("Alpha.md", "zebra"), pair("Beta.md", "dup")]
+        [pair("Beta.md", "dup"), pair("Alpha.md", "zebra")],
+        "a block opening with the query ranks above one holding it later"
     );
     assert_eq!(choices("dawn graze", 10)?, [pair("Alpha.md", "zebra")]);
+    assert_eq!(
+        choices("", 10)?,
+        [
+            pair("Alpha.md", "zebra"),
+            pair("Alpha.md", "at-10"),
+            pair("Beta.md", "dup")
+        ],
+        "an empty query keeps page order"
+    );
     assert_eq!(
         choices("", 1)?.len(),
         1,
@@ -580,6 +640,102 @@ fn block_choices_and_previews_read_live_blocks_and_refuse_ambiguous_ids() -> Res
 }
 
 #[test]
+fn heading_links_find_the_page_and_its_first_matching_heading() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "a", "Alpha.md", "a")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    let heading = |from: u32, text: &str, kind: &str| IndexedBlock {
+        text: text.into(),
+        kind: kind.into(),
+        ..block(None, from)
+    };
+    let alpha = PageIndex {
+        blocks: vec![
+            heading(0, "# Intro", "heading"),
+            heading(10, "Plan B", "list"),
+            heading(20, "## Plan  B ", "heading"),
+            heading(30, "### plan b", "heading"),
+        ],
+        ..Default::default()
+    };
+    analyze_all(&index, &[("Alpha.md", alpha)])?;
+    type Found = Option<(String, Option<(String, u32)>)>;
+    let found = |target: &str| -> Result<Found> {
+        Ok(index
+            .find_heading(target)?
+            .map(|found| (found.page.path, found.heading)))
+    };
+    let alpha = |heading: Option<(&str, u32)>| {
+        Some((
+            "Alpha.md".to_owned(),
+            heading.map(|(key, at)| (key.to_owned(), at)),
+        ))
+    };
+    assert_eq!(
+        found("Alpha#plan b")?,
+        alpha(Some(("at-30", 30))),
+        "list blocks are not headings; inner spaces count"
+    );
+    assert_eq!(found("alpha#Plan  B")?, alpha(Some(("at-20", 20))));
+    assert_eq!(found("Alpha# Intro ")?, alpha(Some(("at-0", 0))));
+    assert_eq!(
+        found("Alpha#Missing")?,
+        alpha(None),
+        "the page opens without the heading"
+    );
+    assert_eq!(found("Alpha")?, alpha(None));
+    assert_eq!(found("Nowhere#Intro")?, None);
+    assert_eq!(quire_store::index::heading_of("Alpha#^id"), None);
+    Ok(())
+}
+
+#[test]
+fn page_previews_start_at_the_page_or_its_heading_and_skip_code() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "a", "Alpha.md", "a")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    let at = |from: u32, text: &str, kind: &str| IndexedBlock {
+        text: text.into(),
+        kind: kind.into(),
+        ..block(None, from)
+    };
+    let alpha = PageIndex {
+        blocks: vec![
+            at(0, "# Intro", "heading"),
+            at(10, "first", "list"),
+            at(20, "let x = 1;", "code"),
+            at(30, "", "list"),
+            at(40, "## Plan", "heading"),
+            at(50, "step", "list"),
+        ],
+        ..Default::default()
+    };
+    analyze_all(&index, &[("Alpha.md", alpha)])?;
+    let lines = |target: &str, limit: usize| -> Result<Option<Vec<String>>> {
+        Ok(index
+            .page_preview(target, limit)?
+            .map(|preview| preview.lines))
+    };
+    assert_eq!(
+        lines("Alpha", 3)?,
+        Some(vec!["Intro".into(), "first".into(), "Plan".into()])
+    );
+    assert_eq!(
+        lines("Alpha#plan", 5)?,
+        Some(vec!["Plan".into(), "step".into()])
+    );
+    assert_eq!(
+        lines("Alpha#Missing", 1)?,
+        Some(vec!["Intro".into()]),
+        "a missing heading previews the page top"
+    );
+    assert_eq!(lines("Nowhere", 3)?, None);
+    Ok(())
+}
+
+#[test]
 fn relocation_candidates_include_pages_not_analyzed_yet() -> Result<()> {
     let root = tempfile::tempdir()?;
     let (store, database) = open(root.path())?;
@@ -603,5 +759,242 @@ fn relocation_candidates_include_pages_not_analyzed_yet() -> Result<()> {
     assert_eq!(candidates(&index)?, ["Old.md", "Links.md"]);
     analyze_all(&index, &[])?;
     assert_eq!(candidates(&index)?, ["Old.md"]);
+    Ok(())
+}
+
+#[test]
+fn search_reads_unsaved_text_of_open_pages_instead_of_their_last_save() -> Result<()> {
+    use quire_store::index::Overlay;
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "s", "Source.md", "- saved wombat")?;
+    save(&store, "o", "Other.md", "- other wombat")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    let says = |text: &str, id: Option<&str>| PageIndex {
+        blocks: vec![IndexedBlock {
+            text: text.into(),
+            id: id.map(str::to_owned),
+            ..block(None, 0)
+        }],
+        ..Default::default()
+    };
+    analyze_all(
+        &index,
+        &[
+            ("Source.md", says("saved wombat", None)),
+            ("Other.md", says("other wombat", None)),
+        ],
+    )?;
+    let hits = |query: &str| -> Result<Vec<(String, String, Option<String>)>> {
+        Ok(index
+            .search(query)?
+            .into_iter()
+            .map(|hit| (hit.source.title, hit.snippet, hit.block_id))
+            .collect())
+    };
+    assert_eq!(hits("wombat")?.len(), 2);
+    let by_title = hits("source")?.len();
+    index.set_overlay(
+        &JsString::from("s"),
+        &Overlay {
+            path: "Source.md".into(),
+            title: "Source".into(),
+            index: says("typed quokka", Some("b1")),
+        },
+    )?;
+    assert_eq!(
+        hits("quokka")?,
+        [("Source".into(), "typed quokka".into(), Some("b1".into()))],
+        "unsaved text is found with its block"
+    );
+    assert_eq!(
+        hits("wombat")?,
+        [("Other".into(), "other wombat".into(), None)],
+        "the open page's saved text no longer matches"
+    );
+    assert_eq!(
+        hits("source")?.len(),
+        by_title,
+        "the title matches the unsaved rows in place of the saved ones"
+    );
+    index.release_overlay(&JsString::from("s"))?;
+    assert!(hits("quokka")?.is_empty());
+    assert_eq!(hits("wombat")?.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn tagged_tasks_pair_each_tagged_task_block_with_its_task() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "a", "A.md", "")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    let block_at = |from: u32| IndexedBlock {
+        content_from: from + 2,
+        ..block(None, from)
+    };
+    let tagged = |from: u32| quire_store::index::IndexedTag {
+        tag: "#plan".into(),
+        from: from + 2,
+        block_id: None,
+        snippet: "s".into(),
+    };
+    let task_at = |from: u32, text: &str| IndexedTask {
+        from,
+        ..task(text, "next", Default::default())
+    };
+    analyze_all(
+        &index,
+        &[(
+            "A.md",
+            PageIndex {
+                blocks: vec![block_at(0), block_at(20), block_at(40)],
+                tagged: vec![tagged(0), tagged(20)],
+                tasks: vec![task_at(0, "Tagged task"), task_at(40, "Untagged task")],
+                ..Default::default()
+            },
+        )],
+    )?;
+    let tasks = index.tagged_tasks("plan")?;
+    assert_eq!(
+        tasks.len(),
+        1,
+        "the tagged plain block and the untagged task are left out"
+    );
+    let ((_, from), task) = tasks.into_iter().next().unwrap();
+    assert_eq!((from, task.text.as_str()), (2, "Tagged task"));
+    Ok(())
+}
+
+#[test]
+fn outlines_list_as_many_nested_blocks_as_asked_and_count_the_rest() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    let revision = save(&store, "a", "Alpha.md", "outline")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    let nested = |n: u32| IndexedBlock {
+        key: format!("k{n}"),
+        from: 10 * n,
+        to: 10 * n + 5,
+        content_from: 10 * n + 2,
+        content_to: 10 * n + 5,
+        subtree_to: 10 * n + 5,
+        depth: 1,
+        kind: "list".into(),
+        parent: Some("k0".into()),
+        text: format!("child {n}"),
+        content: format!("child {n}"),
+        ..Default::default()
+    };
+    let parent = IndexedBlock {
+        subtree_to: 10 * 12 + 5,
+        depth: 0,
+        parent: None,
+        text: "parent".into(),
+        content: "parent".into(),
+        ..nested(0)
+    };
+    let blocks = std::iter::once(parent)
+        .chain((1..=12).map(nested))
+        .collect();
+    analyze_all(
+        &index,
+        &[(
+            "Alpha.md",
+            PageIndex {
+                blocks,
+                ..Default::default()
+            },
+        )],
+    )?;
+    let outlines = index.outlines_with(&[(revision.clone(), 3, 8), (revision.clone(), 3, 50)])?;
+    assert_eq!(outlines[0], index.outlines(&[(revision, 3)])?[0]);
+    assert_eq!(outlines[0].children.len(), 8);
+    assert_eq!(outlines[0].more_children, 4);
+    assert_eq!(outlines[1].children.len(), 12);
+    assert_eq!(outlines[1].children[11], (1, "child 12".into()));
+    assert_eq!(outlines[1].more_children, 0);
+    Ok(())
+}
+
+#[test]
+fn text_hits_find_substrings_in_unsaved_text_up_to_eight_per_page() -> Result<()> {
+    use quire_store::index::Overlay;
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "a", "Alpha.md", "a")?;
+    save(&store, "b", "Beta.md", "b")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    let lines = |texts: &[&str]| PageIndex {
+        blocks: texts
+            .iter()
+            .enumerate()
+            .map(|(at, text)| IndexedBlock {
+                text: (*text).into(),
+                ..block(None, at as u32 * 10)
+            })
+            .collect(),
+        ..Default::default()
+    };
+    let many: Vec<String> = (0..10).map(|n| format!("pineapple {n}")).collect();
+    let many: Vec<&str> = many.iter().map(String::as_str).collect();
+    analyze_all(
+        &index,
+        &[
+            ("Alpha.md", lines(&many)),
+            (
+                "Beta.md",
+                lines(&["Éclair au Café", "日本語のメモ", "", "Apples"]),
+            ),
+        ],
+    )?;
+    let hits = |query: &str, limit: usize| -> Result<Vec<(String, String, Option<u32>)>> {
+        Ok(index
+            .text_hits(query, 8, limit)?
+            .into_iter()
+            .map(|hit| (hit.source.path, hit.snippet, hit.from))
+            .collect())
+    };
+    let found = hits("APPLE", 40)?;
+    assert_eq!(
+        found.len(),
+        9,
+        "eight from Alpha and one from Beta: {found:?}"
+    );
+    assert_eq!(
+        found[0],
+        ("Alpha.md".into(), "pineapple 0".into(), Some(0)),
+        "page path then block order, with the block's start"
+    );
+    assert_eq!(found[7].1, "pineapple 7");
+    assert_eq!(found[8], ("Beta.md".into(), "Apples".into(), Some(30)));
+    assert_eq!(hits("apple", 3)?.len(), 3, "the limit holds across pages");
+    assert_eq!(
+        hits("café", 40)?,
+        [("Beta.md".into(), "Éclair au Café".into(), Some(0))],
+        "letters outside ASCII match ignoring case"
+    );
+    assert_eq!(hits("éCLAIR", 40)?.len(), 1);
+    assert_eq!(hits("語のメ", 40)?.len(), 1, "caseless scripts match");
+    assert!(hits("  ", 40)?.is_empty(), "blank queries find nothing");
+    assert_eq!(hits("eapple 1", 40)?.len(), 1, "the query is one phrase");
+
+    index.set_overlay(
+        &JsString::from("b"),
+        &Overlay {
+            path: "Beta.md".into(),
+            title: "Beta".into(),
+            index: lines(&["typed but unsaved"]),
+        },
+    )?;
+    assert_eq!(
+        hits("unsaved", 40)?,
+        [("Beta.md".into(), "typed but unsaved".into(), Some(0))],
+        "unsaved text is found"
+    );
+    assert!(
+        hits("café", 40)?.is_empty(),
+        "the open page's saved text no longer matches"
+    );
     Ok(())
 }

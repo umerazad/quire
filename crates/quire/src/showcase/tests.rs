@@ -2,6 +2,9 @@ use super::*;
 use gpui::TestAppContext;
 
 fn init_app(cx: &mut TestAppContext) {
+    // The sample's inline PDF opens on its own thread and reads its pages' text there, as
+    // every embedded PDF does, so its replies arrive from outside the test scheduler.
+    cx.executor().allow_parking();
     cx.update(|cx| crate::editor_host::init(cx).expect("editor initialization"));
 }
 

@@ -208,7 +208,7 @@
     },
     {
       "path": "crates/vim/src/vim.rs",
-      "change": "Add editor-local weak search-bar association, targeted submission and command-prefix hooks for embedded hosts; retain workspace lookup and preserve the bar association across Vim toggles. Keep embedded visual/local marks in the Vim session when no workspace exists. Expose initialization with session register retention while leaving default initialization unchanged. Export typed page-command parsing for persistence-aware hosts. Export host_command for host-run Ex commands. Let a host editing command start recorded Insert mode or record itself for dot-repeat, without depending on host types."
+      "change": "Add editor-local weak search-bar association, targeted submission and command-prefix hooks for embedded hosts; retain workspace lookup and preserve the bar association across Vim toggles. Keep embedded visual/local marks in the Vim session when no workspace exists. Expose initialization with session register retention while leaving default initialization unchanged. Export typed page-command parsing for persistence-aware hosts. Export host_command for host-run Ex commands. Let a host editing command start recorded Insert mode or record itself for dot-repeat, without depending on host types. Let a host take the typed count for its command and end a visual mode after acting on the selection."
     },
     {
       "path": "crates/vim/src/normal/search.rs",
@@ -243,8 +243,16 @@
       "change": "Reject insertion of a different source buffer into a single-page shared-history excerpt before changing its excerpt map. Disable generic context expansion for these page embeds; their host owns the semantic range."
     },
     {
+      "path": "crates/editor/src/blink_manager.rs",
+      "change": "Hold the cursor steady while App::reduce_motion is set, as the editor already does for cursor glides, so the system Reduce motion setting stops the blink. Covered by quire's motion test."
+    },
+    {
       "path": "crates/editor/src/display_map/tab_map.rs",
-      "change": "Skip empty fold chunks when seeking tab stops, avoiding a zero-length subtraction overflow with empty replacement text. Add a focused UTF-8/tab regression with empty fold placeholders."
+      "change": "Skip empty fold chunks when seeking tab stops, avoiding a zero-length subtraction overflow with empty replacement text. Add a focused UTF-8/tab regression with empty fold placeholders. Pass a fold placeholder with empty text and a renderer through as its own chunk, so its element still renders."
+    },
+    {
+      "path": "crates/editor/src/display_map/wrap_map.rs",
+      "change": "Wrap a rendered chunk, such as a fold placeholder, as one unbreakable element even before layout measures it, estimating its width from its text. Upstream split an unmeasured multi-character placeholder (LSP collapsed text, Write's code-block toolbar) at a soft wrap, and mapping that wrap row's start back to the fold map panicked in FoldPoint::to_offset. Add a focused regression with a long placeholder in a narrow wrap."
     },
     {
       "path": "crates/editor/src/test/editor_lsp_test_context.rs",
@@ -261,6 +269,18 @@
     {
       "path": "crates/vim/src/visual.rs",
       "change": "Use complete source line selections and scoped DeleteLines intent for filtered visual-line deletion; preserve ordinary and visual-block behavior."
+    },
+    {
+      "path": "crates/vim/src/normal/yank.rs",
+      "change": "For views with an edit filter, copy linewise motion yanks (yy, yj) from complete source lines, including hidden syntax, through the shared linewise source range used by deletion. Ordinary views and other yanks are unchanged."
+    },
+    {
+      "path": "crates/vim/src/normal/paste.rs",
+      "change": "For views with an edit filter, put linewise text (p, P) at the cursor line's source start or end, beyond hidden syntax, under scoped Structural intent so the filter keeps the exact source position. Ordinary views, charwise and visual puts are unchanged."
+    },
+    {
+      "path": "crates/vim/src/normal/repeat.rs",
+      "change": "Replay recorded insertions into the focused Vim session's editor when the window has no workspace, so dot-repeat in embedded editors retypes the text after o or O. Workspace windows keep using the active item."
     },
     {
       "path": "crates/vim/src/normal/change.rs",
@@ -283,12 +303,28 @@
       "change": "Retain a filtered view's complete source selection during clipboard copy and paste rather than clipping its hidden prefix through a display round trip. Reuse the input helper and original clipboard/autoindent/history paths; partial selections and ordinary views retain their existing resolution."
     },
     {
+      "path": "crates/editor/src/fold.rs",
+      "change": "Emit EditorEvent::FoldsChanged from folds_did_change. Fold behavior is unchanged."
+    },
+    {
+      "path": "crates/editor/src/display_map/fold_map.rs",
+      "change": "When chunks start exactly at a fold whose placeholder text is empty, include that fold so its rendered placeholder shows on the first visible line too. Other folds and offsets are unchanged."
+    },
+    {
+      "path": "crates/editor/src/display_map.rs",
+      "change": "Keep a highlighted chunk with empty text and an element renderer instead of dropping it while splitting invisibles, so empty-text fold placeholders render their element."
+    },
+    {
+      "path": "crates/gpui/src/text_system/line_wrapper.rs",
+      "change": "An element that replaces no text (len_utf8 == 0) before a line's first character starts a hanging prefix: its width and the elements and spaces after it, rounded to space widths, indent soft-wrapped rows, so a list item's rows hang under its text instead of its drawn bullet or checkbox. Lines without such an element wrap as before; covered by test_hanging_prefix_indents_continuation_rows."
+    },
+    {
       "path": "crates/editor/src/editor.rs",
-      "change": "Let editor addons supply source-anchored interaction regions for the visible viewport, retaining native text layout and selection. Expose clipped fragment geometry to their renderers."
+      "change": "Let editor addons supply source-anchored interaction regions for the visible viewport, retaining native text layout and selection. Expose clipped fragment geometry to their renderers. Emit FoldsChanged when folds are added or removed, so hosts can follow fold state from any fold command. Let an addon draw its own indent guides (Addon::indent_guides returning HostIndentGuide rows, indentation column, pixel offset, start inset, width, colour, and a test debug selector) in place of the editor's, so Write draws rt's child guides under each parent bullet."
     },
     {
       "path": "crates/editor/src/element.rs",
-      "change": "Lay out addon text regions over native shaped and wrapped source fragments, excluding folded text and clipping to the viewport. Reuse the navigation overlay lifecycle and element namespace; test resize, clipping, stateful elements, removal, and unchanged source text."
+      "change": "Lay out addon text regions over native shaped and wrapped source fragments, excluding folded text and clipping to the viewport. Reuse the navigation overlay lifecycle and element namespace; test resize, clipping, stateful elements, removal, and unchanged source text. When an addon supplies indent guides, skip the editor's own and lay each host guide out as a plain element at content origin + the column's space width + its offset, spanning its rows' display rows from the inset below the first row's middle; guides whose rows fold into one display row are not drawn. Covered by quire's child_guides_hang_under_each_parent_bullet_through_its_subtree."
     },
     {
       "path": "crates/editor/src/completions.rs",
@@ -305,6 +341,14 @@
     {
       "path": "crates/gpui/src/platform.rs",
       "change": "Expose an optional native pre-termination callback, separate from final on_quit, without requiring changes to platforms that only support guarded programmatic quits."
+    },
+    {
+      "path": "crates/gpui/src/text_system.rs",
+      "change": "When a font's family is missing, try that font's own fallbacks as the family (each keeping the fallbacks after it, and the weight, style, and features) before the global fallback stack, so a configured fallback cascade, such as Quire's bundled Arabic font after the editor font, survives a missing editor font. Upstream dropped the requested fallbacks there. Covered by quire's script_fonts test."
+    },
+    {
+      "path": "crates/gpui_apple/src/text_system.rs",
+      "change": "Register each embedded font with Core Text for the process (CTFontManagerRegisterGraphicsFont) when it is added, because font fallback cascades resolve families through Core Text and never saw fonts held only in font-kit's memory source. Quire's bundled Noto Naskh Arabic is such a fallback; without this, Arabic fell to the system's Geeza Pro. Covered by quire's script_fonts test, which fails without it."
     },
     {
       "path": "crates/gpui/src/platform/test/platform.rs",
@@ -329,6 +373,10 @@
     {
       "path": "crates/settings/src/vscode_import.rs",
       "change": "Leave the new quire section unset when importing VS Code settings."
+    },
+    {
+      "path": "crates/gpui/src/style.rs",
+      "change": "Add HighlightStyle::font_family (Option<&'static str>, keeping the style Copy): TextStyle::highlight replaces the run's family and keeps its fallbacks, highlight() lets the later style win, and Hash covers it. Quire sets Urdu lines' Arabic-script runs in Noto Nastaliq Urdu with it, as rt sets lang=ur lines in Quire Urdu; upstream highlights could not change a run's font. Covered by quire's write_style tests."
     }
   ]
 }

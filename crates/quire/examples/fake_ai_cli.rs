@@ -150,7 +150,7 @@ fn main() {
             .append(true)
             .open(log)
             .expect("FAKE_AI_LOG names a file that cannot be opened");
-        writeln!(file, "{line}").ok();
+        file.write_all(format!("{line}\n").as_bytes()).ok();
     }
     if let Some(pids) = var("FAKE_AI_PIDS") {
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())

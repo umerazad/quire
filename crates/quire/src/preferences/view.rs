@@ -2,6 +2,7 @@
 //! to `settings.json` through the settings store.
 
 use super::{Change, Preferences, restore_defaults, settings_error, update};
+use crate::tab_order::{self, TabOrder};
 use editor::{Editor, EditorEvent};
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, Window, WindowOptions, prelude::*, px, relative,
@@ -9,8 +10,8 @@ use gpui::{
 use settings::{CaptureTarget, SettingsStore, ThemeAppearanceMode};
 use theme::ActiveTheme as _;
 use ui::{
-    Button, Clickable as _, Color, Label, LabelCommon as _, LabelSize, SwitchField,
-    ToggleButtonGroup, ToggleButtonSimple, ToggleState, h_flex, v_flex,
+    Button, ButtonCommon as _, Clickable as _, Color, Label, LabelCommon as _, LabelSize,
+    SwitchField, ToggleButtonGroup, ToggleButtonSimple, ToggleState, h_flex, v_flex,
 };
 
 pub const CONTEXT: &str = "QuirePreferences";
@@ -30,6 +31,7 @@ pub struct PreferencesWindow {
     font_size: Entity<Editor>,
     line_spacing: Entity<Editor>,
     pub ai: Entity<crate::ai::settings::AiSection>,
+    pub data: Entity<super::data::DataSection>,
 }
 
 /// Opens Settings, or brings the open Settings window forward.
@@ -107,6 +109,7 @@ impl PreferencesWindow {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         let ai = cx.new(|cx| crate::ai::settings::AiSection::new(window, cx));
+        let data = cx.new(|cx| super::data::DataSection::new(window, cx));
         Self {
             focus,
             shown,
@@ -114,6 +117,7 @@ impl PreferencesWindow {
             font_size,
             line_spacing,
             ai,
+            data,
         }
     }
 
@@ -197,18 +201,22 @@ impl PreferencesWindow {
         Label::new(text).size(LabelSize::Small).color(Color::Muted)
     }
 
-    fn field(&self, label: &'static str, field: Field) -> gpui::Div {
-        v_flex().gap_1().flex_1().child(Label::new(label)).child(
-            gpui::div()
-                .px_2()
-                .py_1()
-                .border_1()
-                .rounded_sm()
-                .child(self.editor(field).clone()),
-        )
+    fn field(
+        &self,
+        label: &'static str,
+        field: Field,
+        order: &mut TabOrder,
+        window: &Window,
+        cx: &App,
+    ) -> gpui::Div {
+        v_flex()
+            .gap_1()
+            .flex_1()
+            .child(Label::new(label))
+            .child(tab_order::field(self.editor(field), order, window, cx))
     }
 
-    fn appearance(&self) -> impl IntoElement {
+    fn appearance(&self, order: &mut TabOrder) -> impl IntoElement {
         let choices = [
             ("System", ThemeAppearanceMode::System),
             ("Light", ThemeAppearanceMode::Light),
@@ -224,13 +232,15 @@ impl PreferencesWindow {
             })
         });
         Self::section("Appearance")
-            .child(ToggleButtonGroup::single_row("appearance", buttons).selected_index(selected))
+            .child(ToggleButtonGroup::single_row("appearance", buttons)
+                    .selected_index(selected)
+                    .tab_index(order.counter()))
             .child(Self::hint(
                 "System follows your computer's light or dark setting as it changes. The Light / Dark button in the sidebar switches between light and dark.",
             ))
     }
 
-    fn capture(&self) -> impl IntoElement {
+    fn capture(&self, order: &mut TabOrder) -> impl IntoElement {
         let selected = match self.shown.capture_target {
             CaptureTarget::Inbox => 0,
             CaptureTarget::Today => 1,
@@ -246,24 +256,26 @@ impl PreferencesWindow {
         });
         Self::section("Tasks")
             .child(Label::new("Quick capture goes to"))
-            .child(ToggleButtonGroup::single_row("capture-target", buttons).selected_index(selected))
+            .child(ToggleButtonGroup::single_row("capture-target", buttons)
+                    .selected_index(selected)
+                    .tab_index(order.counter()))
             .child(Self::hint(
                 "Applies to the capture field on Tasks. A task captured to today's page needs no ➕ date.",
             ))
     }
 
-    fn typography(&self) -> impl IntoElement {
+    fn typography(&self, order: &mut TabOrder, window: &Window, cx: &App) -> impl IntoElement {
         let preview = self.shown.clone();
         Self::section("Typography")
-            .child(self.field("Font family", Field::FontFamily))
+            .child(self.field("Font family", Field::FontFamily, order, window, cx))
             .child(Self::hint(
                 "Use an installed font. Press Enter or leave the field to apply. Unavailable fonts use a monospace fallback.",
             ))
             .child(
                 h_flex()
                     .gap_3()
-                    .child(self.field("Font size (px)", Field::FontSize))
-                    .child(self.field("Line spacing", Field::LineSpacing)),
+                    .child(self.field("Font size (px)", Field::FontSize, order, window, cx))
+                    .child(self.field("Line spacing", Field::LineSpacing, order, window, cx)),
             )
             .child(
                 v_flex()
@@ -287,14 +299,17 @@ impl Focusable for PreferencesWindow {
 }
 
 impl Render for PreferencesWindow {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::app_menus::follow_zoom(window, cx);
         let shown = self.shown.clone();
-        v_flex()
+        let mut order = TabOrder::default();
+        let root = v_flex()
             .id("settings")
             .key_context(CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::confirm))
-            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::cancel));
+        tab_order::handle(root, cx)
             .size_full()
             .overflow_y_scroll()
             .p_4()
@@ -306,7 +321,7 @@ impl Render for PreferencesWindow {
             .child(Self::hint(
                 "Changes apply to every editor and are saved on this computer.",
             ))
-            .child(self.appearance())
+            .child(self.appearance(&mut order))
             .child(
                 Self::section("Editing")
                     .child(SwitchField::new(
@@ -315,7 +330,7 @@ impl Render for PreferencesWindow {
                         Some("Normal, Insert, and Visual modes. Press Escape to return to Normal.".into()),
                         ToggleState::from(shown.vim),
                         |state, _, cx| super::change(Change::Vim(*state == ToggleState::Selected), cx),
-                    ))
+                    ).tab_index(order.next()))
                     .child(SwitchField::new(
                         "format-tags",
                         Some("Format tags"),
@@ -324,16 +339,17 @@ impl Render for PreferencesWindow {
                         |state, _, cx| {
                             super::change(Change::FormatTags(*state == ToggleState::Selected), cx)
                         },
-                    )),
+                    ).tab_index(order.next())),
             )
-            .child(self.capture())
-            .child(self.typography())
+            .child(self.capture(&mut order))
+            .child(self.typography(&mut order, window, cx))
             .child(
                 Self::section("Notebook").child(Self::hint(
                     "Daily notes: set the folder and title pattern in the Daily notes browser. The layout is saved in the notebook, so every device uses it.",
                 )),
             )
-            .child(self.ai.clone())
+            .child(order.group().child(self.data.clone()))
+            .child(order.group().child(self.ai.clone()))
             .when_some(settings_error(cx), |this, error| {
                 this.child(Label::new(error).color(Color::Error))
             })
@@ -344,10 +360,12 @@ impl Render for PreferencesWindow {
                     .justify_end()
                     .child(
                         Button::new("restore-defaults", "Restore defaults")
+                            .tab_index(order.next())
                             .on_click(|_, _, cx| update(restore_defaults, cx)),
                     )
                     .child(
                         Button::new("done", "Done")
+                            .tab_index(order.next())
                             .on_click(|_, window, _| window.remove_window()),
                     ),
             )

@@ -281,7 +281,7 @@ impl NotebookStore {
         })
     }
 
-    fn save_one(&self, edit: &Edit) -> Result<SaveAck> {
+    pub(super) fn save_one(&self, edit: &Edit) -> Result<SaveAck> {
         ensure!(
             !edit.page.is_empty(),
             "Cannot save a page without an identity. Reopen the page and retry."
@@ -426,6 +426,7 @@ impl NotebookStore {
             if changed {
                 self.connection
                     .exec_bound("INSERT INTO outbox(revision) VALUES (?)")?(id)?;
+                self.outbox_grew();
                 merged = self.merge_page(&page_key(&edit.page), edit.created)?;
             }
             let heads = self.heads(&edit.page)?;

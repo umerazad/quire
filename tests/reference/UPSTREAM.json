@@ -11,7 +11,7 @@
     "markdown/markdown.ts": "ed2023610b8b3fbb9302fd81af889bf0fb4da6fa8b7932bf592de3d914466bb7",
     "markdown/range-set.ts": "f38e035299fb90fe0e8bc9c1b945b58d03a85dc9078dc59bb3281b7ee34b8a6c",
     "daily/daily-layout.ts": "32a3eccd9eea5de811a321f74d930788453ceb4f3d309421acd4bc7ca1bb4e24",
-    "daily/workspace.ts": "b9c05efe0846973676ce8e666f87657e091a69f732741ad933148c4110bd000e",
+    "daily/workspace.ts": "1d324d27ec5a3a2bdb50f134eb157baca8355e1b6dd57a946d2ca1db6c7d831f",
     "daily/local-date.ts": "0786f47b120ae1a8759ea1cbdc840fecc82f24ab3aecb183f77d8f5e681806f6",
     "index/page-analysis.ts": "b93c2341736ba3fadeb6d65eb73c8e270127277eef04290f993b78efff08711e",
     "index/search-index.ts": "896af48e70a467b0e432c8045771679e802b3751c107d29428309e41c11c570b",
@@ -79,6 +79,69 @@
       "destination": "../fixtures/reference-filters.json",
       "sha256": "bbb34e5c4d47f2796a68672016da9dddd78de237e0c44faf8577f759a3b75561",
       "note": "Shared linked-reference filter cases, also run by the rt Go terminal app; copied unchanged."
+    },
+    {
+      "source": "tests/fixtures/sync-vectors/go-written/000000001-2aa83dac9353d7e9f130002bd2d78ad0c253190bfab9c65ee8673df053f5ee18.qlog.zst",
+      "source_revision": "5ea5c22310ff",
+      "destination": "../fixtures/sync-vectors/go-written/000000001-2aa83dac9353d7e9f130002bd2d78ad0c253190bfab9c65ee8673df053f5ee18.qlog.zst",
+      "sha256": "49faa474c5d370a60c9f21f8a9d56ffe968127d5d77d4569b3a680cb27e1af72",
+      "note": "A batch the rt Go terminal app writes (tui/internal/format/vectors_test.go with QUIRE_WRITE_GO_BATCH=1); copied unchanged and decoded by crates/quire_store/tests/format.rs."
+    },
+    {
+      "source": "tests/fixtures/sync-vectors/go-written/expected.json",
+      "source_revision": "5ea5c22310ff",
+      "destination": "../fixtures/sync-vectors/go-written/expected.json",
+      "sha256": "1a104e981d18f44bd833c07a3f98de2b55c1ce289ef7bb6bb736d4e2139caa1c",
+      "note": "The Go batch's file name and revision ID, as rt's tests/sync-go-batch.test.ts reads them; copied unchanged."
+    },
+    {
+      "source": "tests/fixtures/sync-vectors/quire-notebook.json",
+      "source_revision": "5ea5c22310ff",
+      "destination": "../fixtures/sync-vectors/quire-notebook.json",
+      "sha256": "b60b27b982082736cbc7d0c4fba52b28e333d0eca2bb7be3e8c1195f0d53a894",
+      "note": "The vector notebook's header, written by rt's scripts/sync-vectors.ts; copied unchanged."
+    },
+    {
+      "source": "tests/fixtures/sync-vectors/expected.json",
+      "source_revision": "5ea5c22310ff",
+      "destination": "../fixtures/sync-vectors/expected.json",
+      "sha256": "08d0756e9668cdafc328d61c7ddf4340037c9c1726de96b76e03a56dea63303e",
+      "note": "rt's scripts/sync-vectors.ts expectations (batches, revisions, heads, sorted heads, page IDs, strings, key order, numbers, frozen ID); copied unchanged and checked by crates/quire_store/tests/sync_vectors.rs."
+    },
+    {
+      "source": "tests/fixtures/sync-vectors/devices/office/log/000000001-950303f9507b2a4756c6ea72218e362a2254c9e0ffe382b495d51bf6068d0e69.qlog.zst",
+      "source_revision": "5ea5c22310ff",
+      "destination": "../fixtures/sync-vectors/devices/office/log/000000001-950303f9507b2a4756c6ea72218e362a2254c9e0ffe382b495d51bf6068d0e69.qlog.zst",
+      "sha256": "b21b24c35d11b2f12798dd23d773968821abcd31dfe7f575f5acd71a9e6d84b7",
+      "note": "A change file rt's scripts/sync-vectors.ts writes; copied unchanged, decoded, re-encoded byte for byte, and imported by crates/quire_store/tests/sync_vectors.rs."
+    },
+    {
+      "source": "tests/fixtures/sync-vectors/devices/home/log/000000001-8295b869c2c775e301a4667016cd92269d87dec87a45c949391c00624fd4e27e.qlog.zst",
+      "source_revision": "5ea5c22310ff",
+      "destination": "../fixtures/sync-vectors/devices/home/log/000000001-8295b869c2c775e301a4667016cd92269d87dec87a45c949391c00624fd4e27e.qlog.zst",
+      "sha256": "aa00a9acc057ac523e7ed4f5237fc02735b2f61bd2634ad7ef6de8b5f5934ffc",
+      "note": "A change file rt's scripts/sync-vectors.ts writes; copied unchanged, decoded, re-encoded byte for byte, and imported by crates/quire_store/tests/sync_vectors.rs."
+    },
+    {
+      "source": "tests/fixtures/sync-vectors/devices/office/log/000000002-53a91f143f1e1fe8ece7403f0ef43a989d4e06547ad7c6462b8cabff72b5341c.qlog.zst",
+      "source_revision": "5ea5c22310ff",
+      "destination": "../fixtures/sync-vectors/devices/office/log/000000002-53a91f143f1e1fe8ece7403f0ef43a989d4e06547ad7c6462b8cabff72b5341c.qlog.zst",
+      "sha256": "a9bdd51e26ed24c97ad0504fc1e60155babc8747b130e33417e819973d6597ac",
+      "note": "A change file rt's scripts/sync-vectors.ts writes; copied unchanged, decoded, re-encoded byte for byte, and imported by crates/quire_store/tests/sync_vectors.rs."
+    },
+    {
+      "source": "tests/fixtures/sync-vectors/devices/office/log/000000003-e22c7b2a8d9b9e7f89ed6ae8f69dd3e82ca14da58c343f7cea312b4e30fd9b6a.qlog.zst",
+      "source_revision": "5ea5c22310ff",
+      "destination": "../fixtures/sync-vectors/devices/office/log/000000003-e22c7b2a8d9b9e7f89ed6ae8f69dd3e82ca14da58c343f7cea312b4e30fd9b6a.qlog.zst",
+      "sha256": "dd628a0f510b2ee42cfadd97c7d91fb37e8e7a65c6c58cd157d89025bb040d64",
+      "note": "A change file rt's scripts/sync-vectors.ts writes; copied unchanged, decoded, re-encoded byte for byte, and imported by crates/quire_store/tests/sync_vectors.rs."
+    },
+    {
+      "source": "tests/fixtures/sync-vectors/devices/home/log/000000002-3a96256ec4eacde5a74312ddea7dcd49d56b400eaed4fd151f3ea653364309e5.qlog.zst",
+      "source_revision": "5ea5c22310ff",
+      "destination": "../fixtures/sync-vectors/devices/home/log/000000002-3a96256ec4eacde5a74312ddea7dcd49d56b400eaed4fd151f3ea653364309e5.qlog.zst",
+      "sha256": "d5d6c66cac3fc19167781076924210b1d6fa77d71e6e98fca56dd049d3e47a8c",
+      "note": "A change file rt's scripts/sync-vectors.ts writes; copied unchanged, decoded, re-encoded byte for byte, and imported by crates/quire_store/tests/sync_vectors.rs."
     }
   ],
   "merge_refresh": {
@@ -103,7 +166,7 @@
       "graph.ts imports mergeText from ../core/merge instead of ../../core/merge; nothing else changed.",
       "merge.test.ts imports ../fixtures/merges.json and ./core/merge.",
       "core/merge.ts, replica.ts, and merges.json are copied unchanged.",
-      "daily/workspace.ts stays at the base revision; namespaceOf and projectStatus changed later and belong to NR16."
+      "daily/workspace.ts was refreshed under NR16 to rt 5ea5c22310ff src/core/workspace.ts, copied unchanged, for namespaceOf and projectStatus; dailyDate did not change."
     ],
     "vectors": {
       "tool": "tools/merge-vectors.ts",
@@ -491,5 +554,15 @@
       "The pending notebook's last save is made with no await before its store closes, so rt's publication timer cannot publish it.",
       "SQLite WAL and shared-memory files are kept as Bun's node:sqlite leaves them, as a running rt would."
     ]
+  },
+  "namespace_vectors": {
+    "repository": "rt",
+    "revision": "5ea5c22310fff0c3d97f069930500fd85067fa96",
+    "source": "src/core/workspace.ts",
+    "destination": "daily/workspace.ts",
+    "tool": "tools/namespace-vectors.ts",
+    "output": "tests/fixtures/namespace-vectors.json",
+    "cases": "The reference test titles, every listed part alone and nested, and 2000 seeded titles joined by /, ' / ', and //, passed through the frozen namespaceOf.",
+    "bun": "1.4.2"
   }
 }

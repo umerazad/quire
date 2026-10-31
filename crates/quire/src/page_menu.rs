@@ -132,6 +132,15 @@ pub fn init(cx: &mut App) {
             editor::actions::OpenContextMenu,
             Some("Editor && !QuireControl"),
         ),
+        KeyBinding::new(
+            if cfg!(target_os = "macos") {
+                "cmd-shift-c"
+            } else {
+                "ctrl-shift-c"
+            },
+            CopyBlockReference,
+            Some("Editor && !QuireControl"),
+        ),
     ]);
 }
 
@@ -310,6 +319,9 @@ fn entries(editor: &Editor, cx: &mut App) -> Vec<Entry> {
                         .done(),
                     Item::action("Copy block embed", CopyBlockEmbed)
                         .disabled(copy)
+                        .done(),
+                    Item::action("Move block to page…", crate::block_move::MoveBlockToPage)
+                        .disabled(!editable)
                         .done(),
                 ],
             ]

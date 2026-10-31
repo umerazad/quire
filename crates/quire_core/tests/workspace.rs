@@ -206,6 +206,9 @@ fn task_choices_survive_save_and_load_and_forget_deleted_projects() {
         view: TaskView::Projects,
         project: Some("atlas".into()),
         project_status: ProjectStatus::Inactive,
+        query: "call".into(),
+        limit: 80,
+        draft: "Email Ana".into(),
     };
     let loaded = Workspace::load(&workspace.save());
     assert_eq!(loaded, workspace);
@@ -257,4 +260,144 @@ fn a_page_whose_identity_changed_keeps_its_tabs_favorites_and_history() {
     assert_eq!(history.current(), Some(&page("new")));
     assert_eq!(history.back(), Some(page("keep")));
     assert_eq!(history.back(), Some(page("new")));
+}
+
+#[test]
+fn view_choices_and_reading_positions_survive_save_load_rename_and_delete() {
+    use quire_core::workspace::{
+        MAX_LIMIT, PageChoices, TagChoices, TagListChoices, TagSort, TaskStatus, position_key,
+    };
+    let mut workspace = Workspace::default();
+    workspace.visit(page("a"));
+    workspace.pages = PageChoices {
+        query: "plan".into(),
+        namespace: Some("Projects".into()),
+    };
+    workspace.tag_list = TagListChoices {
+        query: "wo".into(),
+        sort: TagSort::Most,
+    };
+    workspace.tag_pages.insert(
+        "#work".into(),
+        TagChoices {
+            query: "deck".into(),
+            status: TaskStatus::Due,
+            scroll: 12,
+        },
+    );
+    workspace.positions.insert(position_key(false, "a"), 40);
+    workspace.positions.insert(position_key(true, "a"), 7);
+    workspace.positions.insert(position_key(false, "b"), 3);
+    assert_eq!(Workspace::load(&workspace.save()), workspace);
+
+    let damaged = Workspace::load(
+        r##"{"tabs":[],"positions":{"page:a":5,"page:b":-1,"page:c":"x"},
+            "tag_pages":{"#a":{"query":"x","scroll":2},"#b":{"status":"later"}},
+            "tag_list":{"sort":"loudest"},"tasks":{"limit":99999999}}"##,
+    );
+    assert_eq!(
+        damaged.positions.into_iter().collect::<Vec<_>>(),
+        [("page:a".to_owned(), 5)],
+        "negative and unreadable positions drop"
+    );
+    assert_eq!(damaged.tag_pages.keys().collect::<Vec<_>>(), ["#a"]);
+    assert_eq!(damaged.tag_list, TagListChoices::default());
+    assert_eq!(damaged.tasks.limit, MAX_LIMIT);
+
+    workspace.rename_page("a", "a2");
+    assert_eq!(
+        workspace.positions.get(&position_key(false, "a2")),
+        Some(&40)
+    );
+    assert_eq!(workspace.positions.get(&position_key(true, "a2")), Some(&7));
+    workspace.retain_pages(|id| id != "b");
+    assert_eq!(
+        workspace.positions.keys().collect::<Vec<_>>(),
+        ["page:a2", "side:a2"]
+    );
+}
+
+#[test]
+fn new_folders_open_their_parents_survive_reload_and_go_with_their_parent() {
+    let mut workspace = Workspace::default();
+    workspace.add_folder("Projects/Plans/Q4");
+    workspace.add_folder("Archive");
+    workspace.add_folder("Archive");
+    assert_eq!(workspace.folders, ["Archive", "Projects/Plans/Q4"]);
+    assert_eq!(workspace.expanded, ["Projects", "Projects/Plans"]);
+    assert_eq!(Workspace::load(&workspace.save()), workspace);
+    workspace.forget_folder("Projects");
+    assert_eq!(workspace.folders, ["Archive"]);
+    assert!(workspace.expanded.is_empty());
+}
+
+#[test]
+fn a_moved_folder_takes_its_inner_folders_and_their_open_state_along() {
+    let mut workspace = Workspace::default();
+    workspace.add_folder("Projects/Plans/Q4");
+    workspace.add_folder("Projectsish");
+    workspace.toggle_expanded("Projects/Plans/Q4");
+    workspace.move_folder("Projects", "Archive/Old");
+    assert_eq!(workspace.folders, ["Archive/Old/Plans/Q4", "Projectsish"]);
+    assert_eq!(
+        workspace.expanded,
+        [
+            "Archive/Old",
+            "Archive/Old/Plans",
+            "Archive/Old/Plans/Q4",
+            "Archive"
+        ]
+    );
+    workspace.move_folder("Elsewhere", "Inbox/Scans");
+    assert_eq!(workspace.folders, ["Archive/Old/Plans/Q4", "Projectsish"]);
+    assert!(workspace.expanded.contains(&"Inbox".to_owned()));
+}
+
+#[test]
+fn namespaces_match_the_reference_namespace_of_vectors() {
+    let vectors: Vec<(String, String)> = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/namespace-vectors.json"
+    ))
+    .unwrap();
+    assert!(vectors.len() > 1000);
+    let wrong: Vec<_> = vectors
+        .iter()
+        .filter(|(title, namespace)| namespace_of(title) != namespace)
+        .map(|(title, namespace)| (title, namespace, namespace_of(title)))
+        .collect();
+    assert!(wrong.is_empty(), "title, reference, quire: {wrong:?}");
+}
+
+#[test]
+fn chrome_choices_survive_save_and_load_and_stay_out_of_older_files() {
+    use quire_core::workspace::ChromeChoices;
+    let mut workspace = Workspace::default();
+    assert!(!workspace.save().contains("sidebar_hidden"));
+    workspace.chrome = ChromeChoices {
+        sidebar_hidden: true,
+        files_collapsed: true,
+        daily_month: "2026-10".into(),
+    };
+    assert_eq!(Workspace::load(&workspace.save()), workspace);
+    let older = Workspace::load(r#"{"tabs":[]}"#);
+    assert_eq!(older.chrome, ChromeChoices::default());
+    let damaged = Workspace::load(r#"{"tabs":[],"chrome":{"sidebar_hidden":"yes"}}"#);
+    assert_eq!(damaged.chrome, ChromeChoices::default());
+}
+
+#[test]
+fn an_ask_the_notebook_tab_survives_save_and_load_in_the_reference_form() {
+    let ai = Destination::Browser {
+        view: BrowserView::Ai,
+    };
+    let mut workspace = Workspace::default();
+    workspace.visit(ai.clone());
+    let saved = workspace.save();
+    assert!(
+        saved.contains(r#"{"kind":"browser","view":"ai"}"#),
+        "{saved}"
+    );
+    let loaded = Workspace::load(&saved);
+    assert_eq!(loaded.tabs, std::slice::from_ref(&ai));
+    assert_eq!(loaded.active, Some(ai));
 }

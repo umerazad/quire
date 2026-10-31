@@ -43,6 +43,37 @@ pub(super) struct Step {
     /// The old path of a moved note, whose saved history the new path takes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     history_from: Option<String>,
+    /// Move the folder at `path` here whole, with every file in it, before the steps after it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    folder_to: Option<String>,
+}
+
+impl Step {
+    pub(super) fn folder(from: &str, to: &str) -> Self {
+        Self {
+            path: from.to_owned(),
+            text: String::new(),
+            expected_revision: None,
+            remove: false,
+            retirement: None,
+            history_from: None,
+            folder_to: Some(to.to_owned()),
+        }
+    }
+
+    /// Writes `edit` where its note now is, checked against the version the edit was made from.
+    /// `from` is the note's path before a folder move, whose saved history the note keeps.
+    pub(super) fn write(edit: &Edit, from: Option<String>) -> Self {
+        Self {
+            path: edit.path.clone(),
+            text: edit.text.clone(),
+            expected_revision: edit.base.first().cloned(),
+            remove: false,
+            retirement: None,
+            history_from: from,
+            folder_to: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -60,7 +91,7 @@ fn interrupted(journal: &Path, error: &anyhow::Error) -> String {
 }
 
 impl FolderNotebook {
-    fn journals(&self) -> PathBuf {
+    pub(super) fn journals(&self) -> PathBuf {
         self.state.join(JOURNALS)
     }
 
@@ -69,16 +100,7 @@ impl FolderNotebook {
     /// page's note there: the new file is created, never replacing one, and the old file is
     /// archived. Several notes, or any move, go through the journal.
     pub fn save_many_if_heads(&self, edits: &[Edit]) -> Result<CheckedSaves> {
-        let mut pages: Vec<&str> = edits.iter().map(|edit| edit.page.as_str()).collect();
-        pages.sort_unstable();
-        ensure!(
-            pages.windows(2).all(|pair| pair[0] != pair[1]),
-            "A change across pages must name each page once. Retry the change."
-        );
-        ensure!(
-            edits.len() <= MAX_EDITS,
-            "A change across pages may update at most {MAX_EDITS} notes. Change fewer pages at a time and retry."
-        );
+        check_edits(edits)?;
         let listing = self.listing();
         let taken: HashMap<String, &String> = listing
             .files
@@ -124,6 +146,7 @@ impl FolderNotebook {
                     sha256(format!("{}:{}", edit.page, (self.clock)()))[..32].to_owned(),
                 ),
                 history_from: None,
+                folder_to: None,
             });
         }
         if writes.len() == 1 && removals.is_empty() {
@@ -148,7 +171,7 @@ impl FolderNotebook {
 
     /// The page's file revision as of the last listing, which a change across notes takes once
     /// instead of listing again for every page that has no file.
-    fn listed_heads(&self, page: &str) -> Result<Vec<String>> {
+    pub(super) fn listed_heads(&self, page: &str) -> Result<Vec<String>> {
         let Some(path) = self.path_of(page) else {
             return Ok(Vec::new());
         };
@@ -166,25 +189,35 @@ impl FolderNotebook {
             remove: false,
             retirement: None,
             history_from: from,
+            folder_to: None,
         }
     }
 
-    fn write_journal(&self, steps: &[Step]) -> Result<PathBuf> {
-        let folder = self.journals();
-        fs::create_dir_all(&folder).with_context(|| {
-            format!("Cannot create {}. Check write access to Quire's application data folder and retry.", folder.display())
-        })?;
+    pub(super) fn write_journal(&self, steps: &[Step]) -> Result<PathBuf> {
         let bytes = serde_json::to_vec(&Journal {
             edits: steps.to_vec(),
             created_at: (self.clock)(),
         })?;
-        let path = folder.join(format!("{}.json", &sha256(&bytes)[..32]));
+        self.install_journal(&bytes)
+    }
+
+    /// Writes a journal into the state folder, named by its contents, and makes it durable. An
+    /// identical journal already there is kept.
+    pub(super) fn install_journal(&self, bytes: &[u8]) -> Result<PathBuf> {
+        let folder = self.journals();
+        fs::create_dir_all(&folder).with_context(|| {
+            format!("Cannot create {}. Check write access to Quire's application data folder and retry.", folder.display())
+        })?;
+        let path = folder.join(format!("{}.json", &sha256(bytes)[..32]));
+        if fs::read(&path).is_ok_and(|kept| kept == bytes) {
+            return Ok(path);
+        }
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&path)
             .with_context(|| format!("Cannot create the change journal {}. Check write access to Quire's application data folder and retry.", path.display()))?;
-        file.write_all(&bytes)
+        file.write_all(bytes)
             .and_then(|()| files::full_sync(&file))
             .and_then(|()| files::sync_directory(&folder))
             .with_context(|| format!("Cannot write the change journal {}. Check free space and retry; nothing was changed.", path.display()))?;
@@ -197,7 +230,15 @@ impl FolderNotebook {
     /// in one transaction, the notes are renamed into place and the old ones archived in step
     /// order, and finally every folder touched is made durable together. A step that fails its
     /// check stops the change there, after the steps before it are applied.
-    fn apply(&self, steps: &[Step]) -> Result<Vec<(String, SaveAck)>> {
+    pub(super) fn apply(&self, steps: &[Step]) -> Result<Vec<(String, SaveAck)>> {
+        let folders = steps
+            .iter()
+            .take_while(|step| step.folder_to.is_some())
+            .count();
+        steps[..folders]
+            .iter()
+            .try_for_each(|step| self.move_folder_step(step))?;
+        let steps = &steps[folders..];
         let mut planned = Vec::with_capacity(steps.len());
         let mut failure = None;
         for step in steps {
@@ -290,6 +331,44 @@ impl FolderNotebook {
         })
     }
 
+    /// Renames a step's folder whole, with everything in it. A folder already moved is done; a
+    /// folder that cannot move without replacing something, or that is gone, stops the change.
+    pub(super) fn move_folder_step(&self, step: &Step) -> Result<()> {
+        let (from, to) = (&step.path, step.folder_to.as_deref().unwrap_or_default());
+        let (source, target) = (self.root.join(from), self.root.join(to));
+        match (exists(&source), exists(&target)) {
+            (false, true) => {}
+            (true, false) => {
+                let parent = target.parent().unwrap_or(&self.root);
+                fs::create_dir_all(parent)
+                    .and_then(|()| fs::rename(&source, &target))
+                    .with_context(|| {
+                        format!("Cannot move {from} to {to}. Check the notebook folder's permissions and retry.")
+                    })?;
+                for folder in [source.parent(), Some(parent)].into_iter().flatten() {
+                    files::sync_directory(folder).with_context(|| {
+                        format!("Cannot make the move of {from} to {to} durable. Check the notebook's disk and reopen the notebook to finish the change.")
+                    })?;
+                }
+            }
+            (true, true) => bail!(
+                "{from} and {to} both exist, so the folder cannot move without replacing files. Compare the two folders, then retry the change or set it aside."
+            ),
+            (false, false) => bail!(
+                "{from} is gone and {to} does not exist, so the folder move cannot finish. Put the folder back, then retry the change or set it aside."
+            ),
+        }
+        let inside = format!("{from}/");
+        for seen in [&self.known, &self.reported] {
+            seen.borrow_mut()
+                .retain(|path, _| !path.starts_with(&inside));
+        }
+        self.pages
+            .borrow_mut()
+            .retain(|_, path| !path.starts_with(&inside));
+        Ok(())
+    }
+
     /// Checks one step against the disk before anything is written.
     fn plan<'a>(&self, step: &'a Step) -> Result<Planned<'a>> {
         if step.remove {
@@ -336,7 +415,7 @@ impl FolderNotebook {
         let name = step
             .retirement
             .as_deref()
-            .filter(|name| name.len() == 32 && name.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .filter(|name| archive_name(name))
             .context(
                 "The change journal names an invalid archive. Keep the journal for recovery.",
             )?;
@@ -378,7 +457,9 @@ impl FolderNotebook {
             return Ok(());
         };
         history::copy(&self.connection, from, path)?;
-        if let Some(old) = self.read(from)?
+        // A note whose folder moved whole has no file left at its old path.
+        if exists(&self.root.join(from))
+            && let Some(old) = self.read(from)?
             && !history::has(&self.connection, path, &old.revision)?
         {
             history::add(&self.connection, path, &old.text, &old.revision, now)?;
@@ -449,7 +530,7 @@ impl FolderNotebook {
         }
     }
 
-    fn transaction<T>(&self, work: impl FnOnce() -> Result<T>) -> Result<T> {
+    pub(super) fn transaction<T>(&self, work: impl FnOnce() -> Result<T>) -> Result<T> {
         self.connection.exec("BEGIN IMMEDIATE")?()?;
         match work() {
             Ok(value) => {
@@ -559,6 +640,16 @@ impl FolderNotebook {
     }
 
     fn state_of(&self, step: &Step) -> StepState {
+        if let Some(to) = &step.folder_to {
+            return match (
+                exists(&self.root.join(&step.path)),
+                exists(&self.root.join(to)),
+            ) {
+                (false, true) => StepState::Done,
+                (true, false) => StepState::Waiting,
+                _ => StepState::ChangedElsewhere,
+            };
+        }
         let Ok(disk) = files::read(&self.root, &step.path) else {
             return StepState::Unreadable;
         };
@@ -697,6 +788,35 @@ impl Planned<'_> {
             _ => None,
         }
     }
+}
+
+/// Quire's 32 hex digit archive names, or the reference app's random UUIDs.
+fn archive_name(name: &str) -> bool {
+    let hex = |byte: u8| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte);
+    match name.len() {
+        32 => name.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        36 => name.bytes().all(|byte| hex(byte) || byte == b'-'),
+        _ => false,
+    }
+}
+
+/// Refuses a change across notes that names a page twice or exceeds the reference app's cap.
+pub(super) fn check_edits(edits: &[Edit]) -> Result<()> {
+    let mut pages: Vec<&str> = edits.iter().map(|edit| edit.page.as_str()).collect();
+    pages.sort_unstable();
+    ensure!(
+        pages.windows(2).all(|pair| pair[0] != pair[1]),
+        "A change across pages must name each page once. Retry the change."
+    );
+    ensure!(
+        edits.len() <= MAX_EDITS,
+        "A change across pages may update at most {MAX_EDITS} notes. Change fewer pages at a time and retry."
+    );
+    Ok(())
+}
+
+pub(super) fn exists(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok()
 }
 
 fn changed_before(path: &str) -> String {

@@ -1,13 +1,17 @@
 //! The Help and shortcuts window: searchable topics, then the generated shortcut reference.
 
 use super::{Shortcut, content::SECTIONS, shortcuts};
+use crate::tab_order::{self, TabOrder};
 use editor::{Editor, EditorEvent};
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, ScrollHandle, Window, WindowOptions, prelude::*,
     px,
 };
 use theme::ActiveTheme as _;
-use ui::{Button, Clickable as _, Color, Label, LabelCommon as _, LabelSize, h_flex, v_flex};
+use ui::{
+    Button, ButtonCommon as _, Clickable as _, Color, Label, LabelCommon as _, LabelSize, h_flex,
+    v_flex,
+};
 
 pub const CONTEXT: &str = "QuireHelp";
 pub const FIELD_CONTEXT: &str = "QuireHelp > Editor";
@@ -17,7 +21,14 @@ pub struct HelpWindow {
     search: Entity<Editor>,
     scroll: ScrollHandle,
     shortcuts: Vec<Shortcut>,
+    /// Shown beside a notebook's pages rather than in its own window.
+    pane: bool,
 }
+
+/// Help in a notebook window asks to be closed.
+pub struct CloseHelp;
+
+impl gpui::EventEmitter<CloseHelp> for HelpWindow {}
 
 /// Opens Help, or brings the open Help window forward.
 pub fn open(cx: &mut App) {
@@ -41,7 +52,7 @@ pub fn open(cx: &mut App) {
     };
     let opened = cx.open_window(options, |window, cx| {
         window.set_window_title("Help & shortcuts");
-        cx.new(|cx| HelpWindow::new(window, cx))
+        cx.new(|cx| HelpWindow::new(false, window, cx))
     });
     if let Err(error) = opened {
         crate::outline::show_notice(
@@ -52,7 +63,8 @@ pub fn open(cx: &mut App) {
 }
 
 impl HelpWindow {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// Help in its own window, or, with `pane`, beside a notebook's pages as in the reference app.
+    pub fn new(pane: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Find a shortcut or learn a feature…", window, cx);
@@ -64,14 +76,21 @@ impl HelpWindow {
             }
         })
         .detach();
-        crate::preferences::follow_system_appearance(window, cx);
+        if !pane {
+            crate::preferences::follow_system_appearance(window, cx);
+        }
         window.focus(&search.focus_handle(cx), cx);
         Self {
             focus: cx.focus_handle(),
             search,
             scroll: ScrollHandle::new(),
             shortcuts: shortcuts(cx),
+            pane,
         }
+    }
+
+    pub fn search_focus(&self, cx: &App) -> FocusHandle {
+        self.search.focus_handle(cx)
     }
 
     pub fn needle(&self, cx: &App) -> String {
@@ -111,8 +130,22 @@ impl HelpWindow {
             .collect()
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, _: &mut Context<Self>) {
-        window.remove_window();
+    fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pane {
+            cx.emit(CloseHelp);
+        } else {
+            window.remove_window();
+        }
+    }
+
+    /// Opens Tasks with its capture field, in this notebook window or the active profile's.
+    pub fn capture_task(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let action = Box::new(crate::navigation::CaptureTask);
+        if self.pane {
+            window.dispatch_action(action, cx);
+        } else if let Err(error) = crate::editor_host::dispatch_to_notebook(action, cx) {
+            crate::outline::show_notice(error, cx);
+        }
     }
 
     fn show_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -132,22 +165,27 @@ fn muted(text: impl Into<gpui::SharedString>) -> Label {
 }
 
 impl Render for HelpWindow {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::app_menus::follow_zoom(window, cx);
+        let mut order = TabOrder::default();
+        let close = order.next();
+        let search = tab_order::field(&self.search, &mut order, window, cx).flex_1();
+        let capture = order.next();
         let topics = self.topics(cx);
         let rows = self.rows(cx);
         let empty = topics.is_empty() && rows.is_empty();
-        let colors = cx.theme().colors();
+        let colors = cx.theme().colors().clone();
         let nav = h_flex()
             .flex_wrap()
             .gap_1()
             .children(SECTIONS.iter().enumerate().map(|(index, section)| {
                 let scroll = self.scroll.clone();
-                Button::new(section.id, section.title).on_click(cx.listener(
-                    move |this, _, window, cx| {
+                Button::new(section.id, section.title)
+                    .tab_index(order.next())
+                    .on_click(cx.listener(move |this, _, window, cx| {
                         this.show_all(window, cx);
                         scroll.scroll_to_item(index);
-                    },
-                ))
+                    }))
             }));
         let sections = SECTIONS
             .iter()
@@ -202,10 +240,14 @@ impl Render for HelpWindow {
                     .child(gpui::div().flex_1().child(row.action.clone()))
                     .child(gpui::div().w(px(170.)).child(muted(row.scope.clone())))
             }));
-        v_flex()
+        let readme = order.next();
+        let settings = order.next();
+        let show_all = order.next();
+        let root = v_flex()
             .key_context(CONTEXT)
             .track_focus(&self.focus)
-            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::cancel));
+        tab_order::handle(root, cx)
             .size_full()
             .bg(colors.background)
             .text_color(colors.text)
@@ -213,18 +255,34 @@ impl Render for HelpWindow {
                 v_flex()
                     .p_4()
                     .gap_2()
-                    .child(Label::new("Make yourself at home.").size(LabelSize::Large))
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(Label::new("Make yourself at home.").size(LabelSize::Large))
+                            .when(self.pane, |this| {
+                                this.child(
+                                    Button::new("close-help", "Close")
+                                        .tab_index(close)
+                                        .tooltip(ui::Tooltip::text("Close help (Escape)"))
+                                        .on_click(cx.listener(|_, _, _, cx| cx.emit(CloseHelp))),
+                                )
+                            }),
+                    )
                     .child(muted(
                         "A practical guide to writing, linking and getting things done in Quire. Available offline.",
                     ))
                     .child(
-                        gpui::div()
-                            .px_2()
-                            .py_1()
-                            .border_1()
-                            .border_color(colors.border)
-                            .rounded_sm()
-                            .child(self.search.clone()),
+                        h_flex()
+                            .gap_2()
+                            .child(search)
+                            .child(
+                                Button::new("capture-task", "Capture a task")
+                                    .tab_index(capture)
+                                    .style(ui::ButtonStyle::Filled)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.capture_task(window, cx)
+                                    })),
+                            ),
                     )
                     .child(nav)
                     .child(
@@ -232,10 +290,12 @@ impl Render for HelpWindow {
                             .gap_1()
                             .child(
                                 Button::new("open-readme", "README.md rendering sample")
+                                    .tab_index(readme)
                                     .on_click(|_, _, cx| crate::showcase::open(cx)),
                             )
                             .child(
                                 Button::new("open-settings", "Settings")
+                                    .tab_index(settings)
                                     .on_click(|_, _, cx| crate::preferences::view::open(cx)),
                             ),
                     )
@@ -263,7 +323,9 @@ impl Render for HelpWindow {
                                 .child(muted(
                                     "Try \u{201c}task\u{201d}, \u{201c}Vim\u{201d}, \u{201c}embed\u{201d} or a shortcut such as \u{201c}Enter\u{201d}.",
                                 ))
-                                .child(Button::new("show-all", "Show all help").on_click(
+                                .child(Button::new("show-all", "Show all help")
+                                    .tab_index(show_all)
+                                    .on_click(
                                     cx.listener(|this, _, window, cx| this.show_all(window, cx)),
                                 )),
                         )

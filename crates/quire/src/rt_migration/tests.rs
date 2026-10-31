@@ -111,7 +111,9 @@ fn fixture() -> Fixture {
             {"kind": "browser", "view": "ai"}
         ],
         "active": {"kind": "page", "path": "Plans.md"},
-        "positions": {"page:Plans.md": 120}
+        "positions": {"page:Plans.md": 120},
+        "filesOpen": false,
+        "browsers": {"daily": {"query": "", "limit": 60, "month": "2026-09"}}
     });
     let quire = serde_json::json!({
         "expanded": [],
@@ -165,7 +167,7 @@ fn migration_imports_tabs_favorites_and_prompt_history_once_and_reads_rt_only() 
     assert_eq!(report.notebooks.len(), 2);
     assert!(markdown.contains("Tabs, favorites, and recents imported for"));
     assert!(markdown.contains("AI prompt history (2 prompts) and synthesis instruction imported."));
-    assert!(markdown.contains("rt's AI settings: backend \"codex\""));
+    assert!(markdown.contains("rt's AI settings (backend Codex, model gpt-5, writes apply, Codex at /opt/bin/codex) are imported when Quire next starts"));
     assert_eq!(
         fs::read_to_string(fixture.quire_data.join(REPORT_FILE)).unwrap(),
         markdown
@@ -190,10 +192,17 @@ fn migration_imports_tabs_favorites_and_prompt_history_once_and_reads_rt_only() 
             Destination::Browser {
                 view: BrowserView::Tasks
             },
-        ],
-        "the AI browser has no Quire counterpart"
+            Destination::Browser {
+                view: BrowserView::Ai
+            },
+        ]
     );
     assert_eq!(folder.active, Some(plans));
+    assert!(
+        folder.chrome.files_collapsed,
+        "rt's closed Files stays closed"
+    );
+    assert_eq!(folder.chrome.daily_month, "2026-09");
     assert_eq!(
         folder.favorites,
         [Destination::page(page_id_for_path("Ideas.md"))]
@@ -267,6 +276,21 @@ fn a_renamed_page_and_unknown_destinations_are_dropped_from_converted_tabs() {
         convert_workspace(&Value::Null, |_| None),
         Workspace::default()
     );
+    for (files_open, month) in [
+        (serde_json::json!(true), "2026-13"),
+        (serde_json::json!("no"), "26-10"),
+        (Value::Null, "October"),
+    ] {
+        let rt = serde_json::json!({
+            "filesOpen": files_open,
+            "browsers": {"daily": {"month": month}}
+        });
+        assert_eq!(
+            convert_workspace(&rt, |_| None).chrome,
+            quire_core::workspace::ChromeChoices::default(),
+            "{files_open} {month}"
+        );
+    }
 }
 
 #[test]
@@ -305,4 +329,187 @@ fn command_line_steps_explain_missing_values_and_ignore_other_arguments() {
         Some(0),
         "nothing migrated means nothing to return"
     );
+}
+
+#[test]
+fn rt_ai_choices_keep_only_values_quire_accepts() {
+    let parse = |text: &str| RtAiChoices::parse(&serde_json::from_str(text).unwrap());
+    assert_eq!(
+        parse(
+            r#"{"backend":"claude","paths":{"claude":"claude","codex":" /opt/codex "},"model":"-x","writes":"maybe"}"#
+        ),
+        RtAiChoices {
+            backend: Some(quire_core::ai::Backend::Claude),
+            codex_path: Some("/opt/codex".into()),
+            ..Default::default()
+        },
+        "a relative binary, a flag-like model, and an unknown writes value are dropped"
+    );
+    assert!(parse(r#"{"backend":"gemini","enabled":true}"#).is_empty());
+}
+
+mod window {
+    use super::*;
+    use crate::rt_migration::view::{MigrationWindow, PUBLISH_QUESTION};
+    use gpui::{AppContext as _, TestAppContext, WindowHandle};
+    use quire_core::ai::{Backend, tools::Writes};
+    use settings::Settings as _;
+    use std::time::Duration;
+
+    async fn init(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::editor_host::init(cx).expect("editor initialization"));
+        let fs = ::fs::FakeFs::new(cx.executor());
+        fs.insert_tree(paths::config_dir(), serde_json::json!({}))
+            .await;
+        fs.insert_file(
+            paths::settings_file(),
+            crate::preferences::INITIAL_SETTINGS.into(),
+        )
+        .await;
+        cx.update(|cx| cx.set_global(crate::preferences::SettingsFs(fs)));
+    }
+
+    fn settle(window: WindowHandle<MigrationWindow>, cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        crate::test_wait::until(
+            cx,
+            Duration::from_millis(2),
+            crate::test_wait::advance(Duration::from_millis(100)),
+            |cx| !window.update(cx, |view, _, _| view.is_running()).unwrap(),
+            |_| "the step".into(),
+        );
+    }
+
+    fn report(window: WindowHandle<MigrationWindow>, cx: &mut TestAppContext) -> String {
+        window
+            .update(cx, |view, _, _| {
+                assert_eq!(view.error(), None);
+                view.report().unwrap_or_default().to_owned()
+            })
+            .unwrap()
+    }
+
+    fn draw(window: WindowHandle<MigrationWindow>, cx: &mut TestAppContext) {
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn the_window_migrates_imports_ai_settings_checks_the_return_and_restores_backups(
+        cx: &mut TestAppContext,
+    ) {
+        let fixture = fixture();
+        init(cx).await;
+        let before = tree(&fixture.rt);
+        let quire_data = fixture.quire_data.clone();
+        let rt_data = fixture.rt_data.clone();
+        let window =
+            cx.add_window(|window, cx| MigrationWindow::new(quire_data, Some(rt_data), window, cx));
+        draw(window, cx);
+
+        window.update(cx, |view, _, cx| view.migrate(cx)).unwrap();
+        settle(window, cx);
+        let migrated = report(window, cx);
+        assert!(migrated.contains("Tabs, favorites, and recents imported for"));
+        assert!(
+            migrated.contains(
+                "Imported rt's AI settings (backend Codex, model gpt-5, writes apply, Codex at /opt/bin/codex). AI stays off until you press Test in Settings > AI."
+            ),
+            "{migrated}"
+        );
+        draw(window, cx);
+        cx.update(|cx| {
+            let ai = crate::ai::settings::AiSettings::get_global(cx);
+            assert_eq!(ai.backend, Backend::Codex);
+            assert_eq!(ai.codex_path, "/opt/bin/codex");
+            assert_eq!(ai.model, "gpt-5");
+            assert_eq!(ai.writes, Writes::Apply);
+            assert!(!ai.enabled, "AI waits for Quire's own Test");
+            assert!(!crate::ai::settings::is_on(cx));
+            let work = crate::profiles::get(quire_store::profiles::ProfileId::Work, cx);
+            assert!(
+                matches!(
+                    work.notebook,
+                    Some(quire_store::profiles::Notebook::Store { .. })
+                ),
+                "the profiles migration wrote are the app's now: {work:?}"
+            );
+            assert_eq!(
+                import_ai_settings(&fixture.quire_data, cx),
+                None,
+                "AI settings are imported once"
+            );
+        });
+
+        window
+            .update(cx, |view, _, cx| view.check_return(cx))
+            .unwrap();
+        settle(window, cx);
+        let check = report(window, cx);
+        assert!(!check.is_empty());
+
+        window
+            .update(cx, |view, window, cx| view.publish_for_rt(window, cx))
+            .unwrap();
+        cx.run_until_parked();
+        let (question, _) = cx.pending_prompt().expect("publishing asks first");
+        assert_eq!(question, PUBLISH_QUESTION);
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+        assert!(!window.update(cx, |view, _, _| view.is_running()).unwrap());
+        assert_eq!(report(window, cx), check, "Cancel runs nothing");
+
+        window
+            .update(cx, |view, _, cx| {
+                view.list_backups(fixture.rt.join("backups"), cx)
+            })
+            .unwrap();
+        settle(window, cx);
+        let backups = window
+            .update(cx, |view, _, _| view.backups().to_vec())
+            .unwrap();
+        assert_eq!(backups.len(), 2, "{backups:?}");
+        draw(window, cx);
+        let parent = tempfile::tempdir().unwrap();
+        let parent_path = fs::canonicalize(parent.path()).unwrap();
+        window
+            .update(cx, |view, _, cx| {
+                view.restore(backups[0].path.clone(), parent_path.clone(), cx)
+            })
+            .unwrap();
+        settle(window, cx);
+        assert!(report(window, cx).starts_with("Restored as "));
+        let restored = window
+            .update(cx, |view, _, _| view.restored().to_vec())
+            .unwrap();
+        assert_eq!(restored.len(), 1);
+        assert!(restored[0].root.starts_with(&parent_path));
+        draw(window, cx);
+        assert_eq!(tree(&fixture.rt), before, "rt's files never change");
+    }
+
+    #[gpui::test]
+    async fn migrating_keeps_ai_settings_chosen_in_quire(cx: &mut TestAppContext) {
+        let fixture = fixture();
+        init(cx).await;
+        cx.update(|cx| crate::ai::settings::set_model("sonnet", cx))
+            .unwrap();
+        cx.run_until_parked();
+        let quire_data = fixture.quire_data.clone();
+        let rt_data = fixture.rt_data.clone();
+        let window =
+            cx.add_window(|window, cx| MigrationWindow::new(quire_data, Some(rt_data), window, cx));
+        window.update(cx, |view, _, cx| view.migrate(cx)).unwrap();
+        settle(window, cx);
+        let migrated = report(window, cx);
+        assert!(
+            migrated.contains("Kept Quire's own AI settings; rt's were not imported."),
+            "{migrated}"
+        );
+        cx.update(|cx| {
+            let ai = crate::ai::settings::AiSettings::get_global(cx);
+            assert_eq!(ai.model, "sonnet");
+            assert_eq!(ai.backend, Backend::Claude);
+        });
+    }
 }

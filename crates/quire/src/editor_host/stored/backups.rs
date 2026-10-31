@@ -67,6 +67,59 @@ impl StoredWindow {
             }))
     }
 
+    /// Makes the restored notebook the notebook of the profile holding this one, as the reference
+    /// app opens a restore "as this profile"; the backup folder stays and the old notebook's
+    /// files stay where they are.
+    fn join_profile(&mut self, location: &Location, cx: &mut gpui::Context<Self>) {
+        let Some(id) = self
+            .location
+            .as_ref()
+            .and_then(|notebook| crate::profiles::holding(notebook, cx))
+        else {
+            return;
+        };
+        let restored = match location.clone() {
+            Location::Store {
+                database,
+                notebook,
+                writer,
+            } => Notebook::Store {
+                database,
+                notebook,
+                writer,
+                folder: None,
+            },
+            Location::Folder { root, .. } => Notebook::Folder { root },
+        };
+        if let Err(error) = crate::profiles::update(cx, |profiles| {
+            profiles.set_notebook(id, restored)?;
+            profiles.activate(id)
+        }) {
+            crate::outline::show_notice(
+                format!(
+                    "The restored notebook opens without a profile: {error} Choose it again from File > Profile to back it up."
+                ),
+                cx,
+            );
+        }
+    }
+
+    /// Gives the restored notebook this window's tabs, favorites, recent pages, and expanded
+    /// folders. Pages keep their identities in a restore, and the restored window forgets the
+    /// ones its backup does not hold, as any window does when a page is gone.
+    fn carry_workspace(&self, location: &Location) -> Result<(), String> {
+        let file = match location {
+            Location::Store {
+                database, notebook, ..
+            } => crate::navigation::WorkspaceFile::beside(database, notebook),
+            Location::Folder { root, state } => crate::navigation::WorkspaceFile::beside(
+                &state.join("folder.sqlite"),
+                &format!("folder:{}", root.display()),
+            ),
+        };
+        file.save(&self.nav.workspace)
+    }
+
     /// Opens the restored notebook in a new window at the page shown here, then closes this
     /// window once its pages are secured. This notebook's data stays as it was.
     fn open_restored(
@@ -76,6 +129,13 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        self.join_profile(location, cx);
+        if let Err(error) = self.carry_workspace(location) {
+            crate::outline::show_notice(
+                format!("{error} The restored notebook opens without this window's tabs."),
+                cx,
+            );
+        }
         let page = self.page.read(cx);
         let opened = match location.clone() {
             Location::Store {
@@ -87,6 +147,8 @@ impl StoredWindow {
                 notebook,
                 writer,
                 page: page.id().to_owned(),
+                folder: None,
+                today: false,
             }
             .open(cx),
             Location::Folder { root, state } => {

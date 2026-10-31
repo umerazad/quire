@@ -616,3 +616,52 @@ fn reads_for_other_purposes_never_hide_a_change_from_refresh() {
     fixture.notebook.checkout(&page, None).unwrap();
     assert_eq!(fixture.notebook.refresh(&paths).unwrap().len(), 1);
 }
+
+const LEGACY_SETTINGS: &str = r#"{"version":1,"daily":{"folder":"Journal"}}"#;
+
+#[test]
+fn a_threadnote_metadata_folder_becomes_quire_on_first_open() {
+    let fixture = fixture(&[
+        ("Note.md", "- note"),
+        (".threadnote/notebook.json", LEGACY_SETTINGS),
+    ]);
+    assert!(!fixture.folder.join(".threadnote").exists());
+    assert_eq!(
+        settings::read(&fixture.folder).unwrap().unwrap().text,
+        LEGACY_SETTINGS
+    );
+    assert!(
+        fixture
+            .notebook
+            .notices()
+            .iter()
+            .all(|notice| !notice.contains(".threadnote")),
+        "{:?}",
+        fixture.notebook.notices()
+    );
+}
+
+#[test]
+fn a_threadnote_folder_beside_quire_is_kept_and_named_in_a_notice() {
+    let fixture = fixture(&[
+        (".quire/notebook.json", LEGACY_SETTINGS),
+        (".threadnote/notebook.json", "older"),
+    ]);
+    assert_eq!(
+        fs::read_to_string(fixture.folder.join(".threadnote/notebook.json")).unwrap(),
+        "older"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.folder.join(".quire/notebook.json")).unwrap(),
+        LEGACY_SETTINGS
+    );
+    assert!(
+        fixture
+            .notebook
+            .notices()
+            .iter()
+            .any(|notice| notice.contains("Update every computer to Quire")),
+        "{:?}",
+        fixture.notebook.notices()
+    );
+}

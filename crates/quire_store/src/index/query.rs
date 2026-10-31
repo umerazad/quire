@@ -383,6 +383,8 @@ pub struct SearchHit {
     pub source: PageRef,
     pub snippet: String,
     pub block_id: Option<String>,
+    /// The block's UTF-16 start in its page, when the hit is one block.
+    pub from: Option<u32>,
 }
 
 static TERM: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
@@ -400,6 +402,7 @@ fn search_expression(query: &str) -> Option<String> {
 
 impl QueryIndex {
     /// The reference `search`: up to 40 block and title hits by bm25 rank, with 24-token snippets.
+    /// An open page is searched in its unsaved text instead of its last save.
     pub fn search(&self, query: &str) -> Result<Vec<SearchHit>> {
         self.refresh()?;
         let Some(expression) = search_expression(query) else {
@@ -407,9 +410,18 @@ impl QueryIndex {
         };
         let rows: Vec<(PageRow, (String, Option<String>))> =
             self.connection.select_bound(&format!(
-                "SELECT {PAGE_COLUMNS},snippet(search,2,'','',' … ',24),search.block_id FROM search
-             JOIN pages p ON p.revision=search.revision
-             WHERE search MATCH ? AND p.deleted=0 ORDER BY bm25(search) LIMIT 40"
+                "SELECT revision,page,path,title,snippet,block_id FROM (
+               SELECT {PAGE_COLUMNS},snippet(search,2,'','',' … ',24) AS snippet,
+                 search.block_id AS block_id,bm25(search) AS rank FROM search
+               JOIN pages p ON p.revision=search.revision
+               WHERE search MATCH ?1 AND p.deleted=0
+                 AND p.page NOT IN (SELECT page FROM temp.overlay_pages)
+             UNION ALL
+               SELECT {PAGE_COLUMNS},snippet(overlay_search,2,'','',' … ',24),
+                 overlay_search.block_id,bm25(overlay_search) FROM temp.overlay_search
+               JOIN temp.overlay_pages p ON p.revision=overlay_search.revision
+               WHERE overlay_search MATCH ?1
+             ) ORDER BY rank LIMIT 40"
             ))?(expression)?;
         rows.into_iter()
             .map(|(page, (snippet, block_id))| {
@@ -417,8 +429,71 @@ impl QueryIndex {
                     source: page_ref(page)?,
                     snippet,
                     block_id,
+                    from: None,
                 })
             })
             .collect()
     }
+
+    /// Blocks whose text contains `query`, ignoring case, at most `per_page` from each page and
+    /// `limit` in all, in page path and block order: the reference find palette's live hits. An
+    /// open page is searched in its unsaved text instead of its last save.
+    pub fn text_hits(&self, query: &str, per_page: usize, limit: usize) -> Result<Vec<SearchHit>> {
+        self.refresh()?;
+        let needle = query.to_lowercase();
+        if needle.trim().is_empty() || per_page == 0 || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let (prefilter, exact) = sql_needle(&needle);
+        let capped = if exact {
+            format!("WHERE n<={per_page} ORDER BY path,ordinal LIMIT {limit}")
+        } else {
+            "ORDER BY path,ordinal".to_owned()
+        };
+        let rows: Vec<TextHitRow> =
+            self.connection.select_bound(&format!(
+                "SELECT revision,page,path,title,text,id,start FROM (
+                   SELECT {PAGE_COLUMNS},b.text AS text,b.id AS id,b.start AS start,b.ordinal AS ordinal,
+                     row_number() OVER (PARTITION BY p.revision ORDER BY b.ordinal) AS n
+                   FROM live_blocks b JOIN live_pages p ON p.revision=b.revision
+                   WHERE p.deleted=0 AND b.text!='' AND instr(lower(b.text),?1)>0
+                 ) {capped}"
+            ))?(prefilter.as_str())?;
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        rows.into_iter()
+            .filter(|(_, (text, _, _))| exact || text.to_lowercase().contains(&needle))
+            .filter(|(page, _)| {
+                let seen = counts.entry(page.0.clone()).or_default();
+                *seen += 1;
+                *seen <= per_page
+            })
+            .take(limit)
+            .map(|(page, (snippet, block_id, from))| {
+                Ok(SearchHit {
+                    source: page_ref(page)?,
+                    snippet,
+                    block_id,
+                    from: Some(from),
+                })
+            })
+            .collect()
+    }
+}
+
+/// A page and one block of it: its text, ID, and UTF-16 start.
+type TextHitRow = (PageRow, (String, Option<String>, u32));
+
+/// What SQLite can look for in `lower(text)` for the lowercased `needle`, and whether that test
+/// is exact. SQLite folds only ASCII case, so a needle with other cased letters is narrowed to
+/// its longest run of ASCII or caseless characters and checked again in Rust.
+fn sql_needle(needle: &str) -> (String, bool) {
+    let plain = |c: char| c.is_ascii() || c.to_lowercase().eq(c.to_uppercase());
+    if needle.chars().all(plain) {
+        return (needle.to_owned(), true);
+    }
+    let longest = needle
+        .split(|c: char| !plain(c))
+        .max_by_key(|run| run.chars().count())
+        .unwrap_or_default();
+    (longest.to_owned(), false)
 }

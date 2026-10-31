@@ -21,6 +21,9 @@ mod editor_excerpt;
 mod page_analysis;
 
 #[cfg(feature = "full-editor")]
+mod page_details;
+
+#[cfg(feature = "full-editor")]
 mod page_index;
 
 #[cfg(feature = "full-editor")]
@@ -31,6 +34,9 @@ mod notebook_backend;
 
 #[cfg(feature = "full-editor")]
 mod notebook_session;
+
+#[cfg(feature = "full-editor")]
+mod page_conflict;
 
 #[cfg(feature = "full-editor")]
 mod navigation;
@@ -45,6 +51,9 @@ mod tag_edit;
 mod page_writes;
 
 #[cfg(feature = "full-editor")]
+mod block_move;
+
+#[cfg(feature = "full-editor")]
 mod exchange;
 
 #[cfg(feature = "full-editor")]
@@ -55,6 +64,9 @@ mod backups;
 
 #[cfg(feature = "full-editor")]
 mod sync_status;
+
+#[cfg(feature = "full-editor")]
+mod live_sync;
 
 #[cfg(feature = "full-editor")]
 mod lifecycle;
@@ -87,6 +99,9 @@ mod semantic_excerpt;
 mod editor_projection;
 
 #[cfg(feature = "full-editor")]
+mod write_style;
+
+#[cfg(feature = "full-editor")]
 mod markdown;
 
 #[cfg(feature = "full-editor")]
@@ -117,6 +132,9 @@ mod media;
 mod task_lists;
 
 #[cfg(feature = "full-editor")]
+mod rich_text;
+
+#[cfg(feature = "full-editor")]
 mod templates;
 
 #[cfg(feature = "full-editor")]
@@ -136,6 +154,21 @@ mod showcase;
 
 #[cfg(feature = "full-editor")]
 mod tag_labels;
+
+#[cfg(feature = "full-editor")]
+mod motion;
+
+#[cfg(feature = "full-editor")]
+mod tab_order;
+
+#[cfg(feature = "full-editor")]
+mod script_fonts;
+
+#[cfg(feature = "full-editor")]
+mod title_bar;
+
+#[cfg(feature = "full-editor")]
+mod quire_assets;
 
 #[cfg(feature = "full-editor")]
 mod ai;
@@ -1094,6 +1127,14 @@ fn main() {
             paths::data_dir().join(notebook_tools::bridge::FILE_NAME),
             env!("CARGO_PKG_VERSION"),
         );
+        return;
+    }
+    #[cfg(all(feature = "full-editor", feature = "test-support"))]
+    if std::env::args().nth(1).as_deref() == Some("--measure-sync-latency") {
+        let rounds = std::env::args()
+            .nth(2)
+            .and_then(|rounds| rounds.parse().ok());
+        live_sync::latency::run(rounds.unwrap_or(10));
         return;
     }
     #[cfg(feature = "full-editor")]

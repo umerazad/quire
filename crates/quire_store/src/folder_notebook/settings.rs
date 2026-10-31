@@ -15,6 +15,36 @@ const DISPLAY: &str = ".quire/notebook.json";
 /// The reference writer refuses larger settings.
 const MAX_BYTES: usize = 64 * 1024;
 
+/// The metadata folder Quire used while it was called Threadnote, before 0.9.23.
+const LEGACY_METADATA: &str = ".threadnote";
+
+/// Renames `root`'s `.threadnote` folder to `.quire` the first time Quire opens the notebook, as
+/// the reference app does, so its settings and history stay with the notebook. Nothing is
+/// overwritten: when both folders exist, an older Threadnote on another computer still writes
+/// the old one, and the returned notice says so. Also returns a notice when the rename fails.
+pub fn adopt_legacy_metadata(root: &Path) -> Option<String> {
+    let from = root.join(LEGACY_METADATA);
+    let legacy = fs::symlink_metadata(&from).ok()?;
+    if !legacy.is_dir() || legacy.file_type().is_symlink() {
+        return None;
+    }
+    let to = root.join(METADATA);
+    if fs::symlink_metadata(&to).is_ok() {
+        return Some(format!(
+            "This notebook has a {LEGACY_METADATA} folder from an older Threadnote beside {METADATA}. Update every computer to Quire; Quire does not read {LEGACY_METADATA}, so that computer's recovery data and history stay there until it updates."
+        ));
+    }
+    match fs::rename(&from, &to) {
+        Ok(()) => {
+            sync_directory(root).ok();
+            None
+        }
+        Err(error) => Some(format!(
+            "Cannot rename this notebook's {LEGACY_METADATA} folder to {METADATA}: {error}. Its settings and history stay in {LEGACY_METADATA}; check the folder's permissions and reopen the notebook."
+        )),
+    }
+}
+
 /// `.quire` below `root`, which must be an ordinary folder when it exists.
 fn metadata(root: &Path) -> Result<Option<PathBuf>> {
     let folder = root.join(METADATA);

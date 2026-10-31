@@ -20,6 +20,11 @@ use ui::Disableable as _;
 
 /// Coalesces bursts of file events, such as an editor's save, into one reread.
 const WATCH_LATENCY: Duration = Duration::from_millis(100);
+/// How often the whole folder is reread in case the watcher missed a change, as the reference
+/// app does.
+const RESCAN_EVERY: Duration = Duration::from_secs(30);
+/// The note an empty imported notebook opens on; it is created when first saved.
+const FIRST_NOTE: &str = "Untitled.md";
 /// Recovered pages the notice offers to open.
 const LISTED_RECOVERED: usize = 10;
 /// Lines of the disk version the comparison shows.
@@ -32,6 +37,8 @@ pub(in crate::editor_host) struct FolderOptions {
     notices: Vec<String>,
     /// Quire's state folder for the notebook, when not the one in application data.
     state: Option<PathBuf>,
+    /// A launch without a chosen page, which starts on today's daily page as the reference does.
+    today: bool,
 }
 
 /// Opens the folder notebook at a path in a new window, showing the given notices.
@@ -82,6 +89,7 @@ impl FolderOptions {
         }
         Ok(Some(Self {
             root: root.into(),
+            today: page.is_none(),
             page,
             notices: Vec::new(),
             state: None,
@@ -95,6 +103,15 @@ impl FolderOptions {
             page: None,
             notices,
             state,
+            today: false,
+        }
+    }
+
+    /// Starts on today's daily page, as a launch does.
+    pub fn on_today(self) -> Self {
+        Self {
+            today: true,
+            ..self
         }
     }
 
@@ -114,7 +131,7 @@ impl FolderOptions {
             )
         })?;
         let state = self.state.unwrap_or_else(|| state_folder(&root));
-        show_folder_window(root, state, self.page, self.notices, cx)
+        show_folder_window_at(root, state, self.page, self.notices, self.today, cx)
     }
 }
 
@@ -126,6 +143,17 @@ pub(super) fn show_folder_window(
     state: PathBuf,
     page: Option<String>,
     notices: Vec<String>,
+    cx: &mut App,
+) -> Result<(), String> {
+    show_folder_window_at(root, state, page, notices, false, cx)
+}
+
+fn show_folder_window_at(
+    root: PathBuf,
+    state: PathBuf,
+    page: Option<String>,
+    notices: Vec<String>,
+    today: bool,
     cx: &mut App,
 ) -> Result<(), String> {
     crate::profiles::check_open(
@@ -152,6 +180,8 @@ pub(super) fn show_folder_window(
     let page = match (page, restored) {
         (Some(page), _) => page_id_for_path(&page),
         (None, Some(restored)) => restored,
+        // An imported graph with no pages opens on Pages, with a first note to write.
+        (None, None) if notes.is_empty() && roam => page_id_for_path(FIRST_NOTE),
         (None, None) => notes.into_iter().next().map(|file| page_id_for_path(&file.path)).ok_or_else(|| {
             format!(
                 "{} has no Markdown notes. Add a .md file or pass --page with the note to create.",
@@ -162,14 +192,7 @@ pub(super) fn show_folder_window(
     let mut session =
         NotebookSession::open_folder(root.clone(), state.clone(), Some(system_trash(cx)))?;
     let page = session.open_page(page, cx);
-    let options = gpui::WindowOptions {
-        window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(
-            None,
-            gpui::size(gpui::px(1100.), gpui::px(760.)),
-            cx,
-        ))),
-        ..Default::default()
-    };
+    let options = crate::title_bar::options(1100., 760., cx);
     let notebook = format!("folder:{}", root.display());
     cx.open_window(options, move |window, cx| {
         window.set_window_title("Quire Native");
@@ -183,10 +206,13 @@ pub(super) fn show_folder_window(
                 cx,
             );
             this.watch_folder(cx);
+            this.nav.daily.open_on_launch = today;
+            this.rescan_folder_backstop(window, cx);
             this.folder
                 .notices
                 .extend(notices.into_iter().map(SharedString::from));
             this.load_folder_notices(cx);
+            this.import_reference_history(cx);
             if roam {
                 this.visit(
                     quire_core::workspace::Destination::Browser {
@@ -281,6 +307,18 @@ pub(super) struct FolderView {
     /// Interrupted changes across notes that opening could not finish, to retry or set aside.
     pub(super) stuck: Vec<StuckChange>,
     pub(super) resolving: Option<Task<()>>,
+    /// The progress line while the reference app's saved history is taken in.
+    pub(super) history_progress: Option<SharedString>,
+    /// Every progress line shown, for tests.
+    #[cfg(test)]
+    pub(super) history_progress_shown: Vec<SharedString>,
+    /// The periodic reread and the reread on activating the window, kept for its lifetime.
+    backstop: Option<(Task<()>, gpui::Subscription)>,
+}
+
+/// The line shown while the reference app's saved history is taken in.
+fn history_progress(taken: usize, total: usize) -> SharedString {
+    format!("Taking in the reference app's saved history: {taken} of {total} versions…").into()
 }
 
 /// How to resolve an interrupted change.
@@ -324,6 +362,36 @@ impl StoredWindow {
         .detach();
     }
 
+    /// Rereads the whole folder every `RESCAN_EVERY` and whenever the window becomes active, a
+    /// backstop for changes the watcher missed, such as edits made while the computer slept or
+    /// on a network drive.
+    pub(super) fn rescan_folder_backstop(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.session.borrow().folder().is_none() {
+            return;
+        }
+        let activated = cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.folder_changed(None, cx);
+            }
+        });
+        let periodic = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(RESCAN_EVERY).await;
+                if this
+                    .update(cx, |this, cx| this.folder_changed(None, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        self.folder.backstop = Some((periodic, activated));
+    }
+
     /// Files changed outside Quire: open pages take in their new versions and the index rescans.
     pub(super) fn folder_changed(
         &mut self,
@@ -335,6 +403,9 @@ impl StoredWindow {
                 .invalidate()
                 .map(|reply| cx.background_spawn(reply).detach())
                 .ok();
+        }
+        if notes.is_none() {
+            crate::media::load::files_arrived(cx);
         }
         let work = self.session.borrow().folder_changed(notes, cx);
         cx.spawn(async move |this, cx| {
@@ -479,6 +550,48 @@ impl StoredWindow {
         .detach();
     }
 
+    /// Takes in the reference app's saved history queued on opening, one bounded step per
+    /// request behind the first page's load, so a long history never delays opening or saving.
+    pub(super) fn import_reference_history(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(folder) = self.session.borrow().storage().folder().cloned() else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let total = crate::query_index::ask(folder.reference_history_left())
+                .await
+                .unwrap_or(0);
+            let show = |progress: Option<SharedString>, cx: &mut gpui::AsyncApp| {
+                this.update(cx, |this, cx| {
+                    #[cfg(test)]
+                    this.folder.history_progress_shown.extend(progress.clone());
+                    this.folder.history_progress = progress;
+                    cx.notify();
+                })
+            };
+            let mut left = total;
+            loop {
+                let progress =
+                    (left > 0).then(|| history_progress(total.saturating_sub(left), total));
+                if show(progress, cx).is_err() {
+                    return;
+                }
+                match crate::query_index::ask(folder.import_reference_history()).await {
+                    Ok(0) => break,
+                    Ok(remaining) => left = remaining,
+                    Err(error) => {
+                        this.update(cx, |this, _| {
+                            this.folder.notices.push(error.into());
+                        })
+                        .ok();
+                        break;
+                    }
+                }
+            }
+            show(None, cx).ok();
+        })
+        .detach();
+    }
+
     /// Retries or sets aside an interrupted change. Either way the folder is reread, so pages the
     /// change wrote show their new text, and what happened joins the notices.
     pub(super) fn resolve_stuck(
@@ -577,7 +690,11 @@ impl StoredWindow {
         error: Option<SharedString>,
         cx: &mut gpui::Context<Self>,
     ) -> Option<gpui::AnyElement> {
-        if error.is_none() && self.folder.notices.is_empty() && self.folder.stuck.is_empty() {
+        if error.is_none()
+            && self.folder.notices.is_empty()
+            && self.folder.stuck.is_empty()
+            && self.folder.history_progress.is_none()
+        {
             return None;
         }
         let open = self
@@ -602,6 +719,9 @@ impl StoredWindow {
                 .flex_col()
                 .gap_1()
                 .when_some(error, |div, error| div.child(Label::new(error)))
+                .when_some(self.folder.history_progress.clone(), |div, progress| {
+                    div.child(Label::new(progress).color(ui::Color::Muted))
+                })
                 .children(self.folder.notices.iter().cloned().map(Label::new))
                 .child(gpui::div().flex().flex_wrap().gap_2().children(open))
                 .children(self.render_stuck(cx))

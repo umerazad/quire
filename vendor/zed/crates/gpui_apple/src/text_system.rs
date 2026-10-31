@@ -271,6 +271,7 @@ impl AppleTextSystemState {
                     };
                     let font = core_graphics::font::CGFont::from_data_provider(data_provider)
                         .map_err(|()| anyhow!("Could not load an embedded font."))?;
+                    register_for_cascades(&font);
                     let font = font_kit::loaders::core_text::Font::from_core_graphics_font(font);
                     Ok(Handle::from_native(&font))
                 }
@@ -1061,5 +1062,34 @@ mod tests {
         let layout = fonts.layout_line(text, px(16.), font_runs);
         assert_eq!(layout.len, 0);
         assert!(layout.runs.is_empty());
+    }
+}
+
+/// Registers an embedded font with Core Text for this process, so a font fallback cascade, which
+/// Core Text resolves by family name, can find it as it finds installed fonts. Registering a font
+/// twice fails harmlessly.
+fn register_for_cascades(font: &core_graphics::font::CGFont) {
+    unsafe extern "C" {
+        fn CTFontCopyGraphicsFont(
+            font: core_text::font::CTFontRef,
+            attributes: *mut std::ffi::c_void,
+        ) -> *const std::ffi::c_void;
+        fn CTFontManagerRegisterGraphicsFont(
+            font: *const std::ffi::c_void,
+            error: *mut *const std::ffi::c_void,
+        ) -> bool;
+    }
+    let native = core_text::font::new_from_CGFont(font, 12.);
+    unsafe {
+        let graphics = CTFontCopyGraphicsFont(native.as_concrete_TypeRef(), std::ptr::null_mut());
+        if graphics.is_null() {
+            return;
+        }
+        let mut error = std::ptr::null();
+        CTFontManagerRegisterGraphicsFont(graphics, &mut error);
+        if !error.is_null() {
+            core_foundation::base::CFRelease(error);
+        }
+        core_foundation::base::CFRelease(graphics);
     }
 }

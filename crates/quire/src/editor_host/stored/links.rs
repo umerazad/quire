@@ -5,7 +5,13 @@ use super::*;
 use crate::query_index::ask;
 use crate::references::{Follow, Notebook, ReferenceHost, Target};
 use quire_core::workspace::Destination;
-use quire_store::index::PageRef;
+use quire_store::index::{PageRef, heading_of};
+
+/// The page a followed link opens, and where the heading it names starts there, if it names one.
+struct Arrival {
+    page: PageRef,
+    heading: Option<Result<u32, ()>>,
+}
 
 pub(super) struct Links {
     pub(super) host: Entity<ReferenceHost>,
@@ -16,9 +22,14 @@ impl Links {
     pub(super) fn new(
         window: gpui::WeakEntity<StoredWindow>,
         session: std::rc::Weak<RefCell<NotebookSession>>,
+        folds: Rc<crate::outline::fold_store::FoldStore>,
         cx: &mut App,
     ) -> Self {
-        let notebook = WindowNotebook { window, session };
+        let notebook = WindowNotebook {
+            window,
+            session,
+            folds,
+        };
         Self {
             host: cx.new(|_| ReferenceHost::new(Rc::new(notebook))),
             following: None,
@@ -36,6 +47,7 @@ impl Links {
 struct WindowNotebook {
     window: gpui::WeakEntity<StoredWindow>,
     session: std::rc::Weak<RefCell<NotebookSession>>,
+    folds: Rc<crate::outline::fold_store::FoldStore>,
 }
 
 impl WindowNotebook {
@@ -81,10 +93,38 @@ impl Notebook for WindowNotebook {
         self.loaded(buffer, cx, |_, loaded| loaded.path.clone())
     }
 
+    fn fold_store(&self) -> Option<Rc<crate::outline::fold_store::FoldStore>> {
+        Some(self.folds.clone())
+    }
+
     fn show_page(&self, page: &str, beside: bool, window: &mut Window, cx: &mut App) {
         self.window
             .update(cx, |this, cx| {
                 this.open_page(page.to_owned(), beside, window, cx)
+            })
+            .ok();
+    }
+
+    fn show_tag(&self, tag: &str, window: &mut Window, cx: &mut App) {
+        let tag = tag.to_owned();
+        self.window
+            .update(cx, |this, cx| {
+                this.visit(Destination::Tag { tag }, window, cx)
+            })
+            .ok();
+    }
+
+    fn show_page_at(
+        &self,
+        page: &str,
+        jump: crate::navigation::Jump,
+        beside: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.window
+            .update(cx, |this, cx| {
+                this.open_page_at(page.to_owned(), Some(jump), beside, window, cx)
             })
             .ok();
     }
@@ -176,12 +216,31 @@ impl StoredWindow {
             cx.notify();
             return;
         };
+        let heading = match &follow.target {
+            Target::Page(name) if heading_of(name).is_some() => {
+                Some(client.find_heading(name.clone()))
+            }
+            _ => None,
+        };
         let lookup = match &follow.target {
             Target::Page(name) => client.find_page(name.clone()),
             Target::Block(id) => client.resolve_block(id.clone()),
         };
         self.links.following = Some(cx.spawn_in(window, async move |this, cx| {
-            let found = ask(lookup).await;
+            let found = match heading {
+                Some(heading) => ask(heading).await.map(|target| {
+                    target.map(|target| Arrival {
+                        heading: Some(target.heading.map(|(_, start)| start).ok_or(())),
+                        page: target.page,
+                    })
+                }),
+                None => ask(lookup).await.map(|page| {
+                    page.map(|page| Arrival {
+                        page,
+                        heading: None,
+                    })
+                }),
+            };
             this.update_in(cx, |this, window, cx| {
                 this.links.following = None;
                 this.arrive(follow, found, window, cx);
@@ -194,19 +253,37 @@ impl StoredWindow {
     fn arrive(
         &mut self,
         follow: Follow,
-        found: Result<Option<PageRef>, String>,
+        found: Result<Option<Arrival>, String>,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
         match (found, &follow.target) {
-            (Ok(Some(page)), _) => {
+            (Ok(Some(arrival)), _) => {
                 self.nav.error = None;
-                let id = page.page.to_lossy_string();
+                let id = arrival.page.page.to_lossy_string();
                 if follow.backlinks {
                     self.visit(Destination::page(id), window, cx);
                     self.focus_references(window, cx);
                 } else {
-                    self.open_page(id, follow.beside, window, cx);
+                    let block = match &follow.target {
+                        Target::Block(target) => target.rsplit("#^").next(),
+                        Target::Page(name) => name.split_once("#^").map(|(_, id)| id),
+                    };
+                    let jump = match arrival.heading {
+                        Some(Ok(start)) => Some(crate::navigation::Jump::at(None, start)),
+                        _ => block.map(crate::navigation::Jump::block),
+                    };
+                    self.open_page_at(id, jump, follow.beside, window, cx);
+                }
+                if let (Some(Err(())), Target::Page(name)) = (arrival.heading, &follow.target) {
+                    self.nav.error = Some(
+                        format!(
+                            "{} has no heading “{}”, so it opened at the top. Check the heading in the link.",
+                            arrival.page.title,
+                            heading_of(name).unwrap_or_default()
+                        )
+                        .into(),
+                    );
                 }
             }
             (Ok(None), Target::Page(name)) if !follow.backlinks => {

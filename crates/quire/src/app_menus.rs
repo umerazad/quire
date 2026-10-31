@@ -9,7 +9,10 @@ use crate::{
     preferences::{
         OpenPreferences, Preferences, UseDarkAppearance, UseLightAppearance, UseSystemAppearance,
     },
-    profiles::{OpenNotebookFolder, UseCurrentProfile, UsePersonalProfile, UseWorkProfile},
+    profiles::{
+        OpenNotebookDatabase, OpenNotebookFolder, UseCurrentProfile, UsePersonalProfile,
+        UseWorkProfile,
+    },
     showcase::OpenShowcase,
 };
 use gpui::{App, KeyBinding, Menu, MenuItem, OsAction};
@@ -33,6 +36,20 @@ gpui::actions!(
         HideOthers,
         /// Shows every application again.
         ShowAll,
+        /// Makes Quire's text and controls larger, until Quire quits or Actual Size.
+        ZoomIn,
+        /// Makes Quire's text and controls smaller, until Quire quits or Actual Size.
+        ZoomOut,
+        /// Returns text and controls to the sizes Settings choose.
+        ActualSize,
+        /// Shows or hides the sidebar.
+        ToggleSidebar,
+        /// Shows or hides the page details: its headings and connections.
+        TogglePageDetails,
+        /// Shows the notebook's folder in Finder or Explorer.
+        ShowNotebookFolder,
+        /// Turns Vim bindings on or off for every editor.
+        ToggleVim,
     ]
 );
 
@@ -55,12 +72,47 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &HideQuire, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+    cx.on_action(|_: &ZoomIn, cx| {
+        theme_settings::increase_buffer_font_size(cx);
+        theme_settings::adjust_ui_font_size(cx, |size| size + gpui::px(1.));
+    });
+    cx.on_action(|_: &ZoomOut, cx| {
+        theme_settings::decrease_buffer_font_size(cx);
+        theme_settings::adjust_ui_font_size(cx, |size| size - gpui::px(1.));
+    });
+    cx.on_action(|_: &ActualSize, cx| {
+        theme_settings::reset_buffer_font_size(cx);
+        theme_settings::reset_ui_font_size(cx);
+    });
+    cx.on_action(|_: &ToggleVim, cx| {
+        let vim = crate::preferences::Preferences::current(cx).vim;
+        crate::preferences::change(crate::preferences::Change::Vim(!vim), cx);
+    });
     cx.observe_global::<settings::SettingsStore>(refresh)
         .detach();
     refresh(cx);
 }
 
+/// Sizes `window`'s interface from the UI font size, which View zoom changes, so every window
+/// zooms with the notebook windows. Each window's render calls it.
+pub fn follow_zoom(window: &mut gpui::Window, cx: &App) {
+    window.set_rem_size(
+        <theme_settings::ThemeSettings as settings::Settings>::get_global(cx).ui_font_size(cx),
+    );
+}
+
 pub fn bind_keys(cx: &mut App) {
+    let [zoom_in, zoom_in_plus, zoom_out, actual] = if cfg!(target_os = "macos") {
+        ["cmd-=", "cmd-+", "cmd--", "cmd-0"]
+    } else {
+        ["ctrl-=", "ctrl-+", "ctrl--", "ctrl-0"]
+    };
+    cx.bind_keys([
+        KeyBinding::new(zoom_in, ZoomIn, None),
+        KeyBinding::new(zoom_in_plus, ZoomIn, None),
+        KeyBinding::new(zoom_out, ZoomOut, None),
+        KeyBinding::new(actual, ActualSize, None),
+    ]);
     if cfg!(target_os = "macos") {
         cx.bind_keys([
             KeyBinding::new("cmd-m", Minimize, None),
@@ -87,6 +139,7 @@ pub fn menus(cx: &App) -> Vec<Menu> {
     let appearance = cx
         .has_global::<settings::SettingsStore>()
         .then(|| Preferences::current(cx).appearance);
+    let vim = cx.has_global::<settings::SettingsStore>() && Preferences::current(cx).vim;
     let profile = cx
         .has_global::<crate::profiles::ProfileStore>()
         .then(|| crate::profiles::active(cx));
@@ -125,6 +178,7 @@ pub fn menus(cx: &App) -> Vec<Menu> {
         MenuItem::action("Today", OpenToday),
         MenuItem::separator(),
         MenuItem::action("Open Notebook Folder…", OpenNotebookFolder),
+        MenuItem::action("Open Quire Notebook…", OpenNotebookDatabase),
         MenuItem::submenu(Menu::new("Profile").items([
             profile_item("Current", Box::new(UseCurrentProfile), ProfileId::Current),
             profile_item("Work", Box::new(UseWorkProfile), ProfileId::Work),
@@ -136,8 +190,25 @@ pub fn menus(cx: &App) -> Vec<Menu> {
         ])),
         MenuItem::separator(),
         MenuItem::action("Save Locally", crate::editor_command::SavePage),
+        MenuItem::separator(),
+        MenuItem::submenu(Menu::new("Import").items([
+            MenuItem::action("Markdown Folder…", crate::exchange::ImportMarkdownFolder),
+            MenuItem::action("Roam Data…", crate::exchange::ImportRoamData),
+        ])),
+        MenuItem::submenu(Menu::new("Export").items([
+            MenuItem::action("Page as Markdown…", crate::exchange::ExportPageMarkdown),
+            MenuItem::action(
+                "Notebook as Markdown…",
+                crate::exchange::ExportNotebookMarkdown,
+            ),
+            MenuItem::action("Notebook as Roam JSON…", crate::exchange::ExportRoamJson),
+        ])),
+        MenuItem::separator(),
+        MenuItem::action("Backups…", crate::backups::ShowBackups),
         MenuItem::action("Back Up Now", crate::backups::BackUpNow),
         MenuItem::action("Sync with Git", crate::sync_status::SyncWithGit),
+        MenuItem::action("Move from rt…", crate::rt_migration::view::OpenMigration),
+        MenuItem::action("Show Notebook Folder", ShowNotebookFolder),
         MenuItem::separator(),
         MenuItem::action("Close Window", CloseWindow),
     ];
@@ -195,6 +266,19 @@ pub fn menus(cx: &App) -> Vec<Menu> {
         MenuItem::separator(),
         MenuItem::action("Source or Write", crate::editor_host::TogglePresentation),
         MenuItem::action("Page Beside", ToggleSidePane),
+        MenuItem::action("Sidebar", ToggleSidebar),
+        MenuItem::action("Page Details", TogglePageDetails),
+        MenuItem::Action {
+            name: "Vim Bindings".into(),
+            action: Box::new(ToggleVim),
+            os_action: None,
+            checked: vim,
+            disabled: false,
+        },
+        MenuItem::separator(),
+        MenuItem::action("Actual Size", ActualSize),
+        MenuItem::action("Zoom In", ZoomIn),
+        MenuItem::action("Zoom Out", ZoomOut),
         MenuItem::separator(),
         MenuItem::action("Enter Full Screen", ToggleFullScreen),
     ]));

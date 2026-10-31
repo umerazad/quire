@@ -1,7 +1,8 @@
 //! The answer pane (reference `AiPage.tsx`): questions about the notebook beside the page, each
 //! answered through the notebook tools with the calls it made listed under it, and the answer
 //! rendered as Markdown whose citations open the page or block they name. A synthesis of linked
-//! references starts by editing its instruction and runs only on Command-Enter.
+//! references or of a tag's blocks starts by editing its instruction and runs only on
+//! Command-Enter.
 
 use super::{
     context,
@@ -41,6 +42,24 @@ const THINKING: &str = "Thinking…";
 const READING: &str = "Reading the notebook…";
 
 /// What the pane starts with.
+/// The blocks a synthesis sends with its instruction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Scope {
+    /// The linked references to the page with this title.
+    References(String),
+    /// The blocks carrying this tag.
+    Tag(String),
+}
+
+impl Scope {
+    fn describe(&self) -> String {
+        match self {
+            Self::References(page) => format!("the linked references to {page}"),
+            Self::Tag(tag) => format!("the blocks tagged {tag}"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Seed {
     /// The header, such as "Linked references to Atlas".
@@ -51,8 +70,8 @@ pub struct Seed {
     pub draft: Option<String>,
     /// Selected text the first question is about.
     pub range: Option<AiRange>,
-    /// The page whose linked references the first question sends, for a synthesis.
-    pub references: Option<String>,
+    /// The blocks the first question sends, for a synthesis.
+    pub scope: Option<Scope>,
     /// The daily page Tidy this day may change; its run is held to Tidy's limits.
     pub tidy: Option<String>,
 }
@@ -74,9 +93,9 @@ impl Seed {
             .then_some(tidy::WRITES_OFF)
     }
 
-    /// Linked references with no question make a synthesis, which waits for its instruction.
+    /// A scope with no question makes a synthesis, which waits for its instruction.
     fn synthesis(&self) -> bool {
-        self.question.as_deref().is_none_or(|q| q.trim().is_empty()) && self.references.is_some()
+        self.question.as_deref().is_none_or(|q| q.trim().is_empty()) && self.scope.is_some()
     }
 
     /// The pane for a preset: its question, or the Tagged with… draft.
@@ -127,6 +146,8 @@ pub struct Place {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AnswerEvent {
     Close,
+    /// Move this pane, conversation and all, into an "Ask the notebook" tab.
+    OpenAsTab,
     /// Keep turn `index`'s answer in today's page.
     Keep {
         index: usize,
@@ -183,6 +204,9 @@ pub struct AnswerPane {
     pub notice: Option<SharedString>,
     /// Changes from terminal sessions, where the notebook tools exist.
     pub terminal: Option<AnyView>,
+    /// Shown as a tab's content rather than beside a page, so it offers neither Open as tab nor
+    /// Close; its tab closes it.
+    pub in_tab: bool,
     focus: FocusHandle,
     scroll: ScrollHandle,
 }
@@ -295,6 +319,7 @@ impl AnswerPane {
             editing_synthesis: synthesis,
             notice,
             terminal: change_list(None, cx),
+            in_tab: false,
             focus: cx.focus_handle(),
             scroll: ScrollHandle::new(),
         };
@@ -355,7 +380,7 @@ impl AnswerPane {
         }
         self.notice = None;
         let range = first.then(|| self.seed.range.clone()).flatten();
-        let references = first.then(|| self.seed.references.clone()).flatten();
+        let scope = first.then(|| self.seed.scope.clone()).flatten();
         let tidy_day = first.then(|| self.seed.tidy.clone()).flatten();
         let earlier: Vec<Turn> = self.turns[self.since..]
             .iter()
@@ -420,12 +445,12 @@ impl AnswerPane {
                     return;
                 }
             }
-            let gathered = match (references, index_client.clone()) {
-                (Some(title), Some(client)) => match context::references(client, &title).await {
+            let gathered = match (scope, index_client.clone()) {
+                (Some(scope), Some(client)) => match context::gather(client, &scope).await {
                     Ok(gathered) => Some(gathered),
                     Err(error) => {
                         this.update(cx, |this, cx| {
-                            this.fail(index, format!("Quire could not read the linked references to {title}: {error}. Wait for indexing to finish, then press Retry."), true, cx)
+                            this.fail(index, format!("Quire could not read {}: {error}. Wait for indexing to finish, then press Retry.", scope.describe()), true, cx)
                         })
                         .ok();
                         return;
@@ -869,10 +894,12 @@ impl Render for AnswerPane {
             .collect();
         let draft = self.input.read(cx).text(cx);
         let composer = if self.editing_synthesis {
-            let source = match &self.seed.references {
-                Some(page) => format!("Sends the linked references to {page}."),
-                _ => String::new(),
-            };
+            let source = self
+                .seed
+                .scope
+                .as_ref()
+                .map(|scope| format!("Sends {}.", scope.describe()))
+                .unwrap_or_default();
             let shortcut = if cfg!(target_os = "macos") {
                 "⌘↩ to run"
             } else {
@@ -960,11 +987,27 @@ impl Render for AnswerPane {
                     .gap_2()
                     .child(Label::new(self.title()))
                     .child(gpui::div().flex_1())
-                    .child(
-                        Button::new("ai-close", "Close")
-                            .style(ButtonStyle::Subtle)
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(AnswerEvent::Close))),
-                    ),
+                    .when(!self.in_tab, |header| {
+                        header
+                            .child(
+                                gpui::div()
+                                    .debug_selector(|| "quire-ai-open-tab".into())
+                                    .child(
+                                        Button::new("ai-open-tab", "Open as tab")
+                                            .style(ButtonStyle::Subtle)
+                                            .on_click(cx.listener(|_, _, _, cx| {
+                                                cx.emit(AnswerEvent::OpenAsTab)
+                                            })),
+                                    ),
+                            )
+                            .child(
+                                Button::new("ai-close", "Close")
+                                    .style(ButtonStyle::Subtle)
+                                    .on_click(
+                                        cx.listener(|_, _, _, cx| cx.emit(AnswerEvent::Close)),
+                                    ),
+                            )
+                    }),
             )
             .when_some(self.notice.clone(), |pane, notice| {
                 pane.child(Label::new(notice).color(Color::Warning))

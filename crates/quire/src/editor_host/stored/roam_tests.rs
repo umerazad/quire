@@ -284,6 +284,41 @@ fn importing_roam_json_creates_a_notebook_whose_export_restores_the_graph(cx: &m
 }
 
 #[gpui::test]
+fn an_import_with_no_pages_opens_on_pages_with_a_note_to_write(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&[("k", "Keep.md", "- keep\n")], "k", cx);
+    settle(&notebook, cx);
+    let opened = record_opened(cx);
+    let input = tempfile::tempdir().unwrap();
+    let source = input.path().join("empty.json");
+    fs::write(&source, "[]").unwrap();
+    let parent = tempfile::tempdir().unwrap();
+
+    dispatch(&notebook, ImportRoamData, cx);
+    choose_source(&source, parent.path(), cx);
+    let message = finished_in(notebook.window, cx);
+    assert!(
+        message.ends_with("Details are available in notebook notices."),
+        "{message}"
+    );
+    let (root, _) = opened.borrow().roots[0].clone();
+    let window = opened_window(notebook.window, cx);
+    let imported = notebook_for(window, cx);
+    wait_until(cx, "the empty notebook's Pages", |cx| {
+        read(&imported, cx, |view, cx| {
+            view.page.read(cx).id() == quire_store::sync::format::page_id_for_path("Untitled.md")
+                && view.nav.history.current()
+                    == Some(&quire_core::workspace::Destination::Browser {
+                        view: quire_core::workspace::BrowserView::Pages,
+                    })
+        })
+    });
+    assert!(
+        !root.join("Untitled.md").exists(),
+        "the first note is created only when written"
+    );
+}
+
+#[gpui::test]
 fn importing_roam_edn_archives_the_exact_database(cx: &mut TestAppContext) {
     let notebook = open_notebook(&[("k", "Keep.md", "- keep\n")], "k", cx);
     settle(&notebook, cx);

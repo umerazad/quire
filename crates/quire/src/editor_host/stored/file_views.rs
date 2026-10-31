@@ -11,6 +11,53 @@ use crate::{
 };
 use quire_core::workspace::{BrowserView, Destination, TreeKind};
 
+/// What a folder notebook's folder holds besides notes, so Files shows empty folders and
+/// attachments as the reference app does. Reread whenever the page list is.
+#[derive(Default)]
+pub(in crate::editor_host::stored) struct OnDisk {
+    pub(in crate::editor_host::stored) folders: Vec<String>,
+    /// Files that are not notes, such as attachments.
+    pub(in crate::editor_host::stored) files: Vec<String>,
+    reading: Option<gpui::Task<()>>,
+    /// The folder changed while it was being read, so it is read again.
+    stale: bool,
+}
+
+impl StoredWindow {
+    /// Rereads what the folder notebook's folder holds besides notes; a Quire notebook has no
+    /// such folder.
+    pub(in crate::editor_host::stored) fn refresh_on_disk(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(root) = self
+            .session
+            .borrow()
+            .folder()
+            .map(|(root, _)| root.to_owned())
+        else {
+            return;
+        };
+        let disk = &mut self.nav.browsers.on_disk;
+        if disk.reading.is_some() {
+            disk.stale = true;
+            return;
+        }
+        let listing = cx.background_spawn(async move { quire_store::folder_notebook::list(&root) });
+        disk.reading = Some(cx.spawn(async move |this, cx| {
+            let listing = listing.await;
+            this.update(cx, |this, cx| {
+                let disk = &mut this.nav.browsers.on_disk;
+                disk.reading = None;
+                disk.folders = listing.folders;
+                disk.files = listing.others;
+                if std::mem::take(&mut disk.stale) {
+                    this.refresh_on_disk(cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+}
+
 impl StoredWindow {
     fn writers(&self) -> Writers {
         let session = self.session.clone();
@@ -50,6 +97,13 @@ impl StoredWindow {
                     this.update_title(window, cx);
                     cx.notify();
                 }
+                FileDialogEvent::FolderCreated(folder) => this.folder_created(folder, cx),
+                FileDialogEvent::FolderMoved { from, to } => {
+                    this.nav.workspace.move_folder(from, to);
+                    this.persist(cx);
+                    this.refresh_on_disk(cx);
+                    cx.notify();
+                }
             },
         )
         .detach();
@@ -64,6 +118,23 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        if let Target::Folder(folder) = &target {
+            let inside = format!("{folder}/");
+            // A folder notebook folder with no page can still hold files, which the dialog
+            // names before they go to the Trash.
+            if !self
+                .nav
+                .pages
+                .iter()
+                .any(|listed| listed.page.path.starts_with(&inside))
+                && !self.nav.browsers.on_disk.folders.contains(folder)
+            {
+                self.nav.workspace.forget_folder(folder);
+                self.persist(cx);
+                cx.notify();
+                return;
+            }
+        }
         let Some(index) = self.index_client(cx) else {
             self.nav.error = Some(
                 "Deleting needs the notebook index, which did not start. Reopen the notebook to retry."
@@ -170,6 +241,43 @@ impl StoredWindow {
         let writers = self.writers();
         let dialog = cx.new(|cx| FileDialog::relocate(moving, path, writers, index, window, cx));
         self.show_dialog(dialog, window, cx);
+    }
+
+    /// Asks for a new folder's path inside `parent`.
+    pub(in crate::editor_host::stored) fn ask_new_folder(
+        &mut self,
+        parent: String,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let taken = self
+            .nav
+            .pages
+            .iter()
+            .flat_map(|listed| {
+                let path = listed.page.path.as_str();
+                std::iter::successors(Some(path), |path| path.rsplit_once('/').map(|(up, _)| up))
+            })
+            .map(str::to_owned)
+            .chain(self.nav.workspace.folders.iter().cloned())
+            .collect();
+        let writers = self.writers();
+        let dialog = cx.new(|cx| FileDialog::new_folder(parent, taken, writers, window, cx));
+        self.show_dialog(dialog, window, cx);
+    }
+
+    /// Shows a new folder in Files, highlighted, with its parents open.
+    fn folder_created(&mut self, folder: &str, cx: &mut gpui::Context<Self>) {
+        self.nav.workspace.add_folder(folder);
+        self.persist(cx);
+        if let Some(index) = self
+            .file_rows()
+            .iter()
+            .position(|row| row.kind == TreeKind::Folder && row.path == folder)
+        {
+            self.nav.browsers.files_selected = index;
+        }
+        cx.notify();
     }
 
     /// A page's path from its open buffer, or else from the page list.
@@ -354,5 +462,46 @@ impl StoredWindow {
         self.persist(cx);
         self.refresh_catalogue(cx);
         cx.notify();
+    }
+
+    /// The choice between a page's competing versions, while the shown page has them.
+    pub(in crate::editor_host::stored) fn render_version_conflict(
+        &self,
+        cx: &App,
+    ) -> Option<gpui::AnyElement> {
+        self.shown_page(cx)?;
+        let conflict = self.page.read(cx).loaded()?.conflict.clone()?;
+        Some(conflict.into_any_element())
+    }
+
+    /// A page whose competing versions were resolved opens afresh from storage, with one
+    /// version and editing allowed.
+    pub(in crate::editor_host::stored) fn reopen_resolved(
+        &mut self,
+        page: &Entity<OpenPage>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let id = page.read(cx).id().to_owned();
+        let shown = self.page.entity_id() == page.entity_id() && self.shown_page(cx).is_some();
+        if self
+            .nav
+            .side
+            .as_ref()
+            .is_some_and(|side| side.page.entity_id() == page.entity_id())
+        {
+            self.nav.side = None;
+        }
+        if let Some(open) = self.session.borrow_mut().forget(&id) {
+            if let Ok(index) = &self.index {
+                index.update(cx, |index, cx| index.forget(&open, cx));
+            }
+            self.nav.editors.remove(&open.entity_id());
+            self.nav.watched.remove(&open.entity_id());
+        }
+        if shown {
+            self.show(&Destination::page(&id), window, cx);
+        }
+        self.refresh_catalogue(cx);
     }
 }

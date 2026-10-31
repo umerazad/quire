@@ -300,3 +300,169 @@ fn the_templates_page_keeps_task_queries_as_written(cx: &mut TestAppContext) {
     });
     assert!(lines(&editor, cx).is_empty());
 }
+
+fn editor_focused(
+    notebook: &Notebook,
+    editor: &Entity<editor::Editor>,
+    cx: &mut TestAppContext,
+) -> bool {
+    notebook
+        .window
+        .update(cx, |_, window, cx| {
+            editor.focus_handle(cx).is_focused(window)
+        })
+        .unwrap()
+}
+
+fn keyboard_reaches_rows(vim: bool, cx: &mut TestAppContext) {
+    const HERE: &str = "- {{tasks}}\n- [ ] first #next\n- [ ] second\n";
+    let (notebook, editor) = open_in_write(&[("h", "Here.md", HERE)], "h", vim, cx);
+    wait_for_lines(
+        &notebook,
+        &editor,
+        &[&["[ ] first · Next · Here", "[ ] second · Inbox · Here"]],
+        cx,
+    );
+    let window = notebook.window.into();
+    cx.simulate_keystrokes(window, &key("enter"));
+    assert!(
+        !editor_focused(&notebook, &editor, cx),
+        "Cmd/Ctrl-Enter on the query line enters its list"
+    );
+    cx.read(|cx| assert_eq!(editor.read(cx).text(cx), HERE, "the line stays as written"));
+
+    cx.simulate_keystrokes(window, &format!("down {}", key("enter")));
+    let ticked = "- {{tasks}}\n- [ ] first #next\n- [x] second ✅ 2026-10-30\n";
+    cx.read(|cx| {
+        assert_eq!(
+            editor.read(cx).text(cx),
+            ticked,
+            "the highlighted task ticks"
+        )
+    });
+    wait_for_lines(&notebook, &editor, &[&["[ ] first · Next · Here"]], cx);
+
+    cx.simulate_keystrokes(window, &format!("up {}", key("shift-enter")));
+    let moved = "- {{tasks}}\n- [ ] first #waiting\n- [x] second ✅ 2026-10-30\n";
+    cx.read(|cx| assert_eq!(editor.read(cx).text(cx), moved, "the state moves on"));
+    wait_for_lines(&notebook, &editor, &[&["[ ] first · Waiting · Here"]], cx);
+
+    cx.simulate_keystrokes(window, "d");
+    draw(&notebook, cx);
+    let mut visual = gpui::VisualTestContext::from_window(notebook.window.into(), cx);
+    assert!(visual.debug_bounds("quire-task-list-date").is_some());
+    cx.simulate_input(window, "soon");
+    cx.simulate_keystrokes(window, "enter");
+    let refused = format!(
+        "notice: {}",
+        quire_core::tasks::date_phrase("soon", "2026-10-30").unwrap_err()
+    );
+    wait_for_lines(
+        &notebook,
+        &editor,
+        &[&[refused.as_str(), "[ ] first · Waiting · Here"]],
+        cx,
+    );
+    cx.simulate_keystrokes(window, &format!("{} backspace", key("a")));
+    cx.simulate_input(window, "tomorrow");
+    cx.simulate_keystrokes(window, "enter");
+    wait_until(cx, "the due date in the page", |cx| {
+        cx.read(|cx| editor.read(cx).text(cx))
+            == "- {{tasks}}\n- [ ] first #waiting 📅 [[2026-10-31]]\n- [x] second ✅ 2026-10-30\n"
+    });
+    wait_until(cx, "the list to settle", |cx| {
+        cx.read(|cx| crate::task_lists::settled(editor.read(cx), cx))
+    });
+    cx.simulate_keystrokes(window, "escape");
+    assert!(
+        editor_focused(&notebook, &editor, cx),
+        "Escape returns to the page"
+    );
+}
+
+#[gpui::test]
+fn the_keyboard_reaches_list_rows_ticks_moves_and_dates_them_with_vim(cx: &mut TestAppContext) {
+    keyboard_reaches_rows(true, cx);
+}
+
+#[gpui::test]
+fn the_keyboard_reaches_list_rows_ticks_moves_and_dates_them_with_vim_off(cx: &mut TestAppContext) {
+    keyboard_reaches_rows(false, cx);
+}
+
+#[gpui::test]
+fn a_list_inside_an_embed_lists_the_embedded_page_as_here(cx: &mut TestAppContext) {
+    let pages = [
+        ("h", "Host.md", "- ![[Inner]]\n- [ ] host task\n"),
+        ("i", "Inner.md", "- {{tasks}}\n- [ ] inner task\n"),
+    ];
+    let (notebook, editor) = open_in_write(&pages, "h", false, cx);
+    wait_until(cx, "the list inside the embed", |cx| {
+        draw(&notebook, cx);
+        let nested = cx.update(|cx| crate::embeds::nested_editors(editor.read(cx)));
+        nested
+            .iter()
+            .any(|nested| lines(nested, cx) == [["[ ] inner task · Inbox · Inner"]])
+    });
+    assert!(
+        lines(&editor, cx).is_empty(),
+        "the host page has no query of its own"
+    );
+}
+
+#[gpui::test]
+fn ticking_a_task_whose_page_is_open_in_another_tab_updates_that_tab(cx: &mut TestAppContext) {
+    let pages = [
+        ("q", "Query.md", "- {{tasks: next}}\n"),
+        ("a", "Alpha.md", "- [ ] one #next\n"),
+    ];
+    let notebook = open_notebook(&pages, "a", cx);
+    let alpha = read(&notebook, cx, |view, _| view.page.clone());
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.visit(quire_core::workspace::Destination::page("q"), window, cx)
+        })
+        .unwrap();
+    wait_until(cx, "the query page", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.page.read(cx).id() == "q" && view.editor.is_some()
+        })
+    });
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.nav.daily.now = Rc::new(|| NOW);
+            view.install_task_context(cx);
+            view.focus_active(window, cx);
+        })
+        .unwrap();
+    cx.simulate_keystrokes(notebook.window.into(), &key("shift-m"));
+    let editor = host_editor(&notebook, cx);
+    wait_for_lines(&notebook, &editor, &[&["[ ] one · Next · Alpha"]], cx);
+    assert!(
+        read(&notebook, cx, |view, cx| view
+            .nav
+            .workspace
+            .tabs
+            .iter()
+            .any(|tab| view.destination_label(tab, cx) == "Alpha")),
+        "Alpha stays open in its tab"
+    );
+    click(&notebook, &editor, "quire-task-list-tick-0", cx);
+    let ticked = "- [x] one #next ✅ 2026-10-30\n";
+    wait_until(
+        cx,
+        "the tick in the other tab's buffer and the store",
+        |cx| {
+            let text = cx.read(|cx| {
+                alpha
+                    .read(cx)
+                    .loaded()
+                    .map(|loaded| loaded.analysis.read(cx).source.read(cx).text())
+            });
+            text.as_deref() == Some(ticked) && stored(&notebook, "a") == ticked
+        },
+    );
+    cx.read(|cx| assert_eq!(editor.read(cx).text(cx), "- {{tasks: next}}\n"));
+}

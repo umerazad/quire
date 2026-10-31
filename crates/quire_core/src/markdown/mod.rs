@@ -17,6 +17,9 @@ pub use copies::{Addresses, block_id_range, copy_with_new_ids};
 mod tags;
 pub use tags::{TagToken, tag_completion_range, tags};
 
+mod words;
+pub use words::{count_words, plural, reading_minutes};
+
 pub(crate) const JS_SPACE: &str = r"[\t\n\x0b\x0c\r \u{00a0}\u{1680}\u{2000}-\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}\u{feff}]";
 
 mod references;

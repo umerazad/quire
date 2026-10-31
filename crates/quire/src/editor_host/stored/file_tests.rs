@@ -484,6 +484,173 @@ fn the_files_tree_is_rebuilt_only_when_its_pages_or_folders_change(cx: &mut Test
 
             view.nav.pages = vec![listed("Work/A.md"), listed("C.md")];
             assert_eq!(paths(&view.file_rows()), ["Work", "Work/A.md", "C.md"]);
+
+            view.nav.workspace.add_folder("Empty");
+            assert_eq!(
+                paths(&view.file_rows()),
+                ["Empty", "Work", "Work/A.md", "C.md"]
+            );
         })
         .unwrap();
+}
+
+#[gpui::test]
+fn new_folder_here_shows_an_empty_folder_until_it_is_deleted(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&PAGES, "k", cx);
+    let folders = |cx: &mut TestAppContext| {
+        read(&notebook, cx, |view, _| {
+            view.file_rows()
+                .iter()
+                .filter(|row| row.kind == quire_core::workspace::TreeKind::Folder)
+                .map(|row| row.path.clone())
+                .collect::<Vec<_>>()
+        })
+    };
+    cx.simulate_keystrokes(notebook.window.into(), &key("shift-e"));
+    cx.simulate_keystrokes(notebook.window.into(), "home");
+    cx.dispatch_action(notebook.window.into(), crate::navigation::NewFolderHere);
+    draw(&notebook, cx);
+    let typed = read(&notebook, cx, |view, cx| {
+        view.nav.dialog.as_ref().unwrap().read(cx).name(cx)
+    });
+    assert_eq!(typed.as_deref(), Some("Projects/"));
+    cx.simulate_input(notebook.window.into(), "Deep");
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    assert_eq!(
+        dialog_error(&notebook, cx).as_deref(),
+        Some("Projects/Deep already exists. Choose another name for the new folder.")
+    );
+    cx.simulate_input(notebook.window.into(), "er/../x");
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    assert_eq!(
+        dialog_error(&notebook, cx).as_deref(),
+        Some(quire_core::relocate::INVALID_PATH)
+    );
+    for _ in 0.."/../x".len() {
+        cx.simulate_keystrokes(notebook.window.into(), "backspace");
+    }
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    assert!(read(&notebook, cx, |view, _| view.nav.dialog.is_none()));
+    assert_eq!(
+        folders(cx),
+        ["Projects", "Projects/Deep", "Projects/Deeper"]
+    );
+    read(&notebook, cx, |view, _| {
+        assert_eq!(view.nav.workspace.folders, ["Projects/Deeper"]);
+        assert_eq!(
+            view.file_rows()[view.nav.browsers.files_selected].path,
+            "Projects/Deeper",
+            "the new folder is highlighted"
+        );
+    });
+
+    cx.simulate_keystrokes(notebook.window.into(), &key("shift-e"));
+    cx.simulate_keystrokes(notebook.window.into(), "delete");
+    assert!(
+        read(&notebook, cx, |view, _| view.nav.dialog.is_none()),
+        "a folder holding nothing goes without asking"
+    );
+    assert_eq!(folders(cx), ["Projects", "Projects/Deep"]);
+    assert!(read(&notebook, cx, |view, _| view
+        .nav
+        .workspace
+        .folders
+        .is_empty()));
+}
+
+#[gpui::test]
+fn renaming_a_quire_notebook_folder_without_pages_renames_it_here(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&PAGES, "k", cx);
+    notebook
+        .window
+        .update(cx, |view, _, cx| {
+            view.nav.workspace.add_folder("Ideas/Later");
+            cx.notify();
+        })
+        .unwrap();
+    super::move_tests::select_file(&notebook, "Ideas", cx);
+    cx.simulate_keystrokes(notebook.window.into(), "f2");
+    rename_to(&notebook, "Plans", cx);
+    wait_until(cx, "the folder rename", |cx| {
+        read(&notebook, cx, |view, _| view.nav.dialog.is_none())
+    });
+    read(&notebook, cx, |view, _| {
+        assert_eq!(view.nav.workspace.folders, ["Plans/Later"]);
+        assert!(view.file_rows().iter().any(|row| row.path == "Plans"));
+        assert!(!view.file_rows().iter().any(|row| row.path == "Ideas"));
+    });
+}
+
+/// Gives page `o` a competing first version from another computer, as an import whose merge
+/// failed leaves it.
+fn compete(notebook: &super::tests::Notebook) {
+    let store = NotebookStore::open(&notebook.path, "nb", "local").unwrap();
+    let mut other = serde_json::json!({"page":"o","parents":[],"generation":0,"path":"Old.md","text":"- From home\n","deleted":false,"created":2,"device":"peer"});
+    other["id"] = quire_store::sync::format::revision_id(&other)
+        .unwrap()
+        .into();
+    let batch = quire_store::sync::format::encode(
+        &serde_json::json!({"notebook":"nb","device":"peer","seq":1,"previous":null,"created":2,"revisions":[other],"attachments":[]}),
+        quire_store::sync::format::Kind::Batch,
+    )
+    .unwrap();
+    store
+        .import_batch("peer", &batch.name, &batch.data)
+        .unwrap();
+    assert_eq!(store.heads("o").unwrap().len(), 2);
+}
+
+#[gpui::test]
+fn keeping_both_competing_versions_saves_one_version_and_reopens_the_page_for_editing(
+    cx: &mut TestAppContext,
+) {
+    let notebook = open_notebook(&PAGES, "k", cx);
+    compete(&notebook);
+    visit(&notebook, Destination::page("o"), cx);
+    wait_until(cx, "the competing versions", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.page
+                .read(cx)
+                .loaded()
+                .is_some_and(|page| page.conflict.is_some())
+        })
+    });
+    draw(&notebook, cx);
+    let conflict = read(&notebook, cx, |view, cx| {
+        let page = view.page.read(cx).loaded().unwrap();
+        assert!(
+            page.persistence.is_none(),
+            "competing versions open read-only"
+        );
+        assert!(view.render_version_conflict(cx).is_some());
+        page.conflict.clone().unwrap()
+    });
+    let computers = conflict.read_with(cx, |conflict, _| {
+        conflict
+            .versions()
+            .iter()
+            .map(|version| (version.computer.clone(), version.text.clone()))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(computers.len(), 2);
+    assert!(computers.contains(&("this computer".into(), "- Original ^stable\n".into())));
+    assert!(computers.contains(&("another computer".into(), "- From home\n".into())));
+    let expected: String = computers.iter().map(|(_, text)| text.as_str()).collect();
+
+    conflict.update(cx, |conflict, cx| conflict.keep(None, cx));
+    wait_until(cx, "the page to reopen with one version", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.page.read(cx).id() == "o"
+                && view
+                    .page
+                    .read(cx)
+                    .loaded()
+                    .is_some_and(|page| page.heads.len() == 1 && page.persistence.is_some())
+        })
+    });
+    read(&notebook, cx, |view, cx| {
+        assert!(view.render_version_conflict(cx).is_none());
+    });
+    let store = NotebookStore::open(&notebook.path, "nb", "local").unwrap();
+    assert_eq!(head(&store, "o"), (false, "Old.md".into(), expected));
 }

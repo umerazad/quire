@@ -96,17 +96,17 @@ fn notice(cx: &mut TestAppContext) -> Option<String> {
 
 /// Waits for the formatter thread's answer to reach the view.
 fn settle(window: WindowHandle<Editor>, cx: &mut TestAppContext) {
-    for _ in 0..2000 {
-        cx.executor().run_until_parked();
-        if !window
-            .update(cx, |editor, _, _| formatting(editor))
-            .unwrap()
-        {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    panic!("Format code did not finish within 10 seconds");
+    crate::test_wait::until(
+        cx,
+        Duration::from_millis(5),
+        crate::test_wait::park,
+        |cx| {
+            !window
+                .update(cx, |editor, _, _| formatting(editor))
+                .unwrap()
+        },
+        |_| "Format code to finish".into(),
+    );
 }
 
 fn format(window: WindowHandle<Editor>, cx: &mut TestAppContext) {

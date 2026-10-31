@@ -1,0 +1,226 @@
+{
+  "notebook": "vectors-notebook",
+  "batches": [
+    {
+      "device": "office",
+      "name": "000000001-950303f9507b2a4756c6ea72218e362a2254c9e0ffe382b495d51bf6068d0e69.qlog.zst",
+      "hash": "950303f9507b2a4756c6ea72218e362a2254c9e0ffe382b495d51bf6068d0e69",
+      "seq": 1
+    },
+    {
+      "device": "home",
+      "name": "000000001-8295b869c2c775e301a4667016cd92269d87dec87a45c949391c00624fd4e27e.qlog.zst",
+      "hash": "8295b869c2c775e301a4667016cd92269d87dec87a45c949391c00624fd4e27e",
+      "seq": 1
+    },
+    {
+      "device": "office",
+      "name": "000000002-53a91f143f1e1fe8ece7403f0ef43a989d4e06547ad7c6462b8cabff72b5341c.qlog.zst",
+      "hash": "53a91f143f1e1fe8ece7403f0ef43a989d4e06547ad7c6462b8cabff72b5341c",
+      "seq": 2
+    },
+    {
+      "device": "office",
+      "name": "000000003-e22c7b2a8d9b9e7f89ed6ae8f69dd3e82ca14da58c343f7cea312b4e30fd9b6a.qlog.zst",
+      "hash": "e22c7b2a8d9b9e7f89ed6ae8f69dd3e82ca14da58c343f7cea312b4e30fd9b6a",
+      "seq": 3
+    },
+    {
+      "device": "home",
+      "name": "000000002-3a96256ec4eacde5a74312ddea7dcd49d56b400eaed4fd151f3ea653364309e5.qlog.zst",
+      "hash": "3a96256ec4eacde5a74312ddea7dcd49d56b400eaed4fd151f3ea653364309e5",
+      "seq": 2
+    }
+  ],
+  "revisions": [
+    {
+      "id": "a1a45d4960bb2228de07dc71815ae21b80ebc45163021ed4ade59d71f630ee15",
+      "canonical": "{\"created\":1793000000000,\"deleted\":false,\"device\":\"office\",\"generation\":0,\"id\":\"a1a45d4960bb2228de07dc71815ae21b80ebc45163021ed4ade59d71f630ee15\",\"page\":\"p-0bbe5bc4573bcf1caa8ba13b58efe7c4\",\"parents\":[],\"path\":\"Plan.md\",\"text\":\"- one\\n\"}",
+      "idInput": "{\"deleted\":false,\"format\":1,\"generation\":0,\"page\":\"p-0bbe5bc4573bcf1caa8ba13b58efe7c4\",\"parents\":[],\"path\":\"Plan.md\",\"text\":\"- one\\n\"}"
+    },
+    {
+      "id": "e42e47d4bff2d91310acfa8c2d555228416390e9c91f8f2824d2b7583cac39e4",
+      "canonical": "{\"created\":1793000000002,\"deleted\":false,\"device\":\"home\",\"generation\":1,\"id\":\"e42e47d4bff2d91310acfa8c2d555228416390e9c91f8f2824d2b7583cac39e4\",\"page\":\"p-0bbe5bc4573bcf1caa8ba13b58efe7c4\",\"parents\":[\"a1a45d4960bb2228de07dc71815ae21b80ebc45163021ed4ade59d71f630ee15\"],\"path\":\"Plan.md\",\"text\":\"- one\\n- from home\\n\"}",
+      "idInput": "{\"deleted\":false,\"format\":1,\"generation\":1,\"page\":\"p-0bbe5bc4573bcf1caa8ba13b58efe7c4\",\"parents\":[\"a1a45d4960bb2228de07dc71815ae21b80ebc45163021ed4ade59d71f630ee15\"],\"path\":\"Plan.md\",\"text\":\"- one\\n- from home\\n\"}"
+    },
+    {
+      "id": "782863adf290719b550a42747f119c6cc6113e702f17b0324680d90fe0f67fcb",
+      "canonical": "{\"created\":1793000000003,\"deleted\":false,\"device\":\"office\",\"generation\":1,\"id\":\"782863adf290719b550a42747f119c6cc6113e702f17b0324680d90fe0f67fcb\",\"page\":\"p-0bbe5bc4573bcf1caa8ba13b58efe7c4\",\"parents\":[\"a1a45d4960bb2228de07dc71815ae21b80ebc45163021ed4ade59d71f630ee15\"],\"path\":\"Plan.md\",\"text\":\"- one\\n- from office\\n\"}",
+      "idInput": "{\"deleted\":false,\"format\":1,\"generation\":1,\"page\":\"p-0bbe5bc4573bcf1caa8ba13b58efe7c4\",\"parents\":[\"a1a45d4960bb2228de07dc71815ae21b80ebc45163021ed4ade59d71f630ee15\"],\"path\":\"Plan.md\",\"text\":\"- one\\n- from office\\n\"}"
+    },
+    {
+      "id": "59f77462b14d17b0abfa6032d1e0edf7575442e5c1bc0e5ee3b6bf831cc7d1d1",
+      "canonical": "{\"created\":1793000000006,\"deleted\":false,\"device\":\"office\",\"generation\":2,\"id\":\"59f77462b14d17b0abfa6032d1e0edf7575442e5c1bc0e5ee3b6bf831cc7d1d1\",\"page\":\"p-0bbe5bc4573bcf1caa8ba13b58efe7c4\",\"parents\":[\"782863adf290719b550a42747f119c6cc6113e702f17b0324680d90fe0f67fcb\",\"e42e47d4bff2d91310acfa8c2d555228416390e9c91f8f2824d2b7583cac39e4\"],\"path\":\"Plan.md\",\"text\":\"- one\\n- from home\\n- from office\\n\"}",
+      "idInput": "{\"deleted\":false,\"format\":1,\"generation\":2,\"page\":\"p-0bbe5bc4573bcf1caa8ba13b58efe7c4\",\"parents\":[\"782863adf290719b550a42747f119c6cc6113e702f17b0324680d90fe0f67fcb\",\"e42e47d4bff2d91310acfa8c2d555228416390e9c91f8f2824d2b7583cac39e4\"],\"path\":\"Plan.md\",\"text\":\"- one\\n- from home\\n- from office\\n\"}"
+    },
+    {
+      "id": "6a0dad2c49cb2684d1a29f15e6d5612c25e46447d0345c7db36a5c570505d491",
+      "canonical": "{\"created\":1793000000007,\"deleted\":false,\"device\":\"office\",\"generation\":0,\"id\":\"6a0dad2c49cb2684d1a29f15e6d5612c25e46447d0345c7db36a5c570505d491\",\"page\":\"p-5e202922a4d67513341e2150db98b823\",\"parents\":[],\"path\":\"Tricky \\\"quotes\\\" and \\\\slashes\\\\.md\",\"text\":\"- \\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f   😀 مرحبا é </script> & <b>\\n\"}",
+      "idInput": "{\"deleted\":false,\"format\":1,\"generation\":0,\"page\":\"p-5e202922a4d67513341e2150db98b823\",\"parents\":[],\"path\":\"Tricky \\\"quotes\\\" and \\\\slashes\\\\.md\",\"text\":\"- \\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f   😀 مرحبا é </script> & <b>\\n\"}"
+    },
+    {
+      "id": "b4ee8682856412ab7446b72daf7b35cc44a797face0d37e7e8fe20293638c765",
+      "canonical": "{\"created\":1793000000008,\"deleted\":false,\"device\":\"office\",\"generation\":1,\"id\":\"b4ee8682856412ab7446b72daf7b35cc44a797face0d37e7e8fe20293638c765\",\"page\":\"p-5e202922a4d67513341e2150db98b823\",\"parents\":[\"6a0dad2c49cb2684d1a29f15e6d5612c25e46447d0345c7db36a5c570505d491\"],\"path\":\"Tricky \\\"quotes\\\" and \\\\slashes\\\\.md\",\"text\":\"- broken \\ud800 surrogate\\n\"}",
+      "idInput": "{\"deleted\":false,\"format\":1,\"generation\":1,\"page\":\"p-5e202922a4d67513341e2150db98b823\",\"parents\":[\"6a0dad2c49cb2684d1a29f15e6d5612c25e46447d0345c7db36a5c570505d491\"],\"path\":\"Tricky \\\"quotes\\\" and \\\\slashes\\\\.md\",\"text\":\"- broken \\ud800 surrogate\\n\"}"
+    },
+    {
+      "id": "3ea2dfc2e55590a17b728118e49848ccb25e4ecc748dc943e54034bc035871f2",
+      "canonical": "{\"created\":1793000000009,\"deleted\":false,\"device\":\"office\",\"generation\":0,\"id\":\"3ea2dfc2e55590a17b728118e49848ccb25e4ecc748dc943e54034bc035871f2\",\"page\":\"p-92176179e4d659287eb7e76f55f0538c\",\"parents\":[],\"path\":\"Daily/2026-10-29.md\",\"text\":\"- today\\n\"}",
+      "idInput": "{\"deleted\":false,\"format\":1,\"generation\":0,\"page\":\"p-92176179e4d659287eb7e76f55f0538c\",\"parents\":[],\"path\":\"Daily/2026-10-29.md\",\"text\":\"- today\\n\"}"
+    },
+    {
+      "id": "8d0cd206321aa8c55ae90a35f70499e47e15850ab7aec93999a4fc6666fddb27",
+      "canonical": "{\"created\":1793000000010,\"deleted\":false,\"device\":\"office\",\"generation\":1,\"id\":\"8d0cd206321aa8c55ae90a35f70499e47e15850ab7aec93999a4fc6666fddb27\",\"page\":\"p-92176179e4d659287eb7e76f55f0538c\",\"parents\":[\"3ea2dfc2e55590a17b728118e49848ccb25e4ecc748dc943e54034bc035871f2\"],\"path\":\"Daily/Renamed.md\",\"text\":\"- today\\n\"}",
+      "idInput": "{\"deleted\":false,\"format\":1,\"generation\":1,\"page\":\"p-92176179e4d659287eb7e76f55f0538c\",\"parents\":[\"3ea2dfc2e55590a17b728118e49848ccb25e4ecc748dc943e54034bc035871f2\"],\"path\":\"Daily/Renamed.md\",\"text\":\"- today\\n\"}"
+    },
+    {
+      "id": "15088af76b5f14016f032824c5dd58be8d6177d00e36cf3f4cb4e882650ba77c",
+      "canonical": "{\"created\":1793000000011,\"deleted\":false,\"device\":\"office\",\"generation\":0,\"id\":\"15088af76b5f14016f032824c5dd58be8d6177d00e36cf3f4cb4e882650ba77c\",\"page\":\"p-6d3cfd6c9fa96768c8f0de3e0e9b1038\",\"parents\":[],\"path\":\"Gone.md\",\"text\":\"- soon gone\\n\"}",
+      "idInput": "{\"deleted\":false,\"format\":1,\"generation\":0,\"page\":\"p-6d3cfd6c9fa96768c8f0de3e0e9b1038\",\"parents\":[],\"path\":\"Gone.md\",\"text\":\"- soon gone\\n\"}"
+    },
+    {
+      "id": "e8d593424b472830af7537e1daef851023fbd67dc66e07f723616f9599021689",
+      "canonical": "{\"created\":1793000000012,\"deleted\":true,\"device\":\"office\",\"generation\":1,\"id\":\"e8d593424b472830af7537e1daef851023fbd67dc66e07f723616f9599021689\",\"page\":\"p-6d3cfd6c9fa96768c8f0de3e0e9b1038\",\"parents\":[\"15088af76b5f14016f032824c5dd58be8d6177d00e36cf3f4cb4e882650ba77c\"],\"path\":\"Gone.md\",\"text\":\"- soon gone\\n\"}",
+      "idInput": "{\"deleted\":true,\"format\":1,\"generation\":1,\"page\":\"p-6d3cfd6c9fa96768c8f0de3e0e9b1038\",\"parents\":[\"15088af76b5f14016f032824c5dd58be8d6177d00e36cf3f4cb4e882650ba77c\"],\"path\":\"Gone.md\",\"text\":\"- soon gone\\n\"}"
+    },
+    {
+      "id": "aa4467cad12d1aed0917b4d14a8139fe94723eac181c0d017597376a7a2a6b00",
+      "canonical": "{\"created\":1793000000013,\"deleted\":false,\"device\":\"office\",\"generation\":0,\"id\":\"aa4467cad12d1aed0917b4d14a8139fe94723eac181c0d017597376a7a2a6b00\",\"page\":\"p-0123456789abcdef0123456789abcdef\",\"parents\":[],\"path\":\"Random id.md\",\"text\":\"- random\\n\"}",
+      "idInput": "{\"deleted\":false,\"format\":1,\"generation\":0,\"page\":\"p-0123456789abcdef0123456789abcdef\",\"parents\":[],\"path\":\"Random id.md\",\"text\":\"- random\\n\"}"
+    },
+    {
+      "id": "a2734826e4318de0095f3b58750b11fcd23451a36bd8aec8b7dfe654fc49648c",
+      "canonical": "{\"created\":1793000000015,\"deleted\":false,\"device\":\"home\",\"future\":{\"empty\":{},\"list\":[1,2.5,-3,1e+21],\"note\":\"kept\"},\"generation\":0,\"id\":\"a2734826e4318de0095f3b58750b11fcd23451a36bd8aec8b7dfe654fc49648c\",\"page\":\"p-2913a4de99c9049a2f5cdf7a02d8c94a\",\"parents\":[],\"path\":\"Future.md\",\"text\":\"- from the future\\n\"}",
+      "idInput": "{\"deleted\":false,\"format\":1,\"generation\":0,\"page\":\"p-2913a4de99c9049a2f5cdf7a02d8c94a\",\"parents\":[],\"path\":\"Future.md\",\"text\":\"- from the future\\n\"}"
+    }
+  ],
+  "heads": {
+    "p-0123456789abcdef0123456789abcdef": [
+      "aa4467cad12d1aed0917b4d14a8139fe94723eac181c0d017597376a7a2a6b00"
+    ],
+    "p-0bbe5bc4573bcf1caa8ba13b58efe7c4": [
+      "59f77462b14d17b0abfa6032d1e0edf7575442e5c1bc0e5ee3b6bf831cc7d1d1"
+    ],
+    "p-2913a4de99c9049a2f5cdf7a02d8c94a": [
+      "a2734826e4318de0095f3b58750b11fcd23451a36bd8aec8b7dfe654fc49648c"
+    ],
+    "p-5e202922a4d67513341e2150db98b823": [
+      "b4ee8682856412ab7446b72daf7b35cc44a797face0d37e7e8fe20293638c765"
+    ],
+    "p-6d3cfd6c9fa96768c8f0de3e0e9b1038": [
+      "e8d593424b472830af7537e1daef851023fbd67dc66e07f723616f9599021689"
+    ],
+    "p-92176179e4d659287eb7e76f55f0538c": [
+      "8d0cd206321aa8c55ae90a35f70499e47e15850ab7aec93999a4fc6666fddb27"
+    ]
+  },
+  "sortedHeads": [
+    "59f77462b14d17b0abfa6032d1e0edf7575442e5c1bc0e5ee3b6bf831cc7d1d1",
+    "e8d593424b472830af7537e1daef851023fbd67dc66e07f723616f9599021689",
+    "e42e47d4bff2d91310acfa8c2d555228416390e9c91f8f2824d2b7583cac39e4",
+    "b4ee8682856412ab7446b72daf7b35cc44a797face0d37e7e8fe20293638c765",
+    "8d0cd206321aa8c55ae90a35f70499e47e15850ab7aec93999a4fc6666fddb27",
+    "782863adf290719b550a42747f119c6cc6113e702f17b0324680d90fe0f67fcb",
+    "aa4467cad12d1aed0917b4d14a8139fe94723eac181c0d017597376a7a2a6b00",
+    "a2734826e4318de0095f3b58750b11fcd23451a36bd8aec8b7dfe654fc49648c",
+    "a1a45d4960bb2228de07dc71815ae21b80ebc45163021ed4ade59d71f630ee15",
+    "6a0dad2c49cb2684d1a29f15e6d5612c25e46447d0345c7db36a5c570505d491",
+    "3ea2dfc2e55590a17b728118e49848ccb25e4ecc748dc943e54034bc035871f2",
+    "15088af76b5f14016f032824c5dd58be8d6177d00e36cf3f4cb4e882650ba77c"
+  ],
+  "pageIds": [
+    {
+      "path": "Plan.md",
+      "id": "p-0bbe5bc4573bcf1caa8ba13b58efe7c4"
+    },
+    {
+      "path": "plan.md",
+      "id": "p-0bbe5bc4573bcf1caa8ba13b58efe7c4"
+    },
+    {
+      "path": "Daily/2026-10-29.md",
+      "id": "p-92176179e4d659287eb7e76f55f0538c"
+    },
+    {
+      "path": "Éte.md",
+      "id": "p-8f14bce36812be4ba9d2127a3ac612d0"
+    },
+    {
+      "path": "Éte.md",
+      "id": "p-8f14bce36812be4ba9d2127a3ac612d0"
+    },
+    {
+      "path": "مرحبا.md",
+      "id": "p-ee79d517e1943deda3ebfbacee378abd"
+    },
+    {
+      "path": "😀.md",
+      "id": "p-6acddbe4ef894ec08c68f6e664816fe9"
+    },
+    {
+      "path": "İstanbul.md",
+      "id": "p-d3bfe3262891bde6b2eed78c3ce3fb06"
+    },
+    {
+      "path": "ΟΔΟΣ.md",
+      "id": "p-6bed8c8ea962ec61009f31bc82713dab"
+    },
+    {
+      "path": "ΣΑΣ Σ.md",
+      "id": "p-07ec3a2e386e47091d4b4be7b6a74341"
+    },
+    {
+      "path": "ǅ Ǆ ß ẞ ﬁ.md",
+      "id": "p-ef1056a9cf64b7dab156b1d67e262cb9"
+    },
+    {
+      "path": "Ω Å K.md",
+      "id": "p-bb55147454418ef5867cca0a1051fb25"
+    }
+  ],
+  "strings": [
+    {
+      "canonical": "\"\"",
+      "sha256": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126"
+    },
+    {
+      "canonical": "\"plain\"",
+      "sha256": "945603a8f587786b463c3f94fce115c0fae88fac2728cc96ddf5981cf7f61741"
+    },
+    {
+      "canonical": "\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\"",
+      "sha256": "f144bcffbdbaea0a670956fb0a3edd44ce6bc4dedc77c30cfc14f40034044739"
+    },
+    {
+      "canonical": "\"ÿ  ﻿�\"",
+      "sha256": "784457e570ce58766e613bd188ea1d87b42fca2ebc569b7bc89fb549eb8f9dd8"
+    },
+    {
+      "canonical": "\"😀𝄞\"",
+      "sha256": "5e9dab01c060c894c5142171aa8598de12854396f1b74beb1dfd40fa82c1ce62"
+    },
+    {
+      "canonical": "\"\\ud800\"",
+      "sha256": "8c0c59dd0d275aadcd462a5fe12eb352cbdfeaf961eae4f85a4660521df7d2f5"
+    },
+    {
+      "canonical": "\"\\udfff\"",
+      "sha256": "aa68369aff102de57c3da5ad0dd5c24149f811b4afcd13c55f2da895bd15c782"
+    },
+    {
+      "canonical": "\"😀 pair\"",
+      "sha256": "b5c835f132f9f83e2c82aaf8bdd0f090158aa0d5eeaf2c5ca207aff796e3e76c"
+    },
+    {
+      "canonical": "\"a\\ud800b\\udc00c\"",
+      "sha256": "c0fef123bb0ab2c9e7d45ab33312e94efb1c082f1e30e1ff4bc050fa2035a4a6"
+    },
+    {
+      "canonical": "\"مرحبا é\"",
+      "sha256": "6e7f8428ba11765bfa7c66daeac207754d59ca615b5ac00dd488b3b1e34f3c98"
+    }
+  ],
+  "keyOrder": "{\"\":7,\"A\":5,\"a\":2,\"aa\":6,\"b\":1,\"😀\":4,\"\":3}",
+  "numbers": "[0,0,1,-1,2.5,1e+21,1e-7,123456789012345,0.30000000000000004]",
+  "frozenId": "8e42eb16a8aabafe56002dd543e7512f51af17f72f8bd5b0870cd4290f554a6b"
+}

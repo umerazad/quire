@@ -62,16 +62,28 @@ struct Rendered {
     image: Arc<RenderImage>,
 }
 
+/// Selected characters, from where the drag started to where it is now, each as a page and a
+/// character index; it can run across pages.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Selection {
-    page: usize,
-    anchor: usize,
-    head: usize,
+    anchor: (usize, usize),
+    head: (usize, usize),
 }
 
 impl Selection {
-    fn range(&self) -> Range<usize> {
-        self.anchor.min(self.head)..self.anchor.max(self.head) + 1
+    /// The selected characters of `page`, out of its `length`.
+    fn range(&self, page: usize, length: usize) -> Option<Range<usize>> {
+        let (start, end) = (self.anchor.min(self.head), self.anchor.max(self.head));
+        if page < start.0 || page > end.0 {
+            return None;
+        }
+        let from = if page == start.0 { start.1 } else { 0 };
+        let to = if page == end.0 { end.1 + 1 } else { length };
+        Some(from..to.min(length).max(from))
+    }
+
+    fn pages(&self) -> std::ops::RangeInclusive<usize> {
+        self.anchor.0.min(self.head.0)..=self.anchor.0.max(self.head.0)
     }
 }
 
@@ -98,6 +110,7 @@ pub(crate) struct PdfView {
     message: Option<SharedString>,
     _open: Option<Task<()>>,
     _find: Subscription,
+    _arrivals: Subscription,
 }
 
 /// What a view shows, for tests.
@@ -152,6 +165,11 @@ impl PdfView {
             message: None,
             _open: None,
             _find: subscription,
+            _arrivals: cx.observe_global::<load::Arrivals>(|view, cx| {
+                if matches!(view.state, State::Failed(_)) && load::waits_for_files(&view.target) {
+                    view.retry(cx);
+                }
+            }),
         };
         cx.on_release(|view, cx| {
             for (_, rendered) in view.rendered.drain() {
@@ -224,6 +242,10 @@ impl PdfView {
             State::Open(document) => Some(document),
             _ => None,
         }
+    }
+
+    pub(crate) fn width(&self) -> Pixels {
+        self.width
     }
 
     pub(crate) fn set_width(&mut self, width: Pixels) {
@@ -348,9 +370,6 @@ impl PdfView {
         let Some(document) = self.document().cloned() else {
             return;
         };
-        if !document.info().has_text {
-            return;
-        }
         let pages = document.info().pages.len();
         self.reading = Some(cx.spawn(async move |view, cx| {
             for page in 0..pages {
@@ -447,21 +466,30 @@ impl PdfView {
         self.texts.get(&page)?.char_at(x, y)
     }
 
-    /// Selects the characters of `page` from `anchor` through `head`, inclusive.
+    /// Selects the characters from `anchor` through `head`, inclusive, each a page and a
+    /// character index.
     pub(crate) fn select(
         &mut self,
-        page: usize,
-        anchor: usize,
-        head: usize,
+        anchor: (usize, usize),
+        head: (usize, usize),
         cx: &mut Context<Self>,
     ) {
-        self.selection = Some(Selection { page, anchor, head });
+        self.selection = Some(Selection { anchor, head });
         cx.notify();
     }
 
+    /// The selected text, with a line break between pages. Pages whose text is not read yet
+    /// are left out.
     pub(crate) fn selected_text(&self) -> Option<String> {
         let selection = self.selection?;
-        Some(self.texts.get(&selection.page)?.text(selection.range()))
+        let parts: Vec<String> = selection
+            .pages()
+            .filter_map(|page| {
+                let text = self.texts.get(&page)?;
+                Some(text.text(selection.range(page, text.chars.len())?))
+            })
+            .collect();
+        (!parts.is_empty()).then(|| parts.join("\n"))
     }
 
     fn copy(&mut self, cx: &mut Context<Self>) {
@@ -532,9 +560,12 @@ impl PdfView {
                         .map(|bounds| highlight(bounds, color)),
                 );
             }
-            if let Some(selection) = self.selection.filter(|selection| selection.page == page) {
+            if let Some(range) = self
+                .selection
+                .and_then(|selection| selection.range(page, text.chars.len()))
+            {
                 marks.extend(
-                    text.boxes(selection.range())
+                    text.boxes(range)
                         .into_iter()
                         .map(|bounds| highlight(bounds, colors.element_selection_background)),
                 );
@@ -565,7 +596,11 @@ impl PdfView {
                             },
                             |_, _, _, _| {},
                         )
+                        // Without an inset an absolute child sits after the in-flow page
+                        // image, a page lower than the page it measures.
                         .absolute()
+                        .top_0()
+                        .left_0()
                         .size_full(),
                     )
                     .on_mouse_down(
@@ -574,7 +609,7 @@ impl PdfView {
                             cx.stop_propagation();
                             window.focus(&view.focus, cx);
                             match view.char_at(page, event.position) {
-                                Some(at) => view.select(page, at, at, cx),
+                                Some(at) => view.select((page, at), (page, at), cx),
                                 None => {
                                     view.selection = None;
                                     cx.notify();
@@ -586,13 +621,12 @@ impl PdfView {
                         if event.pressed_button != Some(MouseButton::Left) {
                             return;
                         }
-                        let Some(selection) =
-                            view.selection.filter(|selection| selection.page == page)
-                        else {
+                        // A drag that started on another page extends onto this one.
+                        let Some(selection) = view.selection else {
                             return;
                         };
                         if let Some(head) = view.char_at(page, event.position) {
-                            view.select(page, selection.anchor, head, cx);
+                            view.select(selection.anchor, (page, head), cx);
                         }
                     })),
             )
@@ -732,7 +766,6 @@ impl Render for PdfView {
                     .logical_scroll_top()
                     .item_ix
                     .min(pages.saturating_sub(1));
-                let has_text = info.has_text;
                 let found = match (self.query.is_empty(), self.matches.len(), self.current) {
                     (true, _, _) => String::new(),
                     (false, 0, _) => "No matches".into(),
@@ -762,33 +795,23 @@ impl Render for PdfView {
                             .label_size(LabelSize::Small)
                             .on_click(cx.listener(|view, _, _, cx| view.step_zoom(true, cx))),
                     )
-                    .when(has_text, |toolbar| {
-                        toolbar
-                            .child(
-                                div()
-                                    .key_context("QuirePdfFind")
-                                    .w(px(160.))
-                                    .px_1()
-                                    .border_1()
-                                    .border_color(colors.border)
-                                    .rounded_sm()
-                                    .on_action(cx.listener(|view, _: &NextMatch, _, cx| {
-                                        view.next_match(true, cx)
-                                    }))
-                                    .on_action(cx.listener(|view, _: &PreviousMatch, _, cx| {
-                                        view.next_match(false, cx)
-                                    }))
-                                    .child(self.find.clone()),
+                    .child(
+                        div()
+                            .key_context("QuirePdfFind")
+                            .w(px(160.))
+                            .px_1()
+                            .border_1()
+                            .border_color(colors.border)
+                            .rounded_sm()
+                            .on_action(
+                                cx.listener(|view, _: &NextMatch, _, cx| view.next_match(true, cx)),
                             )
-                            .child(div().text_color(colors.text_muted).child(found))
-                    })
-                    .when(!has_text, |toolbar| {
-                        toolbar.child(
-                            div()
-                                .text_color(colors.text_muted)
-                                .child("Find and selection need a PDF stored in the notebook"),
-                        )
-                    })
+                            .on_action(cx.listener(|view, _: &PreviousMatch, _, cx| {
+                                view.next_match(false, cx)
+                            }))
+                            .child(self.find.clone()),
+                    )
+                    .child(div().text_color(colors.text_muted).child(found))
                     .child(open_button());
                 let pages_list = list(self.list.clone(), cx.processor(Self::render_page))
                     .w(self.page_width())
@@ -805,6 +828,25 @@ impl Render for PdfView {
                             .h(px(VIEWPORT))
                             .overflow_x_scroll()
                             .bg(colors.editor_background)
+                            // The pages took the scroll; the note around them stays put. At the
+                            // first or last page the scroll carries on to the note.
+                            .on_scroll(cx.listener(
+                                move |view, event: &gpui::ScrollEvent, _, cx| {
+                                    let up = match event.delta {
+                                        gpui::ScrollDelta::Pixels(delta) => delta.y > px(0.),
+                                        gpui::ScrollDelta::Lines(delta) => delta.y > 0.,
+                                    };
+                                    let top = view.list.logical_scroll_top();
+                                    let at_end = if up {
+                                        top.item_ix == 0 && top.offset_in_item <= px(0.)
+                                    } else {
+                                        top.item_ix + 1 >= pages
+                                    };
+                                    if !at_end {
+                                        cx.stop_propagation();
+                                    }
+                                },
+                            ))
                             .child(pages_list),
                     )
                     .into_any_element()

@@ -4,7 +4,7 @@
 
 use super::super::*;
 use super::tags_tests::stored;
-use super::tests::{Notebook, key, open_notebook, read, wait_until};
+use super::tests::{Notebook, caret_text, key, open_notebook, read, wait_until};
 use super::workspace_tests::{reopen, saved};
 use crate::navigation::tasks::{TasksView, next_action};
 use gpui::TestAppContext;
@@ -211,6 +211,49 @@ fn task_lists_count_order_and_change_tasks_in_place(cx: &mut TestAppContext) {
         cx,
     );
     assert_eq!(message(&notebook, cx).0.as_deref(), Some("Reopened task."));
+}
+
+#[gpui::test]
+fn opening_a_task_reveals_its_block(cx: &mut TestAppContext) {
+    let notebook = open_notebook(
+        &[("a", "Alpha.md", "- start\n"), ("w", "Work.md", WORK)],
+        "a",
+        cx,
+    );
+    show_tasks(&notebook, cx);
+    assert_eq!(texts(&notebook, cx), ["Today [[2026-10-30]]"]);
+    keys(&notebook, "enter", cx);
+    wait_until(cx, "the task's page", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.page.read(cx).id() == "w" && view.editor.is_some() && view.nav.jump.is_none()
+        })
+    });
+    assert_eq!(
+        caret_text(&notebook, false, cx),
+        "- [ ] Today [[2026-10-30]]"
+    );
+}
+
+/// rt `TasksPage.tsx` 805: each row has its own state select, which moves that task alone and
+/// leaves the other selected tasks where they are.
+#[gpui::test]
+fn a_rows_state_menu_moves_that_task_alone(cx: &mut TestAppContext) {
+    let notebook = open_notebook(
+        &[("a", "A.md", "- [ ] One #inbox\n- [ ] Two #inbox\n")],
+        "a",
+        cx,
+    );
+    show_tasks(&notebook, cx);
+    wait_rows(&notebook, &["One", "Two"], cx);
+    keys(&notebook, "space", cx);
+    assert_eq!(selected(&notebook, cx), 1);
+    super::tags_tests::click_at(&notebook, "quire-task-state-1".into(), cx);
+    super::tags_tests::click_at(&notebook, "MENU_ITEM-Waiting".into(), cx);
+    wait_stored(&notebook, "a", "- [ ] One #inbox\n- [ ] Two #waiting\n", cx);
+    wait_until(cx, "the notice", |cx| {
+        message(&notebook, cx).0.as_deref() == Some("Moved to Waiting.")
+    });
+    wait_rows(&notebook, &["One"], cx);
 }
 
 #[gpui::test]
@@ -614,5 +657,86 @@ fn task_commands_use_the_notebook_daily_layout_and_page_titles(cx: &mut TestAppC
         text(cx),
         "- [ ] start ➕ [[30.10.2026]]\n",
         "created stamps link the daily page by the configured title"
+    );
+}
+
+#[gpui::test]
+fn the_status_line_says_saving_until_a_task_change_is_written(cx: &mut TestAppContext) {
+    let notebook = open_notebook(
+        &[
+            ("a", "Alpha.md", "- start\n"),
+            ("w", "Work.md", "- [ ] One\n"),
+        ],
+        "a",
+        cx,
+    );
+    show_tasks(&notebook, cx);
+    wait_rows(&notebook, &["One"], cx);
+    let status = |cx: &mut TestAppContext| {
+        let list = list(&notebook, cx);
+        cx.read(|cx| list.read(cx).save_status())
+    };
+    assert_eq!(status(cx), "Saved locally");
+    list(&notebook, cx).update(cx, |list, cx| list.toggle(0, cx));
+    assert_eq!(status(cx), "Saving locally…");
+    wait_stored(&notebook, "w", "- [x] One ✅ 2026-10-30\n", cx);
+    wait_until(cx, "the saved status", |cx| status(cx) == "Saved locally");
+}
+
+fn list_focused(notebook: &Notebook, cx: &mut TestAppContext) -> bool {
+    let list = list(notebook, cx);
+    notebook
+        .window
+        .update(cx, |_, window, cx| list.read(cx).focus.is_focused(window))
+        .unwrap()
+}
+
+#[gpui::test]
+fn a_failed_task_save_writes_nothing_says_why_and_keeps_focus_for_a_retry(cx: &mut TestAppContext) {
+    use sqlez::connection::Connection;
+    let notebook = open_notebook(
+        &[
+            ("a", "Alpha.md", "- start\n"),
+            ("w", "Work.md", "- [ ] One #next\n"),
+        ],
+        "a",
+        cx,
+    );
+    show_tasks(&notebook, cx);
+    keys(&notebook, "]", cx);
+    wait_rows(&notebook, &["One"], cx);
+    assert!(
+        list_focused(&notebook, cx),
+        "Tasks opens with its list focused"
+    );
+
+    let lock = Connection::try_open_file(notebook.path.to_str().unwrap()).unwrap();
+    lock.exec("BEGIN IMMEDIATE").unwrap()().unwrap();
+    keys(&notebook, &key("enter"), cx);
+    wait_until(cx, "the refused save", |cx| {
+        settle_tasks(&notebook, cx);
+        message(&notebook, cx).1.is_some()
+    });
+    let (_, error) = message(&notebook, cx);
+    assert!(
+        error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("Cannot begin a notebook transaction")),
+        "the failure says what failed and what to do: {error:?}"
+    );
+    assert_eq!(texts(&notebook, cx), ["One"], "the task stays listed");
+    assert!(list_focused(&notebook, cx), "focus stays on the list");
+
+    lock.exec("ROLLBACK").unwrap()().unwrap();
+    assert_eq!(
+        stored(&notebook, "w"),
+        "- [ ] One #next\n",
+        "nothing is written"
+    );
+    keys(&notebook, &key("enter"), cx);
+    wait_stored(&notebook, "w", "- [x] One #next ✅ 2026-10-30\n", cx);
+    assert!(
+        list_focused(&notebook, cx),
+        "focus stays on the list after the retry"
     );
 }

@@ -15,7 +15,7 @@ pub(crate) use schema::uri_path;
 mod tasks;
 mod tools;
 
-pub use blocks::{BlockChoice, BlockPreview};
+pub use blocks::{BlockChoice, BlockPreview, HeadingTarget, PagePreview, heading_of};
 pub use catalog::{Deletion, DeletionTarget, ListedPage, RelocationFacts, SETTINGS_PAGE};
 pub use overlay::Overlay;
 pub use query::{Backlink, PageRef, SearchHit, TagCount, TaggedBlock};
@@ -594,6 +594,14 @@ impl Client<QueryIndex> {
     pub fn block_choices(&self, query: String, limit: usize) -> Answer<Vec<BlockChoice>> {
         self.request(128 + query.len(), move |index| {
             index.block_choices(&query, limit)
+        })
+    }
+    pub fn find_heading(&self, target: String) -> Answer<Option<HeadingTarget>> {
+        self.request(128 + target.len(), move |index| index.find_heading(&target))
+    }
+    pub fn page_preview(&self, target: String, limit: usize) -> Answer<Option<PagePreview>> {
+        self.request(128 + target.len(), move |index| {
+            index.page_preview(&target, limit)
         })
     }
     pub fn block_preview(&self, target: String) -> Answer<Option<BlockPreview>> {

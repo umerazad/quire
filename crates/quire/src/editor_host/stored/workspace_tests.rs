@@ -323,7 +323,7 @@ fn pages_browser_filters_by_namespace_and_text(cx: &mut TestAppContext) {
         notebook
             .window
             .update(cx, |view, _, cx| {
-                view.nav.browsers.namespace = namespace.map(str::to_owned);
+                view.nav.workspace.pages.namespace = namespace.map(str::to_owned);
                 cx.notify();
             })
             .unwrap();
@@ -340,4 +340,129 @@ fn pages_browser_filters_by_namespace_and_text(cx: &mut TestAppContext) {
         active(&notebook, cx) == "b"
     });
     assert_eq!(read(&notebook, cx, |view, _| view.nav.view), None);
+}
+
+#[gpui::test]
+fn reading_positions_filters_and_drafts_survive_reopening(cx: &mut TestAppContext) {
+    use quire_core::workspace::position_key;
+    let long: String = (0..200)
+        .map(|line| format!("- line {line} #work\n"))
+        .collect();
+    let pages = [
+        ("a", "Alpha.md", "- apple pie\n"),
+        ("long", "Long.md", long.as_str()),
+    ];
+    let notebook = open_notebook(&pages, "long", cx);
+    wait_until(cx, "the long page", |cx| {
+        read(&notebook, cx, |view, _| view.editor.is_some())
+    });
+    let source = |notebook: &Notebook, cx: &mut TestAppContext| {
+        read(notebook, cx, |view, cx| {
+            view.editor.as_ref().unwrap().read(cx).source.clone()
+        })
+    };
+    let top = |notebook: &Notebook, cx: &mut TestAppContext| {
+        let editor = source(notebook, cx);
+        editor.update(cx, |editor, cx| editor.scroll_position(cx).y)
+    };
+    let editor = source(&notebook, cx);
+    notebook
+        .window
+        .update(cx, |_, window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.set_scroll_position(gpui::point(0., 120.), window, cx);
+            })
+        })
+        .unwrap();
+    wait_until(cx, "the remembered reading position", |cx| {
+        read(&notebook, cx, |view, _| {
+            view.nav
+                .workspace
+                .positions
+                .get(&position_key(false, "long"))
+                == Some(&120)
+        })
+    });
+
+    dispatch(&notebook, crate::navigation::ShowPages, cx);
+    draw(&notebook, cx);
+    cx.simulate_input(notebook.window.into(), "lo");
+    visit(
+        &notebook,
+        Destination::Tag {
+            tag: "#work".into(),
+        },
+        cx,
+    );
+    let tag_page = read(&notebook, cx, |view, _| view.shown_tag_page().unwrap());
+    wait_until(cx, "the tagged blocks", |cx| {
+        cx.read(|cx| tag_page.read(cx).blocks.value.len() == 200)
+    });
+    draw(&notebook, cx);
+    cx.simulate_input(notebook.window.into(), "line 1");
+    tag_page.update(cx, |page, _| {
+        page.scroll
+            .scroll_to_item_strict(40, gpui::ScrollStrategy::Top)
+    });
+    draw(&notebook, cx);
+    dispatch(&notebook, crate::navigation::ShowTasks, cx);
+    let tasks = read(&notebook, cx, |view, _| {
+        view.nav.tasks.list.clone().unwrap()
+    });
+    notebook
+        .window
+        .update(cx, |_, window, cx| {
+            tasks.update(cx, |tasks, cx| tasks.focus_capture(window, cx))
+        })
+        .unwrap();
+    cx.simulate_input(notebook.window.into(), "Email Ana");
+    visit(&notebook, Destination::page("a"), cx);
+    saved(&notebook, cx);
+    wait_until(cx, "the remembered views", |cx| {
+        read(&notebook, cx, |view, _| {
+            let workspace = &view.nav.workspace;
+            workspace.pages.query == "lo"
+                && workspace.tasks.draft == "Email Ana"
+                && workspace
+                    .tag_pages
+                    .get("work")
+                    .map(|page| page.query.as_str())
+                    == Some("line 1")
+        })
+    });
+    drop((editor, tag_page, tasks));
+    saved(&notebook, cx);
+
+    let notebook = reopen(notebook, "long", cx);
+    wait_until(cx, "the long page again", |cx| {
+        read(&notebook, cx, |view, _| view.editor.is_some())
+    });
+    draw(&notebook, cx);
+    assert_eq!(top(&notebook, cx), 120., "the page opens where it was read");
+    dispatch(&notebook, crate::navigation::ShowPages, cx);
+    draw(&notebook, cx);
+    let rows = read(&notebook, cx, |view, cx| {
+        view.browser_rows(cx)
+            .into_iter()
+            .map(|row| row.title)
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(rows, ["Long"], "the Pages filter is kept");
+    visit(
+        &notebook,
+        Destination::Tag {
+            tag: "#work".into(),
+        },
+        cx,
+    );
+    let tag_page = read(&notebook, cx, |view, _| view.shown_tag_page().unwrap());
+    assert_eq!(cx.read(|cx| tag_page.read(cx).choices(cx).query), "line 1");
+    dispatch(&notebook, crate::navigation::ShowTasks, cx);
+    let tasks = read(&notebook, cx, |view, _| {
+        view.nav.tasks.list.clone().unwrap()
+    });
+    assert_eq!(
+        cx.read(|cx| tasks.read(cx).capture.read(cx).text(cx)),
+        "Email Ana"
+    );
 }

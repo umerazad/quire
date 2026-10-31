@@ -1434,9 +1434,18 @@ impl<'a> HighlightedChunk<'a> {
         let is_tab = self.is_tab;
         let renderer = self.replacement;
         let is_inlay = self.is_inlay;
+        let mut element =
+            text.is_empty() && matches!(renderer, Some(ChunkReplacement::Renderer(_)));
         iter::from_fn(move || {
             if text.is_empty() {
-                return None;
+                return std::mem::take(&mut element).then(|| HighlightedChunk {
+                    text,
+                    style,
+                    diagnostic_underline_severity,
+                    is_tab,
+                    is_inlay,
+                    replacement: renderer.clone(),
+                });
             }
             for (offset, ch) in text.char_indices() {
                 if !is_invisible(ch) {

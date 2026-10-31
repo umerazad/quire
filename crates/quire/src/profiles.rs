@@ -16,8 +16,14 @@ gpui::actions!(
         UseWorkProfile,
         /// Saves open pages and opens the Personal profile's notebook.
         UsePersonalProfile,
-        /// Chooses a folder of Markdown notes as the active profile's notebook and opens it.
+        /// Chooses a folder of Markdown notes, or a Quire notebook's synced folder, as the active
+        /// profile's notebook and opens it.
         OpenNotebookFolder,
+        /// Chooses a Quire notebook database as the active profile's notebook and opens it.
+        OpenNotebookDatabase,
+        /// Makes an empty folder, such as one in OneDrive or Dropbox, a new Quire notebook and
+        /// opens it as the active profile's notebook.
+        NewQuireNotebook,
     ]
 );
 

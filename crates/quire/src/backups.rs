@@ -159,6 +159,12 @@ impl Backups {
         }
     }
 
+    /// Keeps restored folder notebooks' state in `state_for` rather than application data.
+    #[cfg(test)]
+    pub fn keep_restored_state(&mut self, state_for: Arc<dyn Fn(&Path) -> PathBuf + Send + Sync>) {
+        self.state_for = state_for;
+    }
+
     #[cfg(test)]
     pub fn destination(&self) -> Option<&Path> {
         self.destination.as_deref()

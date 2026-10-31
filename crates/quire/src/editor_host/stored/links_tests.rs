@@ -1,5 +1,5 @@
 use super::super::*;
-use super::tests::{Notebook, active, draw, key, open_notebook, read, wait_until};
+use super::tests::{Notebook, active, caret_text, draw, key, open_notebook, read, wait_until};
 use crate::references::{Follow, Target};
 use gpui::TestAppContext;
 use quire_core::workspace::Destination;
@@ -10,7 +10,7 @@ pub(in crate::editor_host::stored) const PAGES: [(&str, &str, &str); 3] = [
         "Home.md",
         "- see [[Target]] and ((blk))\n- [[Missing Page]]\n",
     ),
-    ("t", "Target.md", "- target ^blk\n"),
+    ("t", "Target.md", "- intro\n- target ^blk\n"),
     ("o", "Other.md", "- other\n"),
 ];
 
@@ -59,8 +59,14 @@ fn vim_keys_follow_page_and_block_links_beside_and_to_backlinks(cx: &mut TestApp
     cx.simulate_keystrokes(notebook.window.into(), "f ( ctrl-w d");
     wait_until(cx, "the block's page beside", |cx| {
         side(&notebook, cx).as_deref() == Some("t")
+            && read(&notebook, cx, |view, _| view.nav.jump.is_none())
     });
     assert_eq!(active(&notebook, cx), "h");
+    assert_eq!(
+        caret_text(&notebook, true, cx),
+        "target ^blk",
+        "a followed block link reveals its block"
+    );
 
     focus_home(&notebook, cx);
     cx.simulate_keystrokes(notebook.window.into(), "0 f T g shift-a");
@@ -169,4 +175,33 @@ fn a_newer_follow_replaces_an_unfinished_one(cx: &mut TestAppContext) {
     let error = read(&notebook, cx, |view, _| view.nav.error.clone()).unwrap();
     assert!(error.contains("((nowhere))"), "{error}");
     assert_eq!(active(&notebook, cx), "o");
+}
+
+#[gpui::test]
+fn a_heading_link_opens_its_page_and_says_when_the_heading_is_missing(cx: &mut TestAppContext) {
+    let pages = [
+        ("h", "Home.md", "- [[Target#goal]] or [[Target#Nope]]\n"),
+        ("t", "Target.md", "# Intro\n\n## Goal\n\n- target\n"),
+    ];
+    let notebook = open_notebook(&pages, "h", cx);
+    focus_home(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "f T g d");
+    wait_until(cx, "Target to open", |cx| active(&notebook, cx) == "t");
+    assert_eq!(read(&notebook, cx, |view, _| view.nav.error.clone()), None);
+    wait_until(cx, "the caret to reach the Goal heading", |cx| {
+        caret_text(&notebook, false, cx).ends_with("Goal")
+    });
+
+    cx.simulate_keystrokes(notebook.window.into(), &key("["));
+    focus_home(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "f N g d");
+    wait_until(cx, "Target to open again", |cx| {
+        active(&notebook, cx) == "t"
+    });
+    assert_eq!(
+        read(&notebook, cx, |view, _| view.nav.error.clone()).as_deref(),
+        Some(
+            "Target has no heading “Nope”, so it opened at the top. Check the heading in the link."
+        )
+    );
 }

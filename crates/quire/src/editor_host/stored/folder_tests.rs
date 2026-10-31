@@ -755,6 +755,120 @@ fn reference_drafts_are_offered_for_review_and_settle_only_on_their_base(cx: &mu
     );
 }
 
+#[gpui::test]
+fn a_change_the_watcher_missed_is_reread_periodically_and_on_activating_the_window(
+    cx: &mut TestAppContext,
+) {
+    let opened = open_folder(&[("Note.md", "- one\n")], "Note.md", cx);
+    let notebook = &opened.notebook;
+    wait_until(cx, "Note's editor", |cx| {
+        read(notebook, cx, |view, _| view.editor.is_some())
+    });
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.rescan_folder_backstop(window, cx)
+        })
+        .unwrap();
+    fs::write(opened.file("Note.md"), "- two\n").unwrap();
+    cx.executor().advance_clock(Duration::from_secs(29));
+    cx.run_until_parked();
+    assert_eq!(text(notebook, cx), "- one\n", "nothing told Quire yet");
+    cx.executor().advance_clock(Duration::from_secs(1));
+    wait_until(cx, "the periodic reread", |cx| {
+        text(notebook, cx) == "- two\n"
+    });
+
+    fs::write(opened.file("Note.md"), "- three\n").unwrap();
+    let mut window = gpui::VisualTestContext::from_window(notebook.window.into(), cx);
+    window.deactivate_window();
+    assert_eq!(text(notebook, cx), "- two\n");
+    notebook
+        .window
+        .update(cx, |_, window, _| window.activate_window())
+        .unwrap();
+    // Without advancing the clock, so the periodic reread cannot be what finds the change.
+    crate::test_wait::until(
+        cx,
+        Duration::from_millis(2),
+        crate::test_wait::park,
+        |cx| text(notebook, cx) == "- three\n",
+        |_| "the reread on activating the window".into(),
+    );
+}
+
+#[gpui::test]
+fn reference_history_is_taken_in_after_the_first_page_loads(cx: &mut TestAppContext) {
+    use quire_store::folder_notebook::revision;
+    const VERSIONS: i64 = 600;
+    let opened = open_prepared(
+        &[("Note.md", "- now\n")],
+        "Note.md",
+        |folder, _| {
+            let device = folder.join(".quire/devices/6f1c2b3a-0d4e-4f5a-8b9c-0123456789ab");
+            fs::create_dir_all(&device).unwrap();
+            let database =
+                quire_store::database::open_writable(&device.join("durability.sqlite")).unwrap();
+            for sql in [
+                "CREATE TABLE contents (hash TEXT PRIMARY KEY, codec TEXT NOT NULL, data BLOB NOT NULL)",
+                "CREATE TABLE history (id INTEGER PRIMARY KEY, path TEXT NOT NULL, content TEXT NOT NULL, revision TEXT NOT NULL, saved_at INTEGER NOT NULL)",
+                "BEGIN",
+            ] {
+                database.exec(sql).unwrap()().unwrap();
+            }
+            for day in 0..VERSIONS {
+                let text = format!("- version {day}\n");
+                let hash = quire_store::sync::format::sha256(&text);
+                database
+                    .exec_bound("INSERT INTO contents VALUES (?,'raw',?)")
+                    .unwrap()((hash.as_str(), text.as_bytes()))
+                .unwrap();
+                database
+                    .exec_bound("INSERT INTO history(path,content,revision,saved_at) VALUES ('Note.md',?,?,?)")
+                    .unwrap()((hash.as_str(), revision(&text).as_str(), day * 86_400_000))
+                .unwrap();
+            }
+            database.exec("COMMIT").unwrap()().unwrap();
+        },
+        cx,
+    );
+    let notebook = &opened.notebook;
+    wait_until(cx, "Note's editor", |cx| {
+        read(notebook, cx, |view, _| view.editor.is_some())
+    });
+    let folder = read(notebook, cx, |view, _| {
+        view.session.borrow().storage().folder().cloned().unwrap()
+    });
+    let kept = || {
+        futures::executor::block_on(folder.revisions("Note.md".into()).unwrap())
+            .unwrap()
+            .len()
+    };
+    assert_eq!(kept(), 0, "opening leaves the history for later");
+    notebook
+        .window
+        .update(cx, |view, _, cx| view.import_reference_history(cx))
+        .unwrap();
+    wait_until(cx, "every saved version", |_| kept() == VERSIONS as usize);
+    wait_until(cx, "the progress line to clear", |cx| {
+        read(notebook, cx, |view, _| {
+            view.folder.history_progress.is_none()
+        })
+    });
+    assert_eq!(
+        read(notebook, cx, |view, _| view
+            .folder
+            .history_progress_shown
+            .clone()),
+        [
+            "Taking in the reference app's saved history: 0 of 600 versions…",
+            "Taking in the reference app's saved history: 250 of 600 versions…",
+            "Taking in the reference app's saved history: 500 of 600 versions…",
+        ],
+        "a progress line for each step of 250 until all is in"
+    );
+}
+
 /// `.quire/notebook.json` as the reference `writeNotebookSettings` writes it.
 const RT_SETTINGS: &str = "{\n  \"version\": 1,\n  \"daily\": {\n    \"folder\": \"Journal\",\n    \"title\": \"{DD}.{MM}.{YYYY}\"\n  }\n}\n";
 
@@ -847,18 +961,23 @@ fn newer_reference_settings_stay_read_only_and_unchanged(cx: &mut TestAppContext
     );
 }
 
-const PROJECT: [(&str, &str); 5] = [
+const PROJECT: [(&str, &str); 7] = [
     ("Projects/A.md", "- a [[B]] [b](B.md) ![i](img.png)\n"),
     ("Projects/B.md", "- b [[Projects/A]]\n"),
     ("Projects/img.png", "png"),
+    ("Projects/Scans/receipt.pdf", "pdf"),
     ("Top.md", "- [[Projects/A]] [p](Projects/B.md) [[A]]\n"),
+    (
+        "Gallery.md",
+        "- ![i](Projects/img.png) ![[Projects/Scans/receipt.pdf]]\n",
+    ),
     ("Projects2/Z.md", "- z [[Projects/B]]\n"),
 ];
 
+/// rt renames a moved folder (`VaultFiles.rename`), so its attachments move with its notes and
+/// links to them from elsewhere follow.
 #[gpui::test]
-fn moving_a_folder_moves_each_note_journaled_and_keeps_tabs_and_other_files(
-    cx: &mut TestAppContext,
-) {
+fn moving_a_folder_moves_it_whole_with_its_attachments_and_keeps_tabs(cx: &mut TestAppContext) {
     use super::move_tests::{preview, select_file, update};
     let opened = open_folder(&PROJECT, "Projects/A.md", cx);
     let notebook = &opened.notebook;
@@ -878,10 +997,15 @@ fn moving_a_folder_moves_each_note_journaled_and_keeps_tabs_and_other_files(
         preview(notebook, cx),
         (
             "Projects → Work".into(),
-            "2 pages move. 2 other pages need link updates. The original files and saved history are retained for recovery.".into(),
-            vec!["Projects2/Z.md".into(), "Top.md".into()],
+            "2 pages and 2 other files move. 3 other pages need link updates. Saved history keeps the text of every note the move rewrites.".into(),
+            vec!["Gallery.md".into(), "Projects2/Z.md".into(), "Top.md".into()],
             vec![
-                update("Projects/A.md", "img.png", "../Projects/img.png"),
+                update(
+                    "Gallery.md",
+                    "![[Projects/Scans/receipt.pdf]]",
+                    "![[Work/Scans/receipt.pdf]]"
+                ),
+                update("Gallery.md", "Projects/img.png", "Work/img.png"),
                 update("Projects/B.md", "[[Projects/A]]", "[[Work/A]]"),
                 update("Projects2/Z.md", "[[Projects/B]]", "[[Work/B]]"),
                 update("Top.md", "[[Projects/A]]", "[[Work/A]]"),
@@ -894,14 +1018,16 @@ fn moving_a_folder_moves_each_note_journaled_and_keeps_tabs_and_other_files(
         read(notebook, cx, |view, _| view.nav.dialog.is_none())
     });
     for (path, text) in [
-        (
-            "Work/A.md",
-            "y- a [[B]] [b](B.md) ![i](../Projects/img.png)\n",
-        ),
+        ("Work/A.md", "y- a [[B]] [b](B.md) ![i](img.png)\n"),
         ("Work/B.md", "- b [[Work/A]]\n"),
+        ("Work/img.png", "png"),
+        ("Work/Scans/receipt.pdf", "pdf"),
         ("Top.md", "- [[Work/A]] [p](Work/B.md) [[A]]\n"),
+        (
+            "Gallery.md",
+            "- ![i](Work/img.png) ![[Work/Scans/receipt.pdf]]\n",
+        ),
         ("Projects2/Z.md", "- z [[Work/B]]\n"),
-        ("Projects/img.png", "png"),
     ] {
         assert_eq!(
             fs::read_to_string(opened.file(path)).unwrap(),
@@ -909,10 +1035,9 @@ fn moving_a_folder_moves_each_note_journaled_and_keeps_tabs_and_other_files(
             "{path}"
         );
     }
-    assert!(!opened.file("Projects/A.md").exists());
-    assert!(!opened.file("Projects/B.md").exists());
+    assert!(!opened.file("Projects").exists(), "nothing stays behind");
     let state = notebook.path.parent().unwrap().to_owned();
-    assert_eq!(fs::read_dir(state.join("retired")).unwrap().count(), 2);
+    assert!(!state.join("retired").exists());
     assert_eq!(fs::read_dir(state.join("transactions")).unwrap().count(), 0);
     wait_until(cx, "the moved page to open", |cx| {
         active(notebook, cx) == new
@@ -1076,6 +1201,7 @@ fn renaming_a_folder_page_from_the_files_menu_writes_what_f2_writes(cx: &mut Tes
                 "Add to favorites",
                 "-",
                 "New note here",
+                "New folder here",
                 "-",
                 "Rename",
                 "Move to…",
@@ -1159,4 +1285,132 @@ fn the_hourly_backup_of_a_folder_notebook_waits_for_a_change_such_as_an_external
     let (count, message) = after(hour, cx);
     assert_eq!(count, 2, "{message}");
     assert_eq!(after(hour, cx), (2, UNCHANGED.to_owned()));
+}
+
+#[cfg(target_os = "macos")]
+#[gpui::test]
+fn notebook_windows_draw_the_hidden_inset_title_bar_at_the_top(cx: &mut TestAppContext) {
+    let opened = open_folder(&[("A.md", "- alpha\n")], "A.md", cx);
+    draw(&opened.notebook, cx);
+    let bounds = gpui::VisualTestContext::from_window(opened.notebook.window.into(), cx)
+        .debug_bounds("quire-title-bar")
+        .expect("the title bar is drawn");
+    assert_eq!(bounds.origin.y, gpui::px(0.));
+    assert_eq!(bounds.size.height, crate::title_bar::HEIGHT);
+}
+
+#[gpui::test]
+fn files_shows_a_folder_notebooks_empty_folders_and_attachments(cx: &mut TestAppContext) {
+    let opened = open_prepared(
+        &[("Keep.md", "- keep\n"), ("attachments/pic.png", "png")],
+        "Keep.md",
+        |root, _| fs::create_dir_all(root.join("Empty/Inner")).unwrap(),
+        cx,
+    );
+    let notebook = &opened.notebook;
+    let rows = |cx: &mut TestAppContext| {
+        read(notebook, cx, |view, _| {
+            view.file_rows()
+                .iter()
+                .map(|row| row.path.clone())
+                .collect::<Vec<_>>()
+        })
+    };
+    wait_until(cx, "the folder's other items", |cx| {
+        rows(cx).contains(&"Empty".to_owned())
+    });
+    assert_eq!(rows(cx), ["attachments", "Empty", "Keep.md"]);
+    notebook
+        .window
+        .update(cx, |view, _, cx| {
+            view.nav.workspace.toggle_expanded("attachments");
+            view.nav.workspace.toggle_expanded("Empty");
+            cx.notify();
+        })
+        .unwrap();
+    assert_eq!(
+        rows(cx),
+        [
+            "attachments",
+            "attachments/pic.png",
+            "Empty",
+            "Empty/Inner",
+            "Keep.md"
+        ]
+    );
+    draw(notebook, cx);
+
+    fs::write(opened.file("Empty/notes.pdf"), "pdf").unwrap();
+    notebook
+        .window
+        .update(cx, |view, _, cx| view.refresh_catalogue(cx))
+        .unwrap();
+    wait_until(cx, "the new attachment", |cx| {
+        rows(cx).contains(&"Empty/notes.pdf".to_owned())
+    });
+}
+
+#[gpui::test]
+fn renaming_a_folder_without_notes_moves_it_with_its_files(cx: &mut TestAppContext) {
+    let opened = open_folder(
+        &[
+            ("Keep.md", "- keep\n"),
+            ("Scans/2024/receipt.pdf", "pdf"),
+            ("Taken/photo.png", "png"),
+        ],
+        "Keep.md",
+        cx,
+    );
+    let notebook = &opened.notebook;
+    wait_until(cx, "the scans folder", |cx| {
+        read(notebook, cx, |view, _| {
+            view.file_rows().iter().any(|row| row.path == "Scans")
+        })
+    });
+    super::move_tests::select_file(notebook, "Scans", cx);
+    cx.simulate_keystrokes(notebook.window.into(), "f2");
+    rename_to(notebook, "Taken", cx);
+    wait_until(cx, "the refusal", |cx| {
+        dialog_error(notebook, cx).is_some_and(|error| error.contains("already exists"))
+    });
+    assert!(
+        !read(notebook, cx, |view, cx| view
+            .nav
+            .dialog
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .is_busy()),
+        "a refused move leaves the dialog ready for another name"
+    );
+    assert!(opened.file("Scans/2024/receipt.pdf").exists());
+    rename_to(notebook, "Archive", cx);
+    wait_until(cx, "the folder move", |cx| {
+        read(notebook, cx, |view, _| view.nav.dialog.is_none())
+    });
+    assert!(!opened.file("Scans").exists());
+    assert_eq!(
+        fs::read_to_string(opened.file("Archive/2024/receipt.pdf")).unwrap(),
+        "pdf"
+    );
+    wait_until(cx, "Files to show the moved folder", |cx| {
+        read(notebook, cx, |view, _| {
+            let rows = view.file_rows();
+            rows.iter().any(|row| row.path == "Archive")
+                && !rows.iter().any(|row| row.path == "Scans")
+        })
+    });
+
+    super::move_tests::select_file(notebook, "Archive", cx);
+    cx.simulate_keystrokes(notebook.window.into(), "delete");
+    let (heading, _, _) = summary(notebook, cx);
+    assert!(heading.contains("Archive"), "{heading}");
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the folder to go to the Trash", |_| {
+        !opened.file("Archive").exists()
+    });
+    assert_eq!(
+        fs::read_to_string(opened.trashed(0).join("2024/receipt.pdf")).unwrap(),
+        "pdf"
+    );
 }

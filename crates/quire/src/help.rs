@@ -43,6 +43,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", menu::Cancel, Some(view::CONTEXT)),
         KeyBinding::new("escape", menu::Cancel, Some(view::FIELD_CONTEXT)),
     ]);
+    crate::tab_order::bind_keys(&[view::CONTEXT], cx);
 }
 
 /// Every binding in the keymap, with its keys as this platform shows them, the action's own
@@ -97,12 +98,17 @@ pub fn scope(predicate: &str) -> String {
     let named = [
         ("QuirePreferences", "Settings"),
         ("QuireHelp", "Help"),
+        ("QuireTaskQueryDate", "Live task list due date"),
+        ("QuireTaskQueryList", "Live task lists"),
         ("QuireTaskList", "Task list"),
         ("QuireTaskField", "Task fields"),
         ("QuireTaskFilter", "Task filter"),
         ("QuireTags", "Tags"),
         ("QuireFiles", "Files"),
         ("QuireReferences", "Linked references"),
+        ("QuireContextRows", "Tag pages and linked references"),
+        ("QuireSidebar", "Sidebar"),
+        ("QuireTemplatesGuide", "Templates guide"),
         ("QuireTagEdit", "Tag edits"),
         ("QuireList", "Lists"),
         ("QuireDialog", "Dialogs"),

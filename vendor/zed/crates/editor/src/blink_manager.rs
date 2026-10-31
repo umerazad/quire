@@ -63,7 +63,7 @@ impl BlinkManager {
     }
 
     fn blink_cursors(&mut self, epoch: usize, cx: &mut Context<Self>) {
-        if (self.blink_enabled_in_settings)(cx) {
+        if (self.blink_enabled_in_settings)(cx) && !cx.reduce_motion() {
             if epoch == self.blink_epoch && self.enabled && !self.blinking_paused {
                 self.visible = !self.visible;
                 cx.notify();

@@ -1006,6 +1006,7 @@ impl FoldSnapshot {
             .transforms
             .cursor::<Dimensions<FoldOffset, InlayOffset>>(());
         transform_cursor.seek(&range.start, Bias::Right);
+        include_empty_placeholders(&mut transform_cursor, range.start);
 
         let inlay_start = {
             let overshoot = range.start - transform_cursor.start().0;
@@ -1572,10 +1573,26 @@ pub struct FoldChunks<'a> {
     max_output_offset: FoldOffset,
 }
 
+/// Steps back over folds whose placeholder text is empty and that sit exactly at `start`, so chunks
+/// starting there still yield their rendered placeholder.
+fn include_empty_placeholders(
+    cursor: &mut Cursor<'_, '_, Transform, Dimensions<FoldOffset, InlayOffset>>,
+    start: FoldOffset,
+) {
+    while cursor.start().0 == start
+        && cursor.prev_item().is_some_and(|transform| {
+            transform.is_fold() && transform.summary.output.len == Default::default()
+        })
+    {
+        cursor.prev();
+    }
+}
+
 impl FoldChunks<'_> {
     #[ztracing::instrument(skip_all)]
     pub(crate) fn seek(&mut self, range: Range<FoldOffset>) {
         self.transform_cursor.seek(&range.start, Bias::Right);
+        include_empty_placeholders(&mut self.transform_cursor, range.start);
 
         let inlay_start = {
             let overshoot = range.start - self.transform_cursor.start().0;

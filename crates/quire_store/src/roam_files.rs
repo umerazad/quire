@@ -6,11 +6,14 @@
 
 use crate::folder_notebook::{METADATA, barrier, flush, flush_directory};
 use anyhow::{Context as _, Result, bail};
-use quire_core::exchange::{js_json, roam::Document};
+use quire_core::exchange::{
+    js_json,
+    roam::{Document, METADATA_END, METADATA_START, metadata_entry},
+};
 use serde_json::Value;
 use std::{
     fs::{self, File},
-    io::{self, Write as _},
+    io::{self, BufWriter, Write as _},
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -69,18 +72,151 @@ pub fn read_source(path: &Path) -> Result<RoamSource> {
     Ok(RoamSource { text, format })
 }
 
-/// The graph an import publishes.
-pub struct ImportedGraph<'a> {
-    pub documents: &'a [Document],
-    /// The metadata as `JSON.stringify` writes it.
-    pub metadata: &'a str,
-    pub source: &'a RoamSource,
-    pub report: Vec<String>,
+/// A Roam import being written as the folder notebook `<parent>/<name>`, a page at a time: into a
+/// hidden staging folder go every page and its entry in `.quire/roam.json`, then at
+/// [`ImportStaging::publish`] the metadata's end, `.quire/source.<json|edn>` holding the export's
+/// exact bytes, and `.quire/import-report.txt`, and one rename turns the folder into the notebook.
+/// Dropping it unpublished, after a failure or a cancel, removes the staging folder, so nothing is
+/// left behind.
+pub struct ImportStaging {
+    parent: PathBuf,
+    root: PathBuf,
+    staging: PathBuf,
+    metadata: BufWriter<File>,
+    pages: usize,
+    published: bool,
+}
+
+impl ImportStaging {
+    pub fn create(parent: &Path, name: &str) -> Result<Self> {
+        let parent = fs::canonicalize(parent).with_context(|| {
+            format!(
+                "Cannot open {}. Choose an existing parent folder and retry.",
+                parent.display()
+            )
+        })?;
+        if !name.starts_with("Roam import ") || Path::new(name).components().count() != 1 {
+            bail!("The import folder is invalid. Choose a parent folder and retry.");
+        }
+        let staging = parent.join(format!(".{name}.partial"));
+        fs::create_dir(&staging).with_context(|| {
+            format!(
+                "Cannot create the imported notebook in {}. Check free space and write access, then import again.",
+                parent.display()
+            )
+        })?;
+        let metadata = (|| {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                fs::set_permissions(&staging, fs::Permissions::from_mode(0o700))?;
+            }
+            fs::create_dir(staging.join(METADATA))?;
+            let mut metadata =
+                BufWriter::new(new_file(&staging.join(METADATA).join(METADATA_FILE))?);
+            metadata.write_all(METADATA_START.as_bytes())?;
+            Ok::<_, io::Error>(metadata)
+        })();
+        let metadata = match metadata {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                fs::remove_dir_all(&staging).ok();
+                return Err(error).context("Cannot write the imported notebook's metadata. Check free space and write access, then import again; nothing was imported.");
+            }
+        };
+        Ok(Self {
+            root: parent.join(name),
+            parent,
+            staging,
+            metadata,
+            pages: 0,
+            published: false,
+        })
+    }
+
+    /// Writes one converted page and appends `page`, its Roam metadata, to `.quire/roam.json`.
+    pub fn add(&mut self, document: &Document, page: &Value, cancel: &AtomicBool) -> Result<()> {
+        if cancel.load(Ordering::Relaxed) {
+            bail!(IMPORT_CANCELED);
+        }
+        create(&self.staging.join(&document.path), document.text.as_bytes()).with_context(|| {
+            format!(
+                "Cannot write {} in the imported notebook. Check free space and write access, then import again; nothing was imported.",
+                document.path
+            )
+        })?;
+        if self.pages > 0 {
+            self.metadata.write_all(b",")?;
+        }
+        self.metadata
+            .write_all(metadata_entry(&document.path, page).as_bytes())
+            .context("Cannot write the imported notebook's metadata. Check free space and write access, then import again; nothing was imported.")?;
+        self.pages += 1;
+        Ok(())
+    }
+
+    /// The pages written so far.
+    pub fn pages(&self) -> usize {
+        self.pages
+    }
+
+    /// Finishes the metadata, archives `source`, writes the report, and publishes the notebook.
+    /// Returns the notebook folder and the report, which gains the archive line.
+    pub fn publish(
+        mut self,
+        source: &RoamSource,
+        mut report: Vec<String>,
+        cancel: &AtomicBool,
+    ) -> Result<(PathBuf, Vec<String>)> {
+        let metadata = self.staging.join(METADATA);
+        self.metadata.write_all(METADATA_END.as_bytes())?;
+        self.metadata.flush()?;
+        flush(self.metadata.get_ref())?;
+        let archive = format!("source.{}", source.format.extension());
+        create(&metadata.join(&archive), source.text.as_bytes())?;
+        report.push(format!(
+            "Exact original export archived in .quire/{archive}."
+        ));
+        create(
+            &metadata.join("import-report.txt"),
+            format!("{}\n", report.join("\n")).as_bytes(),
+        )?;
+        flush_directory(&metadata)?;
+        flush_directory(&self.staging)?;
+        barrier([self.staging.as_path()])?;
+        if cancel.load(Ordering::Relaxed) {
+            bail!(IMPORT_CANCELED);
+        }
+        fs::rename(&self.staging, &self.root).with_context(|| {
+            format!(
+                "Cannot publish the imported notebook as {}. Check write access to {}, then import again; nothing was imported.",
+                self.root.display(),
+                self.parent.display()
+            )
+        })?;
+        self.published = true;
+        flush_directory(&self.parent)?;
+        barrier([self.parent.as_path()])?;
+        Ok((self.root.clone(), report))
+    }
+}
+
+impl Drop for ImportStaging {
+    fn drop(&mut self) {
+        if !self.published {
+            fs::remove_dir_all(&self.staging).ok();
+        }
+    }
+}
+
+fn new_file(path: &Path) -> io::Result<File> {
+    let file = File::options().write(true).create_new(true).open(path)?;
+    set_private(&file)?;
+    Ok(file)
 }
 
 fn create(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut file = File::options().write(true).create_new(true).open(path)?;
-    set_private(&file)?;
+    let mut file = new_file(path)?;
     file.write_all(bytes)?;
     flush(&file)
 }
@@ -95,93 +231,6 @@ fn set_private(file: &File) -> io::Result<()> {
 fn set_private(_file: &File) -> io::Result<()> {
     Ok(())
 }
-
-/// Publishes an imported graph as the folder notebook `<parent>/<name>`: every page, then
-/// `.quire/roam.json`, `.quire/source.<json|edn>` holding the export's exact bytes, and
-/// `.quire/import-report.txt`, written into a hidden staging folder that one rename turns into the
-/// notebook. A failure or `cancel` removes the staging folder, so nothing is left behind. Returns
-/// the notebook folder and the report, which gains the archive line.
-pub fn publish_import(
-    parent: &Path,
-    name: &str,
-    graph: ImportedGraph<'_>,
-    cancel: &AtomicBool,
-    mut progress: impl FnMut(usize),
-) -> Result<(PathBuf, Vec<String>)> {
-    let parent = fs::canonicalize(parent).with_context(|| {
-        format!(
-            "Cannot open {}. Choose an existing parent folder and retry.",
-            parent.display()
-        )
-    })?;
-    if !name.starts_with("Roam import ") || Path::new(name).components().count() != 1 {
-        bail!("The import folder is invalid. Choose a parent folder and retry.");
-    }
-    let root = parent.join(name);
-    let staging = parent.join(format!(".{name}.partial"));
-    fs::create_dir(&staging).with_context(|| {
-        format!(
-            "Cannot create the imported notebook in {}. Check free space and write access, then import again.",
-            parent.display()
-        )
-    })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        fs::set_permissions(&staging, fs::Permissions::from_mode(0o700))?;
-    }
-    let written = (|| {
-        let mut report = graph.report;
-        for (count, document) in graph.documents.iter().enumerate() {
-            if cancel.load(Ordering::Relaxed) {
-                bail!(IMPORT_CANCELED);
-            }
-            create(&staging.join(&document.path), document.text.as_bytes()).with_context(|| {
-                format!(
-                    "Cannot write {} in the imported notebook. Check free space and write access, then import again; nothing was imported.",
-                    document.path
-                )
-            })?;
-            progress(count + 1);
-        }
-        let metadata = staging.join(METADATA);
-        fs::create_dir(&metadata)?;
-        create(&metadata.join(METADATA_FILE), graph.metadata.as_bytes())?;
-        let archive = format!("source.{}", graph.source.format.extension());
-        create(&metadata.join(&archive), graph.source.text.as_bytes())?;
-        report.push(format!(
-            "Exact original export archived in .quire/{archive}."
-        ));
-        create(
-            &metadata.join("import-report.txt"),
-            format!("{}\n", report.join("\n")).as_bytes(),
-        )?;
-        flush_directory(&metadata)?;
-        flush_directory(&staging)?;
-        barrier([staging.as_path()])?;
-        if cancel.load(Ordering::Relaxed) {
-            bail!(IMPORT_CANCELED);
-        }
-        fs::rename(&staging, &root).with_context(|| {
-            format!(
-                "Cannot publish the imported notebook as {}. Check write access to {}, then import again; nothing was imported.",
-                root.display(),
-                parent.display()
-            )
-        })?;
-        flush_directory(&parent)?;
-        barrier([parent.as_path()])?;
-        Ok(report)
-    })();
-    match written {
-        Ok(report) => Ok((root, report)),
-        Err(error) => {
-            fs::remove_dir_all(&staging).ok();
-            Err(error)
-        }
-    }
-}
-
 /// The Roam metadata of the folder notebook at `root`, or None when it has none.
 pub fn read_metadata(root: &Path) -> Result<Option<Value>> {
     const UNREADABLE: &str = "The Roam metadata file could not be read. Restore .quire/roam.json from a backup before exporting.";
@@ -269,13 +318,27 @@ pub fn write_export(
 mod tests {
     use super::*;
 
-    fn graph<'a>(documents: &'a [Document], source: &'a RoamSource) -> ImportedGraph<'a> {
-        ImportedGraph {
-            documents,
-            metadata: r#"{"version":1,"pages":{}}"#,
-            source,
-            report: vec!["Imported 2 pages and 0 blocks. Original export unchanged.".into()],
+    /// Writes `documents` through an [`ImportStaging`] as an import does, calling `after` with the
+    /// count after each page, and publishes.
+    fn publish(
+        parent: &Path,
+        name: &str,
+        documents: &[Document],
+        source: &RoamSource,
+        cancel: &AtomicBool,
+        mut after: impl FnMut(usize),
+    ) -> Result<(PathBuf, Vec<String>)> {
+        let mut staging = ImportStaging::create(parent, name)?;
+        for document in documents {
+            let title = document.path.trim_end_matches(".md");
+            staging.add(document, &serde_json::json!({ "title": title }), cancel)?;
+            after(staging.pages());
         }
+        staging.publish(
+            source,
+            vec!["Imported 2 pages and 0 blocks. Original export unchanged.".into()],
+            cancel,
+        )
     }
 
     fn documents() -> Vec<Document> {
@@ -297,10 +360,11 @@ mod tests {
         };
         let documents = documents();
         let mut counted = Vec::new();
-        let (root, report) = publish_import(
+        let (root, report) = publish(
             parent.path(),
             "Roam import x",
-            graph(&documents, &source),
+            &documents,
+            &source,
             &AtomicBool::new(false),
             |count| counted.push(count),
         )?;
@@ -313,7 +377,7 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(root.join(".quire/roam.json"))?,
-            r#"{"version":1,"pages":{}}"#
+            r#"{"version":1,"pages":{"One.md":{"title":"One"},"Two.md":{"title":"Two"}}}"#
         );
         assert_eq!(
             report.last().map(String::as_str),
@@ -328,6 +392,19 @@ mod tests {
             1,
             "no staging folder is left"
         );
+
+        let (empty, _) = publish(
+            parent.path(),
+            "Roam import empty",
+            &[],
+            &source,
+            &AtomicBool::new(false),
+            |_| {},
+        )?;
+        assert_eq!(
+            fs::read_to_string(empty.join(".quire/roam.json"))?,
+            r#"{"version":1,"pages":{}}"#
+        );
         Ok(())
     }
 
@@ -340,10 +417,11 @@ mod tests {
         };
         let mut documents = documents();
         documents[1].path = "One.md".into();
-        let error = publish_import(
+        let error = publish(
             parent.path(),
             "Roam import x",
-            graph(&documents, &source),
+            &documents,
+            &source,
             &AtomicBool::new(false),
             |_| {},
         )
@@ -355,10 +433,11 @@ mod tests {
         assert_eq!(fs::read_dir(parent.path())?.count(), 0);
 
         let cancel = AtomicBool::new(false);
-        let error = publish_import(
+        let error = publish(
             parent.path(),
             "Roam import y",
-            graph(&documents[..1], &source),
+            &documents[..1],
+            &source,
             &cancel,
             |_| cancel.store(true, Ordering::Relaxed),
         )
@@ -366,10 +445,24 @@ mod tests {
         assert_eq!(error.to_string(), IMPORT_CANCELED);
         assert_eq!(fs::read_dir(parent.path())?.count(), 0);
 
-        let error = publish_import(
+        let mut staging = ImportStaging::create(parent.path(), "Roam import dropped")?;
+        staging.add(
+            &documents[0],
+            &serde_json::json!({}),
+            &AtomicBool::new(false),
+        )?;
+        drop(staging);
+        assert_eq!(
+            fs::read_dir(parent.path())?.count(),
+            0,
+            "a conversion error part way drops the staging folder"
+        );
+
+        let error = publish(
             parent.path(),
             "../Roam import z",
-            graph(&documents[..1], &source),
+            &documents[..1],
+            &source,
             &AtomicBool::new(false),
             |_| {},
         )
@@ -380,7 +473,6 @@ mod tests {
         );
         Ok(())
     }
-
     #[test]
     fn sources_are_read_within_the_limit_as_utf8() -> Result<()> {
         let folder = tempfile::tempdir()?;

@@ -12,6 +12,7 @@
 mod census;
 mod deletion;
 mod files;
+mod folder_move;
 mod history;
 mod journal;
 mod markdown_import;
@@ -114,6 +115,8 @@ pub struct FolderNotebook {
     notices: RefCell<Vec<String>>,
     /// Pages that gained a recovery draft from the reference app's records on opening.
     recovered: RefCell<Vec<RecoveredDraft>>,
+    /// The reference app's history still to take in, by `import_reference_history`.
+    backlog: RefCell<Vec<reference::Backlog>>,
     /// Quire's state folder for this notebook.
     state: PathBuf,
     clock: Box<dyn Fn() -> i64>,
@@ -126,6 +129,9 @@ pub struct FolderNotebook {
     /// Stops a change across notes once every new text is staged, before history is recorded.
     #[cfg(test)]
     interrupt_staged: std::cell::Cell<bool>,
+    /// Stops a folder move once its journal is written, before the folder moves.
+    #[cfg(test)]
+    interrupt_folder: std::cell::Cell<bool>,
 }
 
 fn system_clock() -> i64 {
@@ -142,6 +148,20 @@ impl FolderNotebook {
     }
 
     pub fn open_with_clock(root: &Path, state: &Path, clock: Box<dyn Fn() -> i64>) -> Result<Self> {
+        let notebook = Self::open_deferring_history(root, state, clock)?;
+        let failed = notebook.finish_reference_history();
+        notebook.notices.borrow_mut().extend(failed);
+        Ok(notebook)
+    }
+
+    /// Opens like `open_with_clock` but leaves the reference app's history queued for
+    /// `import_reference_history`, so the first page loads without waiting on years of saved
+    /// versions.
+    pub fn open_deferring_history(
+        root: &Path,
+        state: &Path,
+        clock: Box<dyn Fn() -> i64>,
+    ) -> Result<Self> {
         ensure!(
             root.is_absolute() && state.is_absolute(),
             "Cannot open notebook folder {}. Choose an absolute folder path.",
@@ -216,6 +236,7 @@ impl FolderNotebook {
             warnings: RefCell::default(),
             notices: RefCell::default(),
             recovered: RefCell::default(),
+            backlog: RefCell::default(),
             state: state.to_owned(),
             clock,
             trash: None,
@@ -223,9 +244,14 @@ impl FolderNotebook {
             interrupt_at: std::cell::Cell::default(),
             #[cfg(test)]
             interrupt_staged: std::cell::Cell::default(),
+            #[cfg(test)]
+            interrupt_folder: std::cell::Cell::default(),
         };
+        let legacy = settings::adopt_legacy_metadata(&real_root);
         notebook.listing();
-        let mut notices = notebook.resume();
+        let mut notices: Vec<String> = legacy.into_iter().collect();
+        notices.extend(notebook.adopt_reference_journals());
+        notices.extend(notebook.resume());
         let (recovered, imported) = notebook.import_reference();
         notices.extend(imported);
         *notebook.notices.borrow_mut() = notices;
@@ -690,7 +716,7 @@ impl Worker<FolderNotebook> {
         limits: QueueLimits,
     ) -> Result<Self> {
         Self::spawn_with("quire-folder", limits, move || {
-            let mut notebook = FolderNotebook::open(&root, &state)?;
+            let mut notebook = FolderNotebook::open_deferring_history(&root, &state, Box::new(system_clock))?;
             notebook.trash = trash;
             Ok(notebook)
         })
@@ -751,6 +777,22 @@ impl Client<FolderNotebook> {
             notebook.delete_if_heads(&edits, folder.as_deref())
         })
     }
+    pub fn move_noteless_folder(&self, from: String, to: String) -> Answer<()> {
+        self.request(128 + from.len() + to.len(), move |notebook| {
+            notebook.move_noteless_folder(&from, &to)
+        })
+    }
+    pub fn move_folder_if_heads(
+        &self,
+        edits: Vec<Edit>,
+        from: String,
+        to: String,
+    ) -> Answer<CheckedSaves> {
+        let bytes = edits.iter().map(edit_bytes).sum::<usize>() + from.len() + to.len();
+        self.request(bytes, move |notebook| {
+            notebook.move_folder_if_heads(&edits, &from, &to)
+        })
+    }
     pub fn other_files(&self, folder: String) -> Answer<Vec<String>> {
         self.request(128 + folder.len(), move |notebook| {
             Ok(notebook.other_files(&folder))
@@ -809,8 +851,29 @@ impl Client<FolderNotebook> {
             notebook.version_text(&page, &id)
         })
     }
+    /// Takes in another step of the reference app's history queued on opening. Returns how many
+    /// saved versions remain, none once it is all in.
+    pub fn import_reference_history(&self) -> Answer<usize> {
+        self.request(64, |notebook| {
+            notebook
+                .import_reference_history(reference::HISTORY_STEP)
+                .map(|more| {
+                    if more {
+                        notebook.reference_history_left()
+                    } else {
+                        0
+                    }
+                })
+        })
+    }
+    /// How many of the reference app's saved versions are queued to take in.
+    pub fn reference_history_left(&self) -> Answer<usize> {
+        self.request(64, |notebook| Ok(notebook.reference_history_left()))
+    }
 }
 
+#[cfg(test)]
+mod folder_move_tests;
 #[cfg(test)]
 mod rt_tests;
 #[cfg(test)]

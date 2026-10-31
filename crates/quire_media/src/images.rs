@@ -4,7 +4,7 @@
 
 use crate::{Bitmap, MediaError, source::too_large};
 use image::{ImageReader, imageops::FilterType};
-use std::io::Cursor;
+use std::{io::Cursor, time::Duration};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Limits {
@@ -16,6 +16,9 @@ pub struct Limits {
     pub max_side: u32,
     /// The decoded bitmap is downscaled to fit this box, in device pixels.
     pub display: (u32, u32),
+    /// Decoded bytes an animation may hold across its frames after downscaling; a longer one
+    /// shows its first frame only.
+    pub animation_bytes: u64,
 }
 
 impl Default for Limits {
@@ -25,18 +28,47 @@ impl Default for Limits {
             max_pixels: 64 * 1024 * 1024,
             max_side: 16384,
             display: (1600, 1600),
+            // About 130 frames of a 480 by 270 GIF.
+            animation_bytes: 64 * 1024 * 1024,
         }
     }
 }
 
-/// A decoded image: its bitmap, downscaled to the display box, and its original size.
+/// A decoded image: its frames, each downscaled to the display box, and its original size. A
+/// still picture has one frame; an animated GIF has every frame with how long it shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Decoded {
-    pub bitmap: Bitmap,
+    pub frames: Vec<Frame>,
     pub natural: (u32, u32),
 }
 
-/// Decodes PNG, JPEG, GIF (first frame), WebP, BMP, TIFF, ICO, or SVG bytes within `limits`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Frame {
+    pub bitmap: Bitmap,
+    pub delay: Duration,
+}
+
+impl Decoded {
+    fn still(bitmap: Bitmap, natural: (u32, u32)) -> Self {
+        Self {
+            frames: vec![Frame {
+                bitmap,
+                delay: Duration::ZERO,
+            }],
+            natural,
+        }
+    }
+
+    pub fn first(&self) -> &Bitmap {
+        &self.frames[0].bitmap
+    }
+}
+
+/// Browsers show GIF frames with a delay under 20 ms for 100 ms; so does Quire.
+const SHORTEST_DELAY: Duration = Duration::from_millis(20);
+const DEFAULT_DELAY: Duration = Duration::from_millis(100);
+
+/// Decodes PNG, JPEG, GIF (every frame), WebP, BMP, TIFF, ICO, or SVG bytes within `limits`.
 pub fn decode(bytes: &[u8], limits: &Limits) -> Result<Decoded, MediaError> {
     if bytes.len() > limits.max_bytes {
         return Err(too_large(limits.max_bytes));
@@ -74,24 +106,62 @@ pub fn decode(bytes: &[u8], limits: &Limits) -> Result<Decoded, MediaError> {
     let mut reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|_| unreadable())?;
+    if reader.format() == Some(image::ImageFormat::Gif)
+        && let Some(animation) = decode_animation(bytes, decoder_limits.clone(), limits)?
+    {
+        return Ok(animation);
+    }
     reader.limits(decoder_limits.clone());
     let image = reader.decode().map_err(map_error)?;
     let (width, height) = (image.width(), image.height());
+    Ok(Decoded::still(
+        displayed(image.into_rgba8(), limits),
+        (width, height),
+    ))
+}
+
+/// The picture downscaled to the display box, in GPUI's layout.
+fn displayed(rgba: image::RgbaImage, limits: &Limits) -> Bitmap {
+    let (width, height) = rgba.dimensions();
     let (fit_width, fit_height) = fit((width, height), limits.display);
     let rgba = if (fit_width, fit_height) == (width, height) {
-        image.into_rgba8()
+        rgba
     } else {
-        image::imageops::resize(
-            &image.into_rgba8(),
-            fit_width,
-            fit_height,
-            FilterType::Triangle,
-        )
+        image::imageops::resize(&rgba, fit_width, fit_height, FilterType::Triangle)
     };
-    Ok(Decoded {
-        bitmap: Bitmap::from_rgba(rgba.width(), rgba.height(), rgba.into_raw()),
-        natural: (width, height),
-    })
+    Bitmap::from_rgba(rgba.width(), rgba.height(), rgba.into_raw())
+}
+
+/// Every frame of an animated GIF, composited as the format describes, or None for a single
+/// frame or an animation over `limits.animation_bytes`, which show as a still picture.
+fn decode_animation(
+    bytes: &[u8],
+    decoder_limits: image::Limits,
+    limits: &Limits,
+) -> Result<Option<Decoded>, MediaError> {
+    use image::{AnimationDecoder as _, ImageDecoder as _};
+    let mut decoder = image::codecs::gif::GifDecoder::new(Cursor::new(bytes)).map_err(map_error)?;
+    decoder.set_limits(decoder_limits).map_err(map_error)?;
+    let natural = decoder.dimensions();
+    let (fit_width, fit_height) = fit(natural, limits.display);
+    let per_frame = u64::from(fit_width) * u64::from(fit_height) * 4;
+    let mut frames = Vec::new();
+    for frame in decoder.into_frames() {
+        if (frames.len() as u64 + 1) * per_frame > limits.animation_bytes {
+            return Ok(None);
+        }
+        let frame = frame.map_err(map_error)?;
+        let delay = Duration::from(frame.delay());
+        frames.push(Frame {
+            delay: if delay < SHORTEST_DELAY {
+                DEFAULT_DELAY
+            } else {
+                delay
+            },
+            bitmap: displayed(frame.into_buffer(), limits),
+        });
+    }
+    Ok((frames.len() > 1).then_some(Decoded { frames, natural }))
 }
 
 /// The largest size with the same aspect ratio within `bounds`, never enlarging.
@@ -115,6 +185,15 @@ fn looks_like_svg(bytes: &[u8]) -> bool {
     text.starts_with("<svg") || (text.starts_with("<?xml") && text.contains("<svg"))
 }
 
+/// The computer's fonts, read once, so SVG text renders in the font it names or a fallback
+/// rather than disappearing.
+static SYSTEM_FONTS: std::sync::LazyLock<std::sync::Arc<usvg::fontdb::Database>> =
+    std::sync::LazyLock::new(|| {
+        let mut fonts = usvg::fontdb::Database::new();
+        fonts.load_system_fonts();
+        std::sync::Arc::new(fonts)
+    });
+
 /// Renders an SVG without loading anything it links to: only embedded `data:` images resolve.
 fn decode_svg(bytes: &[u8], limits: &Limits) -> Result<Decoded, MediaError> {
     let options = usvg::Options {
@@ -122,6 +201,7 @@ fn decode_svg(bytes: &[u8], limits: &Limits) -> Result<Decoded, MediaError> {
             resolve_data: usvg::ImageHrefResolver::default_data_resolver(),
             resolve_string: Box::new(|_, _| None),
         },
+        fontdb: SYSTEM_FONTS.clone(),
         ..Default::default()
     };
     let tree = usvg::Tree::from_data(bytes, &options).map_err(|_| unreadable())?;
@@ -142,10 +222,10 @@ fn decode_svg(bytes: &[u8], limits: &Limits) -> Result<Decoded, MediaError> {
     resvg::render(&tree, transform, &mut pixmap.as_mut());
     let mut rgba = pixmap.take();
     unpremultiply(&mut rgba);
-    Ok(Decoded {
-        bitmap: Bitmap::from_rgba(width, height, rgba),
+    Ok(Decoded::still(
+        Bitmap::from_rgba(width, height, rgba),
         natural,
-    })
+    ))
 }
 
 fn unpremultiply(rgba: &mut [u8]) {
@@ -196,16 +276,16 @@ mod tests {
     fn decodes_to_bgra_and_downscales_to_the_display_box() {
         let small = decode(&png(3, 2), &Limits::default()).unwrap();
         assert_eq!(small.natural, (3, 2));
-        assert_eq!((small.bitmap.width, small.bitmap.height), (3, 2));
-        assert_eq!(&small.bitmap.bgra[..4], &[255, 0, 255, 255]);
+        assert_eq!((small.first().width, small.first().height), (3, 2));
+        assert_eq!(&small.first().bgra[..4], &[255, 0, 255, 255]);
         let limits = Limits {
             display: (100, 100),
             ..Limits::default()
         };
         let large = decode(&png(400, 200), &limits).unwrap();
         assert_eq!(large.natural, (400, 200));
-        assert_eq!((large.bitmap.width, large.bitmap.height), (100, 50));
-        assert_eq!(large.bitmap.byte_len(), 100 * 50 * 4);
+        assert_eq!((large.first().width, large.first().height), (100, 50));
+        assert_eq!(large.first().byte_len(), 100 * 50 * 4);
     }
 
     #[test]
@@ -247,12 +327,85 @@ mod tests {
         ));
     }
 
+    /// A 4 by 2 GIF whose frames are solid red, green, then blue, shown for these delays.
+    fn gif(delays_ms: &[u32]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = image::codecs::gif::GifEncoder::new(&mut bytes);
+            encoder
+                .set_repeat(image::codecs::gif::Repeat::Infinite)
+                .unwrap();
+            let colors = [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]];
+            for (color, delay) in colors.iter().cycle().zip(delays_ms) {
+                let buffer = image::RgbaImage::from_pixel(4, 2, image::Rgba(*color));
+                encoder
+                    .encode_frame(image::Frame::from_parts(
+                        buffer,
+                        0,
+                        0,
+                        image::Delay::from_numer_denom_ms(*delay, 1),
+                    ))
+                    .unwrap();
+            }
+        }
+        bytes
+    }
+
+    #[test]
+    fn animated_gifs_keep_every_frame_and_its_delay() {
+        let decoded = decode(&gif(&[50, 0, 200]), &Limits::default()).unwrap();
+        assert_eq!(decoded.natural, (4, 2));
+        let shown: Vec<(&[u8], u128)> = decoded
+            .frames
+            .iter()
+            .map(|frame| (&frame.bitmap.bgra[..4], frame.delay.as_millis()))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                (&[0, 0, 255, 255][..], 50),
+                (&[0, 255, 0, 255][..], 100),
+                (&[255, 0, 0, 255][..], 200),
+            ],
+            "BGRA frames in order; a zero delay shows for 100 ms as in browsers"
+        );
+
+        let still = decode(&gif(&[50]), &Limits::default()).unwrap();
+        assert_eq!(still.frames.len(), 1);
+        let tight = Limits {
+            animation_bytes: 2 * 4 * 2 * 4,
+            ..Limits::default()
+        };
+        let capped = decode(&gif(&[50, 50, 50]), &tight).unwrap();
+        assert_eq!(
+            capped.frames.len(),
+            1,
+            "an animation over the budget shows its first frame"
+        );
+        assert_eq!(&capped.first().bgra[..4], &[0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn svg_text_renders_in_a_system_font() {
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40"><text x="2" y="32" font-family="sans-serif" font-size="32" fill="#000">Hi</text></svg>"##;
+        let decoded = decode(svg, &Limits::default()).unwrap();
+        let inked = decoded
+            .first()
+            .bgra
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| pixel[3] > 0)
+            .count();
+        assert!(inked > 50, "the text drew {inked} pixels");
+    }
+
     #[test]
     fn renders_svg_without_following_external_links() {
         let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="40" height="20"><rect width="40" height="20" fill="#0000ff"/><image href="/etc/passwd" width="10" height="10"/></svg>"##;
         let decoded = decode(svg, &Limits::default()).unwrap();
         assert_eq!(decoded.natural, (40, 20));
-        assert_eq!(&decoded.bitmap.bgra[..4], &[255, 0, 0, 255]);
+        assert_eq!(&decoded.first().bgra[..4], &[255, 0, 0, 255]);
         let huge = br#"<svg xmlns="http://www.w3.org/2000/svg" width="900000" height="10"/>"#;
         assert!(matches!(
             decode(huge, &Limits::default()),

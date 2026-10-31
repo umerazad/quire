@@ -22,6 +22,8 @@ pub(in crate::editor_host::stored) struct DailyState {
     pub(in crate::editor_host::stored) editing: Option<[Entity<Editor>; 2]>,
     pub(in crate::editor_host::stored) now: Rc<dyn Fn() -> i64>,
     task: Option<Task<()>>,
+    /// Opens today's page once settings and the index are ready, as every launch does.
+    pub(in crate::editor_host::stored) open_on_launch: bool,
 }
 
 impl DailyState {
@@ -34,6 +36,7 @@ impl DailyState {
             editing: None,
             now: Rc::new(now_millis),
             task: None,
+            open_on_launch: false,
         }
     }
 }
@@ -96,11 +99,15 @@ impl StoredWindow {
 
     /// Reads the notebook's daily layout from its settings page, then starts the index with it,
     /// so date titles and links follow the configured pattern from the first query.
-    pub(in crate::editor_host::stored) fn load_settings(&mut self, cx: &mut gpui::Context<Self>) {
+    pub(in crate::editor_host::stored) fn load_settings(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
         let storage = self.session.borrow().storage();
-        self.nav.daily.task = Some(cx.spawn(async move |this, cx| {
+        self.nav.daily.task = Some(cx.spawn_in(window, async move |this, cx| {
             let stored = read_stored_settings(&storage).await;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 match stored {
                     Ok((text, heads)) => {
                         let settings = read_settings(text.as_deref());
@@ -116,6 +123,9 @@ impl StoredWindow {
                 }
                 this.nav.daily.task = None;
                 this.start_index(cx);
+                if std::mem::take(&mut this.nav.daily.open_on_launch) {
+                    this.open_today(window, cx);
+                }
             })
             .ok();
         }));
@@ -240,7 +250,10 @@ impl StoredWindow {
         let layout = self.nav.daily.layout.clone();
         let lookup = client.with_generation({
             let date = date.clone();
-            move |index| index.daily_page(&date)
+            move |index| {
+                index.refresh()?;
+                index.daily_page(&date)
+            }
         });
         self.nav.daily.task = Some(cx.spawn_in(window, async move |this, cx| {
             let found = match lookup {

@@ -3,7 +3,7 @@
 //! filter line with one-click suggestion chips.
 
 use super::{
-    context_rows::{ContextItem, ContextRow, context_rows},
+    context_rows::{Activate, ContextItem, ContextRow, Expansion, context_rows, with_loaded},
     list_keys,
     live::Live,
 };
@@ -29,6 +29,7 @@ const FACETS: usize = 8;
 pub enum ReferencesEvent {
     Open {
         page: String,
+        jump: Option<super::Jump>,
         beside: bool,
     },
     Order {
@@ -36,6 +37,11 @@ pub enum ReferencesEvent {
     },
     /// Ask the AI to synthesize every linked reference.
     Synthesize,
+    /// A link in a row's text was clicked.
+    Link {
+        link: crate::rich_text::RowLink,
+        beside: bool,
+    },
 }
 
 /// One query's answer: every reference counted, the ones the filter keeps, and chips.
@@ -56,6 +62,8 @@ pub struct ReferencesView {
     client: Option<IndexClient>,
     collapsed: bool,
     highlighted: usize,
+    pub(crate) expansion: Expansion,
+    rich: crate::rich_text::RichCache,
     focus: FocusHandle,
     scroll: UniformListScrollHandle,
     _subscriptions: Vec<Subscription>,
@@ -103,6 +111,8 @@ impl ReferencesView {
             client: None,
             collapsed: false,
             highlighted: 0,
+            expansion: Expansion::default(),
+            rich: Default::default(),
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
             _subscriptions: subscriptions,
@@ -140,8 +150,24 @@ impl ReferencesView {
         let filter = self.parsed(cx).unwrap_or_default();
         let page = JsString::from(self.page.as_str());
         let oldest = self.oldest_first;
+        let loaded: Vec<_> = self
+            .expansion
+            .loaded()
+            .map(|((revision, from), shown)| (revision.clone(), *from, shown))
+            .collect();
         let answer = client.with_generation(move |index| {
-            let all = index.linked_references(&page, oldest)?;
+            let mut all = index.linked_references(&page, oldest)?;
+            let longer = index.outlines_with(&loaded)?;
+            with_loaded(
+                &mut all,
+                |reference| (reference.source.revision.clone(), reference.from),
+                |reference| &mut reference.outline,
+                loaded
+                    .into_iter()
+                    .map(|(revision, from, _)| (revision, from))
+                    .zip(longer)
+                    .collect(),
+            );
             let dated = all
                 .iter()
                 .any(|reference| index.date(&reference.source.title).is_some());
@@ -195,7 +221,10 @@ impl ReferencesView {
                     title: &reference.source.title,
                     text: &reference.snippet,
                     outline: &reference.outline,
+                    jump: super::Jump::at(reference.block_id.clone(), reference.from),
+                    at: (reference.source.revision.clone(), reference.from),
                 }),
+            &self.expansion,
         )
     }
 
@@ -230,13 +259,28 @@ impl ReferencesView {
         cx.notify();
     }
 
+    /// Opens the row's page, or loads more nested blocks for a "more" row.
     fn open(&mut self, index: usize, beside: bool, cx: &mut Context<Self>) {
-        if let Some(row) = self.rows().get(index) {
-            self.highlighted = index;
-            cx.emit(ReferencesEvent::Open {
-                page: row.page().to_owned(),
-                beside,
-            });
+        let Some(row) = self.rows().get(index).cloned() else {
+            return;
+        };
+        self.highlighted = index;
+        match row.activate() {
+            Activate::Open { page, jump } => cx.emit(ReferencesEvent::Open { page, jump, beside }),
+            Activate::More(at) => {
+                self.expansion.more(at);
+                self.query(cx);
+            }
+        }
+    }
+
+    /// Collapses or expands the page group of the highlighted row.
+    pub fn set_group_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {
+        let rows = self.rows();
+        if let Some((heading, page)) = super::context_rows::heading_of(&rows, self.highlighted) {
+            self.expansion.set_collapsed(&page, collapsed);
+            self.highlighted = heading;
+            cx.notify();
         }
     }
 
@@ -277,21 +321,35 @@ impl ReferencesView {
     }
 
     fn render_rows(&self, rows: Vec<ContextRow>, cx: &mut Context<Self>) -> impl IntoElement {
+        let on_link =
+            crate::rich_text::emitter(cx, |link, beside| ReferencesEvent::Link { link, beside });
         uniform_list(
             "reference-rows",
             rows.len(),
             cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
                 range
                     .filter_map(|index| {
-                        let item = rows.get(index)?.item(
+                        let row = rows.get(index)?;
+                        let item = row.item(
                             index,
                             index == this.highlighted,
                             ("reference", "references"),
+                            &this.rich,
+                            &on_link,
+                            cx,
                         );
+                        let page = row.page().to_owned();
                         Some(
                             item.on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
                                 this.open(index, event.modifiers().shift, cx)
-                            })),
+                            }))
+                            .on_toggle(cx.listener(
+                                move |this, _, _, cx| {
+                                    let collapsed = this.expansion.is_collapsed(&page);
+                                    this.expansion.set_collapsed(&page, !collapsed);
+                                    cx.notify();
+                                },
+                            )),
                         )
                     })
                     .collect()
@@ -372,18 +430,32 @@ impl Render for ReferencesView {
                     })),
                 )
             });
-        let root = v_flex()
-            .id("linked-references")
-            .key_context("QuireList QuireReferences")
-            .track_focus(&self.focus)
-            .border_t_1()
-            .border_color(cx.theme().colors().border)
-            .p_1()
-            .gap_1()
-            .on_action(
-                cx.listener(|this, _: &menu::Cancel, window, cx| this.set_filter("", window, cx)),
-            )
-            .when(!self.collapsed && shown > 0, |root| root.h(px(300.)));
+        let root =
+            v_flex()
+                .id("linked-references")
+                .key_context("QuireList QuireReferences QuireContextRows")
+                .track_focus(&self.focus)
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .p_1()
+                .gap_1()
+                .on_action(cx.listener(|this, _: &menu::Cancel, window, cx| {
+                    if this.text(cx).is_empty() {
+                        window.focus(&this.focus, cx)
+                    } else {
+                        this.set_filter("", window, cx)
+                    }
+                }))
+                .on_action(cx.listener(|this, _: &super::FocusRowFilter, window, cx| {
+                    window.focus(&this.filter.focus_handle(cx), cx)
+                }))
+                .on_action(cx.listener(|this, _: &menu::SelectParent, _, cx| {
+                    this.set_group_collapsed(true, cx)
+                }))
+                .on_action(cx.listener(|this, _: &menu::SelectChild, _, cx| {
+                    this.set_group_collapsed(false, cx)
+                }))
+                .when(!self.collapsed && shown > 0, |root| root.h(px(300.)));
         list_keys(
             root,
             cx,

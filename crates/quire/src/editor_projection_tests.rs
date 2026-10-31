@@ -527,7 +527,7 @@ fn focused_link_editing_and_copying_use_the_original_source(cx: &mut TestAppCont
 fn wrapped_link_overlay_preserves_selection_in_fragment_gaps(cx: &mut TestAppContext) {
     cx.update(|cx| init(cx).unwrap());
     let text = format!(
-        "- pre [{}xxxxxx](https://example.com/gap) ^id\n",
+        "- [i {}xxxxxx](https://example.com/gap) ^id\n",
         "word ".repeat(11)
     );
     let window = cx.add_window(|window, cx| {

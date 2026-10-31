@@ -7,7 +7,7 @@ use super::{QueryIndex, REBUILD};
 use anyhow::{Context as _, Result};
 use quire_core::task_query;
 use quire_core::tasks::{TaskFilter, TaskState, add_days, memberships};
-use quire_core::workspace::TaskView;
+use quire_core::workspace::{TaskStatus, TaskView};
 use std::{cell::RefCell, cmp::Ordering, collections::HashMap};
 
 /// How far ahead Upcoming looks, in days.
@@ -36,6 +36,16 @@ impl TaskItem {
 
     pub fn is_due(&self, today: &str) -> bool {
         self.is_open() && self.due.as_deref().is_some_and(|due| due <= today)
+    }
+
+    /// The reference `statusMatches` for tag and linked task filters.
+    pub fn has_status(&self, status: TaskStatus, today: &str) -> bool {
+        match status {
+            TaskStatus::All => true,
+            TaskStatus::Open => self.is_open(),
+            TaskStatus::Due => self.is_due(today),
+            TaskStatus::Done => self.state == TaskState::Done,
+        }
     }
 
     pub fn is_upcoming(&self, today: &str) -> bool {
@@ -200,6 +210,45 @@ impl QueryIndex {
                 .then(a.from.cmp(&b.from))
         });
         Ok(tasks)
+    }
+
+    /// The tasks among `tag`'s tagged blocks, by the revision and offset its tagged block reports,
+    /// for the tag page's task status filter.
+    pub fn tagged_tasks(&self, tag: &str) -> Result<HashMap<(String, u32), TaskItem>> {
+        let tasks = self.tasks()?;
+        let starts: Vec<(String, u32, u32)> = self.connection.select_bound(
+            "SELECT g.revision,g.start,b.start FROM live_tagged g
+             JOIN live_blocks b ON b.revision=g.revision AND b.content_from=g.start
+             WHERE g.tag_key=?",
+        )?(super::tag_key(tag))?;
+        let mut tagged: HashMap<(String, u32), u32> = starts
+            .into_iter()
+            .map(|(revision, from, block)| ((revision, block), from))
+            .collect();
+        Ok(tasks
+            .into_iter()
+            .filter_map(|task| {
+                let from = tagged.remove(&(task.source.revision.clone(), task.from))?;
+                Some(((task.source.revision.clone(), from), task))
+            })
+            .collect())
+    }
+
+    /// The reference `linkedTasks`: tasks on other pages that link to `page`, directly or through
+    /// a parent block, such as action items written under a [[Meeting]] line.
+    pub fn linked_tasks(&self, page: &str) -> Result<Vec<TaskItem>> {
+        let tasks = self.tasks()?;
+        let find = self.page_finder()?;
+        Ok(tasks
+            .into_iter()
+            .filter(|task| {
+                task.source.page.as_str() != Some(page)
+                    && task
+                        .links
+                        .iter()
+                        .any(|link| find(link).as_deref() == Some(page))
+            })
+            .collect())
     }
 
     /// Resolves a page name to a page identity, remembering answers for one query.

@@ -14,8 +14,9 @@ use super::{
     store_database,
 };
 use crate::{
-    notebook::{Draft, DraftStamp, NotebookStore, RescanLimits},
+    notebook::{Draft, DraftStamp, NotebookStore},
     profiles::Notebook,
+    quire_folder::{import_log, new_writer_except},
     sync::{
         format::{page_id_for_path, sha256},
         json::Json,
@@ -23,7 +24,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, bail, ensure};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -109,58 +110,6 @@ pub(super) fn notebook_identity(folder: &Path) -> Result<String> {
         folder.display()
     );
     Ok(id.to_owned())
-}
-
-/// Every writer identity the synced folder holds.
-fn writers(folder: &Path) -> BTreeSet<String> {
-    fs::read_dir(folder.join("devices"))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect()
-}
-
-/// A writer identity distinct from every one `rt` or another computer used.
-fn new_writer(folder: &Path, rt_device: &str) -> String {
-    let taken = writers(folder);
-    loop {
-        let writer = uuid::Uuid::new_v4().to_string();
-        if !taken.contains(&writer) && rt_device.trim() != writer {
-            return writer;
-        }
-    }
-}
-
-/// Reads the whole published log into `store`, in bounded passes.
-pub(super) fn import_log(store: &NotebookStore, folder: &Path) -> Result<Vec<String>> {
-    let mut problems = Vec::new();
-    let mut cursor = None;
-    loop {
-        let report = store.rescan(folder, RescanLimits::default(), cursor.as_ref())?;
-        problems.extend(report.problems.iter().map(|problem| {
-            format!(
-                "{}{}: {}",
-                problem.device.as_deref().unwrap_or("folder"),
-                problem
-                    .file
-                    .as_deref()
-                    .map(|file| format!("/{file}"))
-                    .unwrap_or_default(),
-                problem.reason
-            )
-        }));
-        problems.extend(
-            report
-                .waiting
-                .iter()
-                .map(|wait| format!("Waiting for delivery: {wait:?}")),
-        );
-        match report.continuation {
-            Some(next) => cursor = Some(next),
-            None => return Ok(problems),
-        }
-    }
 }
 
 /// The key under which an imported draft is remembered.
@@ -310,7 +259,7 @@ pub(super) fn migrate(
                 "Quire already has a notebook database at {} that this migration did not make. Move it aside, then run the migration again",
                 database.display()
             );
-            let writer = new_writer(folder, &source.rt_device);
+            let writer = new_writer_except(folder, &source.rt_device);
             record.remember(Migrated::Quire {
                 folder: folder.to_owned(),
                 database: database.clone(),
@@ -421,6 +370,7 @@ pub(super) fn migrate(
             database: PathBuf::from(&database),
             notebook,
             writer,
+            folder: Some(folder.to_owned()),
         }),
         report,
     ))

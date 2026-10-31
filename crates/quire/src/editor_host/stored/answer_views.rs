@@ -1,14 +1,23 @@
 //! The answer pane beside the main page (NR30): opened by `:ai` without a range, the page menu,
-//! presets, and Synthesize under linked references; it keeps answers in today's page and starts
-//! Tidy for the day shown, which asks in a fresh pane.
+//! presets, Find's AI commands, and Synthesize under linked references or on a tag page; it
+//! keeps answers in today's page and starts Tidy for the day shown, which asks in a fresh pane.
 
 use super::*;
 use crate::ai::answer::{AnswerEvent, AnswerPane, Place, Seed};
-use quire_core::daily::format_daily;
+use crate::navigation::palette::{CommandContext, PaletteCommand};
+use quire_core::{ai::ask::Needs, daily::format_daily};
+use settings::ThemeAppearanceMode;
+
+const NO_PAGE_FOR_AI: &str =
+    "AI commands work on a page. Open a page, click in it, then choose the AI command again.";
 
 #[derive(Default)]
 pub(in crate::editor_host::stored) struct AnswerState {
+    /// The pane beside the main page.
     pub(in crate::editor_host::stored) pane: Option<Entity<AnswerPane>>,
+    /// The pane the "Ask the notebook" tab shows, kept while the window lives so the tab finds
+    /// its conversation again.
+    pub(in crate::editor_host::stored) tab: Option<Entity<AnswerPane>>,
     keeping: Option<gpui::Task<()>>,
 }
 
@@ -37,6 +46,66 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        let pane = self.new_answer_pane(seed, window, cx);
+        self.nav.answer.pane = Some(pane);
+        self.nav.answer.keeping = None;
+        cx.notify();
+    }
+
+    /// Shows the "Ask the notebook" tab's pane, starting a fresh conversation when the tab has
+    /// none, as after reopening the notebook.
+    pub(in crate::editor_host::stored) fn show_answer_tab(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let pane = match self.nav.answer.tab.clone() {
+            Some(pane) => pane,
+            None => {
+                let pane = self.new_answer_pane(Seed::default(), window, cx);
+                pane.update(cx, |pane, _| pane.in_tab = true);
+                self.nav.answer.tab = Some(pane.clone());
+                pane
+            }
+        };
+        let input = pane.read(cx).input.focus_handle(cx);
+        window.focus(&input, cx);
+    }
+
+    /// The tab's pane, while the main pane shows the "Ask the notebook" tab.
+    pub(in crate::editor_host::stored) fn answer_tab_content(&self) -> Option<gpui::AnyElement> {
+        (self.nav.view == Some(quire_core::workspace::BrowserView::Ai))
+            .then(|| self.nav.answer.tab.clone())
+            .flatten()
+            .map(IntoElement::into_any_element)
+    }
+
+    /// Moves the pane beside the page into the "Ask the notebook" tab, as rt's Open as tab
+    /// does, keeping its conversation and any run in progress.
+    fn answer_to_tab(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        let Some(pane) = self.nav.answer.pane.take() else {
+            return;
+        };
+        pane.update(cx, |pane, cx| {
+            pane.in_tab = true;
+            cx.notify();
+        });
+        self.nav.answer.tab = Some(pane);
+        self.visit(
+            quire_core::workspace::Destination::Browser {
+                view: quire_core::workspace::BrowserView::Ai,
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn new_answer_pane(
+        &mut self,
+        seed: Seed,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> Entity<AnswerPane> {
         let page = self
             .nav
             .view
@@ -57,6 +126,7 @@ impl StoredWindow {
             window,
             |this, pane, event: &AnswerEvent, window, cx| match event {
                 AnswerEvent::Close => this.close_answer(window, cx),
+                AnswerEvent::OpenAsTab => this.answer_to_tab(window, cx),
                 AnswerEvent::Keep { index, answer } => {
                     this.keep_answer(pane.clone(), *index, answer.clone(), cx)
                 }
@@ -64,11 +134,7 @@ impl StoredWindow {
             },
         )
         .detach();
-        self.nav.answer = AnswerState {
-            pane: Some(pane),
-            keeping: None,
-        };
-        cx.notify();
+        pane
     }
 
     pub(in crate::editor_host::stored) fn close_answer(
@@ -76,7 +142,8 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        self.nav.answer = AnswerState::default();
+        self.nav.answer.pane = None;
+        self.nav.answer.keeping = None;
         self.focus_active(window, cx);
         cx.notify();
     }
@@ -123,6 +190,74 @@ impl StoredWindow {
             })
             .ok();
         }));
+    }
+
+    /// The title of the page the main pane shows, when it shows a page rather than a browser or
+    /// tag page.
+    fn shown_page_title(&self, cx: &App) -> Option<String> {
+        (self.nav.view.is_none() && self.nav.tags.shown.is_none())
+            .then(|| self.nav.title(self.page.read(cx).id()).map(str::to_owned))
+            .flatten()
+    }
+
+    /// What the find palette's commands depend on.
+    pub(in crate::editor_host::stored) fn command_context(&self, cx: &App) -> CommandContext {
+        let preferences = crate::preferences::Preferences::current(cx);
+        let page = self.shown_page_title(cx);
+        CommandContext {
+            appearance: Some(preferences.appearance),
+            vim: preferences.vim,
+            ai: crate::ai::settings::is_on(cx),
+            daily: page
+                .as_deref()
+                .is_some_and(|page| self.daily_date_of(page).is_some()),
+            page,
+        }
+    }
+
+    /// Runs a command chosen in the find palette.
+    pub(in crate::editor_host::stored) fn run_palette_command(
+        &mut self,
+        command: PaletteCommand,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        match command {
+            PaletteCommand::Appearance(mode) => window.dispatch_action(
+                match mode {
+                    ThemeAppearanceMode::Light => Box::new(crate::preferences::UseLightAppearance),
+                    ThemeAppearanceMode::Dark => Box::new(crate::preferences::UseDarkAppearance),
+                    ThemeAppearanceMode::System => {
+                        Box::new(crate::preferences::UseSystemAppearance)
+                    }
+                },
+                cx,
+            ),
+            PaletteCommand::Ai(verb) => {
+                let Some(editor) = self.active_page_editor(cx) else {
+                    self.nav.error = Some(NO_PAGE_FOR_AI.into());
+                    cx.notify();
+                    return;
+                };
+                window.focus(&editor.focus_handle(cx), cx);
+                window.defer(cx, move |window, cx| {
+                    let invocation = crate::ai::proposal::Invocation {
+                        args: String::new(),
+                        rows: None,
+                        verb: Some(verb),
+                    };
+                    crate::ai::proposal::start(&editor, invocation, window, cx)
+                });
+            }
+            PaletteCommand::AskNotebook => self.open_answer(Seed::default(), window, cx),
+            PaletteCommand::Preset(preset) if preset.needs == Needs::Daily => {
+                self.tidy_shown(window, cx)
+            }
+            PaletteCommand::Preset(preset) => {
+                let page = self.shown_page_title(cx).unwrap_or_default();
+                self.open_answer(Seed::preset(preset, &page), window, cx)
+            }
+        }
     }
 
     /// Tidies the page in the main pane, outside this window's update so the editor can ask

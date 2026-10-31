@@ -744,7 +744,11 @@ struct ReferenceDevice {
 
 impl ReferenceDevice {
     fn create(root: &Path) -> Self {
-        let folder = root.join(".quire/devices").join(DEVICE);
+        Self::named(root, DEVICE)
+    }
+
+    fn named(root: &Path, device: &str) -> Self {
+        let folder = root.join(".quire/devices").join(device);
         fs::create_dir_all(&folder).unwrap();
         let connection = crate::database::open_writable(&folder.join("durability.sqlite")).unwrap();
         for sql in [
@@ -984,4 +988,251 @@ fn unreadable_reference_data_is_reported_and_left_alone() {
     assert!(notices[0].contains("reopen the notebook to retry"));
     assert_eq!(snapshot(&opened.folder), before);
     assert!(reopened.recovered_drafts().is_empty());
+}
+
+/// A rename of `Old.md` to `New.md` exactly as the reference `commitFiles` journals it in
+/// `.quire/devices/<device>/transactions`: the moved note, the linking note, then the old file's
+/// removal under a random UUID archive name, with the versions it was planned from.
+fn reference_rename_journal(root: &Path) -> PathBuf {
+    let folder = root
+        .join(".quire/devices")
+        .join(DEVICE)
+        .join("transactions");
+    fs::create_dir_all(&folder).unwrap();
+    let journal = folder.join("2b7e1516-28ae-4d2a-a6f7-15880900cf4f.json");
+    let disk = |path: &str, text: &str| serde_json::json!({ "path": path, "text": text, "revision": revision(text) });
+    fs::write(
+        &journal,
+        serde_json::json!({
+            "edits": [
+                { "path": "New.md", "text": RENAMED, "expectedRevision": null, "historyFrom": "Old.md" },
+                { "path": "Links.md", "text": RELINKED, "expectedRevision": revision(LINKS) },
+                {
+                    "path": "Old.md",
+                    "text": "",
+                    "expectedRevision": revision(OLD),
+                    "remove": true,
+                    "retirement": "9b2f4c1e-7d3a-4e8b-a1c5-0f6e2d4b8a90",
+                },
+            ],
+            "before": [null, disk("Links.md", LINKS), disk("Old.md", OLD)],
+            "createdAt": 1_700_000_000_000_i64,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    journal
+}
+
+#[test]
+fn a_change_the_reference_app_left_unfinished_finishes_here_once() {
+    let opened = fixture(&[("Old.md", OLD), ("Links.md", LINKS), ("New.md", RENAMED)]);
+    let journal = reference_rename_journal(&opened.folder);
+    let kept = fs::read(&journal).unwrap();
+    let reopened = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    let notices = reopened.notices();
+    assert!(
+        notices[0].starts_with(
+            "Found 1 change across notes the reference app left unfinished in .quire/devices."
+        ),
+        "{notices:?}"
+    );
+    assert!(notices[1].starts_with("Finished an interrupted change"));
+    assert_renamed(&opened.folder, &opened.state, &reopened);
+    assert_eq!(
+        fs::read(&journal).unwrap(),
+        kept,
+        "the reference app's journal stays as it is"
+    );
+    let again = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    assert!(again.notices().is_empty(), "{:?}", again.notices());
+}
+
+#[test]
+fn a_change_the_reference_app_left_stuck_is_listed_and_set_aside_once() {
+    let opened = fixture(&[
+        ("Old.md", OLD),
+        ("Links.md", "- edited elsewhere\n"),
+        ("New.md", RENAMED),
+    ]);
+    reference_rename_journal(&opened.folder);
+    let reopened = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    let stuck = reopened.stuck_changes();
+    assert_eq!(stuck.len(), 1);
+    assert_eq!(
+        stuck[0].steps,
+        [
+            ("New.md".to_owned(), StepState::Done),
+            ("Links.md".to_owned(), StepState::ChangedElsewhere),
+            ("Old.md".to_owned(), StepState::Waiting),
+        ]
+    );
+    reopened.set_aside_change(&stuck[0].name).unwrap();
+    let again = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    assert!(again.stuck_changes().is_empty(), "never taken in twice");
+    assert!(again.notices().is_empty(), "{:?}", again.notices());
+    assert_eq!(
+        fs::read_to_string(opened.folder.join("Links.md")).unwrap(),
+        "- edited elsewhere\n"
+    );
+}
+
+#[test]
+fn a_long_reference_history_is_taken_in_after_opening_in_bounded_steps() {
+    let opened = fixture(&[("A.md", "- a\n")]);
+    let device = ReferenceDevice::create(&opened.folder);
+    let versions = 600;
+    device.connection.exec("BEGIN").unwrap()().unwrap();
+    for at in 0..versions {
+        device.history(
+            "A.md",
+            &format!("- a version {at}\n"),
+            "zstd",
+            at * 86_400_000,
+        );
+    }
+    device.connection.exec("COMMIT").unwrap()().unwrap();
+    device.pending("A.md", "- a typed in rt\n", Some("- a\n"), 10_000);
+    let deferred = || {
+        FolderNotebook::open_deferring_history(
+            &opened.folder,
+            &opened.state,
+            Box::new(super::system_clock),
+        )
+        .unwrap()
+    };
+
+    let first = deferred();
+    assert_eq!(
+        draft_text(&first, "A.md").unwrap().0,
+        "- a typed in rt\n",
+        "drafts come back on opening"
+    );
+    assert!(first.reference_tally().unwrap().history_present == 0);
+    assert!(first.import_reference_history(250).unwrap(), "more remains");
+    assert_eq!(first.reference_tally().unwrap().history_present, 250);
+    drop(first);
+
+    let second = deferred();
+    assert!(
+        second.recovered_drafts().is_empty(),
+        "drafts are imported once"
+    );
+    let mut steps = 0;
+    while second.import_reference_history(250).unwrap() {
+        steps += 1;
+    }
+    assert_eq!(steps, 2, "600 versions take three steps of 250");
+    assert_eq!(
+        second.reference_tally().unwrap().history_present,
+        versions as usize,
+        "an interrupted import resumes without repeating versions"
+    );
+    assert!(!second.import_reference_history(250).unwrap());
+    drop(second);
+
+    let third = deferred();
+    assert!(
+        !third.import_reference_history(250).unwrap(),
+        "nothing is queued once a source is fully imported"
+    );
+}
+
+impl ReferenceDevice {
+    /// Records that this computer's reference app recovered `draft` from computer `origin` as the
+    /// note at `recovered_path`, as `importCopiedData` does in vault.ts.
+    fn recovered_from(
+        &self,
+        origin: &str,
+        (path, text, saved_at): (&str, &str, i64),
+        recovered_path: &str,
+        recovered_text: &str,
+    ) {
+        self.connection
+            .exec_bound("INSERT INTO foreign_drafts VALUES (?,?,?,?,?,?,?,?)")
+            .unwrap()((
+            format!("draft:{path}"),
+            origin,
+            path,
+            text,
+            None::<String>,
+            saved_at,
+            recovered_path,
+            recovered_text,
+        ))
+        .unwrap();
+    }
+}
+
+#[test]
+fn a_draft_the_reference_app_recovered_from_another_computer_is_imported_once() {
+    // The third computer sorts first, so its own records are read before the provenance.
+    const THIRD: &str = "0c0c0c0c-1111-4222-8333-444455556666";
+    let opened = fixture(&[
+        ("A.md", "- a\n"),
+        ("Recovered drafts/Draft 0c0c0c0c saved.md", "- s kept\n"),
+    ]);
+    let third = ReferenceDevice::named(&opened.folder, THIRD);
+    third.pending("N.md", "- n typed on the third computer\n", None, 30);
+    third.pending("S.md", "- s typed on the third computer\n", None, 31);
+    let here = ReferenceDevice::create(&opened.folder);
+    // Still waiting in this computer's reference app, unchanged since it was recovered.
+    let waiting = "---\ntitle: \"Recovered draft: N\"\n---\n\n- n typed on the third computer\n";
+    here.recovered_from(
+        THIRD,
+        ("N.md", "- n typed on the third computer\n", 30),
+        "Recovered drafts/Draft 0c0c0c0c waiting.md",
+        waiting,
+    );
+    here.pending(
+        "Recovered drafts/Draft 0c0c0c0c waiting.md",
+        waiting,
+        None,
+        40,
+    );
+    // Already saved there as its own note.
+    here.recovered_from(
+        THIRD,
+        ("S.md", "- s typed on the third computer\n", 31),
+        "Recovered drafts/Draft 0c0c0c0c saved.md",
+        "- s kept\n",
+    );
+    here.pending("A.md", "- a typed here\n", Some("- a\n"), 41);
+
+    let reopened = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    let recovered: Vec<String> = reopened
+        .recovered_drafts()
+        .into_iter()
+        .map(|draft| draft.path)
+        .collect();
+    assert_eq!(
+        recovered,
+        ["N.md", "A.md"],
+        "each draft comes back once, under its own page"
+    );
+    assert_eq!(
+        draft_text(&reopened, "N.md").unwrap().0,
+        "- n typed on the third computer\n"
+    );
+    assert_eq!(
+        draft_text(&reopened, "S.md"),
+        None,
+        "already saved as a note"
+    );
+    assert_eq!(
+        draft_text(&reopened, "Recovered drafts/Draft 0c0c0c0c waiting.md"),
+        None
+    );
+    let tally = reopened.reference_tally().unwrap();
+    assert_eq!(
+        (tally.drafts, tally.drafts_accounted),
+        (3, 3),
+        "the waiting copy counts as the third computer's draft"
+    );
+    assert!(
+        FolderNotebook::open(&opened.folder, &opened.state)
+            .unwrap()
+            .recovered_drafts()
+            .is_empty()
+    );
 }

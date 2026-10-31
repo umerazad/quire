@@ -58,6 +58,11 @@ pub enum Notebook {
         database: PathBuf,
         notebook: String,
         writer: String,
+        /// The synced folder that holds `quire-notebook.json` and every writer's change files,
+        /// where saves are published and other computers' changes come from. Without it the
+        /// notebook stays on this computer.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        folder: Option<PathBuf>,
     },
 }
 
@@ -93,6 +98,14 @@ impl Notebook {
 
     pub fn describe(&self) -> String {
         self.root().display().to_string()
+    }
+
+    /// The synced folder a Quire notebook publishes to, when Quire knows it.
+    pub fn synced_folder(&self) -> Option<&Path> {
+        match self {
+            Self::Store { folder, .. } => folder.as_deref(),
+            Self::Folder { .. } => None,
+        }
     }
 }
 
@@ -466,6 +479,7 @@ mod tests {
             database: root.join("work").join("local.sqlite"),
             notebook: "nb".into(),
             writer: "w".into(),
+            folder: None,
         };
         assert!(profiles.set_notebook(ProfileId::Current, store).is_err());
         profiles

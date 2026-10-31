@@ -604,7 +604,19 @@ impl TextSystem {
             if let Some(font_id) = lookup_font(font) {
                 Some(font_id)
             } else {
-                let font_id = self.fallback_font_stack.iter().find_map(lookup_font);
+                // A missing family gives way to the font's own fallbacks first, each keeping
+                // the fallbacks after it, so a configured fallback cascade survives a missing family.
+                let own = font.fallbacks.iter().flat_map(|fallbacks| {
+                    let list = fallbacks.fallback_list();
+                    (0..list.len()).map(move |at| Font {
+                        family: list[at].clone().into(),
+                        fallbacks: Some(FontFallbacks::from_fonts(list[at + 1..].to_vec())),
+                        ..font.clone()
+                    })
+                });
+                let font_id = own
+                    .chain(self.fallback_font_stack.iter().cloned())
+                    .find_map(|candidate| lookup_font(&candidate));
                 if let Some(font_id) = font_id {
                     font_ids.with_upgraded(|font_ids| {
                         font_ids.insert(font.clone(), CachedFont::Fallback(font_id));

@@ -45,7 +45,18 @@ pub struct NotebookSession {
 }
 
 impl NotebookSession {
+    #[cfg(test)]
     pub fn open(path: PathBuf, notebook: String, writer: String) -> Result<Self, String> {
+        Self::open_synced(path, notebook, writer, None)
+    }
+
+    /// Opens a Quire notebook database whose saves publish to the synced `folder`.
+    pub fn open_synced(
+        path: PathBuf,
+        notebook: String,
+        writer: String,
+        folder: Option<PathBuf>,
+    ) -> Result<Self, String> {
         let lock = path
             .parent()
             .filter(|folder| folder.is_dir())
@@ -57,6 +68,7 @@ impl NotebookSession {
             database: path.clone(),
             notebook: notebook.clone(),
             writer: writer.clone(),
+            folder,
         };
         let worker = StorageWorker::spawn(path, notebook, writer, QueueLimits::default())
             .map_err(|error| format!("{error:#}"))?;
@@ -111,6 +123,13 @@ impl NotebookSession {
             media: None,
             _lock: None,
             location: None,
+        }
+    }
+
+    fn writer(&self) -> Option<(String, Option<PathBuf>)> {
+        match &self.location {
+            Some(Notebook::Store { writer, folder, .. }) => Some((writer.clone(), folder.clone())),
+            _ => None,
         }
     }
 
@@ -169,12 +188,14 @@ impl NotebookSession {
     }
 
     pub fn open_page(&mut self, page: String, cx: &mut App) -> Entity<OpenPage> {
+        let writer = self.writer();
         self.pages
             .entry(page.clone())
             .or_insert_with(|| {
                 cx.new(|cx| {
                     let mut page = OpenPage {
                         id: page,
+                        writer,
                         client: self.client.clone(),
                         ready: self.ready.clone(),
                         editing: self.editing.clone(),
@@ -223,6 +244,22 @@ impl NotebookSession {
             .iter()
             .any(|page| page.read(cx).has_error() && !page.read(cx).is_secured(cx))
     }
+    /// The path of a page in conflict with its file whose typing is not yet recorded, when no
+    /// page has a storage error.
+    pub fn unrecorded_conflict(&self, cx: &App) -> Option<String> {
+        let failing: Vec<_> = self
+            .controllers(cx)
+            .into_iter()
+            .filter(|page| page.read(cx).has_error() && !page.read(cx).is_secured(cx))
+            .collect();
+        if failing
+            .iter()
+            .any(|page| page.read(cx).conflict().is_none())
+        {
+            return None;
+        }
+        failing.first().map(|page| page.read(cx).path().to_owned())
+    }
     pub fn recover(&self, cx: &mut App) {
         for page in self.controllers(cx) {
             page.update(cx, |page, cx| page.recover(cx));
@@ -240,6 +277,9 @@ pub struct LoadedPage {
     pub deleted: bool,
     pub loaded_revision_bodies: usize,
     pub load_time: Duration,
+    /// The choice between competing versions, when two computers changed the page and the
+    /// versions could not be merged.
+    pub conflict: Option<Entity<crate::page_conflict::PageConflict>>,
 }
 
 impl LoadedPage {
@@ -259,6 +299,9 @@ enum LoadState {
 
 pub struct OpenPage {
     id: String,
+    /// This app's writer and the synced folder whose status files name other computers, for a
+    /// Quire notebook.
+    writer: Option<(String, Option<PathBuf>)>,
     client: NotebookBackend,
     ready: Ready,
     editing: Rc<Cell<bool>>,
@@ -314,6 +357,7 @@ impl OpenPage {
         let id = self.id.clone();
         let client = self.client.clone();
         let ready = self.ready.clone();
+        let writer = self.writer.clone();
         let work = cx.background_spawn(async move {
             ready.await.map_err(|error| (error.to_string(), false))?;
             if id.is_empty() {
@@ -339,17 +383,35 @@ impl OpenPage {
                     .map_err(|error| (format!("{error:#}"), true))?,
                 _ => None,
             };
+            let choices = match (&client, &writer) {
+                (NotebookBackend::Store(store), Some((writer, folder)))
+                    if checkout.heads.len() > 1 =>
+                {
+                    let versions = store
+                        .conflict_versions(id.clone())
+                        .map_err(|error| (error.to_string(), error == QueueError::Busy))?
+                        .await
+                        .map_err(|error| (format!("{error:#}"), true))?;
+                    Some(crate::page_conflict::describe(
+                        versions,
+                        writer,
+                        folder.as_deref(),
+                    ))
+                }
+                _ => None,
+            };
             let page = PreparedPage::new(id, checkout, base).map_err(|error| (error, true))?;
-            Ok(match recovered_folder {
+            let page = match recovered_folder {
                 Some(recovery) => recovery.apply(page),
                 None => page,
-            })
+            };
+            Ok((page, choices))
         });
         self.task = Some(cx.spawn(async move |this, cx| {
             let result = work.await;
             this.update(cx, |this, cx| {
                 match result {
-                    Ok(page) => {
+                    Ok((page, choices)) => {
                         let (source, stored_source) = page.text.install(cx);
                         source.update(cx, |source, cx| {
                             source.set_capability(language::Capability::ReadOnly, cx)
@@ -376,6 +438,21 @@ impl OpenPage {
                             persistence
                         });
                         let analysis = cx.new(|cx| PageAnalysis::new(source, cx));
+                        let conflict = match (choices, &this.client) {
+                            (Some((heads, versions)), NotebookBackend::Store(client))
+                                if versions.len() > 1 =>
+                            {
+                                let open = cx.weak_entity();
+                                let page = this.id.clone();
+                                let client = client.clone();
+                                Some(cx.new(|_| {
+                                    crate::page_conflict::PageConflict::new(
+                                        page, heads, versions, client, open,
+                                    )
+                                }))
+                            }
+                            _ => None,
+                        };
                         this.status = page.status.into();
                         this.state = LoadState::Ready(LoadedPage {
                             analysis,
@@ -387,6 +464,7 @@ impl OpenPage {
                             deleted: page.deleted,
                             loaded_revision_bodies: page.loaded_revision_bodies,
                             load_time: started.elapsed(),
+                            conflict,
                         });
                     }
                     Err((error, retryable)) => {

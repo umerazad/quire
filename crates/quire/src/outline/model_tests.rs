@@ -411,3 +411,127 @@ fn numbered_runs_renumber_only_where_edited(cx: &mut TestAppContext) {
     );
     assert_eq!(number("Just a paragraph\n", 3, 3, None, cx), None);
 }
+
+/// A code span in an injected inline layer counts as code to its closing backtick, even around
+/// `[[x]]`, where walking up with `Node::parent` lost the layer offset and skipped the span.
+#[gpui::test]
+fn carets_in_an_injected_code_span_are_literal(cx: &mut TestAppContext) {
+    let input = "- `code [[x]]` y\n- z\n";
+    blocks(input, cx);
+    let buffer = cx.update(|cx| crate::markdown::buffer(input, cx));
+    cx.run_until_parked();
+    let literal: Vec<bool> = cx.update(|cx| {
+        (2..=16)
+            .map(|at| super::super::literal(&buffer, at, cx))
+            .collect()
+    });
+    let mut expected = vec![false];
+    expected.extend([true; 12]);
+    expected.extend([false, false]);
+    assert_eq!(literal, expected);
+}
+
+/// rt's Enter, Tab, and Shift-Tab at every caret position of its outline corpus, from
+/// `tests/fixtures/outline-parity.json`, copied unchanged from rt. Offsets there are UTF-16.
+/// The command layer's checks run first, as in the editor: a caret in code keeps its text, and
+/// a bare `-` becomes a bullet before Tab moves it.
+#[gpui::test]
+fn outline_commands_match_rt_parity_vectors(cx: &mut TestAppContext) {
+    let vectors: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../../tests/fixtures/outline-parity.json"
+    ))
+    .expect("outline parity vectors");
+    let byte = |text: &str, utf16: u64| {
+        let mut units = 0;
+        text.char_indices()
+            .find(|(_, c)| {
+                let found = units >= utf16;
+                units += c.len_utf16() as u64;
+                found
+            })
+            .map_or(text.len(), |(at, _)| at)
+    };
+    let mut parsed: Vec<(String, Vec<Block>, gpui::Entity<language::Buffer>)> = Vec::new();
+    let mut mismatches = Vec::new();
+    for vector in &vectors {
+        let input = vector["input"].as_str().unwrap();
+        if parsed.last().is_none_or(|(text, ..)| text != input) {
+            let parsed_blocks = blocks(input, cx);
+            let buffer = cx.update(|cx| crate::markdown::buffer(input, cx));
+            cx.run_until_parked();
+            parsed.push((input.to_owned(), parsed_blocks, buffer));
+        }
+        let (_, blocks, buffer) = parsed.last().unwrap();
+        let head = byte(input, vector["pos"].as_u64().unwrap());
+        let command = vector["command"].as_str().unwrap();
+        let outcome = if cx.update(|cx| super::super::literal(buffer, head, cx)) {
+            None
+        } else if command == "split" {
+            split(input, blocks, head, None, no_folds)
+        } else {
+            let outdent = command == "outdent";
+            match bare_bullet(input, head) {
+                Some(bullet) => {
+                    let bulleted = apply_edits(input, &bullet.edits);
+                    let then = indent(
+                        &bulleted,
+                        &self::blocks(&bulleted, cx),
+                        bullet.cursor,
+                        outdent,
+                        None,
+                    );
+                    Some(Outcome::Apply(match then {
+                        Some(Outcome::Apply(next)) => Plan {
+                            edits: vec![(0..input.len(), apply_edits(&bulleted, &next.edits))],
+                            cursor: next.cursor,
+                        },
+                        _ => bullet,
+                    }))
+                }
+                None => indent(input, blocks, head, outdent, None),
+            }
+        };
+        let output = vector["output"].as_str().unwrap();
+        let expected = vector["handled"].as_bool().unwrap().then(|| {
+            (
+                output.to_owned(),
+                byte(output, vector["head"].as_u64().unwrap()),
+            )
+        });
+        let actual = match outcome {
+            Some(Outcome::Apply(plan)) => Some((apply_edits(input, &plan.edits), plan.cursor)),
+            Some(Outcome::Refuse(_)) => Some((input.to_owned(), head)),
+            None => None,
+        };
+        if actual != expected {
+            mismatches.push(format!(
+                "{} at {head} in {input:?}: expected {expected:?}, got {actual:?}",
+                vector["command"]
+            ));
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "{} of {} vectors differ:\n{}",
+        mismatches.len(),
+        vectors.len(),
+        mismatches.join("\n")
+    );
+}
+
+#[test]
+fn trimming_drops_the_text_an_edit_keeps() {
+    let text = "- Top\n  - Kid1\n  - Kid2 ^k\n- After\n";
+    let at = text.find("  - Kid1").unwrap()..text.find("- After").unwrap();
+    let edits = vec![(at.clone(), "  - Kid2 ^k\n  - Kid1\n".to_owned())];
+    let trimmed = trim_unchanged(text, edits.clone());
+    assert_eq!(
+        trimmed,
+        [(at.start + 7..at.end - 1, "2 ^k\n  - Kid1".to_owned())]
+    );
+    assert_eq!(apply_edits(text, &trimmed), apply_edits(text, &edits));
+    assert_eq!(
+        trim_unchanged("é", vec![(0..2, "é".to_owned())]),
+        [(2..2, String::new())]
+    );
+}

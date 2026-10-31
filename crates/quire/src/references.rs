@@ -14,7 +14,12 @@ use quire_store::index::IndexClient;
 use std::rc::Rc;
 
 mod completion;
-pub(crate) use completion::new_id as new_block_id;
+pub(crate) mod preview;
+
+/// A new block ID, as every block that gains one in this app gets it.
+pub(crate) fn new_block_id() -> String {
+    format!("b-{}", uuid::Uuid::new_v4().simple())
+}
 
 /// What a reference names.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -64,8 +69,23 @@ pub trait Notebook {
     fn page_id(&self, buffer: &Entity<Buffer>, cx: &App) -> Option<String>;
     /// The notebook path of the page whose buffer this is, when the notebook has it open.
     fn page_path(&self, buffer: &Entity<Buffer>, cx: &App) -> Option<String>;
+    /// Where this notebook keeps each page's collapsed blocks, when it keeps them.
+    fn fold_store(&self) -> Option<Rc<crate::outline::fold_store::FoldStore>> {
+        None
+    }
     /// Opens the page with this ID, beside the current one when asked.
     fn show_page(&self, page: &str, beside: bool, window: &mut Window, cx: &mut App);
+    /// Opens the page with this ID with the caret where `jump` says.
+    fn show_page_at(
+        &self,
+        page: &str,
+        _jump: crate::navigation::Jump,
+        beside: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.show_page(page, beside, window, cx)
+    }
     /// The open pages and the store, for task changes written to other pages.
     fn writers(
         &self,
@@ -81,6 +101,9 @@ pub trait Notebook {
         window: &mut Window,
         cx: &mut App,
     ) -> futures::channel::oneshot::Receiver<Option<String>>;
+
+    /// Opens the tag page of `tag`, written as in the text with its `#`.
+    fn show_tag(&self, _: &str, _: &mut Window, _: &mut App) {}
 
     /// Where pages' notebook-relative media paths resolve.
     fn media_files(&self) -> Option<quire_media::files::Files> {

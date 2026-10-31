@@ -6,8 +6,8 @@ use super::*;
 use crate::{
     file_actions::Target,
     navigation::{
-        CloseTab, CopyLink, DeleteFile, DeletePage, MoveFile, MovePage, NewPageHere, RenameFile,
-        RevealInFileManager, ToggleFavorite,
+        CloseTab, CopyLink, DeleteFile, DeletePage, MoveFile, MovePage, NewFolderHere, NewPageHere,
+        RenameFile, RevealInFileManager, ToggleFavorite,
         file_dialog::Moving,
         pointer_menu::{self, Entry, Item},
     },
@@ -17,7 +17,7 @@ use quire_core::workspace::{Destination, TreeKind};
 use ui::ContextMenu;
 
 pub(in crate::editor_host::stored) const REVEAL: &str = "Reveal in Finder / Explorer";
-pub(in crate::editor_host::stored) const REVEAL_UNAVAILABLE: &str = "Reveal in Finder / Explorer works in folder notebooks; this notebook keeps its pages in its database. Export it as Markdown to see the files.";
+pub(in crate::editor_host::stored) const REVEAL_UNAVAILABLE: &str = "This notebook keeps its pages in its database, so Reveal in Finder / Explorer shows a copy of a page but has no folders to show. Export the notebook as Markdown to see its folders.";
 
 pub(in crate::editor_host::stored) struct DeployedMenu {
     pub(in crate::editor_host::stored) menu: Entity<ContextMenu>,
@@ -44,6 +44,12 @@ pub(in crate::editor_host::stored) struct RevealFiles(
 );
 #[cfg(test)]
 impl gpui::Global for RevealFiles {}
+
+/// Where tests have Reveal write Quire notebook pages, instead of the system's temporary folder.
+#[cfg(test)]
+pub(in crate::editor_host::stored) struct RevealCopies(pub(in crate::editor_host::stored) PathBuf);
+#[cfg(test)]
+impl gpui::Global for RevealCopies {}
 
 #[derive(Clone, Copy)]
 enum PageAction {
@@ -178,15 +184,15 @@ impl StoredWindow {
         self.focus_files(window, cx);
         let position = position.unwrap_or_else(|| self.file_row_position(index, window));
         let focus = self.nav.browsers.files_focus.clone();
-        let reveal = self
-            .files_root()
-            .map(|_| Item::action(REVEAL, RevealInFileManager).done());
+        let reveal = (self.files_root().is_some() || row.kind == TreeKind::File)
+            .then(|| Item::action(REVEAL, RevealInFileManager).done());
         let (name, entries) = match row.kind {
             TreeKind::Folder => (
                 format!("Folder actions for {}", row.path),
                 [
                     vec![
                         Item::action("New note here", NewPageHere).done(),
+                        Item::action("New folder here", NewFolderHere).done(),
                         Entry::Separator,
                         Item::action("Rename or move…", RenameFile).done(),
                     ],
@@ -195,6 +201,20 @@ impl StoredWindow {
                         Entry::Separator,
                         Item::action("Delete folder…", DeleteFile).done(),
                     ],
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>(),
+            ),
+            TreeKind::File if self.page_at_path(&row.path).is_none() => (
+                format!("File actions for {}", row.path),
+                [
+                    vec![
+                        Item::action("Open", menu::Confirm).done(),
+                        Item::action("New note here", NewPageHere).done(),
+                        Item::action("New folder here", NewFolderHere).done(),
+                    ],
+                    reveal.into_iter().collect(),
                 ]
                 .into_iter()
                 .flatten()
@@ -216,6 +236,7 @@ impl StoredWindow {
                             Item::action(favorite_label(favorite), ToggleFavorite).done(),
                             Entry::Separator,
                             Item::action("New note here", NewPageHere).done(),
+                            Item::action("New folder here", NewFolderHere).done(),
                             Entry::Separator,
                             Item::action("Rename", RenameFile).done(),
                             Item::action("Move to…", MoveFile).done(),
@@ -235,8 +256,7 @@ impl StoredWindow {
         self.deploy_menu(name, entries, focus, position, window, cx);
     }
 
-    /// A page action of sidebar entries and page tabs, which order them differently. Reveal
-    /// is left out where the notebook keeps no files.
+    /// A page action of sidebar entries and page tabs, which order them differently.
     fn page_item(&self, action: PageAction, page: &str, view: &WeakEntity<Self>) -> Vec<Entry> {
         let item = match action {
             PageAction::Beside => on_page(view, "Open beside", page, |this, page, window, cx| {
@@ -245,7 +265,6 @@ impl StoredWindow {
             PageAction::Link => on_page(view, "Copy link", page, |this, page, _, cx| {
                 this.copy_link(page, cx)
             }),
-            PageAction::Reveal if self.files_root().is_none() => return Vec::new(),
             PageAction::Reveal => on_page(view, REVEAL, page, |this, page, _, cx| {
                 this.reveal_page(page, cx)
             }),
@@ -445,19 +464,23 @@ impl StoredWindow {
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(format!("[[{title}]]")));
     }
 
+    pub(in crate::editor_host::stored) fn show_in_file_manager(
+        path: &std::path::Path,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        #[cfg(test)]
+        if let Some(reveal) = cx
+            .try_global::<RevealFiles>()
+            .map(|reveal| reveal.0.clone())
+        {
+            return reveal(path);
+        }
+        cx.reveal_path(path)
+    }
+
     fn reveal_path(&mut self, path: &str, cx: &mut gpui::Context<Self>) {
         match self.files_root() {
-            Some(root) => {
-                let path = root.join(path);
-                #[cfg(test)]
-                if let Some(reveal) = cx
-                    .try_global::<RevealFiles>()
-                    .map(|reveal| reveal.0.clone())
-                {
-                    return reveal(&path);
-                }
-                cx.reveal_path(&path)
-            }
+            Some(root) => Self::show_in_file_manager(&root.join(path), cx),
             None => {
                 self.nav.error = Some(REVEAL_UNAVAILABLE.into());
                 cx.notify();
@@ -470,9 +493,51 @@ impl StoredWindow {
         page: &str,
         cx: &mut gpui::Context<Self>,
     ) {
+        if self.files_root().is_none() {
+            return self.reveal_copy(page.to_owned(), cx);
+        }
         if let Some(path) = self.page_path(page, cx) {
             self.reveal_path(&path, cx);
         }
+    }
+
+    /// Shows a Quire notebook page as the reference app does: its current text, unsaved typing
+    /// included, written as a read-only Markdown copy in the temporary `Quire pages` folder.
+    fn reveal_copy(&mut self, page: String, cx: &mut gpui::Context<Self>) {
+        let storage = self.session.borrow().storage();
+        let open = self.session.borrow().open_pages();
+        #[cfg(test)]
+        let folder = cx
+            .try_global::<RevealCopies>()
+            .map(|copies| copies.0.clone())
+            .unwrap_or_else(crate::file_actions::reveal_folder);
+        #[cfg(not(test))]
+        let folder = crate::file_actions::reveal_folder();
+        cx.spawn(async move |this, cx| {
+            let result = match crate::page_writes::read(page, &open, &storage, cx).await {
+                Ok(Some(source)) => {
+                    cx.background_spawn(async move {
+                        crate::file_actions::export_for_reveal(
+                            &folder,
+                            &source.path,
+                            &source.stored,
+                        )
+                    })
+                    .await
+                }
+                Ok(None) => Err("This page is not in the notebook. Choose another page.".into()),
+                Err(error) => Err(error),
+            };
+            this.update(cx, |this, cx| match result {
+                Ok(path) => Self::show_in_file_manager(&path, cx),
+                Err(error) => {
+                    this.nav.error = Some(error.into());
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// The highlighted Files page, which Files-scoped page actions act on.
@@ -493,9 +558,41 @@ impl StoredWindow {
         &mut self,
         cx: &mut gpui::Context<Self>,
     ) {
-        if let Some(row) = self.selected_row() {
-            self.reveal_path(&row.path, cx);
+        let Some(row) = self.selected_row() else {
+            return;
+        };
+        match (self.files_root(), row.kind) {
+            (None, TreeKind::File) => {
+                if let Some(page) = self.page_at_path(&row.path) {
+                    self.reveal_copy(page, cx);
+                }
+            }
+            _ => self.reveal_path(&row.path, cx),
         }
+    }
+
+    /// The highlighted folder, or the highlighted page's folder.
+    fn selected_folder(&self) -> Option<String> {
+        let row = self.selected_row()?;
+        Some(match row.kind {
+            TreeKind::Folder => row.path,
+            TreeKind::File => row
+                .path
+                .rsplit_once('/')
+                .map_or_else(String::new, |(parent, _)| parent.to_owned()),
+        })
+    }
+
+    /// New folder here: asks for a path inside the highlighted folder.
+    pub(in crate::editor_host::stored) fn new_folder_in_selected_folder(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(parent) = self.selected_folder() else {
+            return;
+        };
+        self.ask_new_folder(parent, window, cx);
     }
 
     /// New note here: in the highlighted folder, or in the highlighted page's folder.
@@ -504,15 +601,8 @@ impl StoredWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let Some(row) = self.selected_row() else {
+        let Some(folder) = self.selected_folder() else {
             return;
-        };
-        let folder = match row.kind {
-            TreeKind::Folder => row.path,
-            TreeKind::File => row
-                .path
-                .rsplit_once('/')
-                .map_or_else(String::new, |(parent, _)| parent.to_owned()),
         };
         self.open_palette_in(
             crate::navigation::palette::PaletteMode::Create,

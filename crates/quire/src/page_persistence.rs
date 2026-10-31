@@ -207,6 +207,11 @@ impl PagePersistence {
     pub fn has_error(&self) -> bool {
         self.error.is_some() || self.conflict.is_some()
     }
+    /// The status says more than how far the text is saved: an error, a conflict, a deletion,
+    /// or a warning that the reader needs to see without hovering.
+    pub fn has_notice(&self) -> bool {
+        self.has_error() || self.retired || self.removed || self.warning.is_some()
+    }
     /// The folder conflict waiting for the user to choose a version, if any.
     pub fn conflict(&self) -> Option<&Conflict> {
         self.conflict.as_ref()
@@ -305,6 +310,13 @@ impl PagePersistence {
             return;
         }
         self.hint = Some((revision, text.into()));
+        self.stale = true;
+        self.reconcile(cx);
+    }
+
+    /// Another writer's version of this page arrived in the store, for example by an import:
+    /// merge it as [`Self::absorb`] does, reading the version from the store.
+    pub fn store_moved(&mut self, cx: &mut Context<Self>) {
         self.stale = true;
         self.reconcile(cx);
     }

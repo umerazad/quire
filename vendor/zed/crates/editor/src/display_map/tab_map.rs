@@ -736,6 +736,9 @@ impl<'a> Iterator for TabChunks<'a> {
         while self.chunk.text.is_empty() {
             let chunk = self.fold_chunks.next()?;
             self.chunk = chunk;
+            if self.chunk.text.is_empty() && self.chunk.renderer.is_some() {
+                return Some(std::mem::take(&mut self.chunk));
+            }
             if self.inside_leading_tab {
                 self.chunk.text = &self.chunk.text[1..];
                 self.chunk.tabs >>= 1;

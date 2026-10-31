@@ -18,6 +18,7 @@ fn named(args: &[String]) -> Result<Option<Notebook>, String> {
             database: options.database,
             notebook: options.notebook,
             writer: options.writer,
+            folder: options.folder,
         }));
     }
     Ok(FolderOptions::parse(args)?.and_then(|options| {
