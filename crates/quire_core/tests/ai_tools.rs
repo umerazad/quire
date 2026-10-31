@@ -114,6 +114,31 @@ fn block_keys_match_the_reference_hash() {
 }
 
 #[test]
+fn diffs_lines_as_the_reference_does() {
+    use quire_core::ai::tools::{LineChange::*, diff_lines};
+    assert_eq!(
+        diff_lines("a\nb\nc", "a\nB\nc\nd"),
+        [
+            (Same, "a"),
+            (Remove, "b"),
+            (Add, "B"),
+            (Same, "c"),
+            (Add, "d")
+        ]
+    );
+    assert_eq!(diff_lines("", "- x"), [(Remove, ""), (Add, "- x")]);
+}
+
+#[test]
+fn replacement_text_drops_only_the_blocks_own_marker() {
+    use quire_core::ai::tools::without_marker;
+    assert_eq!(without_marker("fine ^d14 ", "d14"), "fine");
+    assert_eq!(without_marker("fine^d14", "d14"), "fine");
+    assert_eq!(without_marker("fine ^d15", "d14"), "fine ^d15");
+    assert_eq!(without_marker("a ^d14 b", "d14"), "a ^d14 b");
+}
+
+#[test]
 fn new_blocks_become_list_items() {
     assert_eq!(as_block("Notes\nmore"), "- Notes\n  more");
     assert_eq!(as_block("  - already\n  - two "), "- already\n  - two");

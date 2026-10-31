@@ -16,12 +16,19 @@ impl StoredWindow {
                 let window = this.read(cx);
                 let index = window.index_client(cx)?;
                 let session = window.session.try_borrow().ok()?;
+                let identity = session.folder().map_or_else(
+                    || window.nav.database.display().to_string(),
+                    |(root, _)| root.display().to_string(),
+                );
                 Some(LiveNotebook {
+                    identity,
                     open_pages: session.open_pages(),
                     storage: session.storage(),
                     index,
                     today: window.today(),
                     calendar: window.nav.daily.calendar.clone(),
+                    daily: window.today_page(),
+                    capture: window.capture_to(cx),
                 })
             }),
             cx,

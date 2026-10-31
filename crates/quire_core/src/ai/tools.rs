@@ -565,6 +565,55 @@ pub fn outside_pages(value: &str) -> Option<String> {
         })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineChange {
+    Same,
+    Add,
+    Remove,
+}
+
+/// The reference `diffLines`: a longest-common-subsequence line diff, removals before additions
+/// where both fit.
+pub fn diff_lines<'a>(before: &'a str, after: &'a str) -> Vec<(LineChange, &'a str)> {
+    let a: Vec<&str> = before.split('\n').collect();
+    let b: Vec<&str> = after.split('\n').collect();
+    let mut table = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for i in (0..a.len()).rev() {
+        for j in (0..b.len()).rev() {
+            table[i][j] = if a[i] == b[j] {
+                table[i + 1][j + 1] + 1
+            } else {
+                table[i + 1][j].max(table[i][j + 1])
+            };
+        }
+    }
+    let (mut i, mut j) = (0, 0);
+    let mut lines = Vec::new();
+    while i < a.len() || j < b.len() {
+        if i < a.len() && j < b.len() && a[i] == b[j] {
+            lines.push((LineChange::Same, a[i]));
+            i += 1;
+            j += 1;
+        } else if j < b.len() && (i == a.len() || table[i][j + 1] > table[i + 1][j]) {
+            lines.push((LineChange::Add, b[j]));
+            j += 1;
+        } else {
+            lines.push((LineChange::Remove, a[i]));
+            i += 1;
+        }
+    }
+    lines
+}
+
+/// `text` without a trailing `^id` marker for `id`, as replacement text drops it: the block
+/// keeps its own marker.
+pub fn without_marker<'a>(text: &'a str, id: &str) -> &'a str {
+    let space = |character: char| matches!(character, ' ' | '\t' | '\n' | '\r' | '\x0B' | '\x0C');
+    text.trim_end_matches(space)
+        .strip_suffix(&format!("^{id}"))
+        .map_or(text, |rest| rest.trim_end_matches(space))
+}
+
 /// A tag as the tools match it: with its leading #.
 pub fn hashed(tag: &str) -> String {
     if tag.starts_with('#') {

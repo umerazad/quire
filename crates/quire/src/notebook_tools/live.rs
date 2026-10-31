@@ -1,7 +1,7 @@
 //! The notebook the tools answer for: whichever window registered last, read live through its
 //! open pages, storage, and query index, never through a second view of the files.
 
-use crate::{notebook_backend::NotebookBackend, notebook_session::OpenPage};
+use crate::{notebook_backend::NotebookBackend, notebook_session::OpenPage, task_edit::CaptureTo};
 use gpui::{App, Entity, Global};
 use quire_core::daily::DailyCalendar;
 use quire_store::index::IndexClient;
@@ -10,12 +10,19 @@ use std::rc::Rc;
 /// One open notebook as the tools see it.
 #[derive(Clone)]
 pub struct LiveNotebook {
+    /// The notebook's identity: its database, or its folder; a staged change never applies to
+    /// another notebook.
+    pub identity: String,
     pub open_pages: Vec<Entity<OpenPage>>,
     pub storage: NotebookBackend,
     pub index: IndexClient,
     /// Today's date, or why it cannot be read.
     pub today: Result<String, String>,
     pub calendar: Option<DailyCalendar>,
+    /// Today's daily page: its date, its title, and the folder the layout puts it in.
+    pub daily: Result<CaptureTo, String>,
+    /// Where `capture_task` adds tasks, under the Settings choice.
+    pub capture: Result<CaptureTo, String>,
 }
 
 impl LiveNotebook {

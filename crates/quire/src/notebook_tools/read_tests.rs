@@ -8,6 +8,7 @@ use super::{bridge::Call, host, live};
 use crate::{
     notebook_session::{NotebookSession, OpenPage},
     query_index::{IndexSync, default_config},
+    task_edit::CaptureTo,
 };
 use gpui::{AppContext as _, Entity, Task, TestAppContext};
 use quire_core::{ai::tools::Writes, daily::DailyCalendar};
@@ -70,14 +71,19 @@ fn noon(date: &str) -> u64 {
 /// A real store and index holding the fixture, offered to the tools as the open notebook.
 pub(crate) struct Bench {
     _root: tempfile::TempDir,
+    pub database: std::path::PathBuf,
+    pub identity: String,
     pub sync: Entity<IndexSync>,
     pub session: Rc<RefCell<NotebookSession>>,
 }
 
 impl Bench {
+    /// Another fixture notebook in the same app, which becomes the one the tools answer for.
     pub fn new(extra: &[(&str, &str)], cx: &mut TestAppContext) -> Self {
         cx.executor().allow_parking();
-        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        if !cx.update(|cx| cx.has_global::<super::Served>()) {
+            cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        }
         let root = tempfile::tempdir().unwrap();
         let database = root.path().join("local.sqlite");
         let store = NotebookStore::open(&database, "nb", "local").unwrap();
@@ -111,6 +117,8 @@ impl Bench {
         let session = NotebookSession::open(database.clone(), "nb".into(), "local".into()).unwrap();
         let bench = Self {
             _root: root,
+            identity: database.display().to_string(),
+            database,
             sync,
             session: Rc::new(RefCell::new(session)),
         };
@@ -139,19 +147,27 @@ impl Bench {
         }
     }
 
-    fn register(&self, cx: &mut TestAppContext) {
+    pub fn register(&self, cx: &mut TestAppContext) {
         let session = self.session.clone();
         let sync = self.sync.clone();
+        let identity = self.identity.clone();
         cx.update(|cx| {
             live::register(
                 Rc::new(move |cx| {
                     let session = session.borrow();
                     Some(live::LiveNotebook {
+                        identity: identity.clone(),
                         open_pages: session.open_pages(),
                         storage: session.storage(),
                         index: sync.read(cx).client().clone(),
                         today: Ok(TODAY.into()),
                         calendar: Some(DailyCalendar::utc()),
+                        daily: Ok(CaptureTo::Today {
+                            date: TODAY.into(),
+                            title: TODAY.into(),
+                            folder: String::new(),
+                        }),
+                        capture: Ok(CaptureTo::Inbox),
                     })
                 }),
                 cx,

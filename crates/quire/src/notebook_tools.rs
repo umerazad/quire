@@ -3,10 +3,13 @@
 //! that answers each call against the open notebook.
 
 pub mod bridge;
+pub mod changes;
 pub mod host;
 pub mod live;
 pub mod read;
+pub mod review;
 pub mod stdio;
+pub mod write;
 
 use crate::ai::settings::{AiSettings, AiState, is_on};
 use bridge::{CALL_TIMEOUT, NotebookBridge, Options};
@@ -66,6 +69,13 @@ fn sync(cx: &mut App) {
 /// Serves the tools from `directory` (Quire's data folder) while AI commands are on; call after
 /// the AI settings are registered.
 pub fn init(directory: PathBuf, cx: &mut App) {
+    changes::init(cx);
+    cx.on_action(|_: &crate::ai::ReviewAiChanges, cx| review::open(cx));
+    cx.bind_keys([gpui::KeyBinding::new(
+        "escape",
+        menu::Cancel,
+        Some(review::CONTEXT),
+    )]);
     cx.set_global(Served {
         directory,
         ..Served::default()

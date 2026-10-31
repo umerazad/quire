@@ -20,6 +20,8 @@ actions!(
         AcceptProposal,
         /// Rejects the AI proposal, or cancels the run still writing it.
         RejectProposal,
+        /// Opens the changes AI sessions in a terminal proposed, to apply or reject them.
+        ReviewAiChanges,
     ]
 );
 

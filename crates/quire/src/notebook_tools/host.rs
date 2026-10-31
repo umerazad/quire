@@ -14,10 +14,7 @@ pub fn answer(call: Call, cx: &mut App) -> Task<Result<Value, String>> {
         return Task::ready(Err(problem));
     }
     if is_write(&call.name) {
-        return Task::ready(Err(format!(
-            "{} cannot change the notebook in this build of Quire. Ask the writer to make the change.",
-            call.name
-        )));
+        return super::write::answer(call, notebook, cx);
     }
     cx.spawn(async move |cx| {
         read::run(&call.name, &call.input, &notebook, cx)

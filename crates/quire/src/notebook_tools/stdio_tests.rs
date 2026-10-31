@@ -242,3 +242,66 @@ fn reports_the_app_closed_once_its_bridge_stops(cx: &mut TestAppContext) {
         CLOSED_APP
     );
 }
+
+/// A terminal session against the real tool host and fixture notebook: reads answer from the
+/// live notebook, and a write waits for review without touching the page.
+#[gpui::test]
+fn a_terminal_session_reads_the_live_notebook_and_stages_writes(cx: &mut TestAppContext) {
+    use super::{changes, read_tests::Bench};
+    let bench = Bench::new(&[], cx);
+    let folder = tempfile::tempdir().unwrap();
+    let options = super::bridge::Options {
+        directory: folder.path().to_owned(),
+        enabled: std::rc::Rc::new(|_| true),
+        writes: std::rc::Rc::new(|_| quire_core::ai::tools::Writes::Review),
+        notebook_open: std::rc::Rc::new(|cx| super::live::current(cx).is_some()),
+        forward: std::rc::Rc::new(super::host::answer),
+        timeout: super::bridge::CALL_TIMEOUT,
+    };
+    let bridge = cx.update(|cx| NotebookBridge::start(options, cx)).unwrap();
+    let ran = run(
+        &[
+            frame(
+                Some(1),
+                "tools/call",
+                Some(json!({ "name": "tasks", "arguments": { "due": "today" } })),
+            ),
+            frame(
+                Some(2),
+                "tools/call",
+                Some(json!({
+                    "name": "append_block",
+                    "arguments": { "page": "Inbox", "text": "From the terminal" },
+                })),
+            ),
+            frame(
+                Some(3),
+                "tools/call",
+                Some(json!({ "name": "read_page", "arguments": { "page": "Nope" } })),
+            ),
+        ],
+        &bridge.file,
+        &[],
+        cx,
+    );
+    assert_eq!(ran.code, Some(0));
+    assert_eq!(text(&ran.replies[0])["summary"], "Tasks due today · 2");
+    let staged = text(&ran.replies[1]);
+    assert_eq!(staged["status"], "awaiting review");
+    assert_eq!(staged["change_id"], "change-1");
+    assert_eq!(
+        ran.replies[2]["result"],
+        json!({
+            "content": [{ "type": "text", "text": "No page named \"Nope\". Use list_pages or search_notebook to find its title." }],
+            "isError": true,
+        })
+    );
+    let listed = cx.update(|cx| changes::list(Some(changes::TERMINAL_RUN), cx));
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        bench
+            .call("read_page", json!({ "page": "Inbox" }), cx)
+            .unwrap()["text"],
+        "- [ ] Sort the receipts\n"
+    );
+}

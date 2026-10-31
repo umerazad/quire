@@ -333,6 +333,9 @@ fn entries(editor: &Editor, cx: &mut App) -> Vec<Entry> {
     let ai = if editable {
         vec![
             Entry::Separator,
+            Item::action("AI changes…", crate::ai::ReviewAiChanges)
+                .disabled(!cfg!(unix))
+                .done(),
             Item::action("Ask AI…", crate::ai::AskAi).done(),
         ]
     } else {
