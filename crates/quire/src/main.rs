@@ -93,6 +93,9 @@ mod semantic_excerpt;
 mod editor_projection;
 
 #[cfg(feature = "full-editor")]
+mod write_style;
+
+#[cfg(feature = "full-editor")]
 mod markdown;
 
 #[cfg(feature = "full-editor")]

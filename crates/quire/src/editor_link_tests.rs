@@ -56,7 +56,7 @@ fn external_links_and_bare_urls_render_apart_from_notebook_links(cx: &mut TestAp
     let window = projected(PAGE, cx);
     assert_eq!(
         display(window, cx),
-        "see the site↗ and Other\nbare https://example.org/path, here\nhttps://example.net/a↗ `https://code.example`\n"
+        "see the site↗ and Other\nbare https://example.org/path, here\nhttps://example.net/a↗ https://code.example\n"
     );
     window
         .update(cx, |view, _, cx| {
@@ -146,7 +146,7 @@ fn the_caret_reveals_link_source_in_its_block_only(cx: &mut TestAppContext) {
     visual.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(
         display(window, cx),
-        "see the site↗ and Other\nbare https://example.org/path, here\nhttps://example.net/a↗ `https://code.example`\n"
+        "see the site↗ and Other\nbare https://example.org/path, here\nhttps://example.net/a↗ https://code.example\n"
     );
     let auto = PAGE.find("<https").unwrap() + 3;
     caret_at(window, auto, cx);
@@ -157,7 +157,7 @@ fn the_caret_reveals_link_source_in_its_block_only(cx: &mut TestAppContext) {
     caret_at(window, 4, cx);
     assert_eq!(
         display(window, cx),
-        "see [the site](https://example.com) and [[Other]]\nbare https://example.org/path, here\nhttps://example.net/a↗ `https://code.example`\n"
+        "see [the site](https://example.com) and [[Other]]\nbare https://example.org/path, here\nhttps://example.net/a↗ https://code.example\n"
     );
 }
 

@@ -1139,6 +1139,10 @@ mod projection_vim_tests;
 mod link_tests;
 
 #[cfg(test)]
+#[path = "write_style_tests.rs"]
+mod write_style_tests;
+
+#[cfg(test)]
 #[path = "editor_projection_mapping_tests.rs"]
 mod projection_mapping_tests;
 

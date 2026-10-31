@@ -19,6 +19,9 @@ pub struct SyntaxSpan {
     pub id: Option<Range<usize>>,
     /// Where a list item's children start, when it has any.
     pub children: Option<usize>,
+    /// Where a list item's children end, before trailing whitespace, when it has any.
+    pub subtree_end: Option<usize>,
+    pub depth: usize,
 }
 
 pub fn syntax_spans(snapshot: &BufferSnapshot, blocks: &[Block]) -> Vec<SyntaxSpan> {
@@ -47,6 +50,9 @@ pub fn syntax_spans(snapshot: &BufferSnapshot, blocks: &[Block]) -> Vec<SyntaxSp
                 marker,
                 id,
                 children,
+                subtree_end: children
+                    .map(|_| trim_end(snapshot, block.content_to, block.subtree_to)),
+                depth: block.depth,
             })
         })
         .collect()

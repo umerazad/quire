@@ -8,13 +8,19 @@ use std::{
     any::{Any, TypeId},
     collections::HashMap,
     ops::Range,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 pub struct BlockSyntax {
     pub marker: Range<MultiBufferOffset>,
     pub id: Option<Range<MultiBufferOffset>>,
     pub children: Option<MultiBufferOffset>,
+    /// Where a list item's children end, when it has any and they lie in the view.
+    pub subtree_end: Option<MultiBufferOffset>,
+    pub depth: usize,
 }
 
 struct AnchoredBlock {
@@ -22,6 +28,8 @@ struct AnchoredBlock {
     id: Option<Range<Anchor>>,
     /// Where a list item's children start, when it has any: a collapsed fold starts there.
     children: Option<Anchor>,
+    subtree_end: Option<Anchor>,
+    depth: usize,
 }
 
 struct Projection {
@@ -38,6 +46,11 @@ struct Projection {
     /// How many folds hide or replace syntax after the last refresh, to notice when a fold
     /// command outside Write removed some.
     syntax_folds: usize,
+    /// Inline marks, styles, rules, and tables from the latest parse.
+    style: crate::write_style::Presentation,
+    /// Whether the view's highlights show `style`; a parse or theme change clears it.
+    styled: bool,
+    hover: Arc<BulletHover>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -154,7 +167,7 @@ impl Addon for Projection {
         let start = self
             .links
             .partition_point(|link| link.range.end.to_offset(&snapshot) < visible.start);
-        self.links[start..]
+        let links = self.links[start..]
             .iter()
             .take_while(|link| link.range.start.to_offset(&snapshot) <= visible.end)
             .filter(|link| rendered_link(view, link, &snapshot, window, cx))
@@ -165,8 +178,73 @@ impl Addon for Projection {
                     range: link.label.clone(),
                     render: Arc::new(move |layout, _| link_region(&editor, &link, layout)),
                 }
-            })
-            .collect()
+            });
+        let lines = self
+            .blocks
+            .iter()
+            .enumerate()
+            .filter_map(|(ordinal, block)| {
+                let end = block.children?;
+                let range = block.marker.end..end;
+                let offsets = range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot);
+                (offsets.start < offsets.end
+                    && offsets.end >= visible.start
+                    && offsets.start <= visible.end)
+                    .then(|| {
+                        let hover = self.hover.clone();
+                        let editor = editor.downgrade();
+                        editor::TextRegion {
+                            range,
+                            render: Arc::new(move |_, _| {
+                                line_hover(ordinal, hover.clone(), editor.clone())
+                            }),
+                        }
+                    })
+            });
+        links.chain(lines).collect()
+    }
+
+    /// `rt`'s child guides (`block-hierarchy.ts`) in place of Zed's indent guides: for each list
+    /// item with children, a 2 px line under its bullet from just below the dot through its
+    /// subtree's last line, in a tone per depth.
+    fn indent_guides(
+        &self,
+        editor: &Entity<Editor>,
+        visible: Range<MultiBufferRow>,
+        cx: &App,
+    ) -> Option<Vec<editor::HostIndentGuide>> {
+        let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+        let tones = guide_tones(cx);
+        Some(
+            self.blocks
+                .iter()
+                .enumerate()
+                .filter_map(|(ordinal, block)| {
+                    block.children?;
+                    let start = snapshot.offset_to_point(block.marker.start.to_offset(&snapshot));
+                    let end = snapshot.offset_to_point(block.subtree_end?.to_offset(&snapshot));
+                    if end.row < visible.start.0 || start.row > visible.end.0 {
+                        return None;
+                    }
+                    let column = snapshot
+                        .chars_at(snapshot.point_to_offset(language::Point::new(start.row, 0)))
+                        .take(start.column as usize)
+                        .fold(0, |column, c| match c {
+                            '\t' => column + GUIDE_TAB - column % GUIDE_TAB,
+                            _ => column + 1,
+                        });
+                    Some(editor::HostIndentGuide {
+                        rows: MultiBufferRow(start.row)..=MultiBufferRow(end.row),
+                        column,
+                        offset: BULLET_CENTER - GUIDE_WIDTH / 2.,
+                        start_below_center: GUIDE_GAP,
+                        width: GUIDE_WIDTH,
+                        color: tones[block.depth % tones.len()],
+                        debug_selector: format!("quire-guide-{ordinal}"),
+                    })
+                })
+                .collect(),
+        )
     }
 
     fn to_any(&self) -> &dyn Any {
@@ -175,6 +253,42 @@ impl Addon for Projection {
     fn to_any_mut(&mut self) -> Option<&mut dyn Any> {
         Some(self)
     }
+}
+
+/// Tracks the pointer over a parent item's line text, which shows its fold arrow, without taking
+/// clicks or selection from the text.
+fn line_hover(
+    ordinal: usize,
+    hover: Arc<BulletHover>,
+    editor: WeakEntity<Editor>,
+) -> gpui::AnyElement {
+    gpui::div()
+        .id(("quire-bullet-line", ordinal))
+        .debug_selector(move || format!("quire-line-{ordinal}"))
+        .size_full()
+        .on_hover(move |hovered, _, cx| hover.set(false, ordinal, *hovered, &editor, cx))
+        .into_any_element()
+}
+
+/// Where a bullet's dot centre sits right of its marker's start: past the 16 px fold-arrow slot,
+/// half the 18 px bullet.
+const BULLET_CENTER: gpui::Pixels = gpui::px(25.);
+const GUIDE_WIDTH: gpui::Pixels = gpui::px(2.);
+/// The guide starts just below its parent's dot, as `rt`'s starts 1.1em into the line.
+const GUIDE_GAP: gpui::Pixels = gpui::px(5.);
+/// `rt`'s tab width when it measures a parent's indentation.
+const GUIDE_TAB: u32 = 4;
+
+/// `rt`'s four guide tones by depth (`--branch-guide-0` to `-3` in `controls.css`), which its
+/// light and dark themes each set to one neutral colour.
+fn guide_tones(cx: &App) -> [gpui::Hsla; 4] {
+    use theme::ActiveTheme;
+    let tone = if cx.theme().appearance.is_light() {
+        0xd8e0e6
+    } else {
+        0x2b2d2f
+    };
+    [gpui::rgb(tone).into(); 4]
 }
 
 fn rendered_link(
@@ -289,16 +403,10 @@ fn refresh(
         .map(|range| range.start)
         .collect();
     let palette = BulletPalette::of(cx);
-    let caret_rows: Vec<u32> = editor
-        .selections
-        .disjoint_anchors_arc()
-        .iter()
-        .map(|selection| {
-            snapshot
-                .offset_to_point(selection.head().to_offset(&snapshot))
-                .row
-        })
-        .collect();
+    let hover = editor
+        .addon::<Projection>()
+        .map(|projection| projection.hover.clone())
+        .unwrap_or_default();
     let mut hidden = Vec::new();
     let mut tasks = Vec::new();
     for (ordinal, block) in blocks.iter().enumerate() {
@@ -329,8 +437,6 @@ fn refresh(
             let collapsed = block
                 .children
                 .is_some_and(|at| collapsed.contains(&at.to_offset(&snapshot)));
-            let row = snapshot.offset_to_point(marker.start).row;
-            let arrow = block.children.is_some() && (collapsed || caret_rows.contains(&row));
             tasks.push(Crease::simple(
                 marker,
                 bullet_placeholder(
@@ -338,9 +444,10 @@ fn refresh(
                     Bullet {
                         ordinal,
                         number,
-                        children: block.children.filter(|_| arrow),
+                        children: block.children,
                         collapsed,
                         palette,
+                        hover: hover.clone(),
                     },
                 ),
             ));
@@ -362,6 +469,58 @@ fn refresh(
         type_tag: Some(TypeId::of::<Projection>()),
         ..Default::default()
     };
+    let style = editor
+        .addon::<Projection>()
+        .map(|projection| projection.style.clone())
+        .unwrap_or_default();
+    let mut replaced = Vec::new();
+    for mark in style.hidden.iter() {
+        if shown(
+            editor,
+            &mark.range,
+            &mark.block,
+            &mark.source,
+            &snapshot,
+            window,
+            cx,
+        ) {
+            hidden.push(mark.range.start.to_offset(&snapshot)..mark.range.end.to_offset(&snapshot));
+        }
+    }
+    for rule in style.rules.iter() {
+        if shown(
+            editor,
+            &rule.range,
+            &rule.block,
+            &rule.source,
+            &snapshot,
+            window,
+            cx,
+        ) {
+            replaced.push(crate::write_style::Replacement::Rule(rule.clone()));
+        }
+    }
+    for table in style.tables.iter() {
+        let mark = &table.mark;
+        if shown(
+            editor,
+            &mark.range,
+            &mark.block,
+            &mark.source,
+            &snapshot,
+            window,
+            cx,
+        ) {
+            replaced.push(crate::write_style::Replacement::Table(table.clone()));
+        }
+    }
+    crate::write_style::replace(editor, replaced, cx);
+    let restyle = editor
+        .addon_mut::<Projection>()
+        .is_none_or(|projection| !std::mem::replace(&mut projection.styled, true));
+    if restyle {
+        crate::write_style::highlight(editor, &style, cx);
+    }
     let (links, previews) = editor
         .addon::<Projection>()
         .map(|projection| {
@@ -553,21 +712,70 @@ impl BulletPalette {
     }
 }
 
+/// Which list item the pointer is over, by block ordinal: its line's text, or its drawn marker.
+/// Each is tracked apart, so leaving one for the other never hides the item's fold arrow.
+pub(crate) struct BulletHover {
+    line: AtomicUsize,
+    marker: AtomicUsize,
+}
+
+const NOT_HOVERED: usize = usize::MAX;
+
+impl Default for BulletHover {
+    fn default() -> Self {
+        Self {
+            line: AtomicUsize::new(NOT_HOVERED),
+            marker: AtomicUsize::new(NOT_HOVERED),
+        }
+    }
+}
+
+impl BulletHover {
+    fn shows(&self, ordinal: usize) -> bool {
+        [&self.line, &self.marker]
+            .iter()
+            .any(|over| over.load(Ordering::Relaxed) == ordinal)
+    }
+
+    /// Records the pointer entering or leaving `ordinal`'s line or marker, redrawing the editor
+    /// when that changes whether its arrow shows.
+    fn set(
+        &self,
+        marker: bool,
+        ordinal: usize,
+        hovered: bool,
+        editor: &WeakEntity<Editor>,
+        cx: &mut App,
+    ) {
+        let over = if marker { &self.marker } else { &self.line };
+        let changed = if hovered {
+            over.swap(ordinal, Ordering::Relaxed) != ordinal
+        } else {
+            over.compare_exchange(ordinal, NOT_HOVERED, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+        };
+        if changed {
+            editor.update(cx, |_, cx| cx.notify()).ok();
+        }
+    }
+}
+
 struct Bullet {
     ordinal: usize,
     /// A numbered item's marker, such as `2.`, shown in place of the dot.
     number: Option<gpui::SharedString>,
-    /// Where the item's children start, when it shows the arrow that folds them: while they are
-    /// collapsed or the caret is on its line, as Zed shows its gutter disclosure.
+    /// Where the item's children start, when it has any.
     children: Option<Anchor>,
     collapsed: bool,
     palette: BulletPalette,
+    hover: Arc<BulletHover>,
 }
 
 /// A list item's marker as `rt` draws it: a dot, or the item's number, that zooms into the
 /// block on click, with a ring when its children are collapsed. An item with children also gets
-/// an arrow at its left, while collapsed or holding the caret, that collapses or expands them. The placeholder text is
-/// empty, so the view's text and columns stay those of the hidden marker.
+/// an arrow at its left that collapses or expands them, shown while they are collapsed or the
+/// pointer is over the item's line, as `rt` shows it on hover. The placeholder text is empty, so
+/// the view's text and columns stay those of the hidden marker.
 fn bullet_placeholder(editor: WeakEntity<Editor>, bullet: Bullet) -> FoldPlaceholder {
     let bullet = Arc::new(bullet);
     FoldPlaceholder {
@@ -583,6 +791,7 @@ fn bullet_placeholder(editor: WeakEntity<Editor>, bullet: Bullet) -> FoldPlaceho
                 children,
                 collapsed,
                 palette,
+                hover,
             } = &*bullet;
             let (ink, ring) = (rgb(palette.ink), rgb(palette.ring));
             let group = gpui::SharedString::from(format!("quire-bullet-{ordinal}"));
@@ -627,7 +836,7 @@ fn bullet_placeholder(editor: WeakEntity<Editor>, bullet: Bullet) -> FoldPlaceho
                         .ok();
                 });
             let mut slot = gpui::div().flex_none().w(px(16.));
-            if let Some(children) = *children {
+            if let Some(children) = children.filter(|_| *collapsed || hover.shows(*ordinal)) {
                 let fold_editor = editor.clone();
                 slot = slot.child(
                     pointer_control(("quire-bullet-fold", *ordinal))
@@ -664,11 +873,18 @@ fn bullet_placeholder(editor: WeakEntity<Editor>, bullet: Bullet) -> FoldPlaceho
                         }),
                 );
             }
+            let hover = hover.clone();
+            let hover_editor = editor.clone();
+            let ordinal = *ordinal;
             gpui::div()
+                .id(("quire-bullet-marker", ordinal))
                 .flex()
                 .items_center()
                 .h_full()
                 .mr(px(2.))
+                .on_hover(move |hovered, _, cx| {
+                    hover.set(true, ordinal, *hovered, &hover_editor, cx)
+                })
                 .child(slot)
                 .child(bullet)
                 .into_any_element()
@@ -1393,6 +1609,8 @@ fn apply_spans(
                 .as_ref()
                 .map(|id| snapshot.anchor_after(id.start)..snapshot.anchor_before(id.end)),
             children: block.children.map(|at| snapshot.anchor_before(at)),
+            subtree_end: block.subtree_end.map(|at| snapshot.anchor_before(at)),
+            depth: block.depth,
         })
         .collect();
     let protected = blocks.clone();
@@ -1621,6 +1839,11 @@ fn apply_blocks(
         })
         .collect();
     editor.addon_mut::<Projection>().unwrap().links = links;
+    let mut marks = crate::write_style::marks(snapshot, blocks).unwrap_or_default();
+    marks.urdu = crate::write_style::urdu_runs(&page_text);
+    let projection = editor.addon_mut::<Projection>().unwrap();
+    projection.style = crate::write_style::Presentation::anchor(snapshot, marks, shown, anchor);
+    projection.styled = false;
     let spans: Vec<_> = spans
         .into_iter()
         .filter_map(|span| {
@@ -1654,6 +1877,8 @@ fn apply_blocks(
                 marker,
                 id,
                 children,
+                subtree_end: span.subtree_end.and_then(offset),
+                depth: span.depth,
             })
         })
         .collect();
@@ -1697,13 +1922,14 @@ pub fn bind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Resul
             if matches!(event, language::BufferEvent::Reparsed | language::BufferEvent::LanguageChanged(_)) { rebuild(editor, source, window, cx); }
         });
         let theme_subscription = cx.observe_global_in::<theme::GlobalTheme>(window, |editor, window, cx| {
+            if let Some(projection) = editor.addon_mut::<Projection>() { projection.styled = false; }
             if let Some(blocks) = editor.addon::<Projection>().map(|projection| projection.blocks.clone()) {
                 refresh(editor, &blocks, window, cx);
             }
         });
         editor.register_addon(Projection {
             blocks: Arc::default(), links: Vec::new(), previews: Vec::new(), preview_text: HashMap::new(),
-            requests: HashMap::new(), sequence: 0, parsed: None, heads: Vec::new(), syntax_folds: 0,
+            requests: HashMap::new(), sequence: 0, parsed: None, heads: Vec::new(), syntax_folds: 0, style: Default::default(), styled: false, hover: Arc::default(),
             _subscriptions: vec![editor_subscription, source_subscription, theme_subscription],
         });
         apply_spans(editor, &[], window, cx);
@@ -1729,6 +1955,8 @@ pub fn view_range_changed(
     };
     projection.parsed = None;
     projection.links.clear();
+    projection.style = Default::default();
+    projection.styled = false;
     projection.previews.clear();
     apply_spans(editor, &[], window, cx);
     if let Some(blocks) = blocks {

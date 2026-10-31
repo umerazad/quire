@@ -203,8 +203,10 @@ fn undo_removes_a_new_blocks_id_with_the_block(cx: &mut TestAppContext) {
 fn bullet_arrows_toggle_nested_blocks_without_writing_ids(cx: &mut TestAppContext) {
     let page = "- Parent|\n  - Child\n    - Grandchild\n- Sibling\n";
     let window = write_view(page, false, cx);
+    super::tests::hover(window, Some("quire-line-0"), cx);
     super::tests::click(window, "quire-bullet-fold", cx);
     assert!(!displayed(window, cx).contains("Grandchild"));
+    super::tests::hover(window, None, cx);
     super::tests::click(window, "quire-bullet-fold", cx);
     assert!(displayed(window, cx).contains("Grandchild"));
     assert_eq!(state(window, cx), page, "folding writes no block ID");
