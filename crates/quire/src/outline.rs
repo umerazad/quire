@@ -11,6 +11,7 @@ use gpui::{
 use multi_buffer::{MultiBuffer, MultiBufferOffset, ToOffset, ViewEditIntent};
 use std::{any::TypeId, ops::Range};
 
+mod fresh_ids;
 mod lists;
 mod model;
 pub mod zoom;
@@ -109,7 +110,7 @@ enum Handled {
 pub fn init(cx: &mut App) {
     cx.observe_new(|editor: &mut Editor, window, cx| {
         if let Some(window) = window {
-            follow_numbering(editor, window, cx);
+            follow_edits(editor, window, cx);
         }
         cx.subscribe_self(|editor, event: &editor::EditorEvent, cx| {
             let progress = crate::code_format::formatting(editor)
@@ -448,6 +449,27 @@ fn outline_folds(editor: &mut Editor, cx: &mut Context<Editor>) -> Vec<Range<usi
         .collect()
 }
 
+/// Applies source edits that follow up an earlier edit, folding them into that edit's
+/// transaction `into` while it is still the latest, so one undo reverts both.
+fn amend(
+    buffer: &Entity<language::Buffer>,
+    edits: &[Edit],
+    into: Option<text::TransactionId>,
+    cx: &mut App,
+) {
+    let latest =
+        |buffer: &language::Buffer| buffer.peek_undo_stack().map(|entry| entry.transaction_id());
+    let into = into.filter(|into| latest(buffer.read(cx)) == Some(*into));
+    source_edit(buffer, edits, cx);
+    buffer.update(cx, |buffer, _| {
+        if let (Some(into), Some(added)) = (into, latest(buffer))
+            && added != into
+        {
+            buffer.merge_transactions(added, into);
+        }
+    });
+}
+
 /// Edits the source buffer directly. Every view of the page shares its history, so the edit
 /// joins the running editor transaction and no view's Write filter rewrites it.
 fn source_edit(buffer: &Entity<language::Buffer>, edits: &[Edit], cx: &mut App) {
@@ -508,10 +530,11 @@ fn apply(
     apply_then(editor, page, plan, |_, _, _| None, window, cx)
 }
 
-/// Keeps numbered lists counting after edits that are not outline commands, such as typing a
-/// numbered line, Vim `dd`, or undo. The focused Write view renumbers the runs an edit touched
-/// right after it, so the buffer groups both into one undo step.
-fn follow_numbering(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
+/// Follows edits that are not outline commands, such as pasting, typing a numbered line, Vim
+/// `dd` or `yyp`, or undo, in the focused view: copied block IDs become fresh ones, and in
+/// Write view the numbered runs an edit touched keep counting. Both land right after the edit,
+/// so the buffer groups them with it into one undo step.
+fn follow_edits(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
     let Some(buffer) = source_buffer(editor, cx) else {
         return;
     };
@@ -520,35 +543,50 @@ fn follow_numbering(editor: &mut Editor, window: &mut Window, cx: &mut Context<E
         let language::BufferEvent::Edited { source } = event else {
             return;
         };
-        let snapshot = buffer.read(cx).snapshot();
-        let since = std::mem::replace(&mut seen, snapshot.version().clone());
-        if !source.is_local()
-            || !crate::editor_projection::enabled(editor)
-            || !editor.focus_handle(cx).is_focused(window)
-        {
+        let since = std::mem::replace(&mut seen, buffer.read(cx).version());
+        if !source.is_local() || !editor.focus_handle(cx).is_focused(window) {
             return;
         }
-        let touched: Vec<Range<usize>> = snapshot
-            .edits_since::<usize>(&since)
-            .map(|edit| edit.new)
-            .collect();
-        let text = snapshot.text();
-        let numbered = touched.iter().any(|range| {
-            let from = model::line_start(&text, range.start);
-            let to = model::line_end(&text, range.end);
-            let to = model::line_end(&text, (to + 1).min(text.len()));
-            text[from..to].lines().any(|line| {
-                model::list_mark(line.trim_start())
-                    .is_some_and(|mark| mark.starts_with(|c: char| c.is_ascii_digit()))
-            })
-        });
-        if !numbered {
+        let touched = |cx: &App| -> Vec<Range<usize>> {
+            buffer
+                .read(cx)
+                .snapshot()
+                .edits_since::<usize>(&since)
+                .map(|edit| edit.new)
+                .collect()
+        };
+        let inserted = touched(cx);
+        if inserted.is_empty() {
             return;
         }
-        let renumbered = renumber_touched(buffer, &touched, cx);
-        source_edit(buffer, &renumbered, cx);
+        let into = buffer
+            .read(cx)
+            .peek_undo_stack()
+            .map(|entry| entry.transaction_id());
+        fresh_ids::follow(editor, buffer, &inserted, into, cx);
+        if crate::editor_projection::enabled(editor) {
+            let touched = touched(cx);
+            if numbered(&buffer.read(cx).text(), &touched) {
+                let renumbered = renumber_touched(buffer, &touched, cx);
+                amend(buffer, &renumbered, into, cx);
+            }
+        }
+        seen = buffer.read(cx).version();
     })
     .detach();
+}
+
+/// Whether a numbered list item sits on or right after a line an edit touched.
+fn numbered(text: &str, touched: &[Range<usize>]) -> bool {
+    touched.iter().any(|range| {
+        let from = model::line_start(text, range.start);
+        let to = model::line_end(text, range.end);
+        let to = model::line_end(text, (to + 1).min(text.len()));
+        text[from..to].lines().any(|line| {
+            model::list_mark(line.trim_start())
+                .is_some_and(|mark| mark.starts_with(|c: char| c.is_ascii_digit()))
+        })
+    })
 }
 
 /// Applies the plan, then the plan `then` computes from the edited page and the caret, as one

@@ -923,3 +923,7 @@ mod lifecycle_tests;
 #[cfg(test)]
 #[path = "block_move_tests.rs"]
 mod block_move_tests;
+
+#[cfg(test)]
+#[path = "fresh_ids_tests.rs"]
+mod fresh_ids_tests;

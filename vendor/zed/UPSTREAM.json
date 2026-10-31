@@ -263,6 +263,14 @@
       "change": "Use complete source line selections and scoped DeleteLines intent for filtered visual-line deletion; preserve ordinary and visual-block behavior."
     },
     {
+      "path": "crates/vim/src/normal/yank.rs",
+      "change": "For views with an edit filter, copy linewise motion yanks (yy, yj) from complete source lines, including hidden syntax, through the shared linewise source range used by deletion. Ordinary views and other yanks are unchanged."
+    },
+    {
+      "path": "crates/vim/src/normal/paste.rs",
+      "change": "For views with an edit filter, put linewise text (p, P) at the cursor line's source start or end, beyond hidden syntax, under scoped Structural intent so the filter keeps the exact source position. Ordinary views, charwise and visual puts are unchanged."
+    },
+    {
       "path": "crates/vim/src/normal/change.rs",
       "change": "Scope Change intent around motion/object deletion so filtered hosts can preserve hidden block prefixes and identities. Views without a filter are unchanged."
     },

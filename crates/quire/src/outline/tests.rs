@@ -91,11 +91,7 @@ fn displayed(window: WindowHandle<Editor>, cx: &mut TestAppContext) -> String {
 }
 
 fn undo(vim: bool) -> String {
-    if vim {
-        "u".into()
-    } else {
-        format!("{MOD}-z")
-    }
+    if vim { "u".into() } else { format!("{MOD}-z") }
 }
 
 #[gpui::test]
@@ -540,4 +536,55 @@ fn numbered_lists_renumber_after_plain_edits(cx: &mut TestAppContext) {
     let window = write_view("1. One\n2. Two\n|\n", false, cx);
     keys(window, "1 . space c", cx);
     assert_eq!(state(window, cx), "1. One\n2. Two\n3. c|\n");
+}
+
+/// The ID after `^` on each line of the view's text, or "" for lines without one.
+fn line_ids(window: WindowHandle<Editor>, cx: &mut TestAppContext) -> Vec<String> {
+    state(window, cx)
+        .replace('|', "")
+        .lines()
+        .map(|line| line.rsplit_once(" ^").map_or("", |(_, id)| id).to_owned())
+        .collect()
+}
+
+#[gpui::test]
+fn copied_block_ids_become_fresh_ids(cx: &mut TestAppContext) {
+    let window = write_view("- O|ne ^a\n- Two ^b\n", true, cx);
+    keys(window, "y y p", cx);
+    let ids = line_ids(window, cx);
+    assert_eq!(ids[0], "a");
+    assert!(ids[1].starts_with("b-"), "{ids:?}");
+    assert_eq!(ids[2], "b");
+    assert!(state(window, cx).starts_with("- One ^a\n- |One ^b-"));
+    keys(window, "u", cx);
+    assert_eq!(state(window, cx).replace('|', ""), "- One ^a\n- Two ^b\n");
+
+    let window = write_view("- Two ^b\n- |\n", false, cx);
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+        "X ^b\n- Y ^n\n- Z ^n".into(),
+    ));
+    keys(window, &format!("{MOD}-v"), cx);
+    let ids = line_ids(window, cx);
+    assert_eq!(ids[0], "b");
+    assert!(ids[1].starts_with("b-") && ids[1] != "b", "{ids:?}");
+    assert_eq!(ids[2], "n", "a new ID stays");
+    assert!(ids[3].starts_with("b-"), "{ids:?}");
+    keys(window, &undo(false), cx);
+    assert_eq!(state(window, cx).replace('|', ""), "- Two ^b\n- \n");
+}
+
+/// Write hides list markers and IDs, and Vim's linewise yank and put still copy and place
+/// whole source lines.
+#[gpui::test]
+fn vim_linewise_yank_and_put_keep_hidden_syntax(cx: &mut TestAppContext) {
+    let window = write_view("- O|ne\n- Two\n", true, cx);
+    expect(window, &[("y y p", "- One\n- |One\n- Two\n")], cx);
+    let window = write_view("- One\n- T|wo ^t\n", true, cx);
+    keys(window, "y y P", cx);
+    let ids = line_ids(window, cx);
+    assert!(
+        state(window, cx).starts_with("- One\n- |Two ^b-"),
+        "{ids:?}"
+    );
+    assert_eq!(ids[2], "t");
 }
