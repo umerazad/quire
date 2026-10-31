@@ -69,24 +69,48 @@ pub(crate) fn copy_database(source: &Path, scratch: &Path) -> Result<CopiedDatab
             scratch.display()
         )
     })?;
-    let folder = tempfile::tempdir_in(scratch)
-        .context("Cannot make a scratch folder in Quire's data folder; check free space")?;
-    let copy = folder.path().join("copy.sqlite");
-    fs::copy(source, &copy).with_context(|| {
-        format!(
-            "Cannot copy rt's database {}; check free space",
-            source.display()
-        )
-    })?;
     let wal = PathBuf::from(format!("{}-wal", source.display()));
-    match fs::copy(&wal, folder.path().join("copy.sqlite-wal")) {
-        Ok(_) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(error)
-                .with_context(|| format!("Cannot copy rt's write-ahead log {}", wal.display()));
+    // The database and its log are copied separately; a copy taken while either changed could
+    // pair a checkpointed file with a stale log, so it is taken again.
+    let stamp = || {
+        [source, wal.as_path()].map(|path| {
+            fs::metadata(path)
+                .ok()
+                .map(|metadata| (metadata.len(), metadata.modified().ok()))
+        })
+    };
+    let mut attempts = 0;
+    let (folder, copy) = loop {
+        let before = stamp();
+        let folder = tempfile::tempdir_in(scratch)
+            .context("Cannot make a scratch folder in Quire's data folder; check free space")?;
+        let copy = folder.path().join("copy.sqlite");
+        fs::copy(source, &copy).with_context(|| {
+            format!(
+                "Cannot copy rt's database {}; check free space",
+                source.display()
+            )
+        })?;
+        match fs::copy(&wal, folder.path().join("copy.sqlite-wal")) {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("Cannot copy rt's write-ahead log {}", wal.display())
+                });
+            }
         }
-    }
+        if stamp() == before {
+            break (folder, copy);
+        }
+        attempts += 1;
+        if attempts == 3 {
+            bail!(
+                "rt's database {} kept changing while it was copied. Quit rt, then run the migration again.",
+                source.display()
+            );
+        }
+    };
     let connection = database::open_unconfigured(&copy)?;
     let check: Option<String> = connection
         .select_row("PRAGMA integrity_check")
@@ -112,6 +136,19 @@ pub fn store_database(quire_data: &Path, notebook: &str) -> PathBuf {
         .join("local.sqlite")
 }
 
+/// The names `rt` may use for the migrated notebook at `root`: `root` itself and every `rt`
+/// profile root that resolves to it. `rt` keys renderer state by the root as its profile spells it.
+pub fn rt_names_for(rt_data: &Path, quire_data: &Path, root: &Path) -> Vec<PathBuf> {
+    let profile_roots = read_profiles(rt_data, &quire_data.join(SCRATCH))
+        .map(|profiles| profiles.roots())
+        .unwrap_or_default();
+    std::iter::once(root.to_owned())
+        .chain(profile_roots.into_iter().filter(|candidate| {
+            candidate != root && fs::canonicalize(candidate).is_ok_and(|real| real == root)
+        }))
+        .collect()
+}
+
 /// What to migrate and where.
 #[derive(Clone, Debug)]
 pub struct Options {
@@ -135,6 +172,13 @@ pub fn migrate(options: &Options) -> Result<Report> {
         bail!(
             "{} is not rt's data folder. Pass the folder that holds profiles.sqlite, usually ~/Library/Application Support/Quire on macOS.",
             rt_data.display()
+        );
+    }
+    // Electron keeps this link while rt runs; a running rt could save between our copies.
+    if fs::symlink_metadata(rt_data.join("SingletonLock")).is_ok() {
+        bail!(
+            "rt appears to be running: {} exists. Quit rt, then run the migration again. If rt is not running, open and quit it once to clear the lock.",
+            rt_data.join("SingletonLock").display()
         );
     }
     fs::create_dir_all(quire_data).with_context(|| {
@@ -204,7 +248,9 @@ pub fn migrate(options: &Options) -> Result<Report> {
         }
     }
     record.save(quire_data)?;
-    report.profiles = import_profiles(&profiles, &notebooks, quire_data, &mut record)?;
+    let (lines, problems) = import_profiles(&profiles, &notebooks, quire_data, &mut record)?;
+    report.profiles = lines;
+    report.problems.extend(problems);
     record.migrated_at.get_or_insert(*now);
     record.save(quire_data)?;
     let _ = fs::remove_dir(&scratch);
@@ -214,21 +260,25 @@ pub fn migrate(options: &Options) -> Result<Report> {
 /// Gives each Quire profile the notebook, backup folder, and Git remote of its `rt` profile.
 /// Each choice is made once and recorded, so later runs keep what was chosen in Quire since, and
 /// a notebook migrated only on a later run still joins its profile then. A Quire profile that
-/// already has a value keeps it.
+/// already has a value keeps it, and a backup folder or Git remote joins a profile only when it
+/// holds the very notebook they served in `rt`. Returns report lines and problems.
 fn import_profiles(
     rt: &RtProfiles,
     notebooks: &[(ProfileId, Option<Notebook>)],
     quire_data: &Path,
     record: &mut Record,
-) -> Result<Vec<String>> {
+) -> Result<(Vec<String>, Vec<String>)> {
     let mut profiles = Profiles::load(quire_data.join("profiles.json"))?;
     let mut lines = Vec::new();
+    let mut problems = Vec::new();
     let mut step = |record: &mut Record, key: String, outcome: Result<String>| match outcome {
         Ok(line) => {
             record.completed.insert(key);
             lines.push(line);
         }
-        Err(error) => lines.push(format!("{error:#} It is tried again on the next run.")),
+        Err(error) => problems.push(format!(
+            "{error:#} Run the migration again after fixing that; the step is retried."
+        )),
     };
     if !record.completed.contains("profile:active") {
         let fresh = ProfileId::ALL
@@ -252,7 +302,7 @@ fn import_profiles(
             .find(|(held, _)| *held == id)
             .and_then(|(_, notebook)| notebook.clone());
         if !record.completed.contains(&key("notebook"))
-            && let Some(notebook) = notebook
+            && let Some(notebook) = &notebook
         {
             let outcome = if profiles.get(id).notebook.is_some() {
                 Ok(format!(
@@ -267,11 +317,26 @@ fn import_profiles(
             };
             step(record, key("notebook"), outcome);
         }
-        let settled = profile.root.is_none() || record.completed.contains(&key("notebook"));
+        // Until rt's notebook is migrated nothing is decided, since setting a notebook later
+        // clears the Git remote. Afterwards the folder and remote follow only that notebook.
+        let held = profiles.get(id).notebook;
+        let belongs = match (&profile.root, &notebook) {
+            (None, _) => Some(held.is_none()),
+            (Some(_), Some(notebook)) => {
+                Some(held.as_ref().is_some_and(|held| held.same(notebook)))
+            }
+            (Some(_), None) => None,
+        };
+        let Some(belongs) = belongs else { continue };
         if !record.completed.contains(&key("backup"))
             && let Some(folder) = &profile.backup_folder
         {
-            let outcome = if profiles.get(id).backup_folder.is_some() {
+            let outcome = if !belongs {
+                Ok(format!(
+                    "{label}: rt's backup folder {} was not set, since Quire's {label} holds another notebook.",
+                    folder.display()
+                ))
+            } else if profiles.get(id).backup_folder.is_some() {
                 Ok(format!("{label}: kept Quire's backup folder."))
             } else {
                 profiles
@@ -286,12 +351,14 @@ fn import_profiles(
             };
             step(record, key("backup"), outcome);
         }
-        // Setting a different notebook clears the Git remote, so the remote follows the notebook.
-        if settled
-            && !record.completed.contains(&key("git"))
+        if !record.completed.contains(&key("git"))
             && let Some(remote) = &profile.git_remote
         {
-            let outcome = if profiles.get(id).git_remote.is_some() {
+            let outcome = if !belongs {
+                Ok(format!(
+                    "{label}: rt's Git remote {remote} was not set, since Quire's {label} holds another notebook."
+                ))
+            } else if profiles.get(id).git_remote.is_some() {
                 Ok(format!("{label}: kept Quire's Git remote."))
             } else {
                 profiles
@@ -302,10 +369,10 @@ fn import_profiles(
             step(record, key("git"), outcome);
         }
     }
-    if lines.is_empty() {
+    if lines.is_empty() && problems.is_empty() {
         lines.push(
             "Profiles were imported by an earlier run; Quire's profiles are unchanged.".into(),
         );
     }
-    Ok(lines)
+    Ok((lines, problems))
 }

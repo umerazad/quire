@@ -8,10 +8,10 @@
 //! confirms it (`publish`). Afterwards a second, independent replica reads the folder from
 //! scratch, as `rt` would, and must arrive at the same pages Quire shows.
 
-use super::{Migrated, NotebookKind, Record, report::summary};
+use super::{Migrated, NotebookKind, Record, quire_notebook::import_log, report::summary};
 use crate::{
     folder_notebook::{FolderNotebook, state_folder_in},
-    notebook::{NotebookStore, RescanLimits},
+    notebook::NotebookStore,
     notebook_lock::{NotebookLock, folder_lock, store_lock},
 };
 use anyhow::{Context as _, Result};
@@ -109,9 +109,12 @@ fn quire(
     let _lock = NotebookLock::acquire(&store_lock(database))
         .context("Close this notebook in Quire first")?;
     let store = NotebookStore::open(database, notebook, writer)?;
-    store.rescan(folder, RescanLimits::default(), None)?;
+    let mut lines: Vec<String> = import_log(&store, folder)?
+        .into_iter()
+        .map(|problem| format!("Could not read part of the synced folder: {problem}"))
+        .collect();
+    let unreadable = !lines.is_empty();
     let before = store.census()?;
-    let mut lines = Vec::new();
     if before.outbox > 0 && publish {
         while let Some(ack) = store.publish_to(folder, now)? {
             *published += ack.revisions;
@@ -141,7 +144,7 @@ fn quire(
     Ok(RollbackNotebook {
         kind: NotebookKind::Quire,
         source: folder.to_owned(),
-        ready: after.outbox == 0 && agrees && unsaved.is_empty(),
+        ready: !unreadable && after.outbox == 0 && agrees && unsaved.is_empty(),
         lines,
     })
 }
@@ -158,14 +161,7 @@ fn what_rt_sees(
         notebook,
         &format!("verify-{}", uuid::Uuid::new_v4().simple()),
     )?;
-    let mut cursor = None;
-    loop {
-        let report = fresh.rescan(folder, RescanLimits::default(), cursor.as_ref())?;
-        match report.continuation {
-            Some(next) => cursor = Some(next),
-            None => break,
-        }
-    }
+    import_log(&fresh, folder)?;
     fresh.census()
 }
 

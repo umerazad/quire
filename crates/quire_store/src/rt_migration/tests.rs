@@ -625,3 +625,60 @@ fn diff(before: &BTreeMap<String, String>, after: &BTreeMap<String, String>) -> 
         .map(|(path, _)| path.clone())
         .collect()
 }
+
+#[test]
+fn a_running_rt_is_refused_before_anything_is_copied() {
+    let fixture = fixture();
+    let before = fixture.rt_tree();
+    let lock = fixture.rt_data.join("SingletonLock");
+    std::os::unix::fs::symlink("rt-host-1234", &lock).unwrap();
+    let error = format!("{:#}", migrate(&fixture.options()).unwrap_err());
+    fs::remove_file(&lock).unwrap();
+    assert!(
+        error.contains("rt appears to be running") && error.contains("Quit rt"),
+        "{error}"
+    );
+    assert!(!fixture.quire_data.exists(), "nothing was written to Quire");
+    assert_eq!(fixture.rt_tree(), before);
+}
+
+#[test]
+fn a_quire_profile_holding_another_notebook_keeps_it_and_its_backup_folder() {
+    let fixture = fixture();
+    fs::create_dir_all(&fixture.quire_data).unwrap();
+    let own = fixture.rt.join("quire-own-notes");
+    fs::create_dir_all(&own).unwrap();
+    let mut profiles = Profiles::load(fixture.quire_data.join("profiles.json")).unwrap();
+    profiles
+        .set_notebook(ProfileId::Current, Notebook::Folder { root: own.clone() })
+        .unwrap();
+    drop(profiles);
+
+    let report = fixture.migrate();
+
+    let profiles = Profiles::load(fixture.quire_data.join("profiles.json")).unwrap();
+    let current = profiles.get(ProfileId::Current);
+    assert_eq!(current.notebook, Some(Notebook::Folder { root: own }));
+    assert_eq!(current.backup_folder, None, "{:#?}", report.profiles);
+    assert_eq!(
+        profiles.active(),
+        ProfileId::Current,
+        "Quire's choice stays"
+    );
+    assert!(
+        report
+            .profiles
+            .iter()
+            .any(|line| line.contains("kept Quire's notebook")),
+        "{:#?}",
+        report.profiles
+    );
+    assert!(
+        report
+            .profiles
+            .iter()
+            .any(|line| line.contains("backup folder") && line.contains("holds another notebook")),
+        "{:#?}",
+        report.profiles
+    );
+}

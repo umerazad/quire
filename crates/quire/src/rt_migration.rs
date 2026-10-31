@@ -13,7 +13,7 @@ use crate::preferences::{local_storage, rt_import};
 use quire_core::workspace::{Destination, Workspace};
 use quire_store::{
     notebook::NotebookStore,
-    notebook_lock::{NotebookLock, store_lock},
+    notebook_lock::{NotebookLock, folder_lock, store_lock},
     rt_migration::{self, Migrated, Record},
     sync::format::page_id_for_path,
 };
@@ -96,12 +96,14 @@ fn import_workspace(
     database: &Path,
     notebook: &str,
     workspace: &Workspace,
-) -> Result<bool, String> {
+) -> anyhow::Result<bool> {
     let file = crate::navigation::WorkspaceFile::beside(database, notebook);
     if !file.load().tabs.is_empty() {
         return Ok(false);
     }
-    file.save(workspace).map(|()| true)
+    file.save(workspace)
+        .map(|()| true)
+        .map_err(|error| anyhow::anyhow!("{error}"))
 }
 
 /// Merges `rt`'s prompt history and synthesis instruction into Quire's AI state file: Quire's
@@ -152,7 +154,7 @@ pub fn import_local_storage(rt_data: &Path, quire_data: &Path, record: &mut Reco
     if !storage.is_dir() {
         return vec!["rt kept no renderer storage, so there are no tabs, favorites, or prompt history to import.".into()];
     }
-    let roots: Vec<(String, Migrated)> = record
+    let roots: Vec<(String, Vec<String>, Migrated)> = record
         .notebooks
         .iter()
         .map(|migrated| {
@@ -160,13 +162,17 @@ pub fn import_local_storage(rt_data: &Path, quire_data: &Path, record: &mut Reco
                 Migrated::Folder { root, .. } => root,
                 Migrated::Quire { folder, .. } => folder,
             };
-            (
-                format!("{WORKSPACE_PREFIX}{}", root.display()),
-                migrated.clone(),
-            )
+            let names = rt_migration::rt_names_for(rt_data, quire_data, root)
+                .iter()
+                .map(|name| format!("{WORKSPACE_PREFIX}{}", name.display()))
+                .collect();
+            (root.display().to_string(), names, migrated.clone())
         })
         .collect();
-    let mut keys: Vec<&str> = roots.iter().map(|(key, _)| key.as_str()).collect();
+    let mut keys: Vec<&str> = roots
+        .iter()
+        .flat_map(|(_, names, _)| names.iter().map(String::as_str))
+        .collect();
     keys.extend([AI_HISTORY, SYNTHESIS]);
     let stored = match local_storage::read(&storage, ORIGIN, &keys) {
         Ok(stored) => stored,
@@ -177,9 +183,9 @@ pub fn import_local_storage(rt_data: &Path, quire_data: &Path, record: &mut Reco
         }
     };
     let mut lines = Vec::new();
-    for (key, migrated) in &roots {
-        let step = format!("workspace:{key}");
-        let Some(text) = stored.get(key) else {
+    for (root, names, migrated) in &roots {
+        let step = format!("workspace:{WORKSPACE_PREFIX}{root}");
+        let Some(text) = names.iter().find_map(|name| stored.get(name)) else {
             continue;
         };
         if record.completed.contains(&step) {
@@ -187,19 +193,20 @@ pub fn import_local_storage(rt_data: &Path, quire_data: &Path, record: &mut Reco
         }
         let Ok(value) = serde_json::from_str::<Value>(text) else {
             lines.push(format!(
-                "rt's tabs for {key} are damaged and were not imported."
+                "rt's tabs for {root} are damaged and were not imported."
             ));
             continue;
         };
         let outcome = match migrated {
-            Migrated::Folder { root, state } => {
+            Migrated::Folder { root, state } => (|| {
+                let _lock = NotebookLock::acquire(&folder_lock(state))?;
                 let workspace = convert_workspace(&value, |path| Some(page_id_for_path(path)));
                 import_workspace(
                     &state.join("folder.sqlite"),
                     &format!("folder:{}", root.display()),
                     &workspace,
                 )
-            }
+            })(),
             Migrated::Quire {
                 database,
                 notebook,
@@ -208,31 +215,23 @@ pub fn import_local_storage(rt_data: &Path, quire_data: &Path, record: &mut Reco
             } => (|| {
                 let _lock = NotebookLock::acquire(&store_lock(database))?;
                 let store = NotebookStore::open(database, notebook, writer)?;
-                Ok(convert_workspace(&value, |path| {
+                let workspace = convert_workspace(&value, |path| {
                     store.page_at(path).ok().flatten().map(|(page, _)| page)
-                }))
-            })()
-            .map_err(|error: anyhow::Error| format!("{error:#}"))
-            .and_then(|workspace| import_workspace(database, notebook, &workspace)),
+                });
+                import_workspace(database, notebook, &workspace)
+            })(),
         };
         match outcome {
             Ok(written) => {
                 record.completed.insert(step);
                 lines.push(if written {
-                    format!(
-                        "Tabs, favorites, and recents imported for {}.",
-                        &key[WORKSPACE_PREFIX.len()..]
-                    )
+                    format!("Tabs, favorites, and recents imported for {root}.")
                 } else {
-                    format!(
-                        "Kept Quire's own tabs for {}.",
-                        &key[WORKSPACE_PREFIX.len()..]
-                    )
+                    format!("Kept Quire's own tabs for {root}.")
                 });
             }
             Err(error) => lines.push(format!(
-                "Tabs for {} were not imported: {error} They are tried again on the next run.",
-                &key[WORKSPACE_PREFIX.len()..]
+                "Tabs for {root} were not imported: {error:#} They are tried again on the next run."
             )),
         }
     }

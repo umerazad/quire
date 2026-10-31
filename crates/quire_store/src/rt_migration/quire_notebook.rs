@@ -133,7 +133,7 @@ fn new_writer(folder: &Path, rt_device: &str) -> String {
 }
 
 /// Reads the whole published log into `store`, in bounded passes.
-fn import_log(store: &NotebookStore, folder: &Path) -> Result<Vec<String>> {
+pub(super) fn import_log(store: &NotebookStore, folder: &Path) -> Result<Vec<String>> {
     let mut problems = Vec::new();
     let mut cursor = None;
     loop {
@@ -202,7 +202,11 @@ fn import_drafts(
             .map_or_else(|| page_id_for_path(&draft.path), |(page, _)| page.clone());
         let base = match (&found, &draft.expected) {
             (Some(_), Some(expected))
-                if draft.base_known && !review_only && store.get(expected)?.is_some() =>
+                if draft.base_known
+                    && !review_only
+                    && store.get(expected)?.is_some_and(|revision| {
+                        revision.root().field("page").as_str() == Some(page.as_str())
+                    }) =>
             {
                 vec![expected.clone()]
             }
@@ -368,9 +372,13 @@ pub(super) fn migrate(
     let checks = vec![
         Check::new(
             "Pages (count · hash of path and text)",
-            summary(&rt.pages),
+            if source.local.is_some() {
+                summary(&rt.pages)
+            } else {
+                "not compared: rt keeps no local copy on this computer".into()
+            },
             summary(&census.pages),
-            rt.pages.is_empty() || rt.pages == census.pages,
+            source.local.is_none() || rt.pages == census.pages,
         ),
         Check::new(
             "Saved versions (history)",
@@ -382,7 +390,7 @@ pub(super) fn migrate(
             "Drafts",
             rt.drafts.len().to_string(),
             format!("{imported} imported now, {before} earlier, {left} left in rt"),
-            imported + before + left == rt.drafts.len(),
+            left == 0,
         ),
         Check::new(
             "Saves rt has not published",
