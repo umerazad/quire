@@ -655,3 +655,64 @@ fn relocation_candidates_include_pages_not_analyzed_yet() -> Result<()> {
     assert_eq!(candidates(&index)?, ["Old.md"]);
     Ok(())
 }
+
+#[test]
+fn search_reads_unsaved_text_of_open_pages_instead_of_their_last_save() -> Result<()> {
+    use quire_store::index::Overlay;
+    let root = tempfile::tempdir()?;
+    let (store, database) = open(root.path())?;
+    save(&store, "s", "Source.md", "- saved wombat")?;
+    save(&store, "o", "Other.md", "- other wombat")?;
+    let index = QueryIndex::open(&database, config(1))?;
+    let says = |text: &str, id: Option<&str>| PageIndex {
+        blocks: vec![IndexedBlock {
+            text: text.into(),
+            id: id.map(str::to_owned),
+            ..block(None, 0)
+        }],
+        ..Default::default()
+    };
+    analyze_all(
+        &index,
+        &[
+            ("Source.md", says("saved wombat", None)),
+            ("Other.md", says("other wombat", None)),
+        ],
+    )?;
+    let hits = |query: &str| -> Result<Vec<(String, String, Option<String>)>> {
+        Ok(index
+            .search(query)?
+            .into_iter()
+            .map(|hit| (hit.source.title, hit.snippet, hit.block_id))
+            .collect())
+    };
+    assert_eq!(hits("wombat")?.len(), 2);
+    let by_title = hits("source")?.len();
+    index.set_overlay(
+        &JsString::from("s"),
+        &Overlay {
+            path: "Source.md".into(),
+            title: "Source".into(),
+            index: says("typed quokka", Some("b1")),
+        },
+    )?;
+    assert_eq!(
+        hits("quokka")?,
+        [("Source".into(), "typed quokka".into(), Some("b1".into()))],
+        "unsaved text is found with its block"
+    );
+    assert_eq!(
+        hits("wombat")?,
+        [("Other".into(), "other wombat".into(), None)],
+        "the open page's saved text no longer matches"
+    );
+    assert_eq!(
+        hits("source")?.len(),
+        by_title,
+        "the title matches the unsaved rows in place of the saved ones"
+    );
+    index.release_overlay(&JsString::from("s"))?;
+    assert!(hits("quokka")?.is_empty());
+    assert_eq!(hits("wombat")?.len(), 2);
+    Ok(())
+}

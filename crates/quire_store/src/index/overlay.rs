@@ -21,6 +21,8 @@ pub(super) const TABLES: &[&str] = &[
     "CREATE TEMP TABLE overlay_tagged (revision TEXT NOT NULL, ordinal INTEGER NOT NULL, tag TEXT NOT NULL, tag_key TEXT NOT NULL, start INTEGER NOT NULL, block_id TEXT, snippet TEXT NOT NULL, UNIQUE(revision, ordinal))",
     "CREATE INDEX temp.overlay_tagged_by_key ON overlay_tagged(tag_key)",
     "CREATE TEMP TABLE overlay_front_tags (revision TEXT NOT NULL, ordinal INTEGER NOT NULL, tag TEXT NOT NULL, UNIQUE(revision, ordinal))",
+    // Unsaved text is searchable: a title row and one row per block, as committed pages have.
+    "CREATE VIRTUAL TABLE temp.overlay_search USING fts5(revision UNINDEXED, title, text, block_id UNINDEXED, tokenize='unicode61')",
     "CREATE TEMP TABLE overlay_tasks (revision TEXT NOT NULL, ordinal INTEGER NOT NULL, key TEXT NOT NULL, id TEXT, start INTEGER NOT NULL, raw TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL, tags TEXT NOT NULL, links TEXT NOT NULL, dates TEXT NOT NULL, completed TEXT, created TEXT, due TEXT, UNIQUE(revision, ordinal))",
     "CREATE TEMP VIEW live_tasks AS
        SELECT revision,ordinal,key,id,start,raw,text,state,tags,links,dates,completed,created,due FROM main.tasks
@@ -77,6 +79,18 @@ impl QueryIndex {
                 overlay.title.to_lowercase(),
                 self.date(&overlay.title),
             ))?;
+            let mut search = self.connection.exec_bound(
+                "INSERT INTO temp.overlay_search(revision,title,text,block_id) VALUES (?,?,?,?)",
+            )?;
+            search((revision.as_str(), overlay.title.as_str(), "", None::<&str>))?;
+            for block in &overlay.index.blocks {
+                search((
+                    revision.as_str(),
+                    overlay.title.as_str(),
+                    block.text.as_str(),
+                    block.id.as_deref(),
+                ))?;
+            }
             self.insert_rows("temp.overlay_", &revision, &overlay.index)
         })?;
         self.bump();
@@ -115,6 +129,7 @@ impl QueryIndex {
             "overlay_tagged",
             "overlay_front_tags",
             "overlay_tasks",
+            "overlay_search",
         ] {
             self.connection
                 .exec_bound(&format!("DELETE FROM temp.{table} WHERE revision=?"))?(
