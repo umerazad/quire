@@ -9,6 +9,7 @@
 //! replaced text in history, and rename. Recovery and history live in a state folder outside the
 //! notebook, so opening a folder never changes it.
 
+mod census;
 mod deletion;
 mod files;
 mod history;
@@ -17,6 +18,7 @@ mod markdown_import;
 mod reference;
 mod settings;
 
+pub use census::{FolderCensus, hashed_listing};
 pub use deletion::{NO_TRASH, Trash};
 pub use files::{
     DiskDocument, ListedFile, Listing, MAX_NOTE_BYTES, is_markdown, list, read, revision, validate,
@@ -24,7 +26,7 @@ pub use files::{
 pub(crate) use files::{barrier, flush, flush_directory};
 pub use history::FolderRevision;
 pub use journal::{StepState, StuckChange};
-pub use reference::RecoveredDraft;
+pub use reference::{RecoveredDraft, ReferenceTally};
 pub(crate) use settings::METADATA;
 
 use crate::{
@@ -49,6 +51,13 @@ use std::{
 };
 
 const STATE_FILE: &str = "folder.sqlite";
+
+/// Quire's recovery, history, index, and workspace for the folder at `root`, kept in Quire's
+/// data folder `data` so opening a folder never writes inside it.
+pub fn state_folder_in(data: &Path, root: &Path) -> PathBuf {
+    data.join("folder-notebooks")
+        .join(&crate::sync::format::sha256(root.to_string_lossy().as_bytes())[..16])
+}
 
 /// A save refused because the file on disk is not the version the save was made from. Nothing
 /// was written; the text is kept in recovery. `disk` is the file's current contents, or None

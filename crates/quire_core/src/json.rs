@@ -307,11 +307,25 @@ impl Json {
 
     /// Sets a number on the root object. Canonical serialization rejects non-finite values.
     pub fn set_number(&mut self, key: &str, number: f64) -> bool {
+        self.set_root_field(key, Node::Number(number))
+    }
+
+    /// Sets a string on the root object.
+    pub fn set_string(&mut self, key: &str, value: &str) -> bool {
+        self.set_root_field(key, Node::String(value.into()))
+    }
+
+    /// Sets null on the root object.
+    pub fn set_null(&mut self, key: &str) -> bool {
+        self.set_root_field(key, Node::Null)
+    }
+
+    fn set_root_field(&mut self, key: &str, node: Node) -> bool {
         if !matches!(self.nodes.first(), Some(Node::Object(_))) {
             return false;
         }
         let index = self.nodes.len();
-        self.nodes.push(Node::Number(number));
+        self.nodes.push(node);
         if let Node::Object(fields) = &mut self.nodes[0] {
             fields.insert(key.into(), index);
         }

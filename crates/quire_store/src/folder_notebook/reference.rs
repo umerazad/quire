@@ -268,13 +268,7 @@ impl FolderNotebook {
     /// Records one reference draft as a recovery draft, once. None when it needs nothing: it was
     /// imported before, the file already holds its text, or the page has the same draft.
     fn import_draft(&self, device: &str, draft: &Pending) -> Result<Option<RecoveredDraft>> {
-        let key = sha256(serde_json::to_string(&(
-            device,
-            &draft.path,
-            &draft.text,
-            &draft.expected_revision,
-            draft.saved_at,
-        ))?);
+        let key = draft_key(device, draft)?;
         let known: Option<i64> = self
             .connection
             .select_row_bound("SELECT 1 FROM reference_imports WHERE key=?")?(
@@ -353,6 +347,85 @@ impl FolderNotebook {
         })?;
         Ok(Some(RecoveredDraft { page, path }))
     }
+
+    /// Counts every draft and saved version the reference app keeps for this notebook, read
+    /// from fresh copies, and how many of them Quire's state already accounts for.
+    pub fn reference_tally(&self) -> Result<ReferenceTally> {
+        let mut tally = ReferenceTally::default();
+        let mut versions = std::collections::BTreeSet::new();
+        let mut keys = std::collections::BTreeSet::new();
+        for source in self.reference_sources()? {
+            if !source.database.is_file() {
+                continue;
+            }
+            let copy = tempfile::tempdir_in(&self.state)
+                .context("Cannot copy it into Quire's state folder; check free space")?;
+            let database = copy.path().join("reference.sqlite");
+            fs::copy(&source.database, &database)?;
+            let wal = PathBuf::from(format!("{}-wal", source.database.display()));
+            if wal.is_file() {
+                fs::copy(&wal, copy.path().join("reference.sqlite-wal"))?;
+            }
+            let foreign = database::open_unconfigured(&database)?;
+            let mut drafts = pending(&foreign)?;
+            if let Some(folder) = source.recovery.as_deref() {
+                for record in recovery_records(folder)? {
+                    if !drafts.iter().any(|draft| draft.path == record.path) {
+                        drafts.push(record);
+                    }
+                }
+            }
+            for draft in &drafts {
+                // A computer's history snapshot repeats the drafts of its database.
+                let key = draft_key(&source.device, draft)?;
+                if !keys.insert(key.clone()) {
+                    continue;
+                }
+                tally.drafts += 1;
+                let known: Option<i64> = self
+                    .connection
+                    .select_row_bound("SELECT 1 FROM reference_imports WHERE key=?")?(
+                    key.as_str(),
+                )?;
+                tally.drafts_accounted += usize::from(known.is_some());
+            }
+            for (path, _, revision, saved_at) in reference_history(&foreign)? {
+                // A version can be in both a computer's database and its history snapshot.
+                if files::validate(&path).is_err()
+                    || !versions.insert((path.clone(), revision.clone(), saved_at))
+                {
+                    continue;
+                }
+                tally.history += 1;
+                let known: Option<i64> =
+                    self.connection.select_row_bound(
+                        "SELECT 1 FROM history WHERE path=? AND revision=? AND saved_at=? LIMIT 1",
+                    )?((path.as_str(), revision.as_str(), saved_at))?;
+                tally.history_present += usize::from(known.is_some());
+            }
+        }
+        Ok(tally)
+    }
+}
+
+/// What the reference app keeps for a folder notebook beside what Quire's state accounts for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReferenceTally {
+    pub drafts: usize,
+    /// Drafts imported, or found needing nothing (already the file's text).
+    pub drafts_accounted: usize,
+    pub history: usize,
+    pub history_present: usize,
+}
+
+fn draft_key(device: &str, draft: &Pending) -> Result<String> {
+    Ok(sha256(serde_json::to_string(&(
+        device,
+        &draft.path,
+        &draft.text,
+        &draft.expected_revision,
+        draft.saved_at,
+    ))?))
 }
 
 /// The reference app's foreign-draft page: the draft with fresh block IDs under front matter

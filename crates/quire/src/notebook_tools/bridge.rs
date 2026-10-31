@@ -10,7 +10,6 @@ use quire_core::ai::tools::{
     AI_COMMANDS_OFF, NO_NOTEBOOK, WRITES_OFF, Writes, check_input, listed_tools,
 };
 use serde_json::{Value, json};
-use sha2::{Digest as _, Sha256};
 use smol::{future::FutureExt as _, net::unix::UnixListener};
 use std::{
     cell::RefCell,
@@ -55,17 +54,6 @@ pub struct NotebookBridge {
     _accept: Task<()>,
 }
 
-/// A Unix socket beside the settings, or in the temporary folder when that path is too long to
-/// bind (about 100 bytes).
-pub fn socket_path(directory: &Path) -> PathBuf {
-    let inside = directory.join("bridge.sock");
-    if inside.as_os_str().len() < 100 {
-        return inside;
-    }
-    let hash = Sha256::digest(directory.as_os_str().as_encoded_bytes());
-    std::env::temp_dir().join(format!("quire-{}.sock", &hex::encode(hash)[..16]))
-}
-
 fn private_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let temporary = path.with_extension(format!("json.{}.tmp", std::process::id()));
     let mut options = std::fs::OpenOptions::new();
@@ -94,7 +82,7 @@ impl NotebookBridge {
             )
         };
         let file = options.directory.join(FILE_NAME);
-        let socket = socket_path(&options.directory);
+        let socket = crate::single_instance::socket_path(&options.directory, "bridge.sock");
         std::fs::create_dir_all(&options.directory).map_err(failed)?;
         std::fs::remove_file(&socket).ok();
         let listener = std::os::unix::net::UnixListener::bind(&socket).map_err(failed)?;

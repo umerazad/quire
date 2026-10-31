@@ -12,6 +12,7 @@ pub mod notebook_lock;
 pub mod profiles;
 pub mod provider;
 pub mod roam_files;
+pub mod rt_migration;
 mod schema;
 pub mod sync;
 pub mod worker;

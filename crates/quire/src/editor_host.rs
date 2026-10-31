@@ -522,7 +522,7 @@ impl Render for NotebookWindow {
 /// Becomes the only Quire for this data folder, or hands this launch to the running one and
 /// returns None.
 fn claim_instance() -> Result<Option<crate::single_instance::Listener>, String> {
-    use crate::single_instance::{Claim, Launch, Reply, claim};
+    use crate::single_instance::{Claim, Launch, Reply, claim, socket_path};
     let folder = paths::data_dir();
     std::fs::create_dir_all(folder).map_err(|error| {
         format!(
@@ -535,7 +535,7 @@ fn claim_instance() -> Result<Option<crate::single_instance::Listener>, String> 
         executable: std::env::current_exe().unwrap_or_default(),
         args: std::env::args().collect(),
     };
-    let socket = folder.join("quire.sock");
+    let socket = socket_path(folder, "quire.sock");
     match claim(&socket, &launch, 50, std::time::Duration::from_millis(200)) {
         Ok(Claim::First(listener)) => Ok(Some(listener)),
         Ok(Claim::Running(Reply::Handover)) => {
@@ -597,6 +597,10 @@ fn serve_launches(listener: crate::single_instance::Listener, cx: &mut App) {
 }
 
 pub fn run() {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) = crate::rt_migration::run_from_arguments(&arguments, paths::data_dir()) {
+        std::process::exit(code);
+    }
     let stored = match stored::OpenOptions::parse(std::env::args().skip(1).collect()) {
         Ok(options) => options,
         Err(error) => {

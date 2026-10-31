@@ -1,8 +1,8 @@
 //! Finding the PDFium library. Quire binds a prebuilt PDFium from `bblanchon/pdfium-binaries`
 //! at runtime. The build is pinned to the API the `pdfium-render` feature in this crate's
 //! manifest binds (`pdfium_7881`), and `tools/fetch-pdfium.ts` downloads the hash-pinned archive
-//! for this platform into the cache directory below. Packaged builds place the library beside
-//! the executable (NR35).
+//! for this platform into the cache directory below. Packages place the library in the macOS
+//! bundle's Frameworks, the Linux tarball's `lib`, or beside the Windows executable (`tools/bundle-*.ts`).
 
 use std::{
     env,
@@ -56,7 +56,7 @@ fn library_name() -> &'static str {
 }
 
 /// Places to look, in order: `QUIRE_PDFIUM_LIBRARY`, beside the executable (and in a macOS
-/// bundle's Frameworks), then the fetched cache.
+/// bundle's Frameworks or a Linux package's `lib`), then the fetched cache.
 pub fn candidates() -> Vec<PathBuf> {
     let name = library_name();
     let mut found = Vec::new();
