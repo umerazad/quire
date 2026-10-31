@@ -219,6 +219,7 @@ impl NotebookWindow {
             }
         }
         window.focus(&editor.focus_handle(cx), cx);
+        self.refresh_tags(cx);
         cx.notify();
     }
 
@@ -300,6 +301,11 @@ impl NotebookWindow {
     }
 
     #[cfg(test)]
+    pub(crate) fn second_editor(&self) -> &Entity<Editor> {
+        &self.second
+    }
+
+    #[cfg(test)]
     pub(crate) fn second_is_written(&self, cx: &App) -> bool {
         crate::editor_projection::enabled(self.second.read(cx))
     }
@@ -324,6 +330,12 @@ impl NotebookWindow {
     ) -> Self {
         let analysis = cx.new(|cx| crate::page_analysis::PageAnalysis::new(buffer, cx));
         Self::for_page(analysis, excerpt, window, cx)
+    }
+
+    fn refresh_tags(&mut self, cx: &mut gpui::Context<Self>) {
+        for editor in [&self.source, &self.second] {
+            crate::tag_labels::refresh(editor, &self.analysis, cx);
+        }
     }
 
     /// Shows the second pane as Write, the way a reader first meets a page.
@@ -357,7 +369,15 @@ impl NotebookWindow {
         cx.observe(&commands, |_, _, cx| cx.notify()).detach();
         cx.observe(&source_search, |_, _, cx| cx.notify()).detach();
         cx.observe(&second_search, |_, _, cx| cx.notify()).detach();
-        cx.observe(&analysis, |_, _, cx| cx.notify()).detach();
+        cx.observe(&analysis, |this, _, cx| {
+            this.refresh_tags(cx);
+            cx.notify()
+        })
+        .detach();
+        cx.observe_global::<settings::SettingsStore>(|this, cx| this.refresh_tags(cx))
+            .detach();
+        cx.observe_global::<theme::GlobalTheme>(|this, cx| this.refresh_tags(cx))
+            .detach();
         cx.observe_global::<crate::outline::Notice>(|_, cx| cx.notify())
             .detach();
         crate::preferences::follow_system_appearance(window, cx);

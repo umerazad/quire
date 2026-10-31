@@ -624,3 +624,38 @@ async fn turning_vim_off_changes_open_editors_at_once(cx: &mut TestAppContext) {
     page.update(cx, |view, _, cx| assert_eq!(view.source_text(cx), "xello"))
         .unwrap();
 }
+
+#[gpui::test]
+async fn format_tags_labels_write_by_tone_and_turns_off_live(cx: &mut TestAppContext) {
+    init_app(cx);
+    let fs = fake_fs(cx).await;
+    fs.insert_file(paths::settings_file(), INITIAL_SETTINGS.into())
+        .await;
+    let text = "- An #idea and #Book/fiction with #anything\n";
+    let page = cx.add_window(|window, cx| {
+        let mut view = crate::editor_host::NotebookWindow::new(text, window, cx);
+        view.show_written(window, cx);
+        view
+    });
+    cx.run_until_parked();
+    let painted = |page: gpui::WindowHandle<crate::editor_host::NotebookWindow>,
+                   cx: &mut TestAppContext| {
+        page.update(cx, |view, _, cx| {
+            (
+                crate::tag_labels::painted(view.second_editor().read(cx), cx),
+                view.source_text(cx),
+            )
+        })
+        .unwrap()
+    };
+    let idea = quire_core::tag_tones::tone_index("idea").unwrap();
+    let book = quire_core::tag_tones::tone_index("book").unwrap();
+    let neutral = quire_core::tag_tones::TONES.len();
+    assert_eq!(
+        painted(page, cx),
+        (vec![(book, 1), (idea, 1), (neutral, 1)], text.to_owned())
+    );
+    cx.update(|cx| change(Change::FormatTags(false), cx));
+    cx.run_until_parked();
+    assert_eq!(painted(page, cx), (Vec::new(), text.to_owned()));
+}
