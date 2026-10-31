@@ -15,6 +15,9 @@ use std::{path::PathBuf, time::Duration};
 
 const BATCH: usize = 64;
 const IDLE: Duration = Duration::from_secs(1);
+/// While a backlog is analyzed, open views requery at most this often: each batch changes the
+/// index, and requerying the page list and references per batch made a 5x rebuild quadratic.
+const ANNOUNCE: Duration = Duration::from_secs(1);
 const RETRY: Duration = Duration::from_secs(5);
 /// Coalesces typing into one overlay analysis.
 const DEBOUNCE: Duration = Duration::from_millis(150);
@@ -106,6 +109,8 @@ impl IndexSync {
                         .ok();
                     return;
                 }
+                let mut announced = None;
+                let mut unannounced = false;
                 loop {
                     let (pause, progress, error) = match Self::step(&client, cx).await {
                         Ok((0, generation)) => (Some(IDLE), Some((0, generation)), None),
@@ -119,8 +124,17 @@ impl IndexSync {
                                 this.remaining = remaining;
                                 cx.notify();
                             }
-                            if this.generation != generation {
-                                this.generation = generation;
+                            let now = cx.background_executor().now();
+                            unannounced |= this.generation != generation;
+                            this.generation = generation;
+                            if unannounced
+                                && (remaining == 0
+                                    || announced.is_none_or(|at: std::time::Instant| {
+                                        now.saturating_duration_since(at) >= ANNOUNCE
+                                    }))
+                            {
+                                announced = Some(now);
+                                unannounced = false;
                                 cx.emit(IndexChanged);
                             }
                         }
@@ -402,6 +416,51 @@ pub(crate) mod tests {
         );
         assert!(client.tag_names().unwrap().await.unwrap().is_empty());
         assert!(cx.read(|cx| sync.read(cx).error().is_none()));
+    }
+
+    #[gpui::test]
+    async fn a_rebuild_tells_views_once_a_second_and_when_it_finishes(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("local.sqlite");
+        let store = NotebookStore::open(&database, "nb", "local").unwrap();
+        let pages = BATCH * 3 + 1;
+        for page in 0..pages {
+            save(&store, &format!("Page {page}"), "- text\n");
+        }
+        let sync = cx
+            .update(|cx| {
+                IndexSync::spawn(database.clone(), default_config(DailyCalendar::utc()), cx)
+            })
+            .unwrap();
+        let told = std::rc::Rc::new(std::cell::Cell::new(0));
+        cx.update(|cx| {
+            let told = told.clone();
+            cx.subscribe(&sync, move |_, _: &IndexChanged, _| {
+                told.set(told.get() + 1)
+            })
+            .detach()
+        });
+        // The clock stands still, so the four batches fall within one second.
+        crate::test_wait::until(
+            cx,
+            Duration::from_millis(2),
+            crate::test_wait::park,
+            |cx| {
+                let client = cx.read(|cx| sync.read(cx).client().clone());
+                told.get() >= 2
+                    && futures::executor::block_on(client.unanalyzed().unwrap()).unwrap() == 0
+            },
+            |_| {
+                format!(
+                    "the rebuild of {pages} pages; views were told {}",
+                    told.get()
+                )
+            },
+        );
+        cx.run_until_parked();
+        assert_eq!(told.get(), 2, "the first batch and the finished index");
     }
 }
 
