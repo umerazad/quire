@@ -167,6 +167,73 @@ impl FolderNotebook {
         Ok(sources)
     }
 
+    /// Takes in each change across notes the reference app left unfinished in a computer's
+    /// `.quire/devices/<device>/transactions` folder, once, as the reference app takes in another
+    /// computer's journals. Each then resumes on opening, or waits for review, with Quire's own;
+    /// the reference app's files stay as they are. Returns notices for the user.
+    pub(super) fn adopt_reference_journals(&self) -> Vec<String> {
+        match self.adopt_journals() {
+            Ok(0) => Vec::new(),
+            Ok(count) => vec![format!(
+                "Found {count} {} the reference app left unfinished in .quire/devices. Quire finishes each one whose notes are unchanged and lists the rest for review.",
+                if count == 1 {
+                    "change across notes"
+                } else {
+                    "changes across notes"
+                }
+            )],
+            Err(error) => vec![format!(
+                "The reference app's unfinished changes in .quire/devices could not be read: {error:#}. They are kept unchanged; make them ordinary local files and reopen the notebook to retry."
+            )],
+        }
+    }
+
+    fn adopt_journals(&self) -> Result<usize> {
+        let Some(devices) = folder(&self.root, METADATA)?
+            .map(|metadata| folder(&metadata, "devices"))
+            .transpose()?
+            .flatten()
+        else {
+            return Ok(0);
+        };
+        let mut adopted = 0;
+        for device in sorted_entries(&devices)? {
+            let kind = device.file_type()?;
+            if !kind.is_dir() || kind.is_symlink() {
+                continue;
+            }
+            let Some(transactions) = folder(&device.path(), "transactions")? else {
+                continue;
+            };
+            for entry in sorted_entries(&transactions)? {
+                if !entry.file_name().to_string_lossy().ends_with(".json") {
+                    continue;
+                }
+                let kind = entry.file_type()?;
+                if !kind.is_file() || kind.is_symlink() {
+                    bail!("{} is a link or not a file", entry.path().display());
+                }
+                let bytes = fs::read(entry.path())?;
+                let key = format!("journal:{}", sha256(&bytes));
+                let known: Option<i64> = self
+                    .connection
+                    .select_row_bound("SELECT 1 FROM reference_imports WHERE key=?")?(
+                    key.as_str(),
+                )?;
+                if known.is_some() {
+                    continue;
+                }
+                self.install_journal(&bytes)?;
+                self.connection
+                    .exec_bound("INSERT INTO reference_imports(key) VALUES (?)")?(
+                    key.as_str()
+                )?;
+                adopted += 1;
+            }
+        }
+        Ok(adopted)
+    }
+
     /// Imports drafts and history the reference app left since the last open. Returns the pages
     /// that gained a draft and notices for the user.
     pub(super) fn import_reference(&self) -> (Vec<RecoveredDraft>, Vec<String>) {

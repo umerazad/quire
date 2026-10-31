@@ -990,6 +990,93 @@ fn unreadable_reference_data_is_reported_and_left_alone() {
     assert!(reopened.recovered_drafts().is_empty());
 }
 
+/// A rename of `Old.md` to `New.md` exactly as the reference `commitFiles` journals it in
+/// `.quire/devices/<device>/transactions`: the moved note, the linking note, then the old file's
+/// removal under a random UUID archive name, with the versions it was planned from.
+fn reference_rename_journal(root: &Path) -> PathBuf {
+    let folder = root
+        .join(".quire/devices")
+        .join(DEVICE)
+        .join("transactions");
+    fs::create_dir_all(&folder).unwrap();
+    let journal = folder.join("2b7e1516-28ae-4d2a-a6f7-15880900cf4f.json");
+    let disk = |path: &str, text: &str| serde_json::json!({ "path": path, "text": text, "revision": revision(text) });
+    fs::write(
+        &journal,
+        serde_json::json!({
+            "edits": [
+                { "path": "New.md", "text": RENAMED, "expectedRevision": null, "historyFrom": "Old.md" },
+                { "path": "Links.md", "text": RELINKED, "expectedRevision": revision(LINKS) },
+                {
+                    "path": "Old.md",
+                    "text": "",
+                    "expectedRevision": revision(OLD),
+                    "remove": true,
+                    "retirement": "9b2f4c1e-7d3a-4e8b-a1c5-0f6e2d4b8a90",
+                },
+            ],
+            "before": [null, disk("Links.md", LINKS), disk("Old.md", OLD)],
+            "createdAt": 1_700_000_000_000_i64,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    journal
+}
+
+#[test]
+fn a_change_the_reference_app_left_unfinished_finishes_here_once() {
+    let opened = fixture(&[("Old.md", OLD), ("Links.md", LINKS), ("New.md", RENAMED)]);
+    let journal = reference_rename_journal(&opened.folder);
+    let kept = fs::read(&journal).unwrap();
+    let reopened = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    let notices = reopened.notices();
+    assert!(
+        notices[0].starts_with(
+            "Found 1 change across notes the reference app left unfinished in .quire/devices."
+        ),
+        "{notices:?}"
+    );
+    assert!(notices[1].starts_with("Finished an interrupted change"));
+    assert_renamed(&opened.folder, &opened.state, &reopened);
+    assert_eq!(
+        fs::read(&journal).unwrap(),
+        kept,
+        "the reference app's journal stays as it is"
+    );
+    let again = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    assert!(again.notices().is_empty(), "{:?}", again.notices());
+}
+
+#[test]
+fn a_change_the_reference_app_left_stuck_is_listed_and_set_aside_once() {
+    let opened = fixture(&[
+        ("Old.md", OLD),
+        ("Links.md", "- edited elsewhere\n"),
+        ("New.md", RENAMED),
+    ]);
+    reference_rename_journal(&opened.folder);
+    let reopened = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    let stuck = reopened.stuck_changes();
+    assert_eq!(stuck.len(), 1);
+    assert_eq!(
+        stuck[0].steps,
+        [
+            ("New.md".to_owned(), StepState::Done),
+            ("Links.md".to_owned(), StepState::ChangedElsewhere),
+            ("Old.md".to_owned(), StepState::Waiting),
+        ]
+    );
+    reopened.set_aside_change(&stuck[0].name).unwrap();
+    let again = FolderNotebook::open(&opened.folder, &opened.state).unwrap();
+    assert!(again.stuck_changes().is_empty(), "never taken in twice");
+    assert!(again.notices().is_empty(), "{:?}", again.notices());
+    assert_eq!(
+        fs::read_to_string(opened.folder.join("Links.md")).unwrap(),
+        "- edited elsewhere\n"
+    );
+}
+
 impl ReferenceDevice {
     /// Records that this computer's reference app recovered `draft` from computer `origin` as the
     /// note at `recovered_path`, as `importCopiedData` does in vault.ts.

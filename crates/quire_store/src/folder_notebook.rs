@@ -225,7 +225,8 @@ impl FolderNotebook {
             interrupt_staged: std::cell::Cell::default(),
         };
         notebook.listing();
-        let mut notices = notebook.resume();
+        let mut notices = notebook.adopt_reference_journals();
+        notices.extend(notebook.resume());
         let (recovered, imported) = notebook.import_reference();
         notices.extend(imported);
         *notebook.notices.borrow_mut() = notices;
