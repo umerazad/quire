@@ -163,6 +163,7 @@ impl StoredWindow {
         };
         let nav = navigation::Navigation::new(&database, &notebook, calendar.ok());
         let id = page.read(cx).id().to_owned();
+        let links = links::Links::new(cx.weak_entity(), Rc::downgrade(&session), cx);
         let mut this = Self {
             session,
             closing,
@@ -174,7 +175,7 @@ impl StoredWindow {
             copy_error: None,
             index,
             nav,
-            links: links::Links::new(cx.weak_entity(), cx),
+            links,
         };
         let pages = this.session.borrow().open_pages();
         for observed in pages {
