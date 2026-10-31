@@ -330,3 +330,18 @@ fn new_folders_open_their_parents_survive_reload_and_go_with_their_parent() {
     assert_eq!(workspace.folders, ["Archive"]);
     assert!(workspace.expanded.is_empty());
 }
+
+#[test]
+fn namespaces_match_the_reference_namespace_of_vectors() {
+    let vectors: Vec<(String, String)> = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/namespace-vectors.json"
+    ))
+    .unwrap();
+    assert!(vectors.len() > 1000);
+    let wrong: Vec<_> = vectors
+        .iter()
+        .filter(|(title, namespace)| namespace_of(title) != namespace)
+        .map(|(title, namespace)| (title, namespace, namespace_of(title)))
+        .collect();
+    assert!(wrong.is_empty(), "title, reference, quire: {wrong:?}");
+}
