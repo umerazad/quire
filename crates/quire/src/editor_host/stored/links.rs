@@ -13,9 +13,14 @@ pub(super) struct Links {
 }
 
 impl Links {
-    pub(super) fn new(window: gpui::WeakEntity<StoredWindow>, cx: &mut App) -> Self {
+    pub(super) fn new(
+        window: gpui::WeakEntity<StoredWindow>,
+        session: std::rc::Weak<RefCell<NotebookSession>>,
+        cx: &mut App,
+    ) -> Self {
+        let notebook = WindowNotebook { window, session };
         Self {
-            host: cx.new(|_| ReferenceHost::new(Rc::new(WindowNotebook(window)))),
+            host: cx.new(|_| ReferenceHost::new(Rc::new(notebook))),
             following: None,
         }
     }
@@ -26,17 +31,40 @@ impl Links {
     }
 }
 
-struct WindowNotebook(gpui::WeakEntity<StoredWindow>);
+/// Reads open pages through the session rather than the window, so editors bound while the window
+/// is being updated can still ask which page they show.
+struct WindowNotebook {
+    window: gpui::WeakEntity<StoredWindow>,
+    session: std::rc::Weak<RefCell<NotebookSession>>,
+}
+
+impl WindowNotebook {
+    fn loaded<T>(
+        &self,
+        buffer: &Entity<language::Buffer>,
+        cx: &App,
+        read: impl Fn(&OpenPage, &crate::notebook_session::LoadedPage) -> Option<T>,
+    ) -> Option<T> {
+        let pages = self.session.upgrade()?.try_borrow().ok()?.open_pages();
+        pages.into_iter().find_map(|page| {
+            let page = page.read(cx);
+            let loaded = page.loaded()?;
+            (loaded.analysis.read(cx).source == *buffer)
+                .then(|| read(page, loaded))
+                .flatten()
+        })
+    }
+}
 
 impl Notebook for WindowNotebook {
     fn follow(&self, follow: Follow, window: &mut Window, cx: &mut App) {
-        self.0
+        self.window
             .update(cx, |this, cx| this.follow(follow, window, cx))
             .ok();
     }
 
     fn open_page(&self, page: &str, window: &mut Window, cx: &mut App) -> Option<Entity<OpenPage>> {
-        self.0
+        self.window
             .update(cx, |this, cx| {
                 let page = this.session.borrow_mut().open_page(page.to_owned(), cx);
                 this.watch(&page, window, cx);
@@ -46,13 +74,28 @@ impl Notebook for WindowNotebook {
     }
 
     fn page_id(&self, buffer: &Entity<language::Buffer>, cx: &App) -> Option<String> {
-        let this = self.0.upgrade()?;
-        let pages = this.read(cx).session.borrow().open_pages();
-        pages.into_iter().find_map(|page| {
-            let page = page.read(cx);
-            let loaded = page.loaded()?;
-            (loaded.analysis.read(cx).source == *buffer).then(|| page.id().to_owned())
-        })
+        self.loaded(buffer, cx, |page, _| Some(page.id().to_owned()))
+    }
+
+    fn page_path(&self, buffer: &Entity<language::Buffer>, cx: &App) -> Option<String> {
+        self.loaded(buffer, cx, |_, loaded| loaded.path.clone())
+    }
+
+    fn show_page(&self, page: &str, beside: bool, window: &mut Window, cx: &mut App) {
+        self.window
+            .update(cx, |this, cx| {
+                this.open_page(page.to_owned(), beside, window, cx)
+            })
+            .ok();
+    }
+
+    fn writers(
+        &self,
+        _: &App,
+    ) -> Option<(Vec<Entity<OpenPage>>, quire_store::worker::StorageClient)> {
+        let session = self.session.upgrade()?;
+        let session = session.try_borrow().ok()?;
+        Some((session.open_pages(), session.storage()))
     }
 }
 

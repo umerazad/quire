@@ -15,3 +15,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 ryu-js = "=1.0.2"
 regex = { workspace = true, features = ["unicode-gencat"] }
+
+[dev-dependencies]
+icu_collator = "=2.3.0"

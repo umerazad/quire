@@ -10,7 +10,7 @@ use gpui::{App, Context, Entity, KeyBinding, Subscription, Window};
 use language::Buffer;
 use multi_buffer::ToOffset;
 use quire_core::markdown::{Reference, ReferenceKind, ReferenceSyntax};
-use quire_store::index::IndexClient;
+use quire_store::{index::IndexClient, worker::StorageClient};
 use std::rc::Rc;
 
 mod completion;
@@ -61,6 +61,12 @@ pub trait Notebook {
     fn open_page(&self, page: &str, window: &mut Window, cx: &mut App) -> Option<Entity<OpenPage>>;
     /// The ID of the page whose buffer this is, when the notebook has it open.
     fn page_id(&self, buffer: &Entity<Buffer>, cx: &App) -> Option<String>;
+    /// The notebook path of the page whose buffer this is, when the notebook has it open.
+    fn page_path(&self, buffer: &Entity<Buffer>, cx: &App) -> Option<String>;
+    /// Opens the page with this ID, beside the current one when asked.
+    fn show_page(&self, page: &str, beside: bool, window: &mut Window, cx: &mut App);
+    /// The open pages and the store, for task changes written to other pages.
+    fn writers(&self, cx: &App) -> Option<(Vec<Entity<OpenPage>>, StorageClient)>;
 }
 
 /// Shares one notebook among a window's page editors and tells them when indexed answers may

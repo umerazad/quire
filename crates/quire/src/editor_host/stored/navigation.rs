@@ -739,3 +739,7 @@ mod embeds_tests;
 #[cfg(test)]
 #[path = "file_tests.rs"]
 mod file_tests;
+
+#[cfg(test)]
+#[path = "task_lists_tests.rs"]
+mod task_lists_tests;

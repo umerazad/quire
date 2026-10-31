@@ -215,3 +215,84 @@ async fn projects_come_from_front_matter_tags_links_and_their_pages(cx: &mut Tes
     );
     assert_eq!(atlas.counts.inbox, 2, "counts ignore the project filter");
 }
+
+/// Every case of rt `tests/fixtures/task-queries.json`, which the rt terminal app also runs,
+/// through the production analyzer and index. Cases name tasks by their words without tags.
+#[gpui::test]
+async fn task_lists_match_the_shared_fixture(cx: &mut TestAppContext) {
+    use quire_core::task_query::TaskQuery as ListQuery;
+    use quire_store::index::{TaskItem, TaskList, TaskListQuery};
+    use serde_json::Value;
+    let fixture: Value =
+        serde_json::from_str(include_str!("../../../../tests/fixtures/task-queries.json")).unwrap();
+    let pages: Vec<(&str, &str)> = fixture["pages"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(path, text)| (path.as_str(), text.as_str().unwrap()))
+        .collect();
+    let (client, _root, _sync) = index(&pages, cx).await;
+    let words = |text: &str| {
+        text.split_whitespace()
+            .filter(|word| !word.starts_with('#'))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let strings = |value: &Value| -> Vec<String> {
+        value
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|word| word.as_str().unwrap().to_owned())
+            .collect()
+    };
+    let named = |tasks: &[TaskItem]| -> Vec<String> {
+        tasks.iter().map(|task| words(&task.text)).collect()
+    };
+    let cases = fixture["cases"].as_array().unwrap();
+    for case in cases {
+        let source = case["query"].as_str().unwrap();
+        let query = match (ListQuery::parse(source), case["error"].as_str()) {
+            (Err(error), Some(expected)) => {
+                assert_eq!(error, expected, "{source:?}");
+                continue;
+            }
+            (Ok(query), None) => query,
+            (parsed, expected) => panic!("{source:?}: parsed {parsed:?}, expected {expected:?}"),
+        };
+        let list = TaskListQuery {
+            query,
+            here: fixture["here"].as_str().unwrap().into(),
+            today: fixture["today"].as_str().unwrap().into(),
+        };
+        let list: TaskList = client
+            .with_generation(move |index| index.task_list(&list))
+            .unwrap()
+            .await
+            .unwrap()
+            .1;
+        if let Some(groups) = case["groups"].as_array() {
+            let expected: Vec<(String, Vec<String>)> = groups
+                .iter()
+                .map(|group| (group[0].as_str().unwrap().to_owned(), strings(&group[1])))
+                .collect();
+            let actual: Vec<(String, Vec<String>)> = list
+                .groups
+                .iter()
+                .map(|group| (group.label.clone(), named(&group.tasks)))
+                .collect();
+            assert_eq!(actual, expected, "{source:?}");
+        } else {
+            let actual: Vec<String> = list
+                .groups
+                .iter()
+                .flat_map(|group| named(&group.tasks))
+                .collect();
+            assert_eq!(actual, strings(&case["expect"]), "{source:?}");
+        }
+        if let Some(total) = case["total"].as_u64() {
+            assert_eq!(list.total as u64, total, "{source:?}");
+        }
+    }
+    assert_eq!(cases.len(), 30);
+}

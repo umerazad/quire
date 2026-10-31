@@ -298,6 +298,52 @@ fn apply(
     editor.finalize_last_transaction(cx);
 }
 
+/// Changes a listed task on the page this editor shows, as one undo step in this editor.
+/// Returns false when the editor does not show the task's line, so the caller writes the page
+/// another way.
+pub(crate) fn change_listed(
+    editor: &mut Editor,
+    task: &crate::task_edit::TaskRef,
+    action: quire_core::tasks::Action,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> Result<bool, String> {
+    let Some(buffer) = editor.buffer().read(cx).all_buffers_iter().next() else {
+        return Ok(false);
+    };
+    let snapshot = buffer.read(cx).snapshot();
+    let context = cx.global::<TaskContext>();
+    let (Some(today), Some(days)) = (context.today(), context.days()) else {
+        return Err(NO_TIME_ZONE.into());
+    };
+    let analysis = Analysis::read(&snapshot).ok_or_else(|| NOT_READY.to_owned())?;
+    let edits = analysis.with_page("", |page| {
+        let tasks = page.tasks(&days);
+        quire_core::tasks::find_current(&tasks, task.id.as_deref(), &task.key, &task.raw)
+            .map(|found| found.changes(action, &today))
+            .map_err(str::to_owned)
+    })?;
+    if edits.iter().any(|edit| {
+        [edit.range.start, edit.range.end]
+            .iter()
+            .any(|offset| view_offset(editor, &buffer, *offset, cx).is_none())
+    }) {
+        return Ok(false);
+    }
+    apply(
+        editor,
+        &buffer,
+        TaskEdit {
+            edits,
+            selection: None,
+        },
+        false,
+        window,
+        cx,
+    );
+    Ok(true)
+}
+
 /// The checkbox click: toggles the task whose marker starts at view offset `marker_start`.
 pub fn toggle_at(
     editor: &mut Editor,

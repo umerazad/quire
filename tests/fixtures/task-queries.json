@@ -1,0 +1,161 @@
+{
+  "today": "2026-10-29",
+  "here": "Launch.md",
+  "pages": {
+    "Launch.md": "- #project\n- [ ] write the plan #next\n- [ ] book the venue #waiting 📅 [[2026-10-20]]\n- [x] pick a date ✅ 2026-10-01\n",
+    "Garden.md": "- #project\n- [ ] order seeds #someday\n- [ ] dig beds #next\n",
+    "Daily/2026-10-29.md": "- Talked about [[Launch]]\n  - [ ] send the deck #next #question\n- [ ] call Ana #inbox\n- [ ] read the manual #doc 📅 [[2026-11-02]]\n",
+    "Notes.md": "- [ ] tidy notes #learning/go\n- [ ] file taxes #waiting\n"
+  },
+  "cases": [
+    {
+      "query": "",
+      "expect": ["send the deck", "write the plan", "book the venue"]
+    },
+    {
+      "query": "here",
+      "expect": ["send the deck", "write the plan", "book the venue"]
+    },
+    {
+      "query": "all here",
+      "expect": [
+        "send the deck",
+        "write the plan",
+        "book the venue",
+        "pick a date"
+      ]
+    },
+    {
+      "query": "next",
+      "expect": ["send the deck", "dig beds", "write the plan"]
+    },
+    {
+      "query": "next waiting",
+      "expect": [
+        "send the deck",
+        "dig beds",
+        "write the plan",
+        "book the venue",
+        "file taxes"
+      ]
+    },
+    {
+      "query": "done",
+      "expect": ["pick a date"]
+    },
+    {
+      "query": "due",
+      "expect": ["send the deck", "call Ana", "book the venue"]
+    },
+    {
+      "query": "upcoming",
+      "expect": ["read the manual"]
+    },
+    {
+      "query": "open #next",
+      "expect": ["send the deck", "dig beds", "write the plan"]
+    },
+    {
+      "query": "#next -#question",
+      "expect": ["dig beds", "write the plan"]
+    },
+    {
+      "query": "#learning",
+      "expect": ["tidy notes"]
+    },
+    {
+      "query": "[[Garden]]",
+      "expect": ["order seeds", "dig beds"]
+    },
+    {
+      "query": "open -[[Launch]] -[[Garden]] -#learning",
+      "expect": ["call Ana", "read the manual", "file taxes"]
+    },
+    {
+      "query": "project:Launch",
+      "expect": ["send the deck", "write the plan", "book the venue"]
+    },
+    {
+      "query": "-project:Launch -project:Garden",
+      "expect": ["call Ana", "read the manual", "tidy notes", "file taxes"]
+    },
+    {
+      "query": "deck",
+      "expect": ["send the deck"]
+    },
+    {
+      "query": "\"the deck\"",
+      "expect": ["send the deck"]
+    },
+    {
+      "query": "the -deck -venue -plan -manual",
+      "expect": []
+    },
+    {
+      "query": "taxes",
+      "expect": ["file taxes"]
+    },
+    {
+      "query": "next by:project",
+      "groups": [
+        ["Garden", ["dig beds"]],
+        ["Launch", ["send the deck", "write the plan"]]
+      ]
+    },
+    {
+      "query": "#waiting by:page",
+      "groups": [
+        ["Launch", ["book the venue"]],
+        ["Notes", ["file taxes"]]
+      ]
+    },
+    {
+      "query": "here all by:state",
+      "groups": [
+        ["Next", ["send the deck", "write the plan"]],
+        ["Waiting", ["book the venue"]],
+        ["Done", ["pick a date"]]
+      ]
+    },
+    {
+      "query": "open -project:Launch by:project",
+      "groups": [
+        ["Garden", ["order seeds", "dig beds"]],
+        [
+          "No project",
+          ["call Ana", "read the manual", "tidy notes", "file taxes"]
+        ]
+      ]
+    },
+    {
+      "query": "limit:2 next",
+      "expect": ["send the deck", "dig beds"],
+      "total": 3
+    },
+    {
+      "query": "by:colour",
+      "error": "Unknown grouping \"colour\". Use by:page, by:project or by:state."
+    },
+    {
+      "query": "colour:red",
+      "error": "Unknown term \"colour:red\". Use a state, #tag, [[Page]], project:Name, by:, sort:, limit: or words."
+    },
+    {
+      "query": "\"unclosed",
+      "error": "A quote is not closed. Add the closing \"."
+    },
+    {
+      "query": "[[Missing page]]",
+      "expect": []
+    },
+    {
+      "query": "sort:due here",
+      "expect": ["book the venue", "send the deck", "write the plan"]
+    },
+    {
+      "query": "#next #question",
+      "expect": ["send the deck"]
+    }
+  ],
+  "order": "Tasks sort by page title, then position; sort:due puts the earliest due date first and undated tasks last. Several state words match any of them; every other term must hold. An empty query means here."
+}

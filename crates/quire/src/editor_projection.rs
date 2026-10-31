@@ -267,6 +267,21 @@ fn refresh(
         }
     }
     let type_tag = TypeId::of::<Projection>();
+    for (spot, placeholder) in crate::task_lists::headers(editor, cx.entity().downgrade(), type_tag)
+    {
+        if shown(
+            editor,
+            &spot.range,
+            &spot.block,
+            &spot.source,
+            &snapshot,
+            window,
+            cx,
+        ) {
+            let range = spot.range.start.to_offset(&snapshot)..spot.range.end.to_offset(&snapshot);
+            tasks.push(Crease::simple(range, placeholder));
+        }
+    }
     for (spot, placeholder) in crate::embeds::headers(editor, cx.entity().downgrade(), type_tag) {
         if shown(
             editor,
@@ -676,6 +691,7 @@ pub(crate) fn refold(editor: &mut Editor, window: &mut Window, cx: &mut Context<
 pub fn references_changed(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
     request_previews(editor, true, window, cx);
     crate::embeds::requery(editor, window, cx);
+    crate::task_lists::requery(editor, cx);
 }
 
 fn checkbox_placeholder(
@@ -939,6 +955,42 @@ fn rebuild(
     apply_blocks(editor, &snapshot, &blocks, links, &references, window, cx);
 }
 
+/// Blocks holding only a task query, except on the Templates page where queries belong to
+/// templates: the `{{...}}` range, the block's range, and the query.
+fn task_queries(
+    editor: &Editor,
+    text: &str,
+    blocks: &[crate::markdown_blocks::Block],
+    cx: &App,
+) -> Vec<(Range<usize>, Range<usize>, String)> {
+    let templates = crate::references::host(editor)
+        .and_then(|host| {
+            let buffer = editor.buffer().read(cx).all_buffers_iter().next()?;
+            host.read(cx).notebook().page_path(&buffer, cx)
+        })
+        .is_some_and(|path| crate::task_lists::is_templates_page(&path));
+    if templates {
+        return Vec::new();
+    }
+    blocks
+        .iter()
+        .filter(|block| block.kind != "code")
+        .filter_map(|block| {
+            let rest = text.get(block.content_from..)?;
+            let line = &rest[..rest.find('\n').unwrap_or(rest.len())];
+            if !line.contains("{{") {
+                return None;
+            }
+            let found = quire_core::task_query::query_line(line)?;
+            Some((
+                block.content_from + found.range.start..block.content_from + found.range.end,
+                block.from..block.content_to,
+                found.query.to_owned(),
+            ))
+        })
+        .collect()
+}
+
 fn apply_blocks(
     editor: &mut Editor,
     snapshot: &language::BufferSnapshot,
@@ -954,6 +1006,18 @@ fn apply_blocks(
         crate::markdown_links::reference_links(snapshot, blocks, references);
     links.extend(reference_links);
     links.sort_by_key(|link| link.range.start);
+    let page_text = snapshot.text();
+    let queries = task_queries(editor, &page_text, blocks, cx);
+    let in_query = |range: &Range<usize>| {
+        queries
+            .iter()
+            .any(|(braces, ..)| braces.start < range.end && range.start < braces.end)
+    };
+    links.retain(|link| !in_query(&link.range));
+    let previews: Vec<_> = previews
+        .into_iter()
+        .filter(|preview| !in_query(&preview.range))
+        .collect();
     let shown = |range: &Range<usize>| {
         view.excerpts().any(|excerpt| {
             excerpt.context.start.buffer_id == snapshot.remote_id()
@@ -975,7 +1039,6 @@ fn apply_blocks(
         })
         .collect();
     editor.addon_mut::<Projection>().unwrap().previews = previews;
-    let page_text = snapshot.text();
     let spots: Vec<_> = references
         .iter()
         .filter(|reference| crate::markdown_links::is_full_embed(&page_text, reference))
@@ -994,6 +1057,19 @@ fn apply_blocks(
         })
         .collect();
     crate::embeds::sync(editor, spots, window, cx);
+    let lists = queries
+        .into_iter()
+        .filter(|(braces, ..)| shown(braces))
+        .filter_map(|(braces, block, query)| {
+            Some(crate::task_lists::Spot {
+                range: anchor(braces.start)?..anchor(braces.end)?,
+                block: anchor(block.start)?..anchor(block.end)?,
+                source: page_text[braces].to_owned(),
+                query,
+            })
+        })
+        .collect();
+    crate::task_lists::sync(editor, lists, window, cx);
     let links = links
         .into_iter()
         .filter_map(|link| {
@@ -1143,6 +1219,7 @@ pub fn unbind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
         }
         editor.unregister_addon::<Projection>();
         crate::embeds::clear(editor, cx);
+        crate::task_lists::clear(editor, cx);
         editor
             .buffer()
             .update(cx, |buffer, _| buffer.set_edit_filter(None));
