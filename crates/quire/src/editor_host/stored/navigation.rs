@@ -861,7 +861,13 @@ impl StoredWindow {
                                 .flex_1()
                                 .min_w_0()
                                 .child(self.render_page_header(&self.page, cx))
-                                .child(gpui::div().flex_1().min_h_0().child(editor)),
+                                .child(
+                                    gpui::div()
+                                        .flex_1()
+                                        .min_h_0()
+                                        .pl(super::page_views::EDITOR_INSET)
+                                        .child(editor),
+                                ),
                         )
                         .children(self.render_details(cx))
                         .into_any_element()
@@ -959,7 +965,13 @@ impl StoredWindow {
                                         .flex_1()
                                         .min_w_0()
                                         .child(header)
-                                        .child(gpui::div().flex_1().min_h_0().child(editor)),
+                                        .child(
+                                            gpui::div()
+                                                .flex_1()
+                                                .min_h_0()
+                                                .pl(super::page_views::EDITOR_INSET)
+                                                .child(editor),
+                                        ),
                                 )
                                 .children(details),
                         )

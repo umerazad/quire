@@ -261,14 +261,15 @@ impl StoredWindow {
         Self::toolbar(Self::view_switch("side-view-switch", editor, cx), tools)
     }
 
+    /// Padded as rt's `.page-toolbar` (20 px top, 29 px sides, 8 px bottom).
     fn toolbar(switch: impl IntoElement, tools: gpui::Div) -> AnyElement {
         h_flex()
             .flex_none()
             .justify_between()
             .gap_2()
-            .px_4()
-            .pt_3()
-            .pb_1()
+            .px(gpui::px(29.))
+            .pt(gpui::px(20.))
+            .pb(gpui::px(8.))
             .child(switch)
             .child(tools)
             .into_any_element()
