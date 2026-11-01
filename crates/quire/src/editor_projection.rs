@@ -378,6 +378,8 @@ fn hidden_tails(
     children.into_iter().chain(id).collect()
 }
 
+/// A block's hidden ID with the one space that separates it from the text. Spaces before that
+/// one stay visible, so a space typed at the end of the text shows and keeps the caret after it.
 fn id_range(
     block: &AnchoredBlock,
     snapshot: &MultiBufferSnapshot,
@@ -401,11 +403,9 @@ fn id_range(
     }
     start.0 += caret;
     let content = text_start(block, snapshot);
-    let gap = snapshot
-        .reversed_chars_at(start)
-        .take_while(|c| matches!(c, ' ' | '\t'))
-        .count();
-    start.0 -= gap.min(start.0.saturating_sub(content.0));
+    if start > content && matches!(snapshot.reversed_chars_at(start).next(), Some(' ' | '\t')) {
+        start.0 -= 1;
+    }
     Some(start..end)
 }
 
@@ -617,16 +617,23 @@ fn refresh(
             tasks.push(Crease::simple(range, placeholder));
         }
     }
-    for (spot, placeholder) in crate::embeds::headers(editor, cx.entity().downgrade(), type_tag) {
-        if shown(
-            editor,
-            &spot.range,
-            &spot.block,
-            &spot.source,
-            &snapshot,
-            window,
-            cx,
-        ) {
+    let embeds = crate::embeds::headers(editor, cx.entity().downgrade(), type_tag);
+    let folded: Vec<bool> = embeds
+        .iter()
+        .map(|(spot, _)| {
+            shown(
+                editor,
+                &spot.range,
+                &spot.block,
+                &spot.source,
+                &snapshot,
+                window,
+                cx,
+            )
+        })
+        .collect();
+    for ((spot, placeholder), folded) in embeds.into_iter().zip(folded.iter().copied()) {
+        if folded {
             let range = spot.range.start.to_offset(&snapshot)..spot.range.end.to_offset(&snapshot);
             tasks.push(Crease::simple(range, placeholder));
         }
@@ -682,6 +689,7 @@ fn refresh(
         window,
         cx,
     );
+    crate::embeds::lift(editor, &folded, cx);
     let count = syntax_fold_count(editor, cx);
     if let Some(projection) = editor.addon_mut::<Projection>() {
         projection.syntax_folds = count;

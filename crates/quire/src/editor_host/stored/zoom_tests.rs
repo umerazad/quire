@@ -281,7 +281,8 @@ fn the_host_scrolls_to_keep_the_caret_in_a_tall_embed_visible(cx: &mut TestAppCo
                             matches!(block, editor::display_map::Block::Custom(_)).then_some(row.0)
                         })
                         .unwrap();
-                    let caret = f64::from(block + row);
+                    // The embed's first line sits on its folded reference's line, above its block.
+                    let caret = f64::from(block + row - 1);
                     (top, top <= caret && caret < top + visible)
                 })
             })

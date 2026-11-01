@@ -74,6 +74,30 @@ impl SemanticExcerpt {
             })
     }
 
+    /// Whether the view already shows exactly `ranges` of the source. Edits inside the block
+    /// move its excerpt's anchors with them, so most edits leave nothing to update, and the
+    /// views of the block need not rebuild.
+    fn shows(
+        &self,
+        ranges: &[ExcerptRange<text::Point>],
+        source: &language::BufferSnapshot,
+        cx: &App,
+    ) -> bool {
+        let view = self.buffer.read(cx).snapshot(cx);
+        let shown: Vec<_> = view
+            .excerpts()
+            .map(|excerpt| {
+                excerpt.context.start.to_point(&source.text)
+                    ..excerpt.context.end.to_point(&source.text)
+            })
+            .collect();
+        shown.len() == ranges.len()
+            && shown
+                .iter()
+                .zip(ranges)
+                .all(|(shown, wanted)| *shown == wanted.context)
+    }
+
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let page = self.page.read(cx);
         let source = page.source.clone();
@@ -102,6 +126,9 @@ impl SemanticExcerpt {
             return;
         }
         let snapshot = source.read(cx).snapshot();
+        if state == self.state && self.shows(&ranges, &snapshot, cx) {
+            return;
+        }
         self.buffer.update(cx, |buffer, cx| {
             buffer.set_excerpt_ranges_for_path(PathKey::sorted(0), source, &snapshot, ranges, cx);
         });
@@ -272,6 +299,54 @@ mod tests {
                 )
             });
         }
+    }
+
+    /// Typing inside the block leaves its range to the excerpt's anchors, so the views showing it
+    /// do not rebuild their Write projection on every keystroke; a change of range still updates.
+    #[gpui::test]
+    fn typing_inside_the_block_does_not_rebuild_its_excerpt(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let source = cx.update(|cx| crate::markdown::buffer(NOTE, cx));
+        let page = cx.new(|cx| PageAnalysis::new(source.clone(), cx));
+        let model = cx.new(|cx| SemanticExcerpt::new(page.clone(), "parent".into(), cx));
+        cx.executor().run_until_parked();
+        let updates = std::rc::Rc::new(std::cell::Cell::new(0));
+        let _counting = cx.update(|cx| {
+            let updates = updates.clone();
+            cx.observe(&model, move |_, _| updates.set(updates.get() + 1))
+        });
+        let inside = NOTE.find("Parent").unwrap() + "Parent".len();
+        for (at, text) in [(inside, " a"), (inside + 2, " b")] {
+            source.update(cx, |source, cx| source.edit([(at..at, text)], None, cx));
+            cx.executor().run_until_parked();
+        }
+        cx.update(|cx| {
+            assert_eq!(
+                model.read(cx).buffer.read(cx).read(cx).text(),
+                "- Parent a b ^parent\n  - child ^child"
+            )
+        });
+        assert_eq!(
+            updates.get(),
+            0,
+            "edits inside the block rebuilt the excerpt"
+        );
+
+        let outside = cx.update(|cx| source.read(cx).text().find("- outside").unwrap());
+        source.update(cx, |source, cx| {
+            source.edit([(outside..outside, "  ")], None, cx)
+        });
+        cx.executor().run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                model.read(cx).buffer.read(cx).read(cx).text(),
+                "- Parent a b ^parent\n  - child ^child\n  - outside ^outside"
+            )
+        });
+        assert!(
+            updates.get() > 0,
+            "an indented sibling did not join the excerpt"
+        );
     }
 
     #[gpui::test]

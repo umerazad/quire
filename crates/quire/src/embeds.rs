@@ -1,10 +1,12 @@
 //! Full embeds in Write: a block or page reference standing alone on its line shows the
-//! referenced subtree or page below that line, editable in place. The nested editor views the
+//! referenced subtree or page in its place, editable there. The nested editor views the
 //! referenced page's own shared buffer (a semantic excerpt for a block), so every occurrence
-//! shares one buffer, one history, and that page's save stream. The reference itself folds into
-//! a header naming the source, and shows its raw text while the caret is in its block. Embeds
-//! nest at most eight deep, and an embed of something already being embedded shows a notice
-//! instead.
+//! shares one buffer, one history, and that page's save stream. The reference folds away and the
+//! nested editor's block, placed below the reference's line, draws its first line on that line,
+//! with a small link at its right that opens the source. While the caret is on the reference's
+//! line, the raw reference shows there and the embed sits below it. An embed that cannot show,
+//! because it is loading, unresolved, or recursive, folds into a notice saying so. Embeds nest at
+//! most eight deep.
 
 use crate::references::{Follow, Target};
 use editor::{
@@ -58,31 +60,56 @@ enum Content {
     },
 }
 
+/// The block showing a nested editor: `rows` of content, and whether the first sits on the
+/// reference's own line.
+#[derive(Clone, Copy)]
+struct Placed {
+    id: CustomBlockId,
+    rows: u32,
+    lifted: bool,
+}
+
+impl Placed {
+    /// The rows the block adds below the reference's line.
+    fn height(rows: u32, lifted: bool) -> u32 {
+        rows - u32::from(lifted)
+    }
+}
+
 struct Shown {
     spot: Spot,
     resolved: Option<Resolved>,
     content: Content,
-    /// The block showing the nested editor, with its height in rows.
-    block: Option<(CustomBlockId, u32)>,
+    block: Option<Placed>,
+    /// Whether the reference is folded away, so the content starts on its line.
+    lifted: bool,
     _subscriptions: Vec<Subscription>,
 }
 
 impl Shown {
-    fn label(&self) -> SharedString {
+    /// What the embed says in place of its reference when it cannot show its content.
+    fn notice(&self) -> Option<SharedString> {
+        match &self.content {
+            Content::Loading => Some("↳ Loading embed…".into()),
+            Content::Unresolved => Some(
+                format!(
+                    "{} · unresolved. Check the reference in Source.",
+                    self.spot.source.trim()
+                )
+                .into(),
+            ),
+            Content::Recursive => Some("↳ Recursive embed · open original ↗".into()),
+            Content::Editor { .. } => None,
+        }
+    }
+
+    /// The name of the link that opens a working embed's source.
+    fn link(&self) -> Option<SharedString> {
         match (&self.content, &self.resolved) {
-            (Content::Loading, _) => "↳ Loading embed…".into(),
-            (Content::Unresolved, _) => format!(
-                "{} · unresolved. Check the reference in Source.",
-                self.spot.source.trim()
-            )
-            .into(),
-            (Content::Recursive, _) => "↳ Recursive embed · open original ↗".into(),
-            (Content::Editor { .. }, Some(resolved)) => match resolved.block {
-                Some(_) => format!("↳ Embedded block from {} ↗", resolved.title),
-                None => format!("↳ Embedded page {} ↗", resolved.title),
+            (Content::Editor { .. }, Some(resolved)) => {
+                Some(format!("Open {}", resolved.title).into())
             }
-            .into(),
-            (Content::Editor { .. }, None) => "↳ Embed".into(),
+            _ => None,
         }
     }
 }
@@ -181,7 +208,7 @@ pub(crate) fn clear(editor: &mut Editor, cx: &mut Context<Editor>) {
     let blocks = embeds
         .shown
         .drain(..)
-        .filter_map(|shown| shown.block.map(|(block, _)| block))
+        .filter_map(|shown| shown.block.map(|placed| placed.id))
         .collect();
     editor.remove_blocks(blocks, None, cx);
     track(editor, cx);
@@ -263,8 +290,6 @@ fn request(editor: &mut Editor, again: bool, window: &mut Window, cx: &mut Conte
 }
 
 /// Matches shown embeds to the current spots and their resolutions, replacing what changed.
-/// Each nested editor sits in a block below the reference's line; Zed keeps a block on a row
-/// whose start is folded only when that fold ends within the row, as Write's list marker does.
 fn place(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
     let snapshot = editor.buffer().read(cx).snapshot(cx);
     let embeds = state(editor);
@@ -301,53 +326,127 @@ fn place(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
                 nested(editor, resolved, &chain, window, cx).unwrap_or(Content::Loading)
             }
         };
-        let (block, subscriptions) = match &content {
-            Content::Editor { editor: nested, .. } => {
-                let rows = content_rows(nested, cx);
-                let block = editor.insert_blocks(
-                    [BlockProperties {
-                        placement: BlockPlacement::Below(spot.range.start),
-                        height: Some(rows),
-                        style: BlockStyle::Flex,
-                        render: render(nested.clone()),
-                        priority: 0,
-                    }],
-                    None,
-                    cx,
-                )[0];
-                let resized = cx.subscribe_in(
-                    nested,
-                    window,
-                    |editor, nested, event: &EditorEvent, window, cx| match event {
-                        EditorEvent::BufferEdited => resize(editor, cx),
-                        EditorEvent::SelectionsChanged { local: true } => {
-                            reveal(editor, nested, window, cx)
-                        }
-                        _ => {}
-                    },
-                );
-                (Some((block, rows)), vec![resized])
-            }
-            _ => (None, Vec::new()),
+        let subscriptions = match &content {
+            Content::Editor { editor: nested, .. } => vec![cx.subscribe_in(
+                nested,
+                window,
+                |editor, nested, event: &EditorEvent, window, cx| match event {
+                    EditorEvent::BufferEdited => fit(editor, cx),
+                    EditorEvent::SelectionsChanged { local: true } => {
+                        reveal(editor, nested, window, cx)
+                    }
+                    _ => {}
+                },
+            )],
+            _ => Vec::new(),
         };
         kept.push(Shown {
             spot,
             resolved,
             content,
-            block,
+            block: None,
+            lifted: true,
             _subscriptions: subscriptions,
         });
     }
     let removed = old
         .into_iter()
-        .filter_map(|shown| shown.block.map(|(block, _)| block))
+        .filter_map(|shown| shown.block.map(|placed| placed.id))
         .collect();
     editor.remove_blocks(removed, None, cx);
     kept.sort_by_key(|shown| shown.spot.range.start.to_offset(&snapshot));
     state(editor).shown = kept;
-    resize(editor, cx);
+    fit(editor, cx);
     track(editor, cx);
     cx.notify();
+}
+
+/// Places or sizes each nested editor's block to its content and to whether the reference is
+/// folded. The block sits below the reference's line; while the reference is folded, it is one
+/// row shorter and draws its first row up on that line. A block that would add no rows has no
+/// height at all, since Zed grows a block with a height to fit what it draws. Zed keeps a block
+/// on a row whose start is folded only when that fold ends within the row, as Write's list
+/// marker does.
+fn fit(editor: &mut Editor, cx: &mut Context<Editor>) {
+    let outer = cx.entity().downgrade();
+    let mut shown = std::mem::take(&mut state(editor).shown);
+    let mut removed = Vec::new();
+    let mut heights = HashMap::default();
+    let mut inserted = Vec::new();
+    for (index, shown) in shown.iter_mut().enumerate() {
+        let Content::Editor { editor: nested, .. } = &shown.content else {
+            continue;
+        };
+        let rows = content_rows(nested, cx);
+        let (lifted, height) = (shown.lifted, Placed::height(rows, shown.lifted));
+        match &mut shown.block {
+            Some(placed)
+                if placed.lifted == lifted
+                    && (Placed::height(placed.rows, lifted) == 0) == (height == 0) =>
+            {
+                if placed.rows != rows {
+                    placed.rows = rows;
+                    heights.insert(placed.id, height);
+                }
+            }
+            old => {
+                removed.extend(old.take().map(|placed| placed.id));
+                let link = shown.link().map(|label| Link {
+                    target: shown.spot.target.clone(),
+                    label,
+                    outer: outer.clone(),
+                });
+                inserted.push((
+                    index,
+                    rows,
+                    BlockProperties {
+                        placement: BlockPlacement::Below(shown.spot.range.start),
+                        height: (height > 0).then_some(height),
+                        style: BlockStyle::Flex,
+                        render: render(nested.clone(), lifted, height == 0, link),
+                        priority: 0,
+                    },
+                ));
+            }
+        }
+    }
+    if !removed.is_empty() {
+        editor.remove_blocks(removed.into_iter().collect(), None, cx);
+    }
+    if !heights.is_empty() {
+        editor.resize_blocks(heights, None, cx);
+    }
+    if !inserted.is_empty() {
+        let (places, properties): (Vec<_>, Vec<_>) = inserted
+            .into_iter()
+            .map(|(index, rows, properties)| ((index, rows), properties))
+            .unzip();
+        let ids = editor.insert_blocks(properties, None, cx);
+        for ((index, rows), id) in places.into_iter().zip(ids) {
+            shown[index].block = Some(Placed {
+                id,
+                rows,
+                lifted: shown[index].lifted,
+            });
+        }
+    }
+    state(editor).shown = shown;
+}
+
+/// Folds or reveals each embed's reference, in page order: content starts on a folded
+/// reference's line and below a revealed one.
+pub(crate) fn lift(editor: &mut Editor, folded: &[bool], cx: &mut Context<Editor>) {
+    let Some(embeds) = editor.addon_mut::<Embeds>() else {
+        return;
+    };
+    let mut changed = false;
+    for (shown, folded) in embeds.shown.iter_mut().zip(folded) {
+        changed |= shown.lifted != *folded;
+        shown.lifted = *folded;
+    }
+    if changed {
+        fit(editor, cx);
+    }
 }
 
 /// The rows a nested editor needs, including any embeds nested in it, leaving out the empty
@@ -392,13 +491,11 @@ fn reveal_row(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    let Some(block) = state(editor)
+    let Some(placed) = state(editor)
         .shown
         .iter()
         .find_map(|shown| match &shown.content {
-            Content::Editor { editor, .. } if editor == nested => {
-                shown.block.map(|(block, _)| block)
-            }
+            Content::Editor { editor, .. } if editor == nested => shown.block,
             _ => None,
         })
     else {
@@ -409,13 +506,13 @@ fn reveal_row(
     let Some(start) = display
         .blocks_in_range(editor::display_map::DisplayRow(0)..end)
         .find_map(|(start, shown)| match shown {
-            editor::display_map::Block::Custom(custom) if custom.id == block => Some(start),
+            editor::display_map::Block::Custom(custom) if custom.id == placed.id => Some(start),
             _ => None,
         })
     else {
         return;
     };
-    let row = start.0 + row;
+    let row = (start.0 + row).saturating_sub(u32::from(placed.lifted));
     if let Some(outer) = state(editor)
         .outer
         .clone()
@@ -438,26 +535,6 @@ fn reveal_row(
         return;
     };
     editor.set_scroll_position(position, window, cx);
-}
-
-fn resize(editor: &mut Editor, cx: &mut Context<Editor>) {
-    let mut heights = HashMap::default();
-    let mut shown = std::mem::take(&mut state(editor).shown);
-    for shown in &mut shown {
-        if let (Content::Editor { editor: nested, .. }, Some((block, rows))) =
-            (&shown.content, &mut shown.block)
-        {
-            let wanted = content_rows(nested, cx);
-            if wanted != *rows {
-                *rows = wanted;
-                heights.insert(*block, wanted);
-            }
-        }
-    }
-    state(editor).shown = shown;
-    if !heights.is_empty() {
-        editor.resize_blocks(heights, None, cx);
-    }
 }
 
 /// The nested editor for a resolved embed, once its page has loaded through the notebook.
@@ -511,6 +588,9 @@ fn nested(
             window,
             cx,
         );
+        // An embed reads as part of the page: no line numbers, excerpt arrows, or scrollbar.
+        nested.set_show_gutter(false, cx);
+        nested.disable_scrollbars_and_minimap(window, cx);
         crate::page_menu::install(&mut nested);
         let embeds = state(&mut nested);
         embeds.chain = chain;
@@ -529,27 +609,120 @@ fn nested(
     })
 }
 
-fn render(nested: Entity<Editor>) -> editor::display_map::RenderBlock {
+/// The link at the right of an embed's first line, which opens its source.
+#[derive(Clone)]
+struct Link {
+    target: Target,
+    label: SharedString,
+    /// The view the embed is in, which follows the link.
+    outer: WeakEntity<Editor>,
+}
+
+/// Opens an embed's source from the view showing it, beside with Shift.
+fn follow(
+    outer: &WeakEntity<Editor>,
+    target: Target,
+    beside: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(notebook) = outer
+        .upgrade()
+        .and_then(|outer| crate::references::host(outer.read(cx)))
+        .map(|host| host.read(cx).notebook().clone())
+    else {
+        return;
+    };
+    notebook.follow(
+        Follow {
+            target,
+            beside,
+            backlinks: false,
+        },
+        window,
+        cx,
+    );
+}
+
+/// Draws a nested editor in its block, `lifted` one row up onto the reference's folded line.
+/// A block without height (`empty`) still draws the one row it lifts.
+fn render(
+    nested: Entity<Editor>,
+    lifted: bool,
+    empty: bool,
+    link: Option<Link>,
+) -> editor::display_map::RenderBlock {
     Arc::new(move |block| {
         use theme::ActiveTheme;
-        let rows = content_rows(&nested, block.app);
+        let added = if empty { 0 } else { block.height };
+        let rows = added + u32::from(lifted);
+        let line = block.line_height;
         let colors = block.app.theme().colors();
+        let link = link.clone().map(|link| {
+            let Link {
+                target,
+                label,
+                outer,
+            } = link;
+            gpui::div()
+                .id(("quire-embed-link", nested.entity_id()))
+                .debug_selector(|| "quire-embed-link".into())
+                .absolute()
+                .top_0()
+                .right_0()
+                .h(line)
+                .px_1()
+                .flex()
+                .items_center()
+                .role(gpui::Role::Link)
+                .aria_label(label.clone())
+                .cursor_pointer()
+                .tooltip(ui::Tooltip::text(label))
+                .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                })
+                .on_click(move |event, window, cx| {
+                    cx.stop_propagation();
+                    follow(&outer, target.clone(), event.modifiers().shift, window, cx);
+                })
+                .child(
+                    ui::Icon::new(ui::IconName::ArrowUpRight)
+                        .size(ui::IconSize::XSmall)
+                        .color(ui::Color::Muted),
+                )
+        });
+        let width = (block.margins.gutter.full_width() + block.max_width
+            - block.margins.right
+            - block.anchor_x)
+            .max(gpui::px(0.));
         gpui::div()
-            .debug_selector(|| "quire-embed".into())
-            .ml(block.anchor_x)
-            .pl_2()
+            .relative()
             .w_full()
-            .h(block.line_height * rows as f32)
-            .overflow_hidden()
-            .border_l_2()
-            .border_color(colors.border)
-            .child(nested.clone())
+            .h(line * added as f32)
+            .child(
+                gpui::div()
+                    .debug_selector(|| "quire-embed".into())
+                    .absolute()
+                    .top(if lifted { -line } else { gpui::px(0.) })
+                    .left(block.anchor_x)
+                    .w(width)
+                    .h(line * rows as f32)
+                    .pl_2()
+                    .pr_6()
+                    .overflow_hidden()
+                    .border_l_2()
+                    .border_color(colors.border)
+                    .child(nested.clone())
+                    .children(link),
+            )
             .into_any_element()
     })
 }
 
-/// A header for each embed, to fold its reference into: the source it shows, or why it shows
-/// nothing. Clicking the header opens the original, beside with Shift.
+/// What each embed's reference folds into while the caret is away: nothing for an embed that
+/// shows its content, or a notice saying why it shows none. A notice for a resolved embed opens
+/// the original, beside with Shift.
 pub(crate) fn headers(
     editor: &Editor,
     host: WeakEntity<Editor>,
@@ -563,7 +736,18 @@ pub(crate) fn headers(
         .iter()
         .enumerate()
         .map(|(ordinal, shown)| {
-            let label = shown.label();
+            let Some(notice) = shown.notice() else {
+                // Draws nothing, but keeps text: Zed's block map loses count of rows when a
+                // row with blocks below it folds to no text at all, and panics when they go.
+                let placeholder = FoldPlaceholder {
+                    collapsed_text: Some("↳".into()),
+                    constrain_width: false,
+                    merge_adjacent: false,
+                    type_tag: Some(type_tag),
+                    ..Default::default()
+                };
+                return (shown.spot.clone(), placeholder);
+            };
             let original = shown.resolved.as_ref().map(|_| shown.spot.target.clone());
             let host = host.clone();
             let placeholder = FoldPlaceholder {
@@ -576,41 +760,21 @@ pub(crate) fn headers(
                     let colors = cx.theme().colors();
                     let host = host.clone();
                     let original = original.clone();
-                    let selector = if original.is_some() {
-                        "quire-embed-header"
-                    } else {
-                        "quire-embed-notice"
-                    };
                     crate::editor_projection::inline_control(
-                        ("quire-embed-header", ordinal),
+                        ("quire-embed-notice", ordinal),
                         host.clone(),
                     )
-                    .debug_selector(|| selector.into())
+                    .debug_selector(|| "quire-embed-notice".into())
                     .role(gpui::Role::Link)
-                    .aria_label(label.clone())
+                    .aria_label(notice.clone())
                     .cursor_pointer()
                     .text_color(colors.text_muted)
-                    .child(label.clone())
+                    .child(notice.clone())
                     .on_click(move |event, window, cx| {
                         cx.stop_propagation();
-                        let (Some(original), Some(host)) = (original.clone(), host.upgrade())
-                        else {
-                            return;
-                        };
-                        let Some(notebook) = crate::references::host(host.read(cx))
-                            .map(|host| host.read(cx).notebook().clone())
-                        else {
-                            return;
-                        };
-                        notebook.follow(
-                            Follow {
-                                target: original,
-                                beside: event.modifiers().shift,
-                                backlinks: false,
-                            },
-                            window,
-                            cx,
-                        );
+                        if let Some(original) = original.clone() {
+                            follow(&host, original, event.modifiers().shift, window, cx);
+                        }
                     })
                     .into_any_element()
                 }),
@@ -844,16 +1008,23 @@ pub(crate) fn nested_editors(editor: &Editor) -> Vec<Entity<Editor>> {
         .unwrap_or_default()
 }
 
-/// The header of each embed in this view, in page order.
+/// What each embed in this view names, in page order: its link to the source when it shows its
+/// content, or its notice.
 #[cfg(test)]
-pub(crate) fn header_labels(editor: &Editor) -> Vec<String> {
+pub(crate) fn labels(editor: &Editor) -> Vec<String> {
     editor
         .addon::<Embeds>()
         .map(|embeds| {
             embeds
                 .shown
                 .iter()
-                .map(|shown| shown.label().to_string())
+                .map(|shown| {
+                    shown
+                        .link()
+                        .or_else(|| shown.notice())
+                        .unwrap_or_default()
+                        .to_string()
+                })
                 .collect()
         })
         .unwrap_or_default()
