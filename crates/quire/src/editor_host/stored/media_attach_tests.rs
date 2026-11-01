@@ -95,6 +95,34 @@ fn attach_file_stores_files_and_links_them_in_one_undoable_edit(cx: &mut TestApp
 }
 
 #[gpui::test]
+fn the_toolbar_attach_button_links_chosen_files_at_the_caret(cx: &mut TestAppContext) {
+    serve(cx);
+    let (notebook, _) = open_with_attachments(&[], |_| "- first\n- second\n".into(), cx);
+    let editor = enter_write(&notebook, cx);
+    caret_after_first_line(&notebook, &editor, cx);
+    let files = tempfile::tempdir().unwrap();
+    let notes = files.path().join("notes.txt");
+    std::fs::write(&notes, "attached").unwrap();
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            window.blur(cx);
+            view.attach_files(window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert!(cx.did_prompt_for_paths(), "Attach… asks for files");
+    cx.simulate_path_prompt_response(move |_| Some(vec![notes.clone()]));
+    let link = format!(
+        "[{name}](<attachments/{name}>)",
+        name = attachment_file_name(b"attached", "notes.txt")
+    );
+    wait_until(cx, "the attachment link at the caret", |cx| {
+        cx.update(|cx| editor.read(cx).text(cx)) == format!("- first{link}\n- second\n")
+    });
+}
+
+#[gpui::test]
 fn pasting_an_image_attaches_it_and_text_still_pastes(cx: &mut TestAppContext) {
     serve(cx);
     let (notebook, _) = open_with_attachments(&[], |_| "- first\n".into(), cx);

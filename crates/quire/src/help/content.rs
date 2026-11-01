@@ -53,7 +53,7 @@ pub const SECTIONS: &[HelpSection] = &[
             "While zoomed into a block, edits stay inside it and its children, and Mod-A selects only that. With Vim, o, O, J, cc and >> or << work on blocks: o opens a sibling, J joins the next block, and >> nests the block with its children.",
             "A block with children shows an arrow beside its dot while the pointer is over it or it is folded; click the arrow to collapse or expand them. Vim za, zc, zo, zM and zR and the editor fold keys fold blocks too, and folds come back when the page opens again. Click a dot to zoom into that block. Folding does not modify your note.",
             "For a numbered list, type 1. and a space; Enter continues with 2., 3. and so on, and Tab nests a block under the number. To number an existing bullet list, put the cursor in any item and press Mod-Shift-7; press it again to turn the numbers back into bullets. With a selection, only the selected items change. Every item can be typed as 1.: the list still counts 1, 2, 3.",
-            "Use Page actions to copy references or embeds, move a subtree, attach a file or open saved history. Referenced block IDs stay attached to their blocks.",
+            "Right-click a block, or press Shift-F10, to copy its reference or embed or move it with its children to another page. The page toolbar's Attach… adds files and History… opens saved versions. Referenced block IDs stay attached to their blocks.",
         ],
         example: None,
     },
@@ -67,7 +67,7 @@ pub const SECTIONS: &[HelpSection] = &[
             "Tags in the sidebar lists every tag with its block count. Sort by name, most blocks first or fewest blocks first; the choice is remembered. Tick tags to rename or delete them together after a preview; renaming moves nested tags too.",
             "Click a tag to browse matching blocks with parent context and expandable children. Common tags such as #inbox, #pending, #book, #quote and #idea show an icon and their own color; nested tags such as #book/fiction keep their family's look. Source always shows raw text.",
             "Shift-click page links or source links to open beside the current page. The page’s details panel shows the outline and backlinks. Mouse Back/Forward buttons navigate where supported by the operating system.",
-            "Navigate history with ⌘+[ / ⌘+] on Mac, or Alt+Left / Alt+Right on Windows. Browser Back/Forward keys also work. Back/Forward restores tag filters and reading positions.",
+            "Navigate history with ⌘+[ / ⌘+] on Mac, or Alt+Left / Alt+Right on Windows. Back/Forward restores tag filters and reading positions.",
         ],
         example: Some(
             "[[Website]]\nA precise thought: ((block-id))\n{{embed: ((block-id))}}\n#meeting/team",
@@ -94,7 +94,7 @@ pub const SECTIONS: &[HelpSection] = &[
             "Open Templates in the sidebar. Each top-level block on that page with indented blocks under it is a template: the block is its name, the indented blocks are what gets inserted. The page starts with Meeting, Project, Person and My Day, and the guide under it adds more with one click.",
             "At the beginning of an empty block, type jj, keep typing to narrow the list, and press Enter. In Vim, enter Insert mode first. Insertion undoes as one action.",
             "Placeholders: {cursor}, {today}, {date: tomorrow} (also yesterday, +3, -1, a weekday or 2026-11-02), {time}, {weekday}, {page}, {pick: #meeting} (a fuzzy picker of names used before with the tag, or a new one) and {ask: Question?}. Live lists such as {{tasks: next}} and {{query: #idea}} are copied as written; here in a task list means the page you insert into.",
-            "Use Page actions to attach an image or PDF. Standard Markdown image embeds and wiki attachment embeds display inline. Keep attachment files with the notebook when copying or syncing it.",
+            "To attach an image or PDF, use Attach… in the page toolbar or Mod-Alt-A, paste an image, or drop files on the page. Standard Markdown image embeds and wiki attachment embeds display inline. Keep attachment files with the notebook when copying or syncing it.",
             "Use backticks for inline code and fenced blocks with a language name for syntax highlighting. Source lets you edit all the Markdown directly.",
         ],
         example: Some(

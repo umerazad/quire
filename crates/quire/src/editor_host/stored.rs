@@ -698,6 +698,9 @@ impl Render for StoredWindow {
                         .child(Button::new("move-page", "Move…").on_click(
                             cx.listener(|this, _, window, cx| this.move_shown_page(window, cx)),
                         ))
+                        .child(Button::new("attach-file", "Attach…").on_click(
+                            cx.listener(|this, _, window, cx| this.attach_files(window, cx)),
+                        ))
                         .child(Button::new("page-history", "History…").on_click(
                             cx.listener(|this, _, window, cx| this.show_history(window, cx)),
                         ))
