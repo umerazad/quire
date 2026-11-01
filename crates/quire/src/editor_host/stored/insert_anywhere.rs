@@ -1,6 +1,6 @@
-//! With Vim on, a key that starts Insert mode works wherever focus is, except in text fields and
-//! menus: it goes to the page editor used last, or else the shown page's, as if typed there (the
-//! reference `bindInsertAnywhere`).
+//! With Vim on, a key that starts Insert mode works wherever focus is, except in text fields,
+//! menus, and dialogs: it goes to the page editor used last, or else the shown page's, as if
+//! typed there (the reference `bindInsertAnywhere`).
 
 use super::*;
 use editor::Editor;
@@ -8,6 +8,16 @@ use settings::Settings as _;
 
 /// Keys that start Insert mode from Normal mode.
 const INSERT_KEYS: [&str; 9] = ["i", "a", "o", "I", "A", "O", "s", "S", "C"];
+
+/// Contexts whose keys stay where they are typed: text fields, menus, and dialogs, which rt
+/// leaves alone as `[role="dialog"]`.
+const FIELDS: [&str; 5] = [
+    "Editor",
+    crate::navigation::MENU_CONTEXT,
+    crate::navigation::file_dialog::DIALOG_CONTEXT,
+    crate::navigation::page_history::HISTORY_CONTEXT,
+    crate::preferences::view::CONTEXT,
+];
 
 impl StoredWindow {
     /// Remembers which page editor took focus last, for keys typed outside any editor.
@@ -69,9 +79,10 @@ impl StoredWindow {
     ) {
         let keystroke = &event.keystroke;
         let modifiers = keystroke.modifiers;
-        let in_field = window.context_stack().iter().any(|context| {
-            context.contains("Editor") || context.contains(crate::navigation::MENU_CONTEXT)
-        });
+        let in_field = window
+            .context_stack()
+            .iter()
+            .any(|context| FIELDS.iter().any(|field| context.contains(field)));
         if !vim_mode_setting::VimModeSetting::get_global(cx).0
             || modifiers.control
             || modifiers.alt

@@ -241,10 +241,7 @@ fn entries(editor: &Editor, cx: &mut App) -> Vec<Entry> {
     let empty = selection.is_empty();
     let editable = !editor.read_only(cx);
     let block = caret_block(editor, cx);
-    let lists = editable
-        && block.is_some()
-        && crate::editor_projection::enabled(editor)
-        && editor.buffer().read(cx).as_singleton().is_some();
+    let lists = editable && block.is_some() && crate::editor_projection::enabled(editor);
     let clipboard = vec![
         Item::action("Cut", editor::actions::Cut)
             .disabled(empty || !editable)

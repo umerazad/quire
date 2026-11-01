@@ -466,6 +466,64 @@ fn vim_insert_keys_outside_a_text_field_go_to_the_page_editor(cx: &mut TestAppCo
     );
 }
 
+/// Two creates of one title that start before either is saved, as from two quick New page
+/// confirmations, make one page: the second is refused instead of adding a page at the same path
+/// or a second version of the first.
+#[gpui::test]
+fn simultaneous_creates_of_one_title_make_one_page(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&PAGES, "a", cx);
+    let (storage, index) = read(&notebook, cx, |view, cx| {
+        (
+            view.session.borrow().storage(),
+            view.index_client(cx).unwrap(),
+        )
+    });
+    let create = || {
+        crate::navigation::create_page(storage.clone(), index.clone(), "Twin".into(), String::new())
+    };
+    let (first, second) = futures::executor::block_on(futures::future::join(create(), create()));
+    let (created, refused) = match (first, second) {
+        (Ok(page), Err(error)) | (Err(error), Ok(page)) => (page, error),
+        other => panic!("one create must succeed and one be refused: {other:?}"),
+    };
+    assert!(refused.contains("Twin.md already exists"), "{refused}");
+    settle(&notebook, cx);
+    let pages = futures::executor::block_on(crate::query_index::ask(index.pages())).unwrap();
+    let twins: Vec<_> = pages
+        .iter()
+        .filter(|listed| listed.page.path == "Twin.md")
+        .collect();
+    assert_eq!(twins.len(), 1, "{twins:?}");
+    assert_eq!(twins[0].page.page.to_lossy_string(), created);
+    let store = NotebookStore::open(&notebook.path, "nb", "local").unwrap();
+    assert_eq!(store.heads(&created).unwrap().len(), 1, "one version");
+}
+
+/// rt leaves keys in a dialog to the dialog, so an Insert key in the Delete dialog, which has
+/// no text field, keeps focus there instead of starting Insert mode in the page.
+#[gpui::test]
+fn vim_insert_keys_in_a_dialog_stay_in_the_dialog(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&PAGES, "a", cx);
+    wait_until(cx, "the first page", |cx| {
+        read(&notebook, cx, |view, _| view.editor.is_some())
+    });
+    cx.dispatch_action(notebook.window.into(), crate::navigation::DeletePage);
+    wait_until(cx, "the Delete dialog", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.nav
+                .dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.read(cx).can_confirm())
+        })
+    });
+    draw(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "a");
+    cx.run_until_parked();
+    assert!(!editor_focused(&notebook, cx), "the dialog keeps focus");
+    assert!(read(&notebook, cx, |view, _| view.nav.dialog.is_some()));
+    assert_eq!(page_text(&notebook, cx), "- apple pie\n");
+}
+
 #[gpui::test]
 fn notebook_ctrl_keys_win_over_vim_inside_a_page(cx: &mut TestAppContext) {
     let notebook = open_notebook(&PAGES, "a", cx);

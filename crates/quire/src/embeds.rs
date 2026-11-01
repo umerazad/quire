@@ -315,12 +315,17 @@ fn place(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
                     None,
                     cx,
                 )[0];
-                let resized =
-                    cx.subscribe_in(nested, window, |editor, _, event: &EditorEvent, _, cx| {
-                        if matches!(event, EditorEvent::BufferEdited) {
-                            resize(editor, cx);
+                let resized = cx.subscribe_in(
+                    nested,
+                    window,
+                    |editor, nested, event: &EditorEvent, window, cx| match event {
+                        EditorEvent::BufferEdited => resize(editor, cx),
+                        EditorEvent::SelectionsChanged { local: true } => {
+                            reveal(editor, nested, window, cx)
                         }
-                    });
+                        _ => {}
+                    },
+                );
                 (Some((block, rows)), vec![resized])
             }
             _ => (None, Vec::new()),
@@ -356,6 +361,83 @@ fn content_rows(nested: &Entity<Editor>, cx: &mut App) -> u32 {
             rows
         }
     })
+}
+
+/// Scrolls the outermost view so the caret of `nested`, an embed in `editor`, stays in sight.
+/// A nested editor sizes to its content and never scrolls, so a caret moving in a tall embed
+/// would otherwise leave the screen.
+fn reveal(
+    editor: &mut Editor,
+    nested: &Entity<Editor>,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    if !nested.focus_handle(cx).is_focused(window) {
+        return;
+    }
+    let row = nested.update(cx, |nested, cx| {
+        let display = nested.display_snapshot(cx);
+        let head = nested.selections.newest::<Point>(&display).head();
+        display.point_to_display_point(head, Bias::Left).row().0
+    });
+    reveal_row(editor, nested, row, window, cx);
+}
+
+/// Scrolls so `row` of the embed `nested` shows, asking the view around `editor` when
+/// `editor` is itself an embed.
+fn reveal_row(
+    editor: &mut Editor,
+    nested: &Entity<Editor>,
+    row: u32,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    let Some(block) = state(editor)
+        .shown
+        .iter()
+        .find_map(|shown| match &shown.content {
+            Content::Editor { editor, .. } if editor == nested => {
+                shown.block.map(|(block, _)| block)
+            }
+            _ => None,
+        })
+    else {
+        return;
+    };
+    let display = editor.display_snapshot(cx);
+    let end = editor::display_map::DisplayRow(display.max_point().row().0 + 1);
+    let Some(start) = display
+        .blocks_in_range(editor::display_map::DisplayRow(0)..end)
+        .find_map(|(start, shown)| match shown {
+            editor::display_map::Block::Custom(custom) if custom.id == block => Some(start),
+            _ => None,
+        })
+    else {
+        return;
+    };
+    let row = start.0 + row;
+    if let Some(outer) = state(editor)
+        .outer
+        .clone()
+        .and_then(|outer| outer.upgrade())
+    {
+        let this = cx.entity();
+        outer.update(cx, |outer, cx| reveal_row(outer, &this, row, window, cx));
+        return;
+    }
+    let Some(visible) = editor.visible_line_count() else {
+        return;
+    };
+    let mut position = editor.scroll_position(cx);
+    let row = f64::from(row);
+    position.y = if row < position.y {
+        row
+    } else if row + 1. > position.y + visible {
+        row + 1. - visible
+    } else {
+        return;
+    };
+    editor.set_scroll_position(position, window, cx);
 }
 
 fn resize(editor: &mut Editor, cx: &mut Context<Editor>) {
@@ -429,6 +511,7 @@ fn nested(
             window,
             cx,
         );
+        crate::page_menu::install(&mut nested);
         let embeds = state(&mut nested);
         embeds.chain = chain;
         embeds.outer = Some(outer);
