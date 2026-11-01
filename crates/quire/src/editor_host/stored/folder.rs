@@ -348,9 +348,10 @@ impl StoredWindow {
         else {
             return;
         };
-        let watcher = ::fs::RealFs::new(None, cx.background_executor().clone());
+        let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
-            let (mut events, _watcher) = watcher.watch(&root, WATCH_LATENCY).await;
+            let (mut events, _watcher) =
+                crate::folder_watch::watch(&root, WATCH_LATENCY, executor).await;
             let roots: Vec<PathBuf> = std::fs::canonicalize(&root)
                 .into_iter()
                 .chain([root])

@@ -69,6 +69,9 @@ mod sync_status;
 mod live_sync;
 
 #[cfg(feature = "full-editor")]
+mod folder_watch;
+
+#[cfg(feature = "full-editor")]
 mod lifecycle;
 
 #[cfg(feature = "full-editor")]
