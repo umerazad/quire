@@ -33,10 +33,13 @@ pub fn load(cx: &App) -> anyhow::Result<()> {
     cx.text_system().add_fonts(fonts())
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{AssetSource as _, Font, FontFallbacks, FontRun, TextSystem, px};
+    use gpui::{
+        AssetSource as _, Font, FontFallbacks, FontRun, PlatformTextSystem, TextSystem, px,
+    };
+    use std::sync::Arc;
 
     /// A font file's units per em, ascender, and descender, from its `head` and `hhea` tables.
     fn vertical_metrics(font: &[u8]) -> (u16, i16, i16) {
@@ -56,15 +59,10 @@ mod tests {
         )
     }
 
-    #[test]
-    fn arabic_text_falls_back_to_the_bundled_naskh_even_when_the_editor_font_is_missing() {
-        assert_eq!(
-            crate::preferences::FONT_FALLBACKS[1..],
-            [".ZedMono", ARABIC],
-            "Naskh must follow the editor fonts so Latin text keeps them"
-        );
-        let platform: std::sync::Arc<dyn gpui::PlatformTextSystem> =
-            std::sync::Arc::new(gpui_apple::AppleTextSystem::new());
+    /// Loads Lilex and the bundled fonts into `platform`, as the app does at startup, and checks
+    /// that Arabic text in an editor font that is missing falls to the bundled Naskh while Latin
+    /// text keeps the editor's own fallbacks.
+    fn arabic_falls_back_to_naskh(platform: Arc<dyn PlatformTextSystem>) {
         let text_system = TextSystem::new(platform.clone());
         let lilex = assets::Assets
             .load("fonts/lilex/Lilex-Regular.ttf")
@@ -73,7 +71,7 @@ mod tests {
         text_system.add_fonts(vec![lilex]).unwrap();
         text_system.add_fonts(fonts()).unwrap();
         let names = text_system.all_font_names();
-        for family in [ARABIC, "Noto Nastaliq Urdu"] {
+        for family in [ARABIC, URDU] {
             assert!(names.iter().any(|name| name == family), "{family} missing");
         }
         let editor = Font {
@@ -126,5 +124,29 @@ mod tests {
                 assert_eq!(font_id, editor, "{ch} left the editor font");
             }
         }
+    }
+
+    #[test]
+    fn naskh_ends_the_editor_fallbacks() {
+        assert_eq!(
+            crate::preferences::FONT_FALLBACKS[1..],
+            [".ZedMono", ARABIC],
+            "Naskh must follow the editor fonts so Latin text keeps them"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn arabic_text_falls_back_to_the_bundled_naskh_even_when_the_editor_font_is_missing() {
+        arabic_falls_back_to_naskh(Arc::new(gpui_apple::AppleTextSystem::new()));
+    }
+
+    /// Linux sets text with GPUI's cosmic-text system, which runs on any OS, so this checks the
+    /// Linux font fallback here too, with no system fonts so only the bundled ones can answer.
+    #[test]
+    fn linux_text_falls_back_to_the_bundled_naskh_even_when_the_editor_font_is_missing() {
+        arabic_falls_back_to_naskh(Arc::new(
+            gpui_wgpu::CosmicTextSystem::new_without_system_fonts("Lilex"),
+        ));
     }
 }

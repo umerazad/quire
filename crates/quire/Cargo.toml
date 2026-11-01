@@ -68,6 +68,7 @@ hex = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
 async_zip = { workspace = true, optional = true }
 quick-xml = { workspace = true, optional = true }
+net = { workspace = true, optional = true }
 
 [dev-dependencies]
 http_client = { workspace = true, features = ["test-support"] }
@@ -77,6 +78,7 @@ tempfile.workspace = true
 serde_json.workspace = true
 tree-sitter-md.workspace = true
 fs = { workspace = true, features = ["test-support"] }
+gpui_wgpu.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2.workspace = true
@@ -84,10 +86,16 @@ objc2 = { workspace = true }
 objc2-app-kit = { workspace = true, features = ["NSAccessibility", "NSSpellChecker", "NSWorkspace"] }
 objc2-foundation = { workspace = true, features = ["NSNotification", "NSOperation", "NSString", "block2"] }
 
+[build-dependencies]
+embed-resource = "3.0"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { workspace = true, features = ["Win32_Globalization", "Win32_System_Com"] }
+
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 gpui_apple.workspace = true
 
 [features]
 default = ["full-editor"]
 test-support = ["gpui/test-support", "gpui_platform/test-support"]
-full-editor = ["dep:quire_core", "dep:quire_store", "dep:quire_format", "dep:quire_media", "dep:image", "dep:reqwest_client", "dep:futures", "dep:rope", "dep:uuid", "dep:editor", "dep:ui", "dep:http_client", "dep:search", "dep:workspace", "dep:language", "dep:multi_buffer", "dep:grammars", "dep:tree-sitter-quire-markdown", "dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-cpp", "dep:tree-sitter-css", "dep:tree-sitter-html", "dep:tree-sitter-jsdoc", "dep:tree-sitter-json", "dep:tree-sitter-python", "dep:tree-sitter-regex", "dep:tree-sitter-rust", "dep:tree-sitter-typescript", "dep:tree-sitter-yaml", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:vim_mode_setting", "dep:assets", "dep:util", "dep:zed_actions", "dep:picker", "dep:menu", "dep:db", "dep:serde_json", "dep:serde", "dep:project", "dep:anyhow", "dep:fs", "dep:paths", "dep:buffer_diff", "dep:markdown", "dep:smol", "dep:jiff", "dep:sha2", "dep:hex", "dep:rand", "dep:async_zip", "dep:quick-xml"]
+full-editor = ["dep:quire_core", "dep:quire_store", "dep:quire_format", "dep:quire_media", "dep:image", "dep:reqwest_client", "dep:futures", "dep:rope", "dep:uuid", "dep:editor", "dep:ui", "dep:http_client", "dep:search", "dep:workspace", "dep:language", "dep:multi_buffer", "dep:grammars", "dep:tree-sitter-quire-markdown", "dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-cpp", "dep:tree-sitter-css", "dep:tree-sitter-html", "dep:tree-sitter-jsdoc", "dep:tree-sitter-json", "dep:tree-sitter-python", "dep:tree-sitter-regex", "dep:tree-sitter-rust", "dep:tree-sitter-typescript", "dep:tree-sitter-yaml", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:vim_mode_setting", "dep:assets", "dep:util", "dep:zed_actions", "dep:picker", "dep:menu", "dep:db", "dep:serde_json", "dep:serde", "dep:project", "dep:anyhow", "dep:fs", "dep:paths", "dep:buffer_diff", "dep:markdown", "dep:smol", "dep:jiff", "dep:sha2", "dep:hex", "dep:rand", "dep:async_zip", "dep:quick-xml", "dep:net"]

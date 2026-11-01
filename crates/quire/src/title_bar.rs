@@ -18,6 +18,19 @@ const TRAFFIC_LIGHTS: gpui::Point<Pixels> = point(px(16.), px(13.));
 /// Room left of the title for the traffic lights.
 const TRAFFIC_LIGHT_PADDING: Pixels = px(80.);
 
+/// The application ID every window carries: Wayland's `app_id` and the X11 `WM_CLASS` on Linux,
+/// which desktops match to the installed `app.quire.native.desktop` entry for the dock icon and
+/// window grouping, as Zed gives each window its app ID.
+pub const APP_ID: &str = "app.quire.native";
+
+/// What every Quire window starts from.
+pub fn base_options() -> WindowOptions {
+    WindowOptions {
+        app_id: Some(APP_ID.into()),
+        ..Default::default()
+    }
+}
+
 /// Whether windows draw their own title bar.
 pub fn custom() -> bool {
     cfg!(target_os = "macos")
@@ -47,7 +60,7 @@ pub fn options(window_size: gpui::Size<Pixels>, cx: &App) -> WindowOptions {
             appears_transparent: custom(),
             traffic_light_position: custom().then_some(TRAFFIC_LIGHTS),
         }),
-        ..Default::default()
+        ..base_options()
     }
 }
 
@@ -137,6 +150,19 @@ mod size_tests {
             panic!("notebook windows open windowed");
         };
         assert_eq!(bounds.size, MIN_SIZE, "no window opens below the minimum");
+        assert_eq!(notebook.app_id.as_deref(), Some(APP_ID));
+    }
+
+    #[test]
+    fn windows_carry_the_app_id_the_linux_desktop_entry_is_named_after() {
+        let entry = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join(format!("{APP_ID}.desktop"));
+        let text = std::fs::read_to_string(&entry).unwrap();
+        for line in [format!("StartupWMClass={APP_ID}"), format!("Icon={APP_ID}")] {
+            assert!(text.lines().any(|found| found == line), "{line} missing");
+        }
+        assert_eq!(base_options().app_id.as_deref(), Some(APP_ID));
     }
 }
 

@@ -54,7 +54,7 @@ pub fn open(quire_data: PathBuf, cx: &mut App) {
             gpui::size(px(680.), px(760.)),
             cx,
         ))),
-        ..Default::default()
+        ..crate::title_bar::base_options()
     };
     let opened = cx.open_window(options, |window, cx| {
         window.set_window_title("Move from rt");

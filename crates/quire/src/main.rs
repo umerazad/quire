@@ -1,4 +1,7 @@
 #![cfg_attr(target_family = "wasm", no_main)]
+// Release builds on Windows open no console window, as Zed's do; `--mcp-server` still talks over
+// the standard input and output its AI client hands it.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod document;
 
@@ -67,6 +70,9 @@ mod sync_status;
 
 #[cfg(feature = "full-editor")]
 mod live_sync;
+
+#[cfg(feature = "full-editor")]
+mod folder_watch;
 
 #[cfg(feature = "full-editor")]
 mod lifecycle;
@@ -179,7 +185,7 @@ mod ai;
 #[cfg(feature = "full-editor")]
 mod rt_migration;
 
-#[cfg(all(feature = "full-editor", unix))]
+#[cfg(feature = "full-editor")]
 mod notebook_tools;
 
 #[path = "example_support/fonts.rs"]
@@ -1124,7 +1130,7 @@ fn run_example() {
 
 #[cfg(not(target_family = "wasm"))]
 fn main() {
-    #[cfg(all(feature = "full-editor", unix))]
+    #[cfg(feature = "full-editor")]
     if std::env::args().nth(1).as_deref() == Some(notebook_tools::SERVER_FLAG) {
         notebook_tools::stdio::run(
             paths::data_dir().join(notebook_tools::bridge::FILE_NAME),

@@ -515,7 +515,6 @@ impl AiSection {
             this.refresh(window, cx)
         })
         .detach();
-        #[cfg(unix)]
         cx.observe_global::<crate::notebook_tools::terminal::Registration>(|_, cx| cx.notify())
             .detach();
         cx.observe_global::<AiState>(|_, cx| cx.notify()).detach();
@@ -648,10 +647,7 @@ impl AiSection {
 
     /// Use from a terminal, where the app serves the notebook tools.
     fn terminal(cx: &App) -> gpui::AnyElement {
-        #[cfg(unix)]
-        return crate::notebook_tools::terminal::section(cx).into_any_element();
-        #[cfg(not(unix))]
-        gpui::Empty.into_any_element()
+        crate::notebook_tools::terminal::section(cx).into_any_element()
     }
 
     fn hint(text: impl Into<SharedString>) -> Label {

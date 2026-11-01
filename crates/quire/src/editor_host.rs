@@ -29,7 +29,6 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     settings::init(cx);
     crate::preferences::init(cx);
     crate::ai::settings::init(cx);
-    #[cfg(unix)]
     crate::notebook_tools::init(crate::notebook_tools::directory(), cx);
     crate::help::init(cx);
     crate::rt_migration::view::init(cx);

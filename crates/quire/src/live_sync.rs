@@ -236,13 +236,14 @@ impl LiveSync {
 
     fn watch(&self, cx: &mut Context<Self>) -> Task<()> {
         let root = self.root.clone();
-        let fs = ::fs::RealFs::new(None, cx.background_executor().clone());
+        let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let roots: Vec<PathBuf> = std::fs::canonicalize(&root)
                 .into_iter()
                 .chain([root.clone()])
                 .collect();
-            let (mut events, _watcher) = ::fs::Fs::watch(&*fs, &root, WATCH_DELAY).await;
+            let (mut events, _watcher) =
+                crate::folder_watch::watch(&root, WATCH_DELAY, executor).await;
             while let Some(batch) = events.next().await {
                 let paths: Vec<PathBuf> = batch
                     .into_iter()

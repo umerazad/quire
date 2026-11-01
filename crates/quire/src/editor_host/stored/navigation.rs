@@ -40,7 +40,6 @@ mod tag_views;
 mod task_views;
 #[path = "template_views.rs"]
 mod template_views;
-#[cfg(unix)]
 #[path = "tool_views.rs"]
 mod tool_views;
 

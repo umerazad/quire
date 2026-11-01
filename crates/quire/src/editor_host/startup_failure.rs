@@ -46,7 +46,7 @@ pub fn show(message: String, retry: Option<Retry>, cx: &mut App) {
             size(px(520.), px(200.)),
             cx,
         ))),
-        ..Default::default()
+        ..crate::title_bar::base_options()
     };
     match cx.open_window(options, |window, cx| {
         window.set_window_title("Quire");
