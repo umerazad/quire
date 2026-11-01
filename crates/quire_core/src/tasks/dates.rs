@@ -122,3 +122,11 @@ pub fn task_date_label(task: &Task, today: &str) -> Option<String> {
         std::cmp::Ordering::Greater => format!("Due {}", short_date(due, today)),
     })
 }
+
+/// The Monday after `today`: tomorrow on a Sunday, a week later on a Monday. None when `today`
+/// is not a date.
+pub fn next_week(today: &str) -> Option<String> {
+    let (year, month, day) = parts(today)?;
+    let weekday = Date::new(year, month, day).ok()?.weekday();
+    add_days(today, 7 - i64::from(weekday.to_monday_zero_offset()))
+}

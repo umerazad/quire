@@ -1,7 +1,10 @@
 //! Task query parsing and matching against vectors from the frozen rt modules
 //! (`tools/task-query-vectors.ts` over `tests/reference/core/task-query.ts`).
 
-use quire_core::task_query::{Listed, Notebook, Project, TaskQuery, query_line, run};
+use quire_core::task_query::{Listed, Notebook, Project, TERMS, TaskQuery, query_line, run};
+
+/// The terms rt's unknown-term message offers.
+const RT_TERMS: &str = "a state, #tag, [[Page]], project:Name, by:, sort:, limit: or words";
 use quire_core::tasks::{TaskState, memberships};
 use serde::Deserialize;
 
@@ -174,6 +177,7 @@ fn queries_parse_match_order_and_group_as_the_reference_does() {
             links: &task.links,
             state: TaskState::parse(&task.state).unwrap(),
             due: task.due.as_deref(),
+            completed: None,
         })
         .collect();
     let compare = |a: &str, b: &str| collator.compare(a, b);
@@ -188,7 +192,9 @@ fn queries_parse_match_order_and_group_as_the_reference_does() {
     for case in &vectors.queries {
         let query = TaskQuery::parse(&case.source);
         if let Some(error) = &case.error {
-            assert_eq!(query.as_ref().err(), Some(error), "{:?}", case.source);
+            // Quire's unknown-term message also offers the date terms rt lacks.
+            let error = error.replace(RT_TERMS, TERMS);
+            assert_eq!(query.as_ref().err(), Some(&error), "{:?}", case.source);
             continue;
         }
         let query = query.unwrap();
@@ -227,4 +233,87 @@ fn query_lines_match_the_reference_pattern() {
             );
         }
     }
+}
+
+#[test]
+fn date_terms_list_tasks_by_completion_and_due_date() {
+    let tasks = [
+        ("shipped", TaskState::Done, None, Some("2026-10-30")),
+        (
+            "filed",
+            TaskState::Done,
+            Some("2026-10-28"),
+            Some("2026-10-19"),
+        ),
+        ("call", TaskState::Next, Some("2026-10-30"), None),
+        ("late", TaskState::Waiting, Some("2026-10-01"), None),
+        ("plan", TaskState::Someday, None, None),
+        ("trip", TaskState::Inbox, Some("2026-11-20"), None),
+    ];
+    let listed: Vec<Listed> = tasks
+        .iter()
+        .map(|(text, state, due, completed)| Listed {
+            page: "Work.md",
+            title: "Work",
+            text,
+            tags: &[],
+            links: &[],
+            state: *state,
+            due: *due,
+            completed: *completed,
+        })
+        .collect();
+    let compare = |a: &str, b: &str| a.cmp(b);
+    let notebook = Notebook {
+        here: "Work.md",
+        today: "2026-10-30",
+        projects: &[],
+        members: &[],
+        find_page: &|_| None,
+        compare: &compare,
+    };
+    let texts = |source: &str| -> Vec<&str> {
+        let query = TaskQuery::parse(source).unwrap_or_else(|error| panic!("{source}: {error}"));
+        run(&query, &listed, &notebook).groups[0]
+            .tasks
+            .iter()
+            .map(|index| tasks[*index].0)
+            .collect()
+    };
+    assert_eq!(
+        texts("done:today"),
+        ["shipped"],
+        "done: lists done tasks without a state"
+    );
+    assert_eq!(texts("done:month"), ["shipped", "filed"]);
+    assert_eq!(texts("done:last-week"), ["filed"]);
+    assert_eq!(texts("done:week -done:today"), Vec::<&str>::new());
+    assert_eq!(texts("due:today"), ["call"], "due: keeps the open default");
+    assert_eq!(texts("due:week"), ["call"]);
+    assert_eq!(texts("all due:week"), ["filed", "call"]);
+    assert_eq!(texts("due:month sort:due"), ["late", "call"]);
+    assert_eq!(texts("due:overdue"), ["late"]);
+    assert_eq!(texts("due:none"), ["plan"]);
+    assert_eq!(texts("-due:none sort:due"), ["late", "call", "trip"]);
+    assert_eq!(texts("due:2026-11"), ["trip"]);
+    assert_eq!(texts("due:2026-10-01..2026-10-29"), ["late"]);
+    assert_eq!(texts("someday due:none"), ["plan"]);
+
+    let parsed = TaskQuery::parse("due:week -due:none done:2026").unwrap();
+    assert_eq!(
+        (parsed.dates.len(), parsed.not_dates.len()),
+        (2, 1),
+        "date terms are negatable"
+    );
+    assert_eq!(
+        TaskQuery::parse("due:soon").unwrap_err(),
+        format!(
+            "In \"due:soon\": \"soon\" is not a period. Type one of {}. For due: also overdue or none.",
+            quire_core::tasks::PERIODS
+        )
+    );
+    assert_eq!(
+        TaskQuery::parse("colour:red").unwrap_err(),
+        format!("Unknown term \"colour:red\". Use {TERMS}.")
+    );
 }

@@ -11,13 +11,17 @@
 mod commands;
 mod dates;
 mod filter;
+mod periods;
 
 pub use commands::{
     CAPTURE_ONE, NOT_HERE, NOT_IN_CODE, NOT_IN_SELECTION, Shortcut, TaskEdit, capture,
     created_stamp, task_at, tasks_in,
 };
-pub use dates::{add_days, date_phrase, is_due, is_upcoming, short_date, task_date_label};
-pub use filter::{TaskFilter, memberships, project_membership};
+pub use dates::{
+    add_days, date_phrase, is_due, is_upcoming, next_week, short_date, task_date_label,
+};
+pub use filter::{Candidate, TaskFilter, memberships, project_membership};
+pub use periods::{DateTerm, DateTest, PERIODS, Period, date_range};
 
 use crate::daily::{DailyCalendar, DailyLayout, DailyParser, format_daily};
 use crate::markdown::{Reference, ReferenceKind, TagToken, js_space};
