@@ -208,7 +208,7 @@ impl OpenOptions {
         let mut session =
             NotebookSession::open_synced(self.database, self.notebook, self.writer, self.folder)?;
         let page = session.open_page(self.page, cx);
-        let options = crate::title_bar::options(1100., 760., cx);
+        let options = crate::title_bar::options(crate::title_bar::NOTEBOOK_SIZE, cx);
         cx.open_window(options, move |window, cx| {
             window.set_window_title("Quire Native");
             cx.new(|cx| {
