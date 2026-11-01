@@ -716,8 +716,11 @@ fn copied_block_ids_become_fresh_ids(cx: &mut TestAppContext) {
     let ids = line_ids(window, cx);
     assert_eq!(ids[0], "b");
     assert!(ids[1].starts_with("b-") && ids[1] != "b", "{ids:?}");
-    assert_eq!(ids[2], "n", "a new ID stays");
-    assert!(ids[3].starts_with("b-"), "{ids:?}");
+    assert!(
+        ids[2].starts_with("b-"),
+        "a pasted ID no page has becomes fresh too, as in rt: {ids:?}"
+    );
+    assert!(ids[3].starts_with("b-") && ids[3] != ids[2], "{ids:?}");
     keys(window, &undo(false), cx);
     assert_eq!(state(window, cx).replace('|', ""), "- Two ^b\n- \n");
 }

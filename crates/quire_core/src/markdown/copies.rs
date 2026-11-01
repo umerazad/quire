@@ -86,17 +86,39 @@ pub fn copy_with_new_ids(
     addresses: &Addresses,
     destination: &str,
     source_names: &[&str],
-    mut new_id: impl FnMut() -> String,
+    new_id: impl FnMut() -> String,
 ) -> String {
-    let ids: HashMap<&str, String> = addresses
+    let fresh = fresh_ids(text, addresses, new_id);
+    renamed_ids(text, addresses, &fresh, destination, source_names)
+}
+
+/// A fresh ID from `new_id` for each block ID in `text`, run once per marker, so every copy of
+/// a repeated ID takes the last one.
+pub fn fresh_ids(
+    text: &str,
+    addresses: &Addresses,
+    mut new_id: impl FnMut() -> String,
+) -> HashMap<String, String> {
+    addresses
         .ids
         .iter()
-        .map(|range| (&text[range.clone()], new_id()))
-        .collect();
-    let markers = addresses
-        .ids
-        .iter()
-        .map(|range| (range.clone(), ids[&text[range.clone()]].clone()));
+        .map(|range| (text[range.clone()].to_owned(), new_id()))
+        .collect()
+}
+
+/// Renames the block IDs in `text` that `ids` maps, and points references to those blocks at
+/// the new IDs as `copy_with_new_ids` does. IDs that `ids` leaves out keep their names.
+pub fn renamed_ids(
+    text: &str,
+    addresses: &Addresses,
+    ids: &HashMap<String, String>,
+    destination: &str,
+    source_names: &[&str],
+) -> String {
+    let markers = addresses.ids.iter().filter_map(|range| {
+        let fresh = ids.get(&text[range.clone()])?;
+        Some((range.clone(), fresh.clone()))
+    });
     let followed = addresses.references.iter().filter_map(|reference| {
         if reference.kind == ReferenceKind::Page {
             return None;
@@ -153,6 +175,16 @@ mod tests {
                 numbered()
             ),
             "- first ^b-new1\n- see ((b-new1)) and [[Note (recovered)#^b-new1]] and [[Other#^b-one]]\n```\n- code ^b-two\n```\n- second ^b-new2\r\n"
+        );
+    }
+
+    #[test]
+    fn renaming_leaves_unmapped_ids_and_their_references_alone() {
+        let text = "- a ^one\n- b ^two\n- ((one)) ((two)) [[Note#^one]]\n";
+        let ids = HashMap::from([("one".to_owned(), "b-new".to_owned())]);
+        assert_eq!(
+            renamed_ids(text, &Addresses::scan(text), &ids, "Copy.md", &["Note"]),
+            "- a ^b-new\n- b ^two\n- ((b-new)) ((two)) [[Copy#^b-new]]\n"
         );
     }
 

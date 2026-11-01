@@ -11,6 +11,7 @@ use gpui::{
 use multi_buffer::{MultiBuffer, MultiBufferOffset, ToOffset, ViewEditIntent};
 use std::ops::Range;
 
+mod clipboard;
 pub(crate) mod fold_store;
 pub(crate) mod folds;
 mod fresh_ids;
@@ -176,6 +177,12 @@ pub fn init(cx: &mut App) {
         register(editor, cx, |editor, _: &PasteBlocks, window, cx| {
             paste(editor, window, cx)
         });
+        register(
+            editor,
+            cx,
+            |editor, _: &editor::actions::Paste, window, cx| clipboard::paste(editor, window, cx),
+        );
+        clipboard::record(editor, cx);
         register(editor, cx, |editor, _: &FoldBlock, window, cx| {
             fold(editor, Some(true), window, cx)
         });
@@ -980,7 +987,7 @@ fn open_line(editor: &mut Editor, below: bool, cx: &mut Context<Editor>) -> Opti
 fn paste(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) -> Option<Handled> {
     let page = page(editor, cx)?;
     let head = page.caret()?;
-    let pasted = cx.read_from_clipboard()?.text()?;
+    let pasted = clipboard::pasted_text(editor, cx.read_from_clipboard()?.text()?, cx);
     let plan = model::paste(&page.text, &page.blocks, head, &pasted)?;
     apply(editor, &page, plan, window, cx);
     Some(Handled::Done)
