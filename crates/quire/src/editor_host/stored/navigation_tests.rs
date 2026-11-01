@@ -499,6 +499,50 @@ fn simultaneous_creates_of_one_title_make_one_page(cx: &mut TestAppContext) {
     assert_eq!(store.heads(&created).unwrap().len(), 1, "one version");
 }
 
+/// When a renamed page keeps the identity a title's path derives, two simultaneous creates of
+/// that title both take fresh identities; the store still lets only one live page hold the path.
+#[gpui::test]
+fn simultaneous_creates_beside_a_renamed_page_make_one_page(cx: &mut TestAppContext) {
+    let derived = quire_store::sync::format::page_id_for_path("Twin.md");
+    let notebook = open_notebook(
+        &[
+            ("a", "Apple.md", "- apple pie\n"),
+            (&derived, "Renamed.md", "- once called Twin\n"),
+        ],
+        "a",
+        cx,
+    );
+    let (storage, index) = read(&notebook, cx, |view, cx| {
+        (
+            view.session.borrow().storage(),
+            view.index_client(cx).unwrap(),
+        )
+    });
+    let create = || {
+        crate::navigation::create_page(storage.clone(), index.clone(), "Twin".into(), String::new())
+    };
+    let (first, second) = futures::executor::block_on(futures::future::join(create(), create()));
+    let (created, refused) = match (first, second) {
+        (Ok(page), Err(error)) | (Err(error), Ok(page)) => (page, error),
+        other => panic!("one create must succeed and one be refused: {other:?}"),
+    };
+    assert_ne!(created, derived, "the renamed page keeps its identity");
+    assert!(refused.contains("Twin.md already exists"), "{refused}");
+    let store = NotebookStore::open(&notebook.path, "nb", "local").unwrap();
+    assert_eq!(
+        store.page_at("Twin.md").unwrap().map(|(page, _)| page),
+        Some(created)
+    );
+    settle(&notebook, cx);
+    let pages = futures::executor::block_on(crate::query_index::ask(index.pages())).unwrap();
+    let paths: Vec<_> = pages
+        .iter()
+        .map(|listed| listed.page.path.as_str())
+        .filter(|path| *path != "Apple.md")
+        .collect();
+    assert_eq!(paths, ["Renamed.md", "Twin.md"]);
+}
+
 /// rt leaves keys in a dialog to the dialog, so an Insert key in the Delete dialog, which has
 /// no text field, keeps focus there instead of starting Insert mode in the page.
 #[gpui::test]

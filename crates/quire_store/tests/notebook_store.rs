@@ -583,3 +583,48 @@ fn repeated_save_after_acknowledgment_keeps_the_same_editor_snapshot() {
     assert!(store.save(&input).is_err());
     assert_eq!(store.outbox().unwrap(), vec![saved.revision_id()]);
 }
+
+#[test]
+fn creating_a_page_refuses_a_path_any_live_page_holds_from_any_connection() {
+    use quire_store::notebook::CheckedSaves;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("local.sqlite");
+    let first = NotebookStore::open(&path, "nb", "office").unwrap();
+    let second = NotebookStore::open(&path, "nb", "office").unwrap();
+    let new = |page: &str, path: &str| quire_store::notebook::Edit {
+        page: page.into(),
+        path: path.into(),
+        ..edit(vec![], "- new\n")
+    };
+    let renamed = first.save(&new("p-twin", "Renamed.md")).unwrap();
+    assert!(matches!(
+        first.create_if_free(&new("p-fresh-1", "Twin.md")).unwrap(),
+        CheckedSaves::Saved(_)
+    ));
+    for (page, taken) in [("p-fresh-2", "Twin.md"), ("p-fresh-3", "twin.md")] {
+        match second.create_if_free(&new(page, taken)).unwrap() {
+            CheckedSaves::Appeared { path } => assert_eq!(path, taken),
+            other => panic!("{taken} must be refused: {other:?}"),
+        }
+        assert!(second.heads(page).unwrap().is_empty());
+    }
+    assert!(matches!(
+        second.create_if_free(&new("p-twin", "Other.md")).unwrap(),
+        CheckedSaves::HeadsChanged { .. }
+    ));
+    assert_eq!(
+        second.heads("p-twin").unwrap(),
+        [renamed.revision_id().to_owned()]
+    );
+    assert_eq!(
+        second.page_at("Twin.md").unwrap().map(|(page, _)| page),
+        Some("p-fresh-1".into())
+    );
+    assert!(
+        second
+            .create_if_free(&edit(vec!["base".into()], "- new\n"))
+            .unwrap_err()
+            .to_string()
+            .contains("cannot have a base version")
+    );
+}

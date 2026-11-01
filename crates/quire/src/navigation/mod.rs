@@ -447,7 +447,7 @@ pub async fn create_page_with(
         .await
         .map_err(|error| format!("{error:#}"))?;
     let page = if heads.is_empty() {
-        derived.clone()
+        derived
     } else if lives_at(&storage, heads, &path).await? {
         return Err(exists());
     } else {
@@ -465,18 +465,11 @@ pub async fn create_page_with(
     let failed = |error: anyhow::Error| {
         format!("Cannot create the page: {error:#}. Check free space, then retry.")
     };
-    if page != derived {
-        storage
-            .save(edit)
-            .map_err(|error| error.to_string())?
-            .await
-            .map_err(failed)?;
-        return Ok(page);
-    }
     // The index answers only after a save is read, so a create of the same title that started
-    // first may have saved since: saving only while the page has no version refuses this one.
+    // first may have saved since, under this identity or a fresh one: the store saves only while
+    // no live page holds the path.
     match storage
-        .save_many_if_heads(vec![edit])
+        .create_if_free(edit)
         .map_err(|error| error.to_string())?
         .await
         .map_err(failed)?
