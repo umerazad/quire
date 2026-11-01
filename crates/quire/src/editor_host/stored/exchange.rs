@@ -326,24 +326,6 @@ impl StoredWindow {
         )
         .on_action(cx.listener(|this, _: &CancelExchange, _, cx| this.cancel_exchange(cx)))
     }
-
-    /// Export as Markdown and the document exports for the shown page. The Roam import and
-    /// export sit at the sidebar's foot, as the reference has them; the notebook-wide Markdown
-    /// import and export are in File > Import, File > Export, and Settings > Data.
-    pub(super) fn render_exchange_buttons(&self, cx: &mut gpui::Context<Self>) -> gpui::Div {
-        use gpui::{ParentElement as _, Styled as _};
-        use ui::{Button, Clickable as _, prelude::FluentBuilder as _};
-        gpui::div()
-            .flex()
-            .gap_2()
-            .when(self.shown_page(cx).is_some(), |div| {
-                div.child(
-                    Button::new("export-page-markdown", "Export as Markdown…")
-                        .on_click(cx.listener(|this, _, _, cx| this.export_shown_page(cx))),
-                )
-                .children(self.render_document_export_buttons(cx))
-            })
-    }
 }
 
 async fn import(

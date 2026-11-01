@@ -1,7 +1,9 @@
 //! Quire's asset source: Zed's bundled assets, plus the reference app's tag icons (Lucide, ISC;
 //! `assets/icons/tags/LICENSE`) under `quire/icons/tags/<tone>.svg` and the page toolbar's save
-//! states under `quire/icons/save/`, the sidebar's Lucide icons that Zed lacks under
-//! `icons/quire/sidebar/` (where `ui::Icon::from_path` looks for embedded SVGs), and Quire's themes under `themes/quire/`.
+//! states under `icons/quire/save/`, the header's light and dark icons under
+//! `icons/quire/chrome/`, the sidebar's Lucide icons that Zed lacks under `icons/quire/sidebar/`
+//! (all under `icons/`, which `ui::Icon::from_path` reads as embedded SVGs), and Quire's themes
+//! under `themes/quire/`.
 
 use gpui::{AssetSource, Result, SharedString};
 use std::borrow::Cow;
@@ -55,15 +57,15 @@ pub fn tag_icon_path(name: &str) -> Option<SharedString> {
 /// The save indicator's shapes: a circle when saved, a diamond while saving, a warning triangle.
 pub const SAVE_ICONS: &[(&str, &[u8])] = &[
     (
-        "quire/icons/save/saved.svg",
+        "icons/quire/save/saved.svg",
         include_bytes!("../assets/icons/save/saved.svg"),
     ),
     (
-        "quire/icons/save/pending.svg",
+        "icons/quire/save/pending.svg",
         include_bytes!("../assets/icons/save/pending.svg"),
     ),
     (
-        "quire/icons/save/failed.svg",
+        "icons/quire/save/failed.svg",
         include_bytes!("../assets/icons/save/failed.svg"),
     ),
 ];
@@ -100,9 +102,26 @@ pub const THEMES: &[(&str, &[u8])] = &[(
     include_bytes!("../assets/themes/quire.json"),
 )];
 
-/// Assets served at their own paths: the save and sidebar icons and the themes.
+/// The workspace header's icons Zed lacks (Lucide, ISC; `assets/icons/chrome/LICENSE`): the
+/// light and dark appearance toggle.
+pub const CHROME_ICONS: &[(&str, &[u8])] = &[
+    (
+        "icons/quire/chrome/sun.svg",
+        include_bytes!("../assets/icons/chrome/sun.svg"),
+    ),
+    (
+        "icons/quire/chrome/moon.svg",
+        include_bytes!("../assets/icons/chrome/moon.svg"),
+    ),
+];
+
+/// Assets served at their own paths: the save, chrome, and sidebar icons and the themes.
 fn named() -> impl Iterator<Item = &'static (&'static str, &'static [u8])> {
-    SAVE_ICONS.iter().chain(SIDEBAR_ICONS).chain(THEMES)
+    SAVE_ICONS
+        .iter()
+        .chain(CHROME_ICONS)
+        .chain(SIDEBAR_ICONS)
+        .chain(THEMES)
 }
 
 fn named_asset(path: &str) -> Option<&'static [u8]> {
@@ -156,7 +175,11 @@ mod tests {
             assert!(bytes.starts_with(b"<svg"), "{path}");
             assert!(Assets.list("quire/icons/").unwrap().contains(&path));
         }
-        for (path, _) in SAVE_ICONS.iter().chain(SIDEBAR_ICONS) {
+        for (path, _) in SAVE_ICONS.iter().chain(CHROME_ICONS).chain(SIDEBAR_ICONS) {
+            assert!(
+                path.starts_with("icons/"),
+                "Icon::from_path draws {path} as an external image, which never shows; put it under icons/"
+            );
             assert!(
                 Assets.load(path).unwrap().unwrap().starts_with(b"<svg"),
                 "{path}"
@@ -168,11 +191,6 @@ mod tests {
                     .unwrap()
                     .contains(&SharedString::from(*path))
             );
-        }
-        // `ui::Icon::from_path` loads only `icons/` paths from the assets; any other path is read
-        // as a raster file on disk and draws nothing.
-        for (path, _) in SIDEBAR_ICONS {
-            assert!(path.starts_with("icons/"), "{path}");
         }
         assert_eq!(TAG_ICONS.len(), TONES.len());
         assert!(

@@ -78,8 +78,11 @@ fn stored_pdfs_render_lazily_open_at_their_page_zoom_and_stay_bounded(cx: &mut T
     view.update(cx, |view, cx| view.set_zoom(2., cx));
     wait_until(cx, "the zoomed page", |cx| {
         draw(&notebook, cx);
+        // Each zoom rounds its own pixel width, so twice the width may be a pixel off.
         view.read_with(cx, |view, _| {
-            view.rendered_pages().contains(&(11, width * 2))
+            view.rendered_pages()
+                .iter()
+                .any(|&(page, wide)| page == 11 && wide.abs_diff(width * 2) <= 1)
         })
     });
     assert_eq!(view.read_with(cx, |view, _| view.zoom()), 2.);
@@ -207,6 +210,12 @@ fn a_mouse_drag_selects_across_pdf_pages_and_copies_with_a_break_between_them(
         cx,
     );
     let editor = enter_write(&notebook, cx);
+    // A narrow, tall window keeps all three pages on screen at the smallest zoom, now that the
+    // page editor spans the whole pane.
+    cx.simulate_window_resize(
+        notebook.window.into(),
+        gpui::size(gpui::px(1000.), gpui::px(2000.)),
+    );
     let view = wait_open(&notebook, &editor, 1, cx).remove(0);
     view.update(cx, |view, cx| view.set_zoom(0.5, cx));
     wait_until(cx, "every page's text laid out at 50%", |cx| {

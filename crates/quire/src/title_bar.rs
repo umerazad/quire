@@ -1,22 +1,22 @@
-//! The reference app's hidden-inset title bar: on macOS the window content reaches the top edge,
-//! the traffic lights sit inset in a strip that moves the window, and a double click there does
-//! what the system setting says (zoom or minimize). Other platforms keep their native title bar,
-//! as the reference app does. The strip follows Zed's `platform_title_bar`.
+//! The reference app's hidden-inset title bar: on macOS the window content reaches the top edge
+//! and the traffic lights sit over the top of the full-height sidebar, beside the workspace
+//! header. The strip under the lights and the header move the window, and a double click there
+//! does what the system setting says (zoom or minimize). Other platforms keep their native title
+//! bar, as the reference app does. The drag handling follows Zed's `platform_title_bar`.
 
 use gpui::{
-    App, Bounds, InteractiveElement as _, IntoElement, ParentElement as _, Pixels, SharedString,
+    App, Bounds, Div, InteractiveElement as _, IntoElement, Pixels, Stateful,
     StatefulInteractiveElement as _, Styled as _, Window, WindowBounds, WindowControlArea,
     WindowOptions, div, point, px, size,
 };
-use theme::ActiveTheme as _;
-use ui::{Color, Label, LabelCommon as _, LabelSize};
 
-/// The height of the strip that holds the traffic lights.
-pub const HEIGHT: Pixels = px(40.);
+/// The height of the workspace header and of the strip over the sidebar that holds the traffic
+/// lights, as the reference's 57 px header measures in its window.
+pub const HEIGHT: Pixels = px(56.);
 /// Where the traffic lights sit, centred in the strip.
-const TRAFFIC_LIGHTS: gpui::Point<Pixels> = point(px(16.), px(13.));
-/// Room left of the title for the traffic lights.
-const TRAFFIC_LIGHT_PADDING: Pixels = px(80.);
+const TRAFFIC_LIGHTS: gpui::Point<Pixels> = point(px(21.), px(21.));
+/// The traffic lights' width from the window's left edge, with a margin after them.
+const LIGHTS_WIDTH: Pixels = px(84.);
 
 /// The application ID every window carries: Wayland's `app_id` and the X11 `WM_CLASS` on Linux,
 /// which desktops match to the installed `app.quire.native.desktop` entry for the dock icon and
@@ -64,70 +64,74 @@ pub fn options(window_size: gpui::Size<Pixels>, cx: &App) -> WindowOptions {
     }
 }
 
-/// The title of a notebook window: the notebook's folder name.
-pub fn notebook_title(notebook: Option<&quire_store::profiles::Notebook>) -> SharedString {
-    notebook
-        .and_then(|notebook| notebook.root().file_name())
-        .map_or_else(
-            || "Quire".into(),
-            |name| format!("{} · Quire", name.to_string_lossy()).into(),
-        )
+/// Makes `element` move the window when dragged and zoom or minimize on a double click, as the
+/// system setting says. `key` names the drag state, one per region in a window. Controls inside
+/// stop their own mouse downs with [`keep_clicks`].
+pub fn drag_region(
+    key: &'static str,
+    element: Stateful<Div>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Stateful<Div> {
+    if !custom() {
+        return element;
+    }
+    let moving = window.use_keyed_state(key, cx, |_, _| false);
+    let (down, up, out) = (moving.clone(), moving.clone(), moving.clone());
+    element
+        .window_control_area(WindowControlArea::Drag)
+        .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
+            down.write(cx, true);
+        })
+        .on_mouse_up(gpui::MouseButton::Left, move |_, _, cx| {
+            up.write(cx, false);
+        })
+        .on_mouse_down_out(move |_, _, cx| out.write(cx, false))
+        .on_mouse_move(move |_, window, cx| {
+            if *moving.read(cx) {
+                moving.write(cx, false);
+                window.start_window_move();
+            }
+        })
+        .on_click(|event, window, _| {
+            if event.click_count() == 2 {
+                window.titlebar_double_click();
+            }
+        })
 }
 
-/// The strip at the top of a window: it moves the window when dragged and shows `title`. None
-/// where the platform draws the title bar.
-pub fn render(title: SharedString, window: &mut Window, cx: &mut App) -> Option<impl IntoElement> {
-    if !custom() {
-        return None;
-    }
-    let moving = window.use_keyed_state("quire-title-bar-moving", cx, |_, _| false);
-    let (down, up, out) = (moving.clone(), moving.clone(), moving.clone());
-    let inset = if window.is_fullscreen() {
-        px(8.)
+/// Keeps presses on the controls in `element` from moving the window around them.
+pub fn keep_clicks(element: Div) -> Div {
+    element.on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+}
+
+/// The strip over the top of the sidebar where the traffic lights sit, as the reference's
+/// hidden-inset window draws its sidebar under them. None where the platform draws the title
+/// bar.
+pub fn lights_strip(window: &mut Window, cx: &mut App) -> Option<impl IntoElement> {
+    custom().then(|| {
+        drag_region(
+            "quire-lights-strip",
+            div()
+                .id("quire-title-bar")
+                .debug_selector(|| "quire-title-bar".into())
+                .flex_none()
+                .w_full()
+                .h(HEIGHT),
+            window,
+            cx,
+        )
+    })
+}
+
+/// Room a header at the window's top-left edge leaves for the traffic lights when the sidebar
+/// is hidden.
+pub fn lights_inset(window: &Window) -> Pixels {
+    if custom() && !window.is_fullscreen() {
+        LIGHTS_WIDTH
     } else {
-        TRAFFIC_LIGHT_PADDING
-    };
-    Some(
-        div()
-            .id("quire-title-bar")
-            .debug_selector(|| "quire-title-bar".into())
-            .window_control_area(WindowControlArea::Drag)
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .w_full()
-            .h(HEIGHT)
-            .pl(inset)
-            .pr(px(8.))
-            .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
-            .bg(cx.theme().colors().title_bar_background)
-            .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
-                down.write(cx, true);
-            })
-            .on_mouse_up(gpui::MouseButton::Left, move |_, _, cx| {
-                up.write(cx, false);
-            })
-            .on_mouse_down_out(move |_, _, cx| out.write(cx, false))
-            .on_mouse_move(move |_, window, cx| {
-                if *moving.read(cx) {
-                    moving.write(cx, false);
-                    window.start_window_move();
-                }
-            })
-            .on_click(|event, window, _| {
-                if event.click_count() == 2 {
-                    window.titlebar_double_click();
-                }
-            })
-            .child(
-                Label::new(title)
-                    .size(LabelSize::Small)
-                    .color(Color::Muted)
-                    .truncate(),
-            ),
-    )
+        px(0.)
+    }
 }
 
 #[cfg(test)]
@@ -184,8 +188,8 @@ mod tests {
             "lights leave the strip"
         );
         assert!(
-            lights.x + px(60.) <= TRAFFIC_LIGHT_PADDING,
-            "the title overlaps the lights"
+            lights.x + px(60.) <= LIGHTS_WIDTH,
+            "a header beside hidden sidebar overlaps the lights"
         );
     }
 }

@@ -20,6 +20,15 @@ struct Initialized;
 
 impl gpui::Global for Initialized {}
 
+/// Notebook pages open in Write, as rt's do. Most window tests were written against pages that
+/// open in Source and switch when they need Write, so tests start with this set; a test of the
+/// Write default removes it.
+#[cfg(test)]
+pub(crate) struct PagesOpenInSource;
+
+#[cfg(test)]
+impl gpui::Global for PagesOpenInSource {}
+
 /// Initializes the editor host once per app. A second call is ignored: Vim and the editor
 /// register global keystroke and entity observers, and registering them again would record
 /// every Vim action twice, so `.` would replay `o` twice.
@@ -28,6 +37,8 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
         return Ok(());
     }
     cx.set_global(Initialized);
+    #[cfg(test)]
+    cx.set_global(PagesOpenInSource);
     settings::init(cx);
     crate::preferences::init(cx);
     crate::ai::settings::init(cx);
@@ -305,8 +316,10 @@ pub(crate) struct NotebookWindow {
     semantic_excerpt: Option<Entity<crate::semantic_excerpt::SemanticExcerpt>>,
     /// A zoom into one list item, per pane: the page editor first, then the second.
     zooms: [Option<crate::outline::zoom::Zoom>; 2],
-    /// What the stored window shows at the end of the status bar: the page's path and words.
-    pub(crate) status: Option<gpui::AnyView>,
+    /// Shows the page editor alone, as a notebook window's page pane does: the window draws the
+    /// Write and Source switch and the status bar around it. The editor harnesses keep both
+    /// panes side by side.
+    single: bool,
 }
 
 impl NotebookWindow {
@@ -321,7 +334,7 @@ impl NotebookWindow {
         &self.analysis
     }
 
-    fn tag_summary(&self, cx: &App) -> gpui::SharedString {
+    pub(crate) fn tag_summary(&self, cx: &App) -> gpui::SharedString {
         self.analysis
             .read(cx)
             .current_inline(cx)
@@ -351,9 +364,18 @@ impl NotebookWindow {
                     model.read(cx).message().or(self.presentation_error.take());
             }
         }
+        self.number_lines(editor, cx);
         window.focus(&editor.focus_handle(cx), cx);
         self.refresh_tags(cx);
         cx.notify();
+    }
+
+    /// A notebook page numbers its lines in Source only, as rt's editor does.
+    fn number_lines(&self, editor: &Entity<Editor>, cx: &mut gpui::Context<Self>) {
+        if self.single {
+            let source = !crate::editor_projection::enabled(editor.read(cx));
+            editor.update(cx, |editor, cx| editor.set_show_line_numbers(source, cx));
+        }
     }
 
     fn toggle_presentation(
@@ -580,6 +602,29 @@ impl NotebookWindow {
         }
     }
 
+    /// Whether the page editor shows Write rather than Source.
+    pub(crate) fn writing(&self, cx: &App) -> bool {
+        crate::editor_projection::enabled(self.source.read(cx))
+    }
+
+    /// Switches the page editor to Write or Source, as the toolbar's switch chooses.
+    pub(crate) fn set_writing(
+        &mut self,
+        write: bool,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.writing(cx) != write {
+            let source = self.source.clone();
+            self.change_presentation(&source, window, cx);
+        }
+    }
+
+    /// The Vim mode, for a status bar the window draws.
+    pub(crate) fn mode_indicator(&self) -> Entity<vim::ModeIndicator> {
+        self.mode.clone()
+    }
+
     /// Shows the second pane as Write, the way a reader first meets a page.
     pub(crate) fn show_written(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
         if !crate::editor_projection::enabled(self.second.read(cx)) {
@@ -635,8 +680,35 @@ impl NotebookWindow {
             presentation_error: None,
             semantic_excerpt: None,
             zooms: [None, None],
-            status: None,
+            single: false,
         }
+    }
+
+    /// A notebook window's page pane: the page editor alone, saving through `:w` when `writes`.
+    fn for_notebook_page(
+        analysis: Entity<crate::page_analysis::PageAnalysis>,
+        writes: bool,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> Self {
+        let mut view = Self {
+            single: true,
+            ..Self::for_page(analysis, None, window, cx)
+        };
+        #[cfg(test)]
+        let write = !cx.has_global::<PagesOpenInSource>();
+        #[cfg(not(test))]
+        let write = true;
+        if write {
+            view.presentation_error =
+                crate::editor_projection::bind(&view.source, window, cx).err();
+        }
+        view.number_lines(&view.source, cx);
+        if writes {
+            view.commands
+                .update(cx, |commands, _| commands.enable_writes());
+        }
+        view
     }
 
     fn for_block(
@@ -667,7 +739,9 @@ impl Render for NotebookWindow {
             .flex_col()
             .flex_1()
             .min_w_0()
-            .child(self.presentation_button("source-presentation", &self.source, cx))
+            .when(!self.single, |div| {
+                div.child(self.presentation_button("source-presentation", &self.source, cx))
+            })
             .children(self.zoom_bar(0, cx))
             .when(!self.source_search.read(cx).is_dismissed(), |div| {
                 div.child(self.source_search.clone())
@@ -724,7 +798,7 @@ impl Render for NotebookWindow {
                     .flex_1()
                     .min_h_0()
                     .child(source)
-                    .child(second),
+                    .when(!self.single, |div| div.child(second)),
             )
             .when(self.commands.read(cx).is_open(), |div| {
                 div.child(self.commands.clone())
@@ -735,22 +809,23 @@ impl Render for NotebookWindow {
             .when_some(crate::outline::notice(cx), |div, notice| {
                 div.child(gpui::div().p_2().child(notice))
             })
-            .child(
-                gpui::div()
-                    .h_10()
-                    .p_2()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(self.mode.clone())
-                    .child(
-                        gpui::div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(Label::new(self.tag_summary(cx)).truncate()),
-                    )
-                    .children(self.status.clone()),
-            )
+            .when(!self.single, |div| {
+                div.child(
+                    gpui::div()
+                        .h_10()
+                        .p_2()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(self.mode.clone())
+                        .child(
+                            gpui::div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(Label::new(self.tag_summary(cx)).truncate()),
+                        ),
+                )
+            })
     }
 }
 

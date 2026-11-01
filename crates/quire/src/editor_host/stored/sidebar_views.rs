@@ -23,8 +23,6 @@ const UPLOAD: &str = "icons/quire/sidebar/upload.svg";
 pub(in crate::editor_host::stored) const NEW_FILE: &str =
     "icons/quire/sidebar/file-plus-corner.svg";
 
-/// Room at the sidebar's top for the traffic lights, which sit over it on macOS.
-const WINDOW_DRAG: f32 = 55.;
 /// The sidebar takes 21% of the window between the reference's narrowest and widest widths, which
 /// matches its 220, 225, and 272 px media-query steps at 850, 1067, and 1440 px windows.
 pub(in crate::editor_host::stored) const SIDEBAR_WIDTH: [f32; 2] = [220., 272.];
@@ -601,18 +599,5 @@ impl StoredWindow {
                             .color(Color::Muted),
                     ),
             )
-    }
-
-    /// Room for the traffic lights on macOS, which also moves the window.
-    pub(in crate::editor_host::stored) fn render_sidebar_drag(
-        &self,
-    ) -> Option<impl IntoElement + use<>> {
-        crate::title_bar::custom().then(|| {
-            gpui::div()
-                .id("sidebar-drag")
-                .flex_none()
-                .h(px(WINDOW_DRAG))
-                .window_control_area(gpui::WindowControlArea::Drag)
-        })
     }
 }

@@ -13,8 +13,8 @@ fn a_focused_zoom_counts_as_its_page_holding_focus(cx: &mut TestAppContext) {
         .update(cx, |view, window, cx| {
             let editor = view.editor.clone().expect("an open page");
             editor.update(cx, |editor, cx| {
-                editor.show_written(window, cx);
-                window.focus(&editor.second.focus_handle(cx), cx);
+                editor.set_writing(true, window, cx);
+                window.focus(&editor.source.focus_handle(cx), cx);
             });
         })
         .unwrap();

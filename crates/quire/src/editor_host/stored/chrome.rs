@@ -16,8 +16,8 @@ mod sidebar_tests;
 #[path = "sidebar_views.rs"]
 mod sidebar_views;
 use ui::{
-    Color, ContextMenu, Disableable, DropdownMenu, IconButton, IconName, LabelSize, ListItem,
-    ListItemSpacing, Tab, TabBar, Toggleable, h_flex, v_flex,
+    Color, ContextMenu, DropdownMenu, IconButton, IconName, LabelSize, ListItem, ListItemSpacing,
+    Tab, TabBar, Toggleable, h_flex, v_flex,
 };
 
 #[derive(Default)]
@@ -836,6 +836,7 @@ impl StoredWindow {
     /// the view list, Favorites, Files, Recent, and the footer.
     pub(in crate::editor_host::stored) fn render_sidebar(
         &mut self,
+        window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let mut order = crate::tab_order::TabOrder::default();
@@ -899,7 +900,7 @@ impl StoredWindow {
             .bg(colors.panel_background)
             .border_r_1()
             .border_color(colors.border)
-            .children(self.render_sidebar_drag())
+            .children(crate::title_bar::lights_strip(window, cx))
             .when(!crate::title_bar::custom(), |div| div.pt_3())
             .child(self.render_brand(cx))
             .child(gpui::div().mb_4().child(card))
@@ -1007,39 +1008,19 @@ impl StoredWindow {
             .active
             .as_ref()
             .is_some_and(|active| self.nav.workspace.is_favorite(active));
-        TabBar::new("tabs")
-            .start_child(
-                IconButton::new("back", IconName::ArrowLeft)
-                    .disabled(!self.nav.history.can_go_back())
-                    .tooltip(ui::Tooltip::text("Back"))
-                    .on_click(cx.listener(|this, _, window, cx| this.go(true, window, cx))),
+        TabBar::new("tabs").children(tabs).end_child(
+            IconButton::new(
+                "favorite",
+                if favorite {
+                    IconName::StarFilled
+                } else {
+                    IconName::Star
+                },
             )
-            .start_child(
-                IconButton::new("forward", IconName::ArrowRight)
-                    .disabled(!self.nav.history.can_go_forward())
-                    .tooltip(ui::Tooltip::text("Forward"))
-                    .on_click(cx.listener(|this, _, window, cx| this.go(false, window, cx))),
-            )
-            .children(tabs)
-            .end_child(
-                IconButton::new(
-                    "favorite",
-                    if favorite {
-                        IconName::StarFilled
-                    } else {
-                        IconName::Star
-                    },
-                )
-                .toggle_state(favorite)
-                .tooltip(ui::Tooltip::text("Toggle favorite"))
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_favorite(cx))),
-            )
-            .end_child(
-                IconButton::new("side-pane", IconName::Split)
-                    .toggle_state(self.nav.side.is_some())
-                    .tooltip(ui::Tooltip::text("Toggle second pane"))
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_side(window, cx))),
-            )
+            .toggle_state(favorite)
+            .tooltip(ui::Tooltip::text("Toggle favorite"))
+            .on_click(cx.listener(|this, _, _, cx| this.toggle_favorite(cx))),
+        )
     }
 
     pub(in crate::editor_host::stored) fn render_browser(

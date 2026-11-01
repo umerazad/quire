@@ -19,10 +19,7 @@ use crate::{
 use futures::{FutureExt as _, StreamExt as _, channel::mpsc};
 use gpui::{AppContext as _, AsyncWindowContext, Context, Entity, Window};
 use quire_core::{
-    ai::{
-        backend::AI_OFF,
-        export::{EXPORT_OFF, Format, export_hint},
-    },
+    ai::{backend::AI_OFF, export::Format},
     exchange::page_export::{export_name, localize_attachments},
 };
 use quire_media::files::Files;
@@ -143,29 +140,22 @@ impl StoredWindow {
         }))
     }
 
-    /// Export as PDF and Export as Word, named for the chosen backend, off while AI is off.
-    pub(super) fn render_document_export_buttons(&self, cx: &mut Context<Self>) -> [ui::Button; 2] {
-        use ui::{ButtonCommon as _, Clickable as _, Disableable as _, Tooltip};
+    /// Export as PDF and Export as Word for the page actions menu, named for the chosen
+    /// backend, off while AI is off.
+    pub(super) fn document_export_items(
+        cx: &gpui::App,
+    ) -> [crate::navigation::pointer_menu::Entry; 2] {
+        use crate::navigation::pointer_menu::Item;
         let on = is_on(cx);
         let backend = AiSettings::get_global(cx).backend;
-        let hint: gpui::SharedString = if on {
-            export_hint(backend).into()
-        } else {
-            EXPORT_OFF.into()
-        };
         Format::ALL.map(|format| {
-            ui::Button::new(
-                match format {
-                    Format::Pdf => "export-page-pdf",
-                    Format::Docx => "export-page-word",
-                },
-                format!("Export as {} with {}…", format.name(), backend.name()),
-            )
+            let label = format!("Export as {} with {}…", format.name(), backend.name());
+            match format {
+                Format::Pdf => Item::action(label, ExportPagePdf),
+                Format::Docx => Item::action(label, ExportPageWord),
+            }
             .disabled(!on)
-            .tooltip(Tooltip::text(hint.clone()))
-            .on_click(
-                cx.listener(move |this, _, window, cx| this.export_document(format, window, cx)),
-            )
+            .done()
         })
     }
 }

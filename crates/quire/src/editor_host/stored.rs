@@ -427,21 +427,14 @@ impl StoredWindow {
         );
         let writes_enabled = loaded.persistence.is_some();
         let previous = window.focused(cx);
-        let editor = cx.new(|cx| {
-            let editor = NotebookWindow::for_page(analysis, None, window, cx);
-            if writes_enabled {
-                editor
-                    .commands
-                    .update(cx, |commands, _| commands.enable_writes());
-            }
-            editor
-        });
+        let editor =
+            cx.new(|cx| NotebookWindow::for_notebook_page(analysis, writes_enabled, window, cx));
         self.link_editors(&editor, window, cx);
         self.track_editor_focus(&editor, window, cx);
         if let Some(previous) = previous {
             window.focus(&previous, cx);
         }
-        self.attach_page_info(page, &editor, cx);
+        self.attach_page_info(page, cx);
         Self::invite_writing(&editor, window, cx);
         self.cache_editor(page, editor.clone());
         self.keep_reading_position(&editor, page, false, window, cx);
@@ -669,79 +662,8 @@ impl Render for StoredWindow {
         let conflict = self
             .render_folder_conflict(cx)
             .or_else(|| self.render_version_conflict(cx));
-        let sidebar_toggle = self.render_sidebar_toggle();
-        let save_status = self.render_save_status(cx);
-        let tools = self.render_page_tools(cx);
-        let page = self.page.read(cx);
-        let loading = page.is_loading();
-        let header =
-            gpui::div()
-                .p_2()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(sidebar_toggle)
-                .children(save_status)
-                .when(page.persistence().is_some(), |div| {
-                    div.child(
-                        Button::new("save-page", "Save locally")
-                            .on_click(cx.listener(|this, _, _, cx| this.save_page(cx))),
-                    )
-                })
-                .when(page.loaded().is_some(), |div| {
-                    div.child(
-                        Button::new(
-                            "copy-markdown",
-                            if self.copy_task.is_some() {
-                                "Copying Markdown…"
-                            } else {
-                                "Copy Markdown"
-                            },
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| this.copy_markdown(cx))),
-                    )
-                })
-                .when(
-                    page.persistence().is_some() && self.shown_page(cx).is_some(),
-                    |div| {
-                        div.child(Button::new("rename-page", "Rename…").on_click(
-                            cx.listener(|this, _, window, cx| this.rename_shown_page(window, cx)),
-                        ))
-                        .child(Button::new("move-page", "Move…").on_click(
-                            cx.listener(|this, _, window, cx| this.move_shown_page(window, cx)),
-                        ))
-                        .child(Button::new("attach-file", "Attach…").on_click(
-                            cx.listener(|this, _, window, cx| this.attach_files(window, cx)),
-                        ))
-                        .child(Button::new("page-history", "History…").on_click(
-                            cx.listener(|this, _, window, cx| this.show_history(window, cx)),
-                        ))
-                        .child(
-                            Button::new("delete-page", "Delete page…").on_click(cx.listener(
-                                |this, _, window, cx| this.delete_shown_page(window, cx),
-                            )),
-                        )
-                    },
-                )
-                .when(page.can_retry(), |div| {
-                    div.child(
-                        Button::new("retry-page", "Retry page").on_click(cx.listener(
-                            |this, _, _, cx| {
-                                this.page.update(cx, |page, cx| page.retry(cx));
-                            },
-                        )),
-                    )
-                })
-                .child(self.render_exchange_buttons(cx))
-                .child(
-                    Button::new("show-backups", "Backups…")
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle_backups(cx))),
-                )
-                .child(
-                    Button::new("show-sync", "Sync…")
-                        .on_click(cx.listener(|this, _, window, cx| this.toggle_sync(window, cx))),
-                )
-                .child(tools);
+        let loading = self.page.read(cx).is_loading();
+        let header = self.render_workspace_header(window, cx);
         let root = gpui::div()
             .track_focus(&self.nav.loading_focus)
             .font(ui_font)
@@ -776,38 +698,44 @@ impl Render for StoredWindow {
             cx,
         )
         .flex()
-        .flex_col()
         .bg(cx.theme().colors().editor_background)
-        .children(crate::title_bar::render(
-            crate::title_bar::notebook_title(self.location.as_ref()),
-            window,
-            cx,
-        ))
-        .child(header)
-        .child(self.exchange.clone())
-        .child(self.backups.clone())
-        .child(self.sync.clone())
-        .when_some(self.live_view.clone(), |div, live| div.child(live))
-        .when_some(conflict, |div, conflict| div.child(conflict))
-        .when_some(self.close_error.clone(), |div, error| {
-            div.child(gpui::div().p_2().child(error))
+        .when(!self.nav.workspace.chrome.sidebar_hidden, |div| {
+            div.child(self.render_sidebar(window, cx))
         })
-        .when_some(self.copy_error.clone(), |div, error| {
-            div.child(gpui::div().p_2().child(error))
-        })
-        .when_some(self.index_problem(cx), |div, error| {
-            div.child(gpui::div().p_2().child(error))
-        })
-        .when_some(self.nav.error.clone(), |div, error| {
-            div.child(gpui::div().p_2().child(error))
-        })
-        .when_some(crate::outline::notice(cx), |div, notice| {
-            div.child(gpui::div().p_2().child(notice))
-        })
-        .when(loading, |div| {
-            div.child(gpui::div().p_2().child("Opening notebook storage…"))
-        })
-        .child(self.render_body(window, cx))
+        .child(
+            gpui::div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .child(header)
+                .child(self.render_tabs(cx))
+                .child(self.exchange.clone())
+                .child(self.backups.clone())
+                .child(self.sync.clone())
+                .when_some(self.live_view.clone(), |div, live| div.child(live))
+                .when_some(conflict, |div, conflict| div.child(conflict))
+                .when_some(self.close_error.clone(), |div, error| {
+                    div.child(gpui::div().p_2().child(error))
+                })
+                .when_some(self.copy_error.clone(), |div, error| {
+                    div.child(gpui::div().p_2().child(error))
+                })
+                .when_some(self.index_problem(cx), |div, error| {
+                    div.child(gpui::div().p_2().child(error))
+                })
+                .when_some(self.nav.error.clone(), |div, error| {
+                    div.child(gpui::div().p_2().child(error))
+                })
+                .when_some(crate::outline::notice(cx), |div, notice| {
+                    div.child(gpui::div().p_2().child(notice))
+                })
+                .when(loading, |div| {
+                    div.child(gpui::div().p_2().child("Opening notebook storage…"))
+                })
+                .child(self.render_body(window, cx)),
+        )
         .when_some(self.index_progress(cx), |div, progress| {
             div.child(
                 gpui::div()
@@ -964,7 +892,7 @@ mod tests {
                         .as_ref()
                         .unwrap()
                         .read(cx)
-                        .second
+                        .source
                         .focus_handle(cx),
                     cx,
                 );
@@ -1412,7 +1340,7 @@ mod tests {
                 assert!(second.read(cx).read_only(cx));
                 assert_eq!(source.read(cx).text(cx), normalized);
                 assert_eq!(second.read(cx).text(cx), normalized);
-                crate::editor_projection::bind(&second, window, cx).unwrap();
+                crate::editor_projection::bind(&source, window, cx).unwrap();
             })
             .unwrap();
         cx.executor().run_until_parked();

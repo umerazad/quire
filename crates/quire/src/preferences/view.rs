@@ -236,7 +236,7 @@ impl PreferencesWindow {
                     .selected_index(selected)
                     .tab_index(order.counter()))
             .child(Self::hint(
-                "System follows your computer's light or dark setting as it changes. The Light / Dark button in the sidebar switches between light and dark.",
+                "System follows your computer's light or dark setting as it changes. The sun or moon button in the workspace header switches between light and dark.",
             ))
     }
 

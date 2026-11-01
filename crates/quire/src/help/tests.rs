@@ -243,18 +243,16 @@ fn help_names_only_page_controls_quire_has() {
         .copied()
         .collect::<Vec<_>>()
         .join(" ");
-    for missing in ["Page actions", "Browser Back"] {
-        assert!(
-            !text.contains(missing),
-            "Help names {missing}, which Quire lacks"
-        );
-    }
-    let toolbar = include_str!("../editor_host/stored.rs");
-    for control in ["Attach…", "History…"] {
+    assert!(
+        !text.contains("Browser Back"),
+        "Help names Browser Back, which Quire lacks"
+    );
+    let toolbar = include_str!("../editor_host/stored/workspace_chrome.rs");
+    for control in ["Page actions", "Attach…", "History…", "Backups…", "Sync…"] {
         assert!(text.contains(control), "Help guides to {control}");
         assert!(
-            toolbar.contains(&format!("\"{control}\")")),
-            "the page toolbar has {control}"
+            toolbar.contains(&format!("\"{control}\"")),
+            "the page toolbar's menu has {control}"
         );
     }
 }

@@ -25,7 +25,7 @@ fn show_written(notebook: &Notebook, cx: &mut TestAppContext) {
         .window
         .update(cx, |view, window, cx| {
             let editor = view.editor.clone().expect("an open page");
-            editor.update(cx, |editor, cx| editor.show_written(window, cx));
+            editor.update(cx, |editor, cx| editor.set_writing(true, window, cx));
         })
         .unwrap();
     cx.run_until_parked();
