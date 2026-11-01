@@ -349,6 +349,9 @@ impl IndexSync {
     }
 }
 
+#[cfg(feature = "test-support")]
+pub mod measure;
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
