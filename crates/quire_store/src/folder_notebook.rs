@@ -777,6 +777,11 @@ impl Client<FolderNotebook> {
             notebook.delete_if_heads(&edits, folder.as_deref())
         })
     }
+    pub fn create_folder(&self, folder: String) -> Answer<()> {
+        self.request(128 + folder.len(), move |notebook| {
+            notebook.create_folder(&folder)
+        })
+    }
     pub fn move_noteless_folder(&self, from: String, to: String) -> Answer<()> {
         self.request(128 + from.len() + to.len(), move |notebook| {
             notebook.move_noteless_folder(&from, &to)

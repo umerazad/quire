@@ -2,7 +2,8 @@
 //! Deleting names what goes and how many links stop resolving, and applies only when confirmed.
 //! Renaming takes the new name and applies it with every link that follows. Moving takes a path,
 //! previews every page and link that changes, and applies that preview or nothing. A new folder
-//! takes a path and stays on this computer until a page is saved in it, as the reference's does.
+//! takes a path; a folder notebook creates it on disk, and a Quire notebook keeps it on this
+//! computer until a page is saved in it, as the reference does for each.
 
 use crate::{
     file_actions::{self, DeletionPlan, LinkUpdate, Relocate, RelocationPlan, Target},
@@ -321,7 +322,10 @@ impl FileDialog {
     #[cfg(test)]
     /// Selects the whole typed name or path, so typing replaces it.
     pub fn select_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Mode::Rename { name: field, .. } | Mode::Move { path: field, .. } = &self.mode {
+        if let Mode::Rename { name: field, .. }
+        | Mode::Move { path: field, .. }
+        | Mode::Folder { path: field, .. } = &self.mode
+        {
             field.update(cx, |field, cx| {
                 field.select_all(&editor::actions::SelectAll, window, cx)
             });
@@ -380,17 +384,14 @@ impl FileDialog {
         }
         self.error = None;
         let work = match &mut self.mode {
-            Mode::Folder { path, taken } => {
-                match new_folder(&path.read(cx).text(cx), taken) {
-                    Ok(folder) => {
-                        cx.emit(FileDialogEvent::FolderCreated(folder));
-                        cx.emit(DismissEvent);
-                    }
-                    Err(error) => self.error = Some(error.into()),
+            Mode::Folder { path, taken } => match new_folder(&path.read(cx).text(cx), taken) {
+                Ok(folder) => self.create_folder(folder, cx),
+                Err(error) => {
+                    self.error = Some(error.into());
+                    cx.notify();
+                    return;
                 }
-                cx.notify();
-                return;
-            }
+            },
             Mode::Delete { plan, .. } => {
                 let Some(plan) = plan.take() else {
                     return;
@@ -531,6 +532,33 @@ impl FileDialog {
                         }
                     }
                     Ok(None) => {}
+                    Err(error) => this.error = Some(error.into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+    }
+
+    /// Creates a new folder: a folder notebook makes the directory on disk, as the reference
+    /// does; a Quire notebook keeps empty folders only in its workspace.
+    fn create_folder(&mut self, folder: String, cx: &mut Context<Self>) -> Task<()> {
+        let (_, storage) = (self.writers)(cx);
+        let request = storage
+            .folder()
+            .map(|notebook| notebook.create_folder(folder.clone()));
+        cx.spawn(async move |this, cx| {
+            let result = match request {
+                Some(request) => crate::query_index::ask(request).await,
+                None => Ok(()),
+            };
+            this.update(cx, |this, cx| {
+                this.work = None;
+                match result {
+                    Ok(()) => {
+                        cx.emit(FileDialogEvent::FolderCreated(folder));
+                        cx.emit(DismissEvent);
+                    }
                     Err(error) => this.error = Some(error.into()),
                 }
                 cx.notify();

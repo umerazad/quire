@@ -61,6 +61,29 @@ impl FolderNotebook {
         Ok(())
     }
 
+    /// Creates `folder` and any missing parents on disk, as the reference `createFolder` does,
+    /// so Finder and other apps see it. Refuses a path any file or folder already uses, in any
+    /// letter case, and parents that are links.
+    pub fn create_folder(&self, folder: &str) -> Result<()> {
+        valid_folder(folder)?;
+        let listing = self.listing();
+        let lower = folder.to_lowercase();
+        ensure!(
+            !listing
+                .files
+                .iter()
+                .map(|file| &file.path)
+                .chain(&listing.others)
+                .chain(&listing.folders)
+                .any(|path| path.to_lowercase() == lower)
+                && !exists(&self.root.join(folder)),
+            "{folder} already exists. Choose another name for the new folder."
+        );
+        files::resolve(&self.root, &format!("{folder}/Placeholder.md"), true)?;
+        self.listing();
+        Ok(())
+    }
+
     /// Renames or moves `from`, a folder that holds no notes, to `to`, with every other file in
     /// it. This refuses, moving nothing, when a note appeared inside meanwhile, when `to` exists,
     /// or when `to` lies inside `from`.

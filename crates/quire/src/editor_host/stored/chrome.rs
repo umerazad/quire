@@ -533,7 +533,7 @@ impl StoredWindow {
 
     fn render_files(
         &mut self,
-        [heading, refresh, tab_index]: [isize; 3],
+        [heading, new_page, new_folder, refresh, tab_index]: [isize; 5],
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let open = !self.nav.workspace.chrome.files_collapsed;
@@ -599,7 +599,9 @@ impl StoredWindow {
         )
         .track_scroll(&self.nav.browsers.files_scroll)
         .flex_1();
-        v_flex()
+        // The heading's buttons stay outside the tree's QuireList context, where Enter would
+        // open the highlighted file instead of pressing the focused button.
+        let tree = v_flex()
             .id("files-tree")
             .key_context("QuireList QuireFiles")
             .track_focus(&focus)
@@ -652,25 +654,49 @@ impl StoredWindow {
                     this.new_folder_in_selected_folder(window, cx)
                 }),
             )
+            .when(open, |div| div.child(list));
+        let heading = h_flex()
+            .justify_between()
+            .child(
+                Button::new("files-heading", "FILES")
+                    .start_icon(
+                        ui::Icon::new(if open {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        })
+                        .size(ui::IconSize::XSmall)
+                        .color(Color::Muted),
+                    )
+                    .label_size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .aria_expanded(open)
+                    .tab_index(heading)
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_files(cx))),
+            )
             .child(
                 h_flex()
-                    .justify_between()
                     .child(
-                        Button::new("files-heading", "FILES")
-                            .start_icon(
-                                ui::Icon::new(if open {
-                                    IconName::ChevronDown
-                                } else {
-                                    IconName::ChevronRight
-                                })
-                                .size(ui::IconSize::XSmall)
-                                .color(Color::Muted),
-                            )
-                            .label_size(LabelSize::Small)
-                            .color(Color::Muted)
-                            .aria_expanded(open)
-                            .tab_index(heading)
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_files(cx))),
+                        IconButton::new("files-new-page", IconName::Plus)
+                            .icon_size(ui::IconSize::XSmall)
+                            .tab_index(new_page)
+                            .tooltip(ui::Tooltip::text("New page"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_palette(
+                                    crate::navigation::palette::PaletteMode::Create,
+                                    window,
+                                    cx,
+                                )
+                            })),
+                    )
+                    .child(
+                        IconButton::new("files-new-folder", IconName::FolderAdd)
+                            .icon_size(ui::IconSize::XSmall)
+                            .tab_index(new_folder)
+                            .tooltip(ui::Tooltip::text("New folder"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.ask_new_folder(String::new(), window, cx)
+                            })),
                     )
                     .child(
                         IconButton::new("refresh-files", IconName::RotateCw)
@@ -679,11 +705,15 @@ impl StoredWindow {
                             .tooltip(ui::Tooltip::text("Refresh files"))
                             .on_click(cx.listener(|this, _, _, cx| this.refresh_files(cx))),
                     ),
-            )
+            );
+        v_flex()
+            .flex_1()
+            .min_h_0()
+            .child(heading)
             .when(open && count == 0, |div| {
                 div.child(Label::new("A fresh notebook. Add your first page.").color(Color::Muted))
             })
-            .when(open, |div| div.child(list))
+            .child(tree)
     }
 
     fn destination_item(
@@ -819,7 +849,13 @@ impl StoredWindow {
                 self.destination_stop(("recent-entry", index), entry, row, item, cx)
             })
             .collect();
-        let files = [order.next(), order.next(), order.next()];
+        let files = [
+            order.next(),
+            order.next(),
+            order.next(),
+            order.next(),
+            order.next(),
+        ];
         v_flex()
             .id("sidebar")
             .key_context("QuireSidebar")
