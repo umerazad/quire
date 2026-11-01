@@ -415,10 +415,11 @@ fn path_label(path: Option<&Path>) -> String {
 
 impl Render for MigrationWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        crate::app_menus::follow_zoom(window, cx);
+        let ui_font = crate::app_menus::follow_zoom(window, cx);
         let busy = self.is_running();
         let active = crate::profiles::active(cx);
         v_flex()
+            .font(ui_font)
             .id("rt-migration")
             .key_context(CONTEXT)
             .track_focus(&self.focus)

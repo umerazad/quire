@@ -665,7 +665,7 @@ impl StoredWindow {
 
 impl Render for StoredWindow {
     fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        crate::app_menus::follow_zoom(window, cx);
+        let ui_font = crate::app_menus::follow_zoom(window, cx);
         let conflict = self
             .render_folder_conflict(cx)
             .or_else(|| self.render_version_conflict(cx));
@@ -745,6 +745,7 @@ impl Render for StoredWindow {
         let profile = self.render_profile(cx);
         let root = gpui::div()
             .track_focus(&self.nav.loading_focus)
+            .font(ui_font)
             .size_full()
             .relative()
             .on_action(

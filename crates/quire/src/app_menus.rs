@@ -181,11 +181,11 @@ pub fn init(cx: &mut App) {
 }
 
 /// Sizes `window`'s interface from the UI font size, which View zoom changes, so every window
-/// zooms with the notebook windows. Each window's render calls it.
-pub fn follow_zoom(window: &mut gpui::Window, cx: &App) {
-    window.set_rem_size(
-        <theme_settings::ThemeSettings as settings::Settings>::get_global(cx).ui_font_size(cx),
-    );
+/// zooms with the notebook windows, and returns the interface font. Each window's render calls it
+/// and sets the font on its root, as Zed's workspace does, so labels draw in the UI font.
+#[must_use]
+pub fn follow_zoom(window: &mut gpui::Window, cx: &mut App) -> gpui::Font {
+    theme_settings::setup_ui_font(window, cx)
 }
 
 pub fn bind_keys(cx: &mut App) {

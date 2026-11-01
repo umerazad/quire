@@ -35,7 +35,10 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     crate::help::init(cx);
     crate::rt_migration::view::init(cx);
     crate::showcase::init(cx);
-    theme_settings::init(theme::LoadThemes::All(Box::new(assets::Assets)), cx);
+    theme_settings::init(
+        theme::LoadThemes::All(Box::new(crate::quire_assets::Assets)),
+        cx,
+    );
     crate::markdown::init(cx)?;
     crate::media::init(cx);
     release_channel::init(semver::Version::new(0, 1, 0), cx);

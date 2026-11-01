@@ -1564,7 +1564,7 @@ Inventory of rt preferences, with the quire key and status:
 
 | rt setting (storage) | Default | Quire setting | Status |
 | --- | --- | --- | --- |
-| Appearance `quire.appearance` (local storage) and `appearance.json` (`{"appearance":"dark"}`) | system | `theme.mode` (`system`/`light`/`dark`, One Light/One Dark) | Done: Settings radio, sidebar Light / Dark toggle, live system follow per window, rt import |
+| Appearance `quire.appearance` (local storage) and `appearance.json` (`{"appearance":"dark"}`) | system | `theme.mode` (`system`/`light`/`dark`, Quire Light/Quire Dark from rt's palettes) | Done: Settings radio, sidebar Light / Dark toggle, live system follow per window, rt import |
 | `vim` in `quire.editor.settings`; legacy `quire.editor.vim` | true | `vim_mode` | Done: live in open editors, import of both keys |
 | `formatTags` | true | `quire.format_tags` | Done: tone labels in Write, live on/off |
 | `captureTarget` | inbox | `quire.capture_target` (`inbox`/`today`) | Done: Tasks capture to today's daily page without ➕ date |
