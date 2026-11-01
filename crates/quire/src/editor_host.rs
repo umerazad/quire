@@ -8,6 +8,8 @@ use ui::{Button, ButtonCommon, Clickable, Label, LabelCommon, Tooltip};
 mod startup_failure;
 mod stored;
 
+#[cfg(feature = "test-support")]
+pub(crate) use stored::capture_shell;
 pub(crate) use stored::{dispatch_to_notebook, notebook_windows, open_in_profile};
 
 gpui::actions!(quire, [TogglePresentation]);

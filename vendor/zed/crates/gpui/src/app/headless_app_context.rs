@@ -11,8 +11,8 @@
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, AssetSource, BackgroundExecutor, Bounds,
     Context, Entity, EntityId, ForegroundExecutor, Global, Pixels, PlatformHeadlessRenderer,
-    PlatformTextSystem, Render, Reservation, Size, Task, TestDispatcher, TestPlatform, TextSystem,
-    Window, WindowBounds, WindowHandle, WindowOptions,
+    PlatformTextSystem, Render, Reservation, Size, Task, TestDispatcher, TestPlatform, TestWindow,
+    TextSystem, Window, WindowAppearance, WindowBounds, WindowHandle, WindowOptions,
     app::{GpuiBorrow, GpuiMode},
 };
 use anyhow::Result;
@@ -168,6 +168,32 @@ impl HeadlessAppContext {
     pub fn capture_screenshot(&mut self, window: AnyWindowHandle) -> Result<RgbaImage> {
         let mut app = self.app.borrow_mut();
         app.update_window(window, |_, window, _| window.render_to_image())?
+    }
+
+    /// Simulates the user resizing the window, so its viewport and layout follow the new size.
+    pub fn simulate_window_resize(&mut self, window: AnyWindowHandle, size: Size<Pixels>) {
+        if let Some(mut test_window) = self.test_window(window) {
+            test_window.simulate_resize(size);
+        }
+        self.run_until_parked();
+    }
+
+    /// Simulates the system switching the window between light and dark.
+    pub fn simulate_window_appearance(
+        &mut self,
+        window: AnyWindowHandle,
+        appearance: WindowAppearance,
+    ) {
+        if let Some(test_window) = self.test_window(window) {
+            test_window.simulate_appearance_change(appearance);
+        }
+        self.run_until_parked();
+    }
+
+    fn test_window(&self, window: AnyWindowHandle) -> Option<TestWindow> {
+        let mut app = self.app.borrow_mut();
+        let window = app.windows.get_mut(window.window_id())?.as_deref_mut()?;
+        Some(window.platform_window.as_test()?.clone())
     }
 
     /// Returns the text system.

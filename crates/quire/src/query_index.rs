@@ -219,8 +219,8 @@ impl IndexSync {
         &self.client
     }
 
-    /// The index generation this sync last announced to views; for tests.
-    #[cfg(test)]
+    /// The index generation this sync last announced to views; for tests and `--capture-shell`.
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn announced_generation(&self) -> u64 {
         self.generation
     }

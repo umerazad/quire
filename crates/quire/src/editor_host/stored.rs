@@ -14,6 +14,8 @@ use theme::ActiveTheme;
 mod backups;
 mod bench;
 mod block_move_views;
+#[cfg(feature = "test-support")]
+mod capture;
 mod document_export;
 mod example;
 mod exchange;
@@ -27,6 +29,8 @@ mod page_views;
 mod profiles;
 mod sync;
 
+#[cfg(feature = "test-support")]
+pub(crate) use capture::run as capture_shell;
 pub(super) use example::launch as launch_example_notebook;
 pub(super) use folder::FolderOptions;
 pub(super) use instance::{Handover, handle_launch};
