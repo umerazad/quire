@@ -256,7 +256,7 @@
     },
     {
       "path": "crates/editor/src/display_map/wrap_map.rs",
-      "change": "Wrap a rendered chunk, such as a fold placeholder, as one unbreakable element even before layout measures it, estimating its width from its text. Upstream split an unmeasured multi-character placeholder (LSP collapsed text, Write's code-block toolbar) at a soft wrap, and mapping that wrap row's start back to the fold map panicked in FoldPoint::to_offset. Add a focused regression with a long placeholder in a narrow wrap."
+      "change": "Wrap a rendered chunk, such as a fold placeholder, as one unbreakable element even before layout measures it, estimating its width from its text. Upstream split an unmeasured multi-character placeholder (LSP collapsed text, Write's code-block toolbar) at a soft wrap, and mapping that wrap row's start back to the fold map panicked in FoldPoint::to_offset. Add a focused regression with a long placeholder in a narrow wrap. Past the last transform, still yield a trailing fold placeholder with empty text and a renderer, so a page whose last line is only such a fold (Write's empty list item at the end of the page) draws it; upstream returned before asking the tab chunks. Covered by quire's empty_last_block_draws_its_bullet_on_its_own_line."
     },
     {
       "path": "crates/editor/src/test/editor_lsp_test_context.rs",
@@ -312,7 +312,7 @@
     },
     {
       "path": "crates/editor/src/display_map/fold_map.rs",
-      "change": "When chunks start exactly at a fold whose placeholder text is empty, include that fold so its rendered placeholder shows on the first visible line too. Other folds and offsets are unchanged."
+      "change": "When chunks start exactly at a fold whose placeholder text is empty, include that fold so its rendered placeholder shows on the first visible line too. Chunks ending at the buffer's end also yield such a fold when it is the last transform, so a fold that is the whole last line renders. Other folds and offsets are unchanged. Covered by quire's empty_last_block_draws_its_bullet_on_its_own_line."
     },
     {
       "path": "crates/editor/src/display_map.rs",
@@ -324,11 +324,15 @@
     },
     {
       "path": "crates/editor/src/editor.rs",
-      "change": "Let editor addons supply source-anchored interaction regions for the visible viewport, retaining native text layout and selection. Expose clipped fragment geometry to their renderers. Emit FoldsChanged when folds are added or removed, so hosts can follow fold state from any fold command. Let an addon draw its own indent guides (Addon::indent_guides returning HostIndentGuide rows, indentation column, pixel offset, start inset, width, colour, and a test debug selector) in place of the editor's, so Write draws rt's child guides under each parent bullet."
+      "change": "Let editor addons supply source-anchored interaction regions for the visible viewport, retaining native text layout and selection. Expose clipped fragment geometry to their renderers. Emit FoldsChanged when folds are added or removed, so hosts can follow fold state from any fold command. Let an addon draw its own indent guides (Addon::indent_guides returning HostIndentGuide rows, indentation column, pixel offset, start inset, width, colour, and a test debug selector) in place of the editor's, so Write draws rt's child guides under each parent bullet. Add a per-editor show_fold_toggles override of the gutter.folds setting (carried into EditorSnapshot and the gutter width), and a current_line_highlight getter for the per-editor override, so Write turns off gutter fold arrows over its own presentation folds and the current-line band. Covered by quire's write_draws_no_gutter_fold_arrows_or_current_line_band."
+    },
+    {
+      "path": "crates/editor/src/config.rs",
+      "change": "Add Editor::set_show_fold_toggles, overriding gutter.folds for one editor or following it again with None. Covered by quire's write_draws_no_gutter_fold_arrows_or_current_line_band."
     },
     {
       "path": "crates/editor/src/element.rs",
-      "change": "Lay out addon text regions over native shaped and wrapped source fragments, excluding folded text and clipping to the viewport. Reuse the navigation overlay lifecycle and element namespace; test resize, clipping, stateful elements, removal, and unchanged source text. When an addon supplies indent guides, skip the editor's own and lay each host guide out as a plain element at content origin + the column's space width + its offset, spanning its rows' display rows from the inset below the first row's middle; guides whose rows fold into one display row are not drawn. Covered by quire's child_guides_hang_under_each_parent_bullet_through_its_subtree."
+      "change": "Lay out addon text regions over native shaped and wrapped source fragments, excluding folded text and clipping to the viewport. Reuse the navigation overlay lifecycle and element namespace; test resize, clipping, stateful elements, removal, and unchanged source text. When an addon supplies indent guides, skip the editor's own and lay each host guide out as a plain element at content origin + the column's space width + its offset, spanning its rows' display rows from the inset below the first row's middle; guides whose rows fold into one display row are not drawn. Covered by quire's child_guides_hang_under_each_parent_bullet_through_its_subtree. Lay out gutter crease toggles from the editor's show_fold_toggles override when set, else gutter.folds, and drop prepaint's assertion on the setting alone."
     },
     {
       "path": "crates/editor/src/completions.rs",

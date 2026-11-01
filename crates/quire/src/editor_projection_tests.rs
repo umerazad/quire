@@ -1156,3 +1156,72 @@ fn semantic_spans_map_into_an_excerpt_after_outside_source_edits(cx: &mut TestAp
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn empty_last_block_draws_its_bullet_on_its_own_line(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let mut bullet_top = |text: &'static str| {
+        let window = cx.add_window(|window, cx| {
+            let view = NotebookWindow::new(text, window, cx);
+            crate::editor_projection::bind(&view.second, window, cx).expect("Write projection");
+            window.focus(&view.second.focus_handle(cx), cx);
+            view
+        });
+        cx.executor().run_until_parked();
+        let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual
+            .debug_bounds("quire-bullet")
+            .unwrap_or_else(|| panic!("{text:?} draws no bullet"))
+            .origin
+            .y
+    };
+    let first = bullet_top("- a");
+    assert_eq!(bullet_top("- "), first, "a new daily page's empty block");
+    assert_eq!(bullet_top("- \n"), first);
+    assert!(
+        bullet_top("x\n\n- ") > first,
+        "an empty block ending a page draws on its own last line"
+    );
+}
+
+#[gpui::test]
+fn write_draws_no_gutter_fold_arrows_or_current_line_band(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let window = cx.add_window(|window, cx| {
+        let view = NotebookWindow::new("- \n- alpha\n  - child\n- beta\n", window, cx);
+        crate::editor_projection::bind(&view.second, window, cx).expect("Write projection");
+        window.focus(&view.second.focus_handle(cx), cx);
+        view
+    });
+    cx.executor().run_until_parked();
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        visual.debug_bounds("quire-bullet").is_some(),
+        "Write draws its bullets"
+    );
+    assert_eq!(
+        visual.debug_bounds("ICON-ChevronRight"),
+        None,
+        "Write's hidden markers are no folds a reader opens from the gutter"
+    );
+    let second = window.update(cx, |view, _, _| view.second.clone()).unwrap();
+    cx.update(|cx| {
+        assert_eq!(
+            second.read(cx).current_line_highlight(),
+            Some(editor::CurrentLineHighlight::None)
+        )
+    });
+    cx.update_window(window.into(), |_, window, cx| {
+        crate::editor_projection::unbind(&second, window, cx)
+    })
+    .unwrap();
+    cx.update(|cx| {
+        assert_eq!(
+            second.read(cx).current_line_highlight(),
+            None,
+            "Source follows the editor settings again"
+        )
+    });
+}

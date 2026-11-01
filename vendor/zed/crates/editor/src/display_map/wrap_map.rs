@@ -1191,7 +1191,18 @@ impl WrapPointCursor<'_> {
     }
 }
 
-impl WrapChunks<'_> {
+impl<'a> WrapChunks<'a> {
+    /// Past the last transform only a fold with empty placeholder text at the buffer's end can
+    /// remain, as an empty chunk with a renderer; yield it so its element renders.
+    fn trailing_placeholder(&mut self) -> Option<Chunk<'a>> {
+        if !self.input_chunk.text.is_empty() {
+            return None;
+        }
+        self.input_chunks
+            .next()
+            .filter(|chunk| chunk.text.is_empty() && chunk.renderer.is_some())
+    }
+
     #[ztracing::instrument(skip_all)]
     pub(crate) fn seek(&mut self, rows: Range<WrapRow>) {
         let output_start = WrapPoint::new(rows.start, 0);
@@ -1221,7 +1232,9 @@ impl<'a> Iterator for WrapChunks<'a> {
             return None;
         }
 
-        let transform = self.transforms.item()?;
+        let Some(transform) = self.transforms.item() else {
+            return self.trailing_placeholder();
+        };
         if let Some(display_text) = transform.display_text {
             let mut start_ix = 0;
             let mut end_ix = display_text.len();

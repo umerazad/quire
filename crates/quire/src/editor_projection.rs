@@ -1989,6 +1989,7 @@ pub fn bind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Resul
             requests: HashMap::new(), sequence: 0, parsed: None, heads: Vec::new(), syntax_folds: 0, style: Default::default(), styled: false, hover: Arc::default(),
             _subscriptions: vec![editor_subscription, source_subscription, theme_subscription],
         });
+        present(editor, true, cx);
         apply_spans(editor, &[], window, cx);
         rebuild(editor, &source, window, cx);
         Ok(())
@@ -2039,7 +2040,16 @@ pub fn unbind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
             .update(cx, |buffer, _| buffer.set_edit_filter(None));
         refresh(editor, &[], window, cx);
         crate::write_style::source_urdu(editor, cx);
+        present(editor, false, cx);
     });
+}
+
+/// Write reads as rt's page: no current-line band, and no gutter fold arrows, since Write's
+/// folds are its own presentation (hidden syntax and bullets) and each parent bullet draws its
+/// own arrow. Source follows the editor settings again.
+fn present(editor: &mut Editor, write: bool, cx: &mut Context<Editor>) {
+    editor.set_current_line_highlight(write.then_some(editor::CurrentLineHighlight::None));
+    editor.set_show_fold_toggles(write.then_some(false), cx);
 }
 
 #[cfg(test)]

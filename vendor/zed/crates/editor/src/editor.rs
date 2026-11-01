@@ -1066,6 +1066,7 @@ pub struct Editor {
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
+    show_fold_toggles: Option<bool>,
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
     show_bookmarks: Option<bool>,
@@ -1296,6 +1297,7 @@ pub struct EditorSnapshot {
     show_line_numbers: Option<bool>,
     number_deleted_lines: bool,
     show_git_diff_gutter: Option<bool>,
+    show_fold_toggles: Option<bool>,
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
     show_breakpoints: Option<bool>,
@@ -2486,6 +2488,7 @@ impl Editor {
             enable_code_lens: full_mode,
             enable_mouse_wheel_zoom: full_mode,
             show_git_diff_gutter: None,
+            show_fold_toggles: None,
             show_code_actions: None,
             show_runnables: None,
             show_bookmarks: None,
@@ -3225,6 +3228,7 @@ impl Editor {
             show_line_numbers: self.show_line_numbers,
             number_deleted_lines: self.number_deleted_lines,
             show_git_diff_gutter: self.show_git_diff_gutter,
+            show_fold_toggles: self.show_fold_toggles,
             semantic_tokens_enabled: self.semantic_token_state.enabled(),
             show_code_actions: self.show_code_actions,
             show_runnables: self.show_runnables,
@@ -3460,6 +3464,11 @@ impl Editor {
         current_line_highlight: Option<CurrentLineHighlight>,
     ) {
         self.current_line_highlight = current_line_highlight;
+    }
+
+    /// This editor's override of the `current_line_highlight` setting, if any.
+    pub fn current_line_highlight(&self) -> Option<CurrentLineHighlight> {
+        self.current_line_highlight
     }
 
     pub fn set_collapse_matches(&mut self, collapse_matches: bool) {
@@ -12627,7 +12636,8 @@ impl EditorSnapshot {
                     px(0.)
                 };
 
-            let shows_folds = is_singleton && gutter_settings.folds;
+            let shows_folds =
+                is_singleton && self.show_fold_toggles.unwrap_or(gutter_settings.folds);
 
             let right_padding = if shows_folds && show_line_numbers {
                 ch_width * 4.0

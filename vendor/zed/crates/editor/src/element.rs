@@ -1863,7 +1863,6 @@ impl EditorElement {
         crease_toggles: &mut [Option<AnyElement>],
         line_height: Pixels,
         gutter_dimensions: &GutterDimensions,
-        gutter_settings: crate::editor_settings::Gutter,
         scroll_position: gpui::Point<ScrollOffset>,
         start_row: DisplayRow,
         gutter_hitbox: &Hitbox,
@@ -1872,7 +1871,6 @@ impl EditorElement {
     ) {
         for (ix, crease_toggle) in crease_toggles.iter_mut().enumerate() {
             if let Some(crease_toggle) = crease_toggle {
-                debug_assert!(gutter_settings.folds);
                 let available_space = size(
                     AvailableSpace::MinContent,
                     AvailableSpace::Definite(line_height * 0.55),
@@ -3145,7 +3143,9 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<Option<AnyElement>> {
-        let include_fold_statuses = EditorSettings::get_global(cx).gutter.folds
+        let include_fold_statuses = snapshot
+            .show_fold_toggles
+            .unwrap_or(EditorSettings::get_global(cx).gutter.folds)
             && snapshot.mode.is_full()
             && snapshot.display_snapshot.companion_snapshot().is_none()
             && self.editor.read(cx).buffer_kind(cx) == ItemBufferKind::Singleton;
@@ -10046,7 +10046,6 @@ impl Element for EditorElement {
                             &mut crease_toggles,
                             line_height,
                             &gutter_dimensions,
-                            gutter_settings,
                             scroll_position,
                             start_row,
                             &gutter_hitbox,
