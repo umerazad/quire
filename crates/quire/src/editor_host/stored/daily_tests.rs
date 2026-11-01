@@ -91,6 +91,20 @@ fn configured_daily_layout_reaches_the_index_and_the_daily_browser(cx: &mut Test
             ("x".into(), "2026-01-01".into()),
         ]
     );
+    let duplicates = read(&notebook, cx, |view, _| view.daily_duplicates());
+    assert_eq!(duplicates, 1, "one date has two daily pages");
+    assert_eq!(
+        super::daily::duplicates_notice(duplicates).as_deref(),
+        Some(
+            "1 date has more than one daily page; the one in the daily folder opens. The Daily list marks the others with \"also\" to tidy them."
+        )
+    );
+    assert_eq!(super::daily::duplicates_notice(0), None);
+    assert!(
+        super::daily::duplicates_notice(3)
+            .unwrap()
+            .starts_with("3 dates have")
+    );
     cx.simulate_keystrokes(notebook.window.into(), &key("j"));
     wait_until(cx, "today's journal page", |cx| {
         active(&notebook, cx) == "j"
