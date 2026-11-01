@@ -15,6 +15,9 @@ pub struct InlineAnalysis {
     pub references: Arc<[Reference]>,
     pub tags: Arc<[TagToken]>,
     pub tag_summary: gpui::SharedString,
+    /// Sorted, disjoint byte ranges that are not prose to spell-check: front matter, code, HTML,
+    /// URLs, references, tags, and other markup.
+    pub prose_gaps: Arc<[std::ops::Range<usize>]>,
 }
 
 pub struct PageAnalysis {
@@ -213,10 +216,20 @@ pub(crate) fn analyze_inline(snapshot: &BufferSnapshot) -> Option<InlineAnalysis
     let excluded = syntax::exclusions(snapshot, &text)?;
     let references = quire_core::markdown::references(&text, &excluded.code);
     let tags = quire_core::markdown::tags(&text, &excluded.tags, &references);
+    let front = quire_core::markdown::frontmatter_length(&text);
+    let prose_gaps = merged(
+        std::iter::once(0..front)
+            .chain(excluded.code)
+            .chain(excluded.markup)
+            .chain(excluded.urls)
+            .chain(references.iter().map(|reference| reference.range.clone()))
+            .chain(tags.iter().map(|tag| tag.range.clone())),
+    );
     let mut inline = InlineAnalysis {
         references: references.into(),
         tags: tags.into(),
         tag_summary: gpui::SharedString::default(),
+        prose_gaps: prose_gaps.into(),
     };
     let mut seen = std::collections::HashSet::new();
     let labels: Vec<_> = inline
@@ -230,6 +243,19 @@ pub(crate) fn analyze_inline(snapshot: &BufferSnapshot) -> Option<InlineAnalysis
         format!("Inline tags: {}", labels.join(" · ")).into()
     };
     Some(inline)
+}
+
+/// The non-empty ranges sorted and joined where they touch or overlap.
+fn merged(ranges: impl Iterator<Item = std::ops::Range<usize>>) -> Vec<std::ops::Range<usize>> {
+    let mut ranges: Vec<_> = ranges.filter(|range| range.start < range.end).collect();
+    ranges.sort_unstable_by_key(|range| range.start);
+    ranges.into_iter().fold(Vec::new(), |mut joined, range| {
+        match joined.last_mut() {
+            Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+            _ => joined.push(range),
+        }
+        joined
+    })
 }
 
 #[cfg(test)]

@@ -115,6 +115,7 @@ fn defaults_match_the_reference_editor_settings() {
     assert!(defaults.vim);
     assert!(defaults.format_tags);
     assert_eq!(defaults.capture_target, CaptureTarget::Inbox);
+    assert!(defaults.spellcheck, "the reference editor checks spelling");
     assert_eq!(defaults.font_family, "Pragmata Pro Mono Liga");
     assert_eq!(defaults.font_size, 16.);
     assert_eq!(defaults.line_spacing, 1.85);
@@ -454,6 +455,7 @@ async fn changes_are_saved_to_the_settings_file_and_apply_live(cx: &mut TestAppC
         change(Change::Appearance(ThemeAppearanceMode::Light), cx);
         change(Change::FormatTags(false), cx);
         change(Change::CaptureTarget(CaptureTarget::Today), cx);
+        change(Change::Spellcheck(false), cx);
         change(Change::FontFamily(" Iosevka ".into()), cx);
         change(Change::LineSpacing(2.), cx);
     });
@@ -464,6 +466,7 @@ async fn changes_are_saved_to_the_settings_file_and_apply_live(cx: &mut TestAppC
         assert_eq!(current.appearance, ThemeAppearanceMode::Light);
         assert!(!current.format_tags);
         assert_eq!(current.capture_target, CaptureTarget::Today);
+        assert!(!current.spellcheck);
         assert_eq!(current.font_family, "Iosevka");
         assert_eq!(current.line_spacing, 2.);
         assert_eq!(cx.theme().appearance, Appearance::Light);
@@ -476,6 +479,7 @@ async fn changes_are_saved_to_the_settings_file_and_apply_live(cx: &mut TestAppC
     assert!(text.contains("// Quire settings"), "{text}");
     assert!(text.contains("\"buffer_font_size\": 22"), "{text}");
     assert!(text.contains("\"capture_target\": \"today\""), "{text}");
+    assert!(text.contains("\"spellcheck\": false"), "{text}");
 
     cx.update(|cx| change(Change::FontSize(41.), cx));
     cx.run_until_parked();
@@ -698,12 +702,19 @@ async fn tab_walks_settings_in_reading_order_and_keys_work_the_focused_control(
     let vim = cx.update(|cx| Preferences::current(cx).vim);
     press("tab space", cx);
     cx.update(|cx| assert_eq!(Preferences::current(cx).vim, !vim));
-    press("tab tab tab enter", cx);
+    press("tab tab space", cx);
+    cx.update(|cx| {
+        assert!(
+            !Preferences::current(cx).spellcheck,
+            "Format tags, then Check spelling follow Vim bindings"
+        )
+    });
+    press("tab tab enter", cx);
     cx.update(|cx| {
         assert_eq!(
             Preferences::current(cx).capture_target,
             CaptureTarget::Today,
-            "Format tags, then Inbox page and Today's daily page follow Vim bindings"
+            "Inbox page and Today's daily page follow Check spelling"
         )
     });
     press("tab", cx);

@@ -10,6 +10,9 @@ pub(super) struct Exclusions {
     /// Markdown URLs as the reference parser marks them: link and image destinations, autolink
     /// targets, bare URLs, and link reference definition destinations.
     pub urls: Vec<Range<usize>>,
+    /// Text that is not prose to spell-check, besides code and URLs: HTML, images, angle
+    /// autolinks, and link reference definitions.
+    pub markup: Vec<Range<usize>>,
     #[cfg(test)]
     pub inline_reparses: usize,
 }
@@ -25,6 +28,8 @@ enum Kind {
 struct Span {
     range: Range<usize>,
     kind: Kind,
+    /// Whether the span shows its words as text, as a link label does.
+    prose: bool,
 }
 
 fn html_kind(source: &str) -> Kind {
@@ -60,7 +65,14 @@ fn inline_spans(tree: &language::Tree, text: &str) -> Vec<Span> {
             _ => None,
         };
         if let Some(kind) = kind {
-            result.push(Span { range, kind });
+            let prose = matches!(
+                node.kind(),
+                "inline_link"
+                    | "full_reference_link"
+                    | "collapsed_reference_link"
+                    | "shortcut_link"
+            );
+            result.push(Span { range, kind, prose });
         } else {
             let mut cursor = node.walk();
             stack.extend(node.named_children(&mut cursor));
@@ -185,6 +197,7 @@ fn inline_exclusions(
                 });
             if angle.is_some() {
                 result.tags.push(base + position..base + end);
+                result.markup.push(base + position..base + end);
                 result.urls.push(base + position + 1..base + end - 1);
             } else if bare.is_some() {
                 result.urls.push(base + position..base + end);
@@ -242,6 +255,9 @@ fn inline_exclusions(
                 continue;
             }
             let range = base + span.range.start..base + span.range.end;
+            if !span.prose && !matches!(span.kind, Kind::Code | Kind::InvalidAutolink) {
+                result.markup.push(range.clone());
+            }
             match span.kind {
                 Kind::Code => {
                     result.code.push(range.clone());
@@ -296,11 +312,13 @@ pub(super) fn exclusions(snapshot: &BufferSnapshot, text: &str) -> Option<Exclus
                     result.tags.push(range);
                 }
                 "html_block" => {
+                    result.markup.push(range.clone());
                     if matches!(html_kind(&text[range.clone()]), Kind::Excluded) {
                         result.tags.push(range);
                     }
                 }
                 "link_reference_definition" => {
+                    result.markup.push(range.clone());
                     result.tags.push(range);
                     let mut cursor = node.walk();
                     result.urls.extend(

@@ -156,6 +156,9 @@ mod showcase;
 mod tag_labels;
 
 #[cfg(feature = "full-editor")]
+mod spellcheck;
+
+#[cfg(feature = "full-editor")]
 mod motion;
 
 #[cfg(feature = "full-editor")]

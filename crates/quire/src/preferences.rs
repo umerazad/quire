@@ -52,11 +52,13 @@ pub const FONT_FAMILY_LIMIT: usize = 150;
 
 pub const INITIAL_SETTINGS: &str = "{\n  // Quire settings\n  //\n  // Preferences writes here, and edits apply as soon as this file is saved.\n  // Quire uses Zed's settings format; keys left out keep Quire's defaults.\n}\n";
 
-/// The Quire-only part of the settings: tag formatting and the quick-capture destination.
+/// The Quire-only part of the settings: tag formatting, the quick-capture destination, and
+/// spelling.
 #[derive(RegisterSetting, Clone, Copy, Debug, PartialEq)]
 pub struct QuirePreferences {
     pub format_tags: bool,
     pub capture_target: CaptureTarget,
+    pub spellcheck: bool,
 }
 
 impl Settings for QuirePreferences {
@@ -65,6 +67,7 @@ impl Settings for QuirePreferences {
         Self {
             format_tags: quire.format_tags.unwrap_or(true),
             capture_target: quire.capture_target.unwrap_or_default(),
+            spellcheck: quire.spellcheck.unwrap_or(true),
         }
     }
 }
@@ -90,6 +93,7 @@ pub fn apply_defaults(content: &mut SettingsContent) {
     content.quire = Some(QuireSettingsContent {
         format_tags: Some(true),
         capture_target: Some(CaptureTarget::Inbox),
+        spellcheck: Some(true),
         ai: Some(settings::QuireAiSettingsContent {
             enabled: Some(false),
             backend: Some(settings::AiBackendName::Claude),
@@ -119,6 +123,7 @@ pub struct Preferences {
     pub vim: bool,
     pub format_tags: bool,
     pub capture_target: CaptureTarget,
+    pub spellcheck: bool,
     pub font_family: String,
     pub font_size: f32,
     pub line_spacing: f32,
@@ -131,6 +136,7 @@ impl Default for Preferences {
             vim: true,
             format_tags: true,
             capture_target: CaptureTarget::Inbox,
+            spellcheck: true,
             font_family: DEFAULT_FONT_FAMILY.into(),
             font_size: DEFAULT_FONT_SIZE,
             line_spacing: DEFAULT_LINE_SPACING,
@@ -147,6 +153,7 @@ impl Preferences {
             vim: vim_mode_setting::VimModeSetting::get_global(cx).0,
             format_tags: quire.format_tags,
             capture_target: quire.capture_target,
+            spellcheck: quire.spellcheck,
             font_family: theme.buffer_font.family.to_string(),
             font_size: f32::from(theme.buffer_font_size_settings()),
             line_spacing: theme.buffer_line_height.value(),
@@ -176,6 +183,7 @@ impl Preferences {
             (self.format_tags != base.format_tags).then_some(Change::FormatTags(self.format_tags)),
             (self.capture_target != base.capture_target)
                 .then_some(Change::CaptureTarget(self.capture_target)),
+            (self.spellcheck != base.spellcheck).then_some(Change::Spellcheck(self.spellcheck)),
             (self.font_family != base.font_family)
                 .then(|| Change::FontFamily(self.font_family.clone())),
             (self.font_size != base.font_size).then_some(Change::FontSize(self.font_size)),
@@ -195,6 +203,7 @@ pub enum Change {
     Vim(bool),
     FormatTags(bool),
     CaptureTarget(CaptureTarget),
+    Spellcheck(bool),
     FontFamily(String),
     FontSize(f32),
     LineSpacing(f32),
@@ -231,6 +240,9 @@ impl Change {
             Self::CaptureTarget(target) => {
                 content.quire.get_or_insert_default().capture_target = Some(*target)
             }
+            Self::Spellcheck(enabled) => {
+                content.quire.get_or_insert_default().spellcheck = Some(*enabled)
+            }
             Self::FontFamily(family) => {
                 theme.buffer_font_family = Some(FontFamilyName(family.trim().into()))
             }
@@ -257,6 +269,7 @@ pub fn restore_defaults(content: &mut SettingsContent) {
     if let Some(quire) = content.quire.as_mut() {
         quire.format_tags = None;
         quire.capture_target = None;
+        quire.spellcheck = None;
     }
 }
 
