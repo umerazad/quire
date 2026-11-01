@@ -711,3 +711,55 @@ fn a_one_line_embed_takes_its_references_line(cx: &mut TestAppContext) {
     });
     assert_eq!(stored_text(&notebook, "o"), "- intro\n- ((one))\n- after\n");
 }
+
+/// A caret move refolds only the syntax whose block it enters or leaves; past embeds and block
+/// previews the view must still be what refolding it whole shows. Moves that enter an embed move
+/// focus into its nested editor, which sends the page editor no event, so it keeps the source it
+/// showed until focus returns; those steps are not compared.
+#[gpui::test]
+fn caret_moves_past_embeds_and_previews_refold_as_a_whole_refold_would(cx: &mut TestAppContext) {
+    let other = format!("{OTHER}- see ((shared)) and [[Source]] ^p1\n- end\n");
+    let pages = [
+        ("s", "Source.md", SOURCE),
+        ("o", "Other.md", other.as_str()),
+    ];
+    let (notebook, host) = open_in_write(&pages, "o", 2, cx);
+    wait_until(cx, "the resolved preview", |cx| {
+        draw(&notebook, cx);
+        cx.update(|cx| crate::editor_projection::preview_labels(host.read(cx)))
+            .iter()
+            .any(|label| label.contains("Original"))
+    });
+    let check = |step: &str, cx: &mut TestAppContext| {
+        notebook
+            .window
+            .update(cx, |_, window, cx| {
+                host.update(cx, |editor, cx| {
+                    if !editor.focus_handle(cx).is_focused(window) {
+                        return Ok(false);
+                    }
+                    crate::editor_projection::check_against_whole_refold(editor, window, cx)
+                        .map(|()| true)
+                })
+            })
+            .unwrap()
+            .unwrap_or_else(|error| panic!("After {step}: {error}"))
+    };
+    assert!(check("opening the page", cx));
+    let lines = other.lines().count();
+    let mut checked = 0;
+    for (step, key) in std::iter::repeat_n("k", lines)
+        .chain(std::iter::repeat_n("j", lines))
+        .chain(std::iter::repeat_n("k", lines))
+        .enumerate()
+    {
+        cx.simulate_keystrokes(notebook.window.into(), key);
+        cx.run_until_parked();
+        draw(&notebook, cx);
+        checked += usize::from(check(&format!("move {step}, {key}"), cx));
+    }
+    assert!(
+        checked > lines,
+        "only {checked} moves left the caret in the page editor"
+    );
+}

@@ -1318,6 +1318,10 @@ mod projection_tests;
 mod projection_vim_tests;
 
 #[cfg(test)]
+#[path = "editor_projection_incremental_tests.rs"]
+mod projection_incremental_tests;
+
+#[cfg(test)]
 #[path = "editor_link_tests.rs"]
 mod link_tests;
 
