@@ -78,7 +78,7 @@ pub const SECTIONS: &[HelpSection] = &[
         title: "Vim essentials",
         description: "Vim applies to note editors, including editable embeds. Capture, search and other ordinary input fields use standard text entry.",
         steps: &[
-            "Normal mode moves and changes text; Insert mode types; Visual mode selects. Your current mode appears in the editor’s bottom status bar.",
+            "Normal mode moves and changes text; Insert mode types; Visual mode selects. Your current mode appears as a pill at the right of the status bar under the page.",
             "In Normal mode, h/j/k/l move left/down/up/right, w and b move by words, 0 and $ move to line boundaries, and gg / G jump to the document’s start / end.",
             "Use dd to delete a line, yy to copy a line, p to paste, and v to begin a visual selection. / searches forward; n repeats the search. Escape cancels a partial command or returns to Normal.",
             "When focus is outside a text field, for example on a tab or a toolbar button, i, a, o, I, A, O, s, S and C still start Insert mode: they go to the page editor used last, or the open page.",
