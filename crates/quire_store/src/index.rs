@@ -45,6 +45,8 @@ use std::{
 
 const APPLICATION_ID: i32 = i32::from_be_bytes(*b"QIDX");
 const REBUILD: &str = "The notebook query index is damaged. Quire will rebuild it; your notes are unaffected. Reopen the notebook if this repeats.";
+/// A batch this large is part of a backlog; see [`QueryIndex::put_many`].
+const BULK_PAGES: usize = 16;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IndexedBlock {
@@ -158,6 +160,8 @@ pub struct QueryIndex {
     releasing: RefCell<BTreeSet<String>>,
     collator: icu_collator::CollatorBorrowed<'static>,
     folder: Option<folder::FolderSource>,
+    /// Whether a backlog is being stored with the bulk settings; see [`QueryIndex::put_many`].
+    bulk: Cell<bool>,
 }
 
 /// Matches the reference `pageKey`: drop any `#` suffix and `.md`, then lowercase.
@@ -231,6 +235,7 @@ impl QueryIndex {
             rows_read: Cell::new(0),
             releasing: RefCell::default(),
             folder,
+            bulk: Cell::new(false),
         };
         overlay::create(&index.connection)?;
         for statement in query::TAG_CHANGES.iter().chain([&query::SNIPPETS]) {
@@ -245,6 +250,9 @@ impl QueryIndex {
     /// when the index is idle; it costs a stat and an empty checkpoint when nothing changed.
     /// Returns whether the index is now sealed.
     pub fn seal(&self) -> Result<bool> {
+        if self.bulk.replace(false) {
+            self.connection.exec(schema::STEADY_CHECKPOINTS)?()?;
+        }
         let sealed = schema::seal(
             &self.connection,
             &self.path,
@@ -462,7 +470,15 @@ impl QueryIndex {
     /// Records analysis for several revisions in one transaction, so a rebuild commits and
     /// flushes the search index once per batch instead of once per page. Each result is what
     /// [`Self::put`] returns for that revision.
+    ///
+    /// A batch of several pages means a backlog, such as a first open: until the next
+    /// [`Self::seal`], the write-ahead log is checkpointed less often. Checkpoints and their file
+    /// syncs took 37% of the index thread while a 5x notebook was first indexed. Commits stay
+    /// atomic and the log keeps the file consistent through a crash, as before.
     pub fn put_many(&self, analyses: &[(&str, &PageIndex)]) -> Result<Vec<bool>> {
+        if analyses.len() >= BULK_PAGES && !self.bulk.replace(true) {
+            self.connection.exec(schema::BULK_CHECKPOINTS)?()?;
+        }
         let stored: Vec<bool> = self.transaction(|| {
             let mut planned = std::collections::HashSet::new();
             let mut state = self.connection.select_row_bound(
@@ -864,6 +880,30 @@ mod tests {
             .connection
             .select_row("SELECT count(*) FROM search_rows")?()?;
         assert_eq!(rows, Some(2));
+        Ok(())
+    }
+
+    /// A backlog is stored with rarer checkpoints; sealing it restores SQLite's default and leaves
+    /// an empty log, so a reopen skips the integrity scan.
+    #[test]
+    fn a_backlog_uses_bulk_settings_until_it_is_sealed() -> Result<()> {
+        let notebook = test_notebook::TestNotebook::new(40, 3)?;
+        let index = &notebook.index;
+        let setting = |pragma: &str| -> Result<i64> {
+            index.connection.select_row(&format!("PRAGMA {pragma}"))?()?.context(
+                "SQLite reported no value for a setting. Rebuild Quire with its bundled SQLite.",
+            )
+        };
+        assert!(index.bulk.get(), "a 40-page first open is a backlog");
+        assert_eq!(setting("wal_autocheckpoint")?, 16384);
+        assert!(index.seal()?);
+        assert_eq!(setting("wal_autocheckpoint")?, 1000);
+        let path = index.path.clone();
+        notebook.save("Topic 1.md", "- one more save\n")?;
+        notebook.analyze(4)?;
+        assert!(!index.bulk.get(), "a single save is not a backlog");
+        assert!(index.seal()?);
+        assert!(schema::is_sealed(&path));
         Ok(())
     }
 

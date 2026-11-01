@@ -14,6 +14,8 @@ use std::collections::HashMap;
 use std::{path::PathBuf, time::Duration};
 
 const BATCH: usize = 64;
+/// Batches read at once, so the next is parsed while the index stores the last.
+const PIPELINED: usize = 4;
 const IDLE: Duration = Duration::from_secs(1);
 /// While a backlog is analyzed, open views requery at most this often: each batch changes the
 /// index, and requerying the page list and references per batch made a 5x rebuild quadratic.
@@ -169,25 +171,33 @@ impl IndexSync {
         })
     }
 
-    /// Analyzes one batch and returns how many pages still need analysis, with the index
-    /// generation after it.
+    /// Analyzes a few batches and returns how many pages still need analysis, with the index
+    /// generation after them. Each batch is analyzed while the index stores the one before, so
+    /// parsing and writing overlap instead of taking turns.
     async fn step(client: &IndexClient, cx: &mut gpui::AsyncApp) -> Result<(usize, u64), String> {
-        let pending = ask(client.pending(BATCH)).await?;
-        let analyses = pending
-            .into_iter()
-            .map(|page| {
-                let work = cx.update(|cx| analyze(editor_text(&page.text), cx));
-                let analysis = cx.background_spawn(work);
-                async move { analysis.await.map(|analysis| (page.revision, analysis)) }
-            })
-            .collect::<Vec<_>>();
-        let analyses = futures::future::join_all(analyses)
-            .await
-            .into_iter()
-            .collect::<Option<Vec<_>>>()
-            .ok_or("Cannot analyze pages because the Markdown grammar is unavailable. Rebuild Quire with its bundled grammars.")?;
-        if !analyses.is_empty() {
-            ask(client.put_many(analyses)).await?;
+        let pending = ask(client.pending(BATCH * PIPELINED)).await?;
+        let mut storing = None;
+        for batch in pending.chunks(BATCH) {
+            let analyses = batch
+                .iter()
+                .map(|page| {
+                    let work = cx.update(|cx| analyze(editor_text(&page.text), cx));
+                    let analysis = cx.background_spawn(work);
+                    let revision = page.revision.clone();
+                    async move { analysis.await.map(|analysis| (revision, analysis)) }
+                })
+                .collect::<Vec<_>>();
+            let analyses = futures::future::join_all(analyses)
+                .await
+                .into_iter()
+                .collect::<Option<Vec<_>>>()
+                .ok_or("Cannot analyze pages because the Markdown grammar is unavailable. Rebuild Quire with its bundled grammars.")?;
+            if let Some(stored) = storing.replace(client.put_many(analyses)) {
+                ask(stored).await?;
+            }
+        }
+        if let Some(stored) = storing {
+            ask(stored).await?;
         }
         let (generation, remaining) =
             ask(client.with_generation(|index| index.unanalyzed())).await?;
@@ -442,7 +452,7 @@ pub(crate) mod tests {
         let root = tempfile::tempdir().unwrap();
         let database = root.path().join("local.sqlite");
         let store = NotebookStore::open(&database, "nb", "local").unwrap();
-        let pages = BATCH * 3 + 1;
+        let pages = BATCH * PIPELINED * 3 + 1;
         for page in 0..pages {
             save(&store, &format!("Page {page}"), "- text\n");
         }
@@ -459,7 +469,7 @@ pub(crate) mod tests {
             })
             .detach()
         });
-        // The clock stands still, so the four batches fall within one second.
+        // The clock stands still, so the four steps of pipelined batches fall within one second.
         crate::test_wait::until(
             cx,
             Duration::from_millis(2),
@@ -477,7 +487,7 @@ pub(crate) mod tests {
             },
         );
         cx.run_until_parked();
-        assert_eq!(told.get(), 2, "the first batch and the finished index");
+        assert_eq!(told.get(), 2, "the first step and the finished index");
     }
 
     #[gpui::test]

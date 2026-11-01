@@ -39,6 +39,11 @@ const TABLES: &[&str] = &[
     "CREATE TRIGGER search_rows_delete AFTER DELETE ON search_rows BEGIN INSERT INTO search(search,rowid,revision,title,text,block_id) VALUES ('delete',old.rowid,old.revision,old.title,old.text,old.block_id); END",
 ];
 
+/// While a backlog is stored, the log is checkpointed per 64 MiB instead of per 4 MiB, SQLite's
+/// default, which is restored when the backlog is sealed.
+pub(super) const BULK_CHECKPOINTS: &str = "PRAGMA wal_autocheckpoint = 16384";
+pub(super) const STEADY_CHECKPOINTS: &str = "PRAGMA wal_autocheckpoint = 1000";
+
 /// The selected head of every page, using the same order as `page_metadata`.
 macro_rules! selected {
     () => {
@@ -150,7 +155,7 @@ fn suffixed(path: &Path, suffix: &str) -> PathBuf {
 /// committed changes waiting in the write-ahead log. SQLite's write-ahead log keeps the file
 /// consistent through crashes, so an unchanged sealed file needs no integrity scan; anything else,
 /// such as a crash before sealing or an outside edit, is scanned on open.
-fn is_sealed(path: &Path) -> bool {
+pub(super) fn is_sealed(path: &Path) -> bool {
     let log_empty = std::fs::metadata(suffixed(path, "-wal")).map_or(true, |log| log.len() == 0);
     log_empty
         && super::folder::stamp(path).is_some_and(|stamp| {
