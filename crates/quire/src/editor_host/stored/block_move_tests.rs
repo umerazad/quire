@@ -253,7 +253,10 @@ fn moving_a_block_in_a_folder_notebook_rewrites_its_files(cx: &mut TestAppContex
     cx.run_until_parked();
     let dest = quire_store::sync::format::page_id_for_path("Dest.md");
     choose(notebook, "Dest", &dest, cx);
-    wait_until(cx, "the move", |_| file("Dest.md").contains("Move"));
+    // The notes are written one after another; the destination opens once all are.
+    wait_until(cx, "the move to finish and open the destination", |cx| {
+        active(notebook, cx) == dest
+    });
     assert_eq!(file("Source.md"), "- Keep ^keep\n- After\n");
     assert_eq!(file("Dest.md"), "# Dest\n\n- Move ^m\n  - Child ^c\n");
     assert_eq!(
@@ -261,9 +264,6 @@ fn moving_a_block_in_a_folder_notebook_rewrites_its_files(cx: &mut TestAppContex
         "- [[Dest#^m]] ((c)) [[Source#^keep]] [[Dest#^c|kid]]\n"
     );
     assert_eq!(file("Other.md"), "- unrelated\n");
-    wait_until(cx, "the destination to open", |cx| {
-        active(notebook, cx) == dest
-    });
     read(notebook, cx, |view, _| assert!(view.nav.error.is_none()));
 }
 
