@@ -12,12 +12,19 @@ use gpui::{AnyElement, EntityId, SharedString};
 use quire_core::workspace::Destination;
 use settings::Settings as _;
 use ui::{
-    Color, Headline, HeadlineSize, Icon, IconButton, IconName, IconSize, LabelSize, ListItem,
-    ListItemSpacing, Toggleable as _, Tooltip, h_flex, v_flex,
+    Color, Icon, IconButton, IconName, IconSize, LabelSize, ListItem, ListItemSpacing,
+    Toggleable as _, Tooltip, h_flex, v_flex,
 };
 
 /// The placeholder of an empty page.
 pub(super) const EMPTY_PAGE: &str = "Let a thought begin…";
+
+/// The side padding of rt's `.note-paper` at the window widths Quire is compared at.
+pub(super) const PAPER_INSET: gpui::Pixels = gpui::px(45.);
+
+/// How far the page editor sits in from the pane, so Write's bullets line up under the title
+/// with their 16 px fold-arrow slot hanging left of the paper edge, as rt hangs its fold gutter.
+pub(super) const EDITOR_INSET: gpui::Pixels = gpui::px(6.);
 
 #[derive(Default)]
 pub(super) struct PageChrome {
@@ -186,14 +193,24 @@ impl StoredWindow {
     /// The page's title above its editor. rt's markup also has a kind eyebrow and a size line,
     /// which the theme it ships hides, so Quire draws the title alone; the details panel keeps
     /// the figures.
+    ///
+    /// The paper's padding and title follow rt's `.note-paper` and `.page-title` as the roam
+    /// theme sets them (24 px top, 45 px sides, a 28 px title). The theme asks for weight 600, but
+    /// rt renders the editor font regular there, so the title stays regular.
     pub(super) fn render_page_header(&self, page: &Entity<OpenPage>, cx: &App) -> AnyElement {
         let title = self.destination_label(&Destination::page(page.read(cx).id()), cx);
         gpui::div()
-            .debug_selector(|| "quire-page-title".into())
-            .px_4()
-            .pt_4()
+            .px(PAPER_INSET)
+            .pt(gpui::px(24.))
             .pb_2()
-            .child(Headline::new(title).size(HeadlineSize::Large))
+            .child(
+                gpui::div()
+                    .debug_selector(|| "quire-page-title".into())
+                    .text_size(gpui::rems(1.75))
+                    .line_height(gpui::relative(1.2))
+                    .text_color(cx.theme().colors().text)
+                    .child(title),
+            )
             .into_any_element()
     }
 

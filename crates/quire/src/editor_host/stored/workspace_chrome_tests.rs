@@ -265,3 +265,30 @@ fn pages_open_in_write_as_the_reference_opens_them(cx: &mut TestAppContext) {
     });
     assert!(side, "the second pane opens in Write too");
 }
+
+/// rt's `.page-toolbar` and `.note-paper` padding: the switch 29 px in, the title 45 px in and
+/// 24 px below the toolbar, and Write's first bullet under the title's first letter.
+#[gpui::test]
+fn the_page_sits_on_the_reference_paper(cx: &mut TestAppContext) {
+    let notebook = opened(cx);
+    let switch = bounds(&notebook, "quire-view-switch", cx);
+    click_at(
+        &notebook,
+        point(switch.left() + switch.size.width * 0.25, switch.center().y),
+        cx,
+    );
+    assert!(writing(&notebook, cx));
+    let pane = bounds(&notebook, "quire-page-status", cx).left();
+    let title = bounds(&notebook, "quire-page-title", cx);
+    let bullet = bounds(&notebook, "quire-bullet", cx);
+    assert_eq!(switch.left() - pane, px(29.), "the toolbar's side padding");
+    assert_eq!(title.left() - pane, px(45.), "the paper's side padding");
+    assert!(
+        title.top() - switch.bottom() >= px(24. + 8.),
+        "the paper starts under the toolbar's bottom padding: {switch:?} {title:?}"
+    );
+    assert!(
+        (bullet.left() - title.left()).abs() <= px(1.),
+        "the first bullet hangs under the title: {bullet:?} {title:?}"
+    );
+}

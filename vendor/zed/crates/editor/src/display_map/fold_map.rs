@@ -1589,6 +1589,17 @@ fn include_empty_placeholders(
 }
 
 impl FoldChunks<'_> {
+    /// Whether the cursor sits on the buffer's last transform and it is a fold whose placeholder
+    /// text is empty. Chunks ending there still yield it, so a last line made only of such a fold
+    /// shows its rendered placeholder.
+    fn at_trailing_empty_placeholder(&self) -> bool {
+        self.transform_cursor.next_item().is_none()
+            && self.transform_cursor.item().is_some_and(|transform| {
+                transform.placeholder.is_some()
+                    && transform.summary.output.len == Default::default()
+            })
+    }
+
     #[ztracing::instrument(skip_all)]
     pub(crate) fn seek(&mut self, range: Range<FoldOffset>) {
         self.transform_cursor.seek(&range.start, Bias::Right);
@@ -1627,7 +1638,7 @@ impl<'a> Iterator for FoldChunks<'a> {
 
     #[ztracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.output_offset >= self.max_output_offset {
+        if self.output_offset >= self.max_output_offset && !self.at_trailing_empty_placeholder() {
             return None;
         }
 

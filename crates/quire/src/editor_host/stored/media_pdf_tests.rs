@@ -214,7 +214,7 @@ fn a_mouse_drag_selects_across_pdf_pages_and_copies_with_a_break_between_them(
     // page editor spans the whole pane.
     cx.simulate_window_resize(
         notebook.window.into(),
-        gpui::size(gpui::px(1000.), gpui::px(2000.)),
+        gpui::size(gpui::px(900.), gpui::px(2000.)),
     );
     let view = wait_open(&notebook, &editor, 1, cx).remove(0);
     view.update(cx, |view, cx| view.set_zoom(0.5, cx));

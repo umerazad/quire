@@ -140,6 +140,50 @@ fn the_settings_store_starts_from_quire_defaults(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn quire_themes_draw_the_vim_mode_as_the_references_pill(cx: &mut TestAppContext) {
+    init_app(cx);
+    for (appearance, background, foreground) in [
+        (Appearance::Light, 0xdfebe0ff, 0x2f6846ff),
+        (Appearance::Dark, 0x232623ff, 0x8dc8a1ff),
+    ] {
+        cx.update(|cx| {
+            *SystemAppearance::global_mut(cx) = SystemAppearance(appearance);
+            theme_settings::reload_theme(cx);
+            let colors = cx.theme().colors();
+            let pills = [
+                (colors.vim_normal_background, colors.vim_normal_foreground),
+                (colors.vim_insert_background, colors.vim_insert_foreground),
+                (colors.vim_replace_background, colors.vim_replace_foreground),
+                (colors.vim_visual_background, colors.vim_visual_foreground),
+                (
+                    colors.vim_visual_line_background,
+                    colors.vim_visual_line_foreground,
+                ),
+                (
+                    colors.vim_visual_block_background,
+                    colors.vim_visual_block_foreground,
+                ),
+            ];
+            let hex = |color: gpui::Hsla| {
+                let rgba = color.to_rgb();
+                [rgba.r, rgba.g, rgba.b, rgba.a]
+                    .iter()
+                    .fold(0_u32, |hex, channel| {
+                        hex << 8 | (channel * 255.).round() as u32
+                    })
+            };
+            for (pill_background, pill_foreground) in pills {
+                assert_eq!(
+                    (hex(pill_background), hex(pill_foreground)),
+                    (background, foreground),
+                    "an opaque mode background makes Zed's mode indicator a pill"
+                );
+            }
+        });
+    }
+}
+
+#[gpui::test]
 fn quire_themes_are_the_defaults_for_each_appearance(cx: &mut TestAppContext) {
     init_app(cx);
     let shown = |appearance: Appearance, cx: &mut TestAppContext| {

@@ -200,6 +200,17 @@ impl Editor {
         cx.notify();
     }
 
+    /// Overrides the `gutter.folds` setting for this editor, or follows it again with `None`, for
+    /// hosts whose folds are their own presentation rather than code the reader folds.
+    pub fn set_show_fold_toggles(
+        &mut self,
+        show_fold_toggles: Option<bool>,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_fold_toggles = show_fold_toggles;
+        cx.notify();
+    }
+
     pub fn set_allow_git_diff_scrollbar_markers(&mut self, allow: bool, cx: &mut Context<Self>) {
         if self.allow_git_diff_scrollbar_markers != allow {
             self.allow_git_diff_scrollbar_markers = allow;
