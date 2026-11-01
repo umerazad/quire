@@ -466,6 +466,31 @@ fn vim_insert_keys_outside_a_text_field_go_to_the_page_editor(cx: &mut TestAppCo
     );
 }
 
+/// rt leaves keys in a dialog to the dialog, so an Insert key in the Delete dialog, which has
+/// no text field, keeps focus there instead of starting Insert mode in the page.
+#[gpui::test]
+fn vim_insert_keys_in_a_dialog_stay_in_the_dialog(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&PAGES, "a", cx);
+    wait_until(cx, "the first page", |cx| {
+        read(&notebook, cx, |view, _| view.editor.is_some())
+    });
+    cx.dispatch_action(notebook.window.into(), crate::navigation::DeletePage);
+    wait_until(cx, "the Delete dialog", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.nav
+                .dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.read(cx).can_confirm())
+        })
+    });
+    draw(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "a");
+    cx.run_until_parked();
+    assert!(!editor_focused(&notebook, cx), "the dialog keeps focus");
+    assert!(read(&notebook, cx, |view, _| view.nav.dialog.is_some()));
+    assert_eq!(page_text(&notebook, cx), "- apple pie\n");
+}
+
 #[gpui::test]
 fn notebook_ctrl_keys_win_over_vim_inside_a_page(cx: &mut TestAppContext) {
     let notebook = open_notebook(&PAGES, "a", cx);
