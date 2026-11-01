@@ -209,6 +209,12 @@ impl IndexSync {
         &self.client
     }
 
+    /// The index generation this sync last announced to views; for tests.
+    #[cfg(test)]
+    pub(crate) fn announced_generation(&self) -> u64 {
+        self.generation
+    }
+
     pub fn error(&self) -> Option<&SharedString> {
         self.error.as_ref()
     }
