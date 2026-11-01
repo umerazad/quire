@@ -7,7 +7,7 @@ use crate::navigation::{
     GoBack, GoForward, MoveFile, MovePage, NewPage, NewPageHere, NextTab, OpenContextMenu,
     OpenToday, PreviousTab, RenameFile, RenamePage, RevealInFileManager, ShowDaily,
     ShowPageHistory, ShowPages, ShowTags, ShowTasks, ToggleFavorite, ToggleSidePane, WorkspaceFile,
-    create_page,
+    create_page, page_path,
     palette::{PagePalette, PaletteChoice, PaletteMode},
 };
 use gpui::{DismissEvent, EntityId, SharedString, Task};
@@ -43,6 +43,13 @@ mod template_views;
 #[path = "tool_views.rs"]
 mod tool_views;
 
+/// A page being created, opened once its save lands.
+struct Creating {
+    /// The path the new page takes, when the request names one up front.
+    path: Option<String>,
+    _task: Task<()>,
+}
+
 pub(super) struct Navigation {
     file: WorkspaceFile,
     pub(super) workspace: Workspace,
@@ -62,7 +69,7 @@ pub(super) struct Navigation {
     /// A save of view state waiting for typing or scrolling to pause.
     remembering: Option<Task<()>>,
     saves: usize,
-    creating: Option<Task<()>>,
+    creating: Option<Creating>,
     pub(super) error: Option<SharedString>,
     pub(super) side: Option<SidePane>,
     /// Where the caret goes once the page just opened can show it.
@@ -489,8 +496,9 @@ impl StoredWindow {
             return;
         };
         let storage = self.session.borrow().storage();
+        let path = page_path(&title, &folder).ok();
         let work = create_page(storage, index, title, folder);
-        self.nav.creating = Some(cx.spawn_in(window, async move |this, cx| {
+        let task = cx.spawn_in(window, async move |this, cx| {
             let result = work.await;
             this.update_in(cx, |this, window, cx| {
                 this.nav.creating = None;
@@ -505,7 +513,16 @@ impl StoredWindow {
                 cx.notify();
             })
             .ok();
-        }));
+        });
+        self.nav.creating = Some(Creating { path, _task: task });
+    }
+
+    /// Whether a create of the page at `path` is still saving.
+    pub(super) fn creating_at(&self, path: &str) -> bool {
+        self.nav
+            .creating
+            .as_ref()
+            .is_some_and(|creating| creating.path.as_deref() == Some(path))
     }
 
     pub(super) fn register_navigation(div: gpui::Div, cx: &mut gpui::Context<Self>) -> gpui::Div {

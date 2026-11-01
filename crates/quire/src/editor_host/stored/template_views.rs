@@ -34,7 +34,7 @@ impl StoredWindow {
             return;
         };
         let storage = self.session.borrow().storage();
-        self.nav.creating = Some(cx.spawn_in(window, async move |this, cx| {
+        let task = cx.spawn_in(window, async move |this, cx| {
             let found = ask(index.pages()).await.map(|pages| {
                 pages
                     .into_iter()
@@ -70,7 +70,11 @@ impl StoredWindow {
                 cx.notify();
             })
             .ok();
-        }));
+        });
+        self.nav.creating = Some(Creating {
+            path: None,
+            _task: task,
+        });
     }
 
     /// The guide beside the Templates page, while the main pane shows it.
