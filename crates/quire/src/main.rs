@@ -1156,6 +1156,11 @@ fn main() {
         query_index::measure::run(root.into(), state.into(), edits);
         return;
     }
+    #[cfg(all(feature = "full-editor", feature = "test-support"))]
+    if std::env::args().nth(1).as_deref() == Some("--capture-shell") {
+        editor_host::capture_shell(std::env::args().skip(2).collect());
+        return;
+    }
     #[cfg(feature = "full-editor")]
     editor_host::run();
     #[cfg(not(feature = "full-editor"))]

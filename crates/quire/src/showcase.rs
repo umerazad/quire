@@ -469,7 +469,7 @@ impl ShowcaseWindow {
 
 impl Render for ShowcaseWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        crate::app_menus::follow_zoom(window, cx);
+        let ui_font = crate::app_menus::follow_zoom(window, cx);
         let colors = cx.theme().colors();
         let body = match &self.tag {
             Some(tag) => v_flex()
@@ -493,6 +493,7 @@ impl Render for ShowcaseWindow {
             None => self.notebook.clone().into_any_element(),
         };
         v_flex()
+            .font(ui_font)
             .size_full()
             .bg(colors.background)
             .text_color(colors.text)

@@ -1,7 +1,7 @@
 //! Quire's asset source: Zed's bundled assets, plus the reference app's tag icons (Lucide, ISC;
 //! `assets/icons/tags/LICENSE`) under `quire/icons/tags/<tone>.svg` and the page toolbar's save
-//! states under `quire/icons/save/`, and under `quire/icons/sidebar/` the sidebar's Lucide icons
-//! that Zed lacks.
+//! states under `quire/icons/save/`, the sidebar's Lucide icons that Zed lacks under
+//! `quire/icons/sidebar/`, and Quire's themes under `themes/quire/`.
 
 use gpui::{AssetSource, Result, SharedString};
 use std::borrow::Cow;
@@ -92,11 +92,21 @@ pub const SIDEBAR_ICONS: &[(&str, &[u8])] = &[
     ),
 ];
 
-fn save_icon(path: &str) -> Option<&'static [u8]> {
-    SAVE_ICONS
-        .iter()
-        .chain(SIDEBAR_ICONS)
-        .find_map(|(icon, bytes)| (*icon == path).then_some(*bytes))
+/// Quire Light and Quire Dark, built from the reference app's palettes (`roam-theme.css`, its
+/// generated `dark-theme.css`, and `controls.css`). Zed loads every `themes/*.json` asset as a
+/// bundled theme family; `preferences` makes them the defaults.
+pub const THEMES: &[(&str, &[u8])] = &[(
+    "themes/quire/quire.json",
+    include_bytes!("../assets/themes/quire.json"),
+)];
+
+/// Assets served at their own paths: the save and sidebar icons and the themes.
+fn named() -> impl Iterator<Item = &'static (&'static str, &'static [u8])> {
+    SAVE_ICONS.iter().chain(SIDEBAR_ICONS).chain(THEMES)
+}
+
+fn named_asset(path: &str) -> Option<&'static [u8]> {
+    named().find_map(|(icon, bytes)| (*icon == path).then_some(*bytes))
 }
 
 fn tag_icon(path: &str) -> Option<&'static [u8]> {
@@ -108,7 +118,7 @@ fn tag_icon(path: &str) -> Option<&'static [u8]> {
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
-        match tag_icon(path).or_else(|| save_icon(path)) {
+        match tag_icon(path).or_else(|| named_asset(path)) {
             Some(bytes) => Ok(Some(Cow::Borrowed(bytes))),
             None => assets::Assets.load(path),
         }
@@ -124,11 +134,9 @@ impl AssetSource for Assets {
                 .map(SharedString::from),
         );
         paths.extend(
-            SAVE_ICONS
-                .iter()
-                .chain(SIDEBAR_ICONS)
-                .map(|(icon, _)| *icon)
-                .filter(|icon| icon.starts_with(path))
+            named()
+                .map(|(asset, _)| *asset)
+                .filter(|asset| asset.starts_with(path))
                 .map(SharedString::new_static),
         );
         Ok(paths)
