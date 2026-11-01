@@ -144,6 +144,11 @@ fn linked_references_order_daily_pages_follow_saves_and_open_sources(cx: &mut Te
         ("other", "Other.md", "- [[Ana]] undated\n"),
     ];
     let notebook = open_notebook(&pages, "ana", cx);
+    // The panel can settle on an index that has not analyzed every page yet; it answers again
+    // when the index catches up.
+    wait_until(cx, "every linking page in the index", |cx| {
+        blocks(&notebook, cx).0.len() == 3
+    });
     assert_eq!(
         blocks(&notebook, cx).0,
         ["[[Ana]] late", "[[Ana]] early", "[[Ana]] undated"],

@@ -4,6 +4,7 @@
 //! its line; a GFM table draws as a table unless the caret is in it. Everything is read from the
 //! page's Markdown and inline syntax trees, and the Markdown text never changes.
 
+use crate::rich_text::Rich;
 use editor::{
     Addon, Editor, HighlightKey, NavigationOverlayKey,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock},
@@ -55,7 +56,7 @@ pub enum Align {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Table {
     pub mark: Mark,
-    pub rows: Vec<Vec<String>>,
+    pub rows: Vec<Vec<Rich>>,
     pub align: Vec<Align>,
 }
 
@@ -300,7 +301,7 @@ fn quote_marks(
 fn table_cells(
     snapshot: &BufferSnapshot,
     table: language::Node<'_>,
-) -> (Vec<Vec<String>>, Vec<Align>) {
+) -> (Vec<Vec<Rich>>, Vec<Align>) {
     let mut rows = Vec::new();
     let mut align = Vec::new();
     let mut cursor = table.walk();
@@ -310,7 +311,7 @@ fn table_cells(
             "pipe_table_header" | "pipe_table_row" => rows.push(
                 row.named_children(&mut cells)
                     .filter(|cell| cell.kind() == "pipe_table_cell")
-                    .map(|cell| text(snapshot, cell.byte_range()).trim().to_owned())
+                    .map(|cell| crate::rich_text::inline(text(snapshot, cell.byte_range()).trim()))
                     .collect(),
             ),
             "pipe_table_delimiter_row" => {
@@ -408,7 +409,7 @@ pub(crate) struct Anchored {
 #[derive(Clone)]
 pub(crate) struct AnchoredTable {
     pub mark: Anchored,
-    pub rows: Arc<[Vec<String>]>,
+    pub rows: Arc<[Vec<Rich>]>,
     pub align: Arc<[Align]>,
 }
 
@@ -633,6 +634,46 @@ pub(crate) fn highlight(
     }
 }
 
+/// Sets Urdu lines in Nastaliq in Markdown views without Write's projection, such as Source,
+/// as `rt`'s `scriptLines` does in both views. Write sets them with its other styles.
+pub(crate) fn init(cx: &mut App) {
+    cx.observe_new(|editor: &mut Editor, _, cx| {
+        source_urdu(editor, cx);
+        cx.subscribe_self(|editor, event: &editor::EditorEvent, cx| {
+            if matches!(event, editor::EditorEvent::BufferEdited) {
+                source_urdu(editor, cx);
+            }
+        })
+        .detach();
+    })
+    .detach();
+}
+
+/// Sets the Urdu runs of a Markdown view outside Write in Nastaliq.
+pub(crate) fn source_urdu(editor: &mut Editor, cx: &mut Context<Editor>) {
+    let markdown = editor
+        .buffer()
+        .read(cx)
+        .as_singleton()
+        .and_then(|buffer| buffer.read(cx).language().cloned())
+        .is_some_and(|language| language.name().as_ref() == "Markdown");
+    if !markdown || crate::editor_projection::enabled(editor) {
+        return;
+    }
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let runs: Vec<_> = urdu_runs(&snapshot.text())
+        .into_iter()
+        .map(|run| {
+            snapshot.anchor_before(multi_buffer::MultiBufferOffset(run.start))
+                ..snapshot.anchor_after(multi_buffer::MultiBufferOffset(run.end))
+        })
+        .collect();
+    editor.clear_highlights(urdu_key(), cx);
+    if !runs.is_empty() {
+        editor.highlight_text(urdu_key(), runs, urdu_style(), cx);
+    }
+}
+
 /// The styles a view applies, by style, in source offsets; for tests.
 #[cfg(test)]
 pub(crate) fn applied(editor: &Editor, cx: &App) -> Vec<(Style, Vec<Range<usize>>)> {
@@ -810,39 +851,59 @@ fn render_table(host: WeakEntity<Editor>, at: Anchor, table: AnchoredTable) -> R
         let columns = table.rows.iter().map(Vec::len).max().unwrap_or(0);
         let last = table.rows.len().saturating_sub(1);
         let host = host.clone();
-        let rows = table.rows.iter().enumerate().map(|(index, cells)| {
-            gpui::div()
-                .flex()
-                .w_full()
-                .h(block.line_height)
-                .border_t_1()
-                .border_color(line)
-                .when(index == 0, |row| {
-                    row.bg(gpui::rgb(palette.table_head))
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                })
-                .when(index == last, |row| row.border_b_1())
-                .children((0..columns).map(|column| {
-                    let cell = gpui::div()
-                        .flex_1()
-                        .min_w_0()
-                        .h_full()
-                        .px(block.em_width)
-                        .flex()
-                        .items_center()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .border_l_1()
-                        .border_color(line)
-                        .when(column + 1 == columns, |cell| cell.border_r_1())
-                        .child(cells.get(column).cloned().unwrap_or_default());
-                    match table.align.get(column) {
-                        Some(Align::Right) => cell.justify_end(),
-                        Some(Align::Center) => cell.justify_center(),
-                        _ => cell,
-                    }
-                }))
-        });
+        let ink: gpui::Hsla = gpui::rgb(palette.table_ink).into();
+        let font = <theme_settings::ThemeSettings as settings::Settings>::get_global(block.app)
+            .buffer_font
+            .clone();
+        let head = gpui::Font {
+            weight: gpui::FontWeight::MEDIUM,
+            ..font.clone()
+        };
+        let rows: Vec<_> = table
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(index, cells)| {
+                let base = if index == 0 { &head } else { &font };
+                gpui::div()
+                    .flex()
+                    .w_full()
+                    .h(block.line_height)
+                    .border_t_1()
+                    .border_color(line)
+                    .when(index == 0, |row| row.bg(gpui::rgb(palette.table_head)))
+                    .when(index == last, |row| row.border_b_1())
+                    .children((0..columns).map(|column| {
+                        let cell = gpui::div()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .px(block.em_width)
+                            .flex()
+                            .items_center()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .border_l_1()
+                            .border_color(line)
+                            .when(column + 1 == columns, |cell| cell.border_r_1())
+                            .children(cells.get(column).map(|rich| {
+                                cell_text(
+                                    &host,
+                                    index * columns + column,
+                                    rich,
+                                    ink,
+                                    base.clone(),
+                                    block.app,
+                                )
+                            }));
+                        match table.align.get(column) {
+                            Some(Align::Right) => cell.justify_end(),
+                            Some(Align::Center) => cell.justify_center(),
+                            _ => cell,
+                        }
+                    }))
+            })
+            .collect();
         gpui::div()
             .id(block.block_id)
             .debug_selector(|| "quire-table".into())
@@ -854,7 +915,7 @@ fn render_table(host: WeakEntity<Editor>, at: Anchor, table: AnchoredTable) -> R
             .flex()
             .flex_col()
             .justify_center()
-            .text_color(gpui::rgb(palette.table_ink))
+            .text_color(ink)
             .cursor_text()
             .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
                 cx.stop_propagation();
@@ -863,6 +924,54 @@ fn render_table(host: WeakEntity<Editor>, at: Anchor, table: AnchoredTable) -> R
             .children(rows)
             .into_any_element()
     })
+}
+
+/// A table cell's inline Markdown, as rows draw it: emphasis, code, links, and tags, with their
+/// syntax hidden. A press on a link opens it through the page's notebook instead of showing the
+/// table's source.
+fn cell_text(
+    host: &WeakEntity<Editor>,
+    ordinal: usize,
+    rich: &Rich,
+    ink: gpui::Hsla,
+    font: gpui::Font,
+    cx: &App,
+) -> gpui::AnyElement {
+    let text = gpui::StyledText::new(rich.text.clone())
+        .with_runs(crate::rich_text::runs_in(rich, ink, font, cx));
+    if rich.links.is_empty() {
+        return text.into_any_element();
+    }
+    let layout = text.layout().clone();
+    let (ranges, links): (Vec<_>, Vec<_>) = rich.links.iter().cloned().unzip();
+    let pressed = ranges.clone();
+    let host = host.clone();
+    gpui::div()
+        .debug_selector(move || format!("quire-table-link-{ordinal}"))
+        .on_mouse_down(gpui::MouseButton::Left, move |event, _, cx| {
+            if layout
+                .index_for_position(event.position)
+                .is_ok_and(|at| pressed.iter().any(|range| range.contains(&at)))
+            {
+                cx.stop_propagation();
+            }
+        })
+        .child(
+            gpui::InteractiveText::new(("quire-table-cell", ordinal), text).on_click(
+                ranges,
+                move |index, window, cx| {
+                    cx.stop_propagation();
+                    let notebook = host.upgrade().and_then(|editor| {
+                        crate::references::host(editor.read(cx))
+                            .map(|host| host.read(cx).notebook().clone())
+                    });
+                    if let (Some(link), Some(notebook)) = (links.get(index), notebook) {
+                        link.open(window.modifiers().shift, notebook.as_ref(), window, cx);
+                    }
+                },
+            ),
+        )
+        .into_any_element()
 }
 
 #[cfg(test)]
@@ -947,8 +1056,78 @@ mod tests {
             &text[table.mark.range.clone()],
             "| a | b |\n| :-- | --: |\n| 1 | 2 |"
         );
-        assert_eq!(table.rows, [["a", "b"], ["1", "2"]]);
+        assert_eq!(cell_texts(table), [["a", "b"], ["1", "2"]]);
         assert_eq!(table.align, [Align::Left, Align::Right]);
+    }
+
+    fn cell_texts(table: &Table) -> Vec<Vec<&str>> {
+        table
+            .rows
+            .iter()
+            .map(|row| row.iter().map(|cell| cell.text.as_ref()).collect())
+            .collect()
+    }
+
+    /// rt draws a table through its Markdown renderer, so cells show bold, italic, code, links,
+    /// and tags with their syntax hidden.
+    #[gpui::test]
+    fn table_cells_read_their_inline_markdown(cx: &mut TestAppContext) {
+        use crate::rich_text::{Mark, RowLink};
+        let note = "| **Name** | Notes |\n| --- | --- |\n| *it* `code` | see [[Target]] #tag |\n";
+        let (marks, _) = parsed(note, cx);
+        let [table] = marks.tables.as_slice() else {
+            panic!("one table: {:?}", marks.tables);
+        };
+        assert_eq!(
+            cell_texts(table),
+            [["Name", "Notes"], ["it code", "see Target #tag"]]
+        );
+        let shown = |cell: &Rich| -> Vec<(String, Mark)> {
+            cell.marks
+                .iter()
+                .map(|(range, mark)| (cell.text[range.clone()].to_owned(), *mark))
+                .collect()
+        };
+        assert_eq!(
+            shown(&table.rows[0][0]),
+            [("Name".to_owned(), Mark::Strong)]
+        );
+        assert_eq!(
+            shown(&table.rows[1][0]),
+            [
+                ("it".to_owned(), Mark::Emphasis),
+                ("code".to_owned(), Mark::Code)
+            ]
+        );
+        let links: Vec<_> = table.rows[1][1]
+            .links
+            .iter()
+            .map(|(range, link)| (&table.rows[1][1].text[range.clone()], link.clone()))
+            .collect();
+        assert_eq!(
+            links,
+            [
+                (
+                    "Target",
+                    RowLink::Reference(crate::references::Target::Page("Target".into()))
+                ),
+                ("#tag", RowLink::Tag("#tag".into())),
+            ]
+        );
+    }
+
+    /// Front matter is metadata, so its `---` fences never draw as rules, as in rt, which starts
+    /// rules after `frontmatterLength`.
+    #[gpui::test]
+    fn front_matter_fences_are_never_rules(cx: &mut TestAppContext) {
+        let note = "---\ntitle: Plan\ntags: [a]\n---\n\n- item\n\n---\n";
+        let (marks, text) = parsed(note, cx);
+        let rules: Vec<_> = marks.rules.iter().map(|rule| rule.range.start).collect();
+        assert_eq!(
+            rules,
+            [text.rfind("---").unwrap()],
+            "only the rule after the list"
+        );
     }
 
     #[gpui::test]

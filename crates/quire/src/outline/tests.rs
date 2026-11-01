@@ -300,6 +300,91 @@ fn backspace_and_delete_merge_or_remove_empty_bullets(cx: &mut TestAppContext) {
     }
 }
 
+/// rt `Editor.tsx` binds Alt-Backspace to the same merge as Backspace at a block's text start;
+/// elsewhere it is the platform's word deletion (macOS only, as CodeMirror's standard keymap).
+#[gpui::test]
+fn alt_backspace_at_a_block_start_merges_into_the_block_above(cx: &mut TestAppContext) {
+    for vim in [false, true] {
+        let insert = if vim { "i " } else { "" };
+        let window = write_view("- Alpha\n- |Beta\n  - Kid\n", vim, cx);
+        expect(
+            window,
+            &[(&format!("{insert}alt-backspace"), "- Alpha|Beta\n  - Kid\n")],
+            cx,
+        );
+        let window = write_view("- Alpha\n- |Beta ^ref\n", vim, cx);
+        keys(window, &format!("{insert}alt-backspace"), cx);
+        assert_eq!(state(window, cx), "- Alpha\n- |Beta ^ref\n");
+        assert_eq!(
+            cx.update(|cx| notice(cx)).as_deref(),
+            Some(model::REFERENCED)
+        );
+        keys(window, "x", cx);
+        if cfg!(target_os = "macos") {
+            let window = write_view("- Alpha be|ta\n", vim, cx);
+            expect(
+                window,
+                &[(&format!("{insert}alt-backspace"), "- Alpha |ta\n")],
+                cx,
+            );
+        }
+    }
+}
+
+fn selected(window: WindowHandle<Editor>, cx: &mut TestAppContext) -> String {
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |editor, _, cx| {
+            let text = editor.text(cx);
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let selection = editor.selections.newest_anchor();
+            let start = selection.start.to_offset(&snapshot).0;
+            let end = selection.end.to_offset(&snapshot).0;
+            format!("{}[{}]{}", &text[..start], &text[start..end], &text[end..])
+        })
+        .unwrap()
+}
+
+/// rt's `toTextEnd` (`Editor.tsx` 2010-2027): End, Shift-End, Mod-Right, and Mod-Shift-Right
+/// stop at the text end, before a hidden ID and a collapsed block's children, so typing over the
+/// selection keeps them.
+#[gpui::test]
+fn line_end_keys_stop_before_a_hidden_id_and_collapsed_children(cx: &mut TestAppContext) {
+    let line_end = if cfg!(target_os = "macos") {
+        "cmd-right"
+    } else {
+        "end"
+    };
+    let select_line_end = if cfg!(target_os = "macos") {
+        "cmd-shift-right"
+    } else {
+        "shift-end"
+    };
+    for vim in [false, true] {
+        let insert = if vim { "i " } else { "" };
+        for key in ["end", line_end] {
+            let window = write_view("- Al|pha ^id\n- Next\n", vim, cx);
+            expect(
+                window,
+                &[(&format!("{insert}{key}"), "- Alpha| ^id\n- Next\n")],
+                cx,
+            );
+        }
+        for key in ["shift-end", select_line_end] {
+            let window = write_view("- Al|pha ^id\n- Next\n", vim, cx);
+            keys(window, &format!("{insert}{key}"), cx);
+            assert_eq!(selected(window, cx), "- Al[pha] ^id\n- Next\n", "{key}");
+            keys(window, "X", cx);
+            assert_eq!(state(window, cx), "- AlX| ^id\n- Next\n", "{key}");
+        }
+    }
+    let window = write_view("- Pa|rent ^p\n  - Kid\n- Next\n", false, cx);
+    keys(window, &format!("{MOD}-alt-["), cx);
+    assert_eq!(displayed(window, cx), "Parent⋯\nNext\n");
+    keys(window, "shift-end", cx);
+    assert_eq!(selected(window, cx), "- Pa[rent] ^p\n  - Kid\n- Next\n");
+}
+
 #[gpui::test]
 fn task_line_start_reaches_text_then_checkbox(cx: &mut TestAppContext) {
     let text = "- One ^a\n- [ ] Ta|sk\n";
@@ -778,6 +863,13 @@ fn cmd_backspace_stops_at_the_text_start(cx: &mut TestAppContext) {
         ],
         cx,
     );
+    let window = write_view("Plain te|xt\n", false, cx);
+    let line_start = if cfg!(target_os = "macos") {
+        "|xt\n"
+    } else {
+        "Plain |xt\n"
+    };
+    expect(window, &[(&*format!("{MOD}-backspace"), line_start)], cx);
 }
 
 #[gpui::test]

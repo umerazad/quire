@@ -289,3 +289,33 @@ fn hovering_a_page_link_previews_the_page_it_names(cx: &mut TestAppContext) {
         )
     );
 }
+
+/// A link in a drawn table opens its page, as rt's rendered table does, while a press elsewhere
+/// in the table shows its source for editing.
+#[gpui::test]
+fn a_link_in_a_drawn_table_opens_its_page(cx: &mut TestAppContext) {
+    let notebook = open_notebook(
+        &[
+            (
+                "h",
+                "Home.md",
+                "- first\n\n| Page | Note |\n| --- | --- |\n| [[Target]] | **bold** |\n",
+            ),
+            ("t", "Target.md", "- target text\n"),
+        ],
+        "h",
+        cx,
+    );
+    show_home_in_write(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "g g");
+    let link = |cx: &mut TestAppContext| {
+        draw(&notebook, cx);
+        VisualTestContext::from_window(notebook.window.into(), cx)
+            .debug_bounds("quire-table-link-2")
+    };
+    wait_until(cx, "a drawn table link", |cx| link(cx).is_some());
+    let at = link(cx).unwrap();
+    VisualTestContext::from_window(notebook.window.into(), cx)
+        .simulate_click(at.center(), Default::default());
+    wait_until(cx, "the linked page", |cx| active(&notebook, cx) == "t");
+}

@@ -373,7 +373,6 @@ fn native_analysis_matches_the_frozen_task_vectors(cx: &mut TestAppContext) {
     let vectors: Value =
         serde_json::from_str(include_str!("../../../../tests/fixtures/task-vectors.json")).unwrap();
     let today = vectors["today"].as_str().unwrap();
-    let mut divergent = Vec::new();
     let mut failures = Vec::new();
     for case in vectors["cases"].as_array().unwrap() {
         let text = case["text"].as_str().unwrap();
@@ -418,7 +417,10 @@ fn native_analysis_matches_the_frozen_task_vectors(cx: &mut TestAppContext) {
             })
             .collect();
         if native_blocks != reference_blocks {
-            divergent.push(case["name"].as_str().unwrap().to_owned());
+            failures.push(format!(
+                "{} blocks text={text:?}\nexpected={reference_blocks:?}\nactual={native_blocks:?}",
+                case["name"]
+            ));
             continue;
         }
         let duplicate_keys = {
@@ -510,15 +512,6 @@ fn native_analysis_matches_the_frozen_task_vectors(cx: &mut TestAppContext) {
             }
         });
     }
-    // Seeded pages where a fence line follows a list item parse into other blocks under the
-    // tree-sitter grammar than under the reference parser; tasks follow the blocks.
-    assert_eq!(
-        divergent,
-        [
-            "0-59", "0-79", "0-99", "0-141", "0-159", "1-33", "1-47", "1-53"
-        ],
-        "pages whose native blocks differ from the reference blocks"
-    );
     assert!(
         failures.is_empty(),
         "{} native task mismatches:\n{}",

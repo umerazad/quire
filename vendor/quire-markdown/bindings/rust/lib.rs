@@ -244,4 +244,59 @@ mod tests {
         );
         assert!(!edited.root_node().has_error());
     }
+
+    const FENCE: &str = "(fenced_code_block (fenced_code_block_delimiter)";
+
+    // Lezer opens a fence on a line ending at EOF and closes one only where a
+    // line's content starts: backticks after text on a line are code.
+    #[test]
+    fn fences_open_at_eof_and_close_only_at_a_line_start() {
+        let item = items(ITEM, &[" (paragraph (inline))"]);
+        let content = "(block_continuation) (code_fence_content (block_continuation)";
+        let cases = [
+            ("```", format!("{FENCE})")),
+            ("- a\n```", format!("{item} {FENCE})")),
+            ("a\n~~~ js", format!("(paragraph (inline)) {FENCE} (info_string (language)))")),
+            (
+                "```\nx\n```",
+                format!("{FENCE} {content}) (fenced_code_block_delimiter))"),
+            ),
+            (
+                "```\nx ```\ny\n```\n",
+                format!("{FENCE} {content} (block_continuation)) (fenced_code_block_delimiter))"),
+            ),
+            (
+                "> ~~~\n> x ~~~\n> ~~~\n",
+                format!("(block_quote (block_quote_marker) {FENCE} {content}) (fenced_code_block_delimiter)))"),
+            ),
+            (
+                "- a\n  ```\n  x ```\n  ```\n- b\n",
+                format!(
+                    "(list (list_item (list_marker_minus) (paragraph (inline) (block_continuation)) {FENCE} {content}) (fenced_code_block_delimiter))) (list_item (list_marker_minus) (paragraph (inline))))"
+                ),
+            ),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(block_tree(text), expected, "{text:?}");
+        }
+        let text = "```\nx ```\ny\n```\n";
+        let mut parser = block_parser();
+        let mut tree = parser.parse(text, None).unwrap();
+        let at = text.find("y").unwrap();
+        tree.edit(&tree_sitter::InputEdit {
+            start_byte: at,
+            old_end_byte: at,
+            new_end_byte: at + 1,
+            start_position: tree_sitter::Point::new(2, 0),
+            old_end_position: tree_sitter::Point::new(2, 0),
+            new_end_position: tree_sitter::Point::new(2, 1),
+        });
+        let edited = format!("{}z{}", &text[..at], &text[at..]);
+        let reparsed = parser.parse(&edited, Some(&tree)).unwrap();
+        assert_eq!(
+            reparsed.root_node().to_sexp(),
+            parser.parse(&edited, None).unwrap().root_node().to_sexp(),
+            "an incremental reparse agrees with a fresh one"
+        );
+    }
 }

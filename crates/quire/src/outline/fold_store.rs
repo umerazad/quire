@@ -3,7 +3,8 @@
 //! neither synced nor written into the Markdown.
 
 use crate::markdown_blocks::Block;
-use gpui::{App, AppContext as _};
+use editor::Editor;
+use gpui::{AnyWindowHandle, App, AppContext as _, EntityId, WeakEntity};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{
@@ -33,6 +34,14 @@ pub struct FoldStore {
     generation: Cell<u64>,
     /// The generation last written, so an older write that waited never replaces a newer one.
     written: Arc<Mutex<u64>>,
+    /// The views showing each page, which take another view's fold changes as they happen.
+    views: RefCell<Vec<View>>,
+}
+
+struct View {
+    page: String,
+    editor: WeakEntity<Editor>,
+    window: AnyWindowHandle,
 }
 
 impl FoldStore {
@@ -48,6 +57,7 @@ impl FoldStore {
             pages: RefCell::new(pages),
             generation: Cell::new(0),
             written: Arc::default(),
+            views: RefCell::default(),
         })
     }
 
@@ -55,9 +65,21 @@ impl FoldStore {
         self.pages.borrow().get(page).cloned().unwrap_or_default()
     }
 
-    /// Records the page's collapsed blocks and writes the file in the background. A failed write
-    /// shows a notice; the folds stay in this window.
-    pub fn save(&self, page: &str, marks: Vec<Mark>, cx: &mut App) {
+    /// Keeps `editor`, a view of `page`, in step with the folds other views save for the page.
+    pub fn watch(&self, page: &str, editor: WeakEntity<Editor>, window: AnyWindowHandle) {
+        let mut views = self.views.borrow_mut();
+        views.retain(|view| view.editor.upgrade().is_some() && view.editor != editor);
+        views.push(View {
+            page: page.to_owned(),
+            editor,
+            window,
+        });
+    }
+
+    /// Records the page's collapsed blocks, which the view `from` changed, and writes the file in
+    /// the background. The page's other views take the change once the current update ends. A
+    /// failed write shows a notice; the folds stay in this window.
+    pub fn save(&self, page: &str, marks: Vec<Mark>, from: EntityId, cx: &mut App) {
         {
             let mut pages = self.pages.borrow_mut();
             if pages
@@ -71,6 +93,27 @@ impl FoldStore {
             } else {
                 pages.insert(page.to_owned(), marks);
             }
+        }
+        let others: Vec<_> = self
+            .views
+            .borrow()
+            .iter()
+            .filter(|view| view.page == page && view.editor.entity_id() != from)
+            .map(|view| (view.editor.clone(), view.window))
+            .collect();
+        if !others.is_empty() {
+            cx.defer(move |cx| {
+                for (editor, window) in others {
+                    // A view whose window or editor has closed has nothing left to update.
+                    window
+                        .update(cx, |_, window, cx| {
+                            editor
+                                .update(cx, |editor, cx| super::folds::sync(editor, window, cx))
+                                .ok();
+                        })
+                        .ok();
+                }
+            });
         }
         let generation = self.generation.get() + 1;
         self.generation.set(generation);
@@ -293,11 +336,11 @@ mod tests {
             path: vec![1],
             text: "Parent".into(),
         };
-        cx.update(|cx| store.save("p", vec![mark.clone()], cx));
+        cx.update(|cx| store.save("p", vec![mark.clone()], EntityId::from(0), cx));
         cx.executor().run_until_parked();
         assert_eq!(FoldStore::beside(&database, "mine").marks("p"), [mark]);
         assert_eq!(FoldStore::beside(&database, "other").marks("p").len(), 1);
-        cx.update(|cx| store.save("p", Vec::new(), cx));
+        cx.update(|cx| store.save("p", Vec::new(), EntityId::from(0), cx));
         cx.executor().run_until_parked();
         assert!(FoldStore::beside(&database, "mine").marks("p").is_empty());
     }

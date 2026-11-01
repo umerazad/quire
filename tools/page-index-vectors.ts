@@ -70,6 +70,12 @@ const sources: { name: string; source: string }[] = [
     "underscore-break-at-eof": "a\n___",
     "minus-break-at-eof": "---",
     "code-span-with-wiki-link": "- `code [[x]]` y\n- z\n",
+    "fence-opens-at-eof-after-item": "- [ ] code\n```",
+    "fence-with-info-opens-at-eof": "a\n~~~ js",
+    "fence-closes-at-eof": "```\nx\n```",
+    "fence-text-ending-in-backticks": "- a\n```\n- b\nP [[x]] ```\n- c\n```\n- d",
+    "fence-text-ending-in-backticks-in-item": "- a\n  ```\n  x ```\n  ```\n- b\n",
+    "fence-text-ending-in-tildes-in-quote": "> ~~~\n> x ~~~\n> ~~~\nafter\n",
   }).map(([name, source]) => ({ name: `blocks-${name}`, source })),
 ];
 const vectors = sources.map(({ name, source }) => {

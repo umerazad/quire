@@ -12,7 +12,7 @@ use quire_store::index::{IndexedBlock, IndexedLink, IndexedTag, IndexedTask, Pag
 use std::{collections::HashSet, future::Future};
 
 /// Bump whenever analysis output changes; the index then rebuilds itself.
-pub const ANALYZER_VERSION: i64 = 6;
+pub const ANALYZER_VERSION: i64 = 7;
 
 /// The editor's view of stored text: every line break becomes `\n`. Unpaired surrogates become
 /// U+FFFD, which keeps UTF-16 offsets unchanged.
