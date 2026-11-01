@@ -11599,6 +11599,7 @@ dependencies = [
  "gpui",
  "gpui_apple",
  "gpui_platform",
+ "gpui_wgpu",
  "grammars",
  "hex",
  "http_client",
