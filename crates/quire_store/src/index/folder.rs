@@ -49,6 +49,58 @@ pub(super) fn stamp(path: &Path) -> Option<String> {
     ))
 }
 
+enum Scanned {
+    /// The file is unchanged since it was catalogued under this revision.
+    Kept(String),
+    /// The file is new or changed: its page, stamp, and contents.
+    Added(String, String, DiskDocument),
+    Gone,
+}
+
+/// Maps `items` on up to eight threads, keeping their order. Reading and hashing a 5x notebook's
+/// 32,680 files one by one took the first seconds of its first open, then again as pages were
+/// analyzed.
+fn in_parallel<T: Sync, U: Send>(items: &[T], map: impl Fn(&T) -> U + Sync) -> Vec<U> {
+    let threads = std::thread::available_parallelism().map_or(1, |count| count.get().min(8));
+    let chunk = items.len().div_ceil(threads).max(32);
+    let map = &map;
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = items
+            .chunks(chunk)
+            .map(|items| scope.spawn(move || items.iter().map(map).collect::<Vec<_>>()))
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| {
+                worker
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    })
+}
+
+/// Stats each `(page, path)` and reads the files whose stamps changed.
+fn scan(
+    root: &Path,
+    files: &[(String, String)],
+    known: &HashMap<String, (String, String)>,
+) -> Vec<Scanned> {
+    in_parallel(files, |(page, path)| {
+        let Some(stamp) = stamp(&root.join(path)) else {
+            return Scanned::Gone;
+        };
+        match known.get(path) {
+            Some((known_stamp, revision)) if *known_stamp == stamp => {
+                Scanned::Kept(revision.clone())
+            }
+            _ => match folder_notebook::read(root, path) {
+                Ok(Some(document)) => Scanned::Added(page.clone(), stamp, document),
+                _ => Scanned::Gone,
+            },
+        }
+    })
+}
 impl QueryIndex {
     /// Opens the query index of the folder notebook at `root`, kept in `state` outside it.
     pub fn open_folder(root: &Path, state: &Path, config: super::IndexConfig) -> Result<Self> {
@@ -95,25 +147,19 @@ impl QueryIndex {
         .map(|(path, stamp, revision)| (path, (stamp, revision)))
         .collect();
         let mut pages = HashSet::new();
+        let files: Vec<(String, String)> = folder_notebook::list(&folder.root)
+            .files
+            .into_iter()
+            .map(|file| (page_id_for_path(&file.path), file.path))
+            .filter(|(page, _)| pages.insert(page.clone()))
+            .collect();
         let mut kept = Vec::new();
         let mut added = Vec::new();
-        for file in folder_notebook::list(&folder.root).files {
-            let page = page_id_for_path(&file.path);
-            if !pages.insert(page.clone()) {
-                continue;
-            }
-            let Some(stamp) = stamp(&folder.root.join(&file.path)) else {
-                continue;
-            };
-            match known.get(&file.path) {
-                Some((known_stamp, revision)) if *known_stamp == stamp => {
-                    kept.push(revision.clone());
-                }
-                _ => {
-                    if let Ok(Some(document)) = folder_notebook::read(&folder.root, &file.path) {
-                        added.push((page, stamp, document));
-                    }
-                }
+        for scanned in scan(&folder.root, &files, &known) {
+            match scanned {
+                Scanned::Kept(revision) => kept.push(revision),
+                Scanned::Added(page, stamp, document) => added.push((page, stamp, document)),
+                Scanned::Gone => {}
             }
         }
         let wanted: HashSet<String> = kept
@@ -170,22 +216,23 @@ impl QueryIndex {
         let rows: Vec<(String, String)> = self.connection.select_bound(
             "SELECT revision,path FROM pages WHERE analyzed=0 AND deleted=0 ORDER BY revision LIMIT ?",
         )?(limit.clamp(1, 256) as u32)?;
-        let mut pending = Vec::new();
-        for (revision, path) in rows {
-            let page = page_id_for_path(&path);
-            match folder_notebook::read(&folder.root, &path) {
-                Ok(Some(document)) if key(&document, &page) == revision => {
-                    pending.push(PendingPage {
-                        revision,
-                        page: JsString::from(page.as_str()),
-                        path: JsString::from(path.as_str()),
-                        text: JsString::from(document.text.as_str()),
-                    })
-                }
-                _ => folder.stale.set(true),
+        let root = &folder.root;
+        let read = in_parallel(&rows, |(revision, path)| {
+            let page = page_id_for_path(path);
+            match folder_notebook::read(root, path) {
+                Ok(Some(document)) if key(&document, &page) == *revision => Some(PendingPage {
+                    revision: revision.clone(),
+                    page: JsString::from(page.as_str()),
+                    path: JsString::from(path.as_str()),
+                    text: JsString::from(document.text.as_str()),
+                }),
+                _ => None,
             }
+        });
+        if read.iter().any(Option::is_none) {
+            folder.stale.set(true);
         }
-        Ok(pending)
+        Ok(read.into_iter().flatten().collect())
     }
 }
 

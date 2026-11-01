@@ -321,14 +321,16 @@ impl QueryIndex {
     }
 
     /// The reference `projectPages`: a `#project` block, a `Projects/` title, or a front matter
-    /// tag of `project` or `project/<name>`, ordered by title.
+    /// tag of `project` or `project/<name>`, ordered by title. Each way is an index lookup, or a
+    /// pass over front matter tags only: testing every page took 25 ms at 5x. Title keys are
+    /// lowercase, so the range is `LIKE 'projects/%'`.
     pub fn project_pages(&self) -> Result<Vec<PageRef>> {
         let rows: Vec<PageRow> = self.connection.select(&format!(
-            "SELECT {PAGE_COLUMNS} FROM live_pages p WHERE p.deleted=0 AND (
-               EXISTS (SELECT 1 FROM live_tagged t WHERE t.revision=p.revision AND t.tag_key='project')
-               OR p.title_key LIKE 'projects/%'
-               OR EXISTS (SELECT 1 FROM live_front_tags f WHERE f.revision=p.revision
-                 AND (lower(f.tag)='project' OR lower(f.tag) LIKE 'project/_%')))"
+            "SELECT {PAGE_COLUMNS} FROM live_pages p WHERE p.deleted=0 AND p.revision IN (
+               SELECT revision FROM live_tagged WHERE tag_key='project'
+               UNION SELECT revision FROM live_pages WHERE title_key>='projects/' AND title_key<'projects0'
+               UNION SELECT revision FROM live_front_tags
+                 WHERE lower(tag)='project' OR lower(tag) LIKE 'project/_%')"
         ))?()?;
         let mut pages = rows.into_iter().map(page_ref).collect::<Result<Vec<_>>>()?;
         pages.sort_by(|a, b| self.collator.compare(&a.title, &b.title));

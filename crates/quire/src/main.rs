@@ -1140,6 +1140,16 @@ fn main() {
         live_sync::latency::run(rounds.unwrap_or(10));
         return;
     }
+    #[cfg(all(feature = "full-editor", feature = "test-support"))]
+    if std::env::args().nth(1).as_deref() == Some("--measure-index") {
+        let mut args = std::env::args().skip(2);
+        let usage = "Usage: quire --measure-index <notebook folder> <state folder> [edits]";
+        let root = args.next().expect(usage);
+        let state = args.next().expect(usage);
+        let edits = args.next().map_or(0, |edits| edits.parse().expect(usage));
+        query_index::measure::run(root.into(), state.into(), edits);
+        return;
+    }
     #[cfg(feature = "full-editor")]
     editor_host::run();
     #[cfg(not(feature = "full-editor"))]

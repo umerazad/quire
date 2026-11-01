@@ -51,6 +51,9 @@ fn main() -> Result<()> {
         },
     )?;
     let unanalyzed = index.unanalyzed()?;
+    let cold = std::time::Instant::now();
+    index.tag_names()?;
+    let tag_names_cold_ms = cold.elapsed().as_secs_f64() * 1000.;
     ensure!(
         unanalyzed * 100 <= index.pages()?.len(),
         "{unanalyzed} pages are not analyzed yet, so the queries would not be representative. Let Quire finish indexing and retry."
@@ -59,6 +62,7 @@ fn main() -> Result<()> {
     let mut report = serde_json::Map::new();
     report.insert("pages".into(), pages.len().into());
     report.insert("unanalyzed".into(), unanalyzed.into());
+    report.insert("tag_names_cold_ms".into(), tag_names_cold_ms.into());
     report.insert("page_list_ms".into(), times(|| index.pages())?.into());
     for view in [
         TaskView::Due,
@@ -85,7 +89,25 @@ fn main() -> Result<()> {
         .collect::<Result<Vec<_>>>()?
         .concat();
     report.insert("backlinks_ms".into(), backlinks.into());
-    for query in ["budget", "design storage", "ملاحظات"] {
+    let linked: Vec<f64> = pages
+        .iter()
+        .take(20)
+        .map(|page| times(|| index.linked_tasks(&page.page.page.to_lossy_string())))
+        .collect::<Result<Vec<_>>>()?
+        .concat();
+    report.insert("linked_tasks_ms".into(), linked.into());
+    for query in [
+        "budget",
+        "design storage",
+        "meeting",
+        "review draft",
+        "customer support",
+        "quarter release",
+        "schedule",
+        "vendor plan",
+        "ملاحظات",
+        "research summary",
+    ] {
         report.insert(
             format!("search_{query}_ms"),
             times(|| index.search(query))?.into(),

@@ -4,7 +4,7 @@ use sqlez::connection::Connection;
 use std::path::{Path, PathBuf};
 
 /// Bump when the index tables change; a mismatch rebuilds the index.
-const FORMAT: i32 = 4;
+const FORMAT: i32 = 5;
 
 const TABLES: &[&str] = &[
     "CREATE TABLE meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1), notebook TEXT NOT NULL, analyzer INTEGER NOT NULL, layout TEXT NOT NULL)",
@@ -24,7 +24,13 @@ const TABLES: &[&str] = &[
     "CREATE INDEX tagged_by_key ON tagged(tag_key)",
     "CREATE TABLE front_tags (revision TEXT NOT NULL REFERENCES pages(revision) ON DELETE CASCADE, ordinal INTEGER NOT NULL, tag TEXT NOT NULL, UNIQUE(revision, ordinal))",
     // Dates keep their sources; `created` and `due` are re-derived when the daily layout changes.
-    "CREATE TABLE tasks (revision TEXT NOT NULL REFERENCES pages(revision) ON DELETE CASCADE, ordinal INTEGER NOT NULL, key TEXT NOT NULL, id TEXT, start INTEGER NOT NULL, raw TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL, tags TEXT NOT NULL, links TEXT NOT NULL, dates TEXT NOT NULL, completed TEXT, created TEXT, due TEXT, UNIQUE(revision, ordinal))",
+    // `day` is the due date, or the date of the daily page holding the task, which lists sort by.
+    "CREATE TABLE tasks (revision TEXT NOT NULL REFERENCES pages(revision) ON DELETE CASCADE, ordinal INTEGER NOT NULL, key TEXT NOT NULL, id TEXT, start INTEGER NOT NULL, raw TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL, tags TEXT NOT NULL, links TEXT NOT NULL, dates TEXT NOT NULL, completed TEXT, created TEXT, due TEXT, day TEXT, UNIQUE(revision, ordinal))",
+    "CREATE INDEX tasks_by_list ON tasks(state, day)",
+    // Each task link once, keyed as page links are, so linked tasks and project actions are lookups.
+    "CREATE TABLE task_links (revision TEXT NOT NULL REFERENCES pages(revision) ON DELETE CASCADE, ordinal INTEGER NOT NULL, target TEXT NOT NULL, page_key TEXT NOT NULL, date TEXT, UNIQUE(revision, ordinal, target))",
+    "CREATE INDEX task_links_by_page ON task_links(page_key)",
+    "CREATE INDEX task_links_by_date ON task_links(date) WHERE date IS NOT NULL",
     // Search rows mirror the reference SearchIndex: a title row per page, then one row per block.
     "CREATE TABLE search_rows (rowid INTEGER PRIMARY KEY, revision TEXT NOT NULL REFERENCES pages(revision) ON DELETE CASCADE, title TEXT NOT NULL, text TEXT NOT NULL, block_id TEXT)",
     "CREATE INDEX search_rows_by_revision ON search_rows(revision)",
@@ -32,6 +38,11 @@ const TABLES: &[&str] = &[
     "CREATE TRIGGER search_rows_insert AFTER INSERT ON search_rows BEGIN INSERT INTO search(rowid,revision,title,text,block_id) VALUES (new.rowid,new.revision,new.title,new.text,new.block_id); END",
     "CREATE TRIGGER search_rows_delete AFTER DELETE ON search_rows BEGIN INSERT INTO search(search,rowid,revision,title,text,block_id) VALUES ('delete',old.rowid,old.revision,old.title,old.text,old.block_id); END",
 ];
+
+/// While a backlog is stored, the log is checkpointed per 64 MiB instead of per 4 MiB, SQLite's
+/// default, which is restored when the backlog is sealed.
+pub(super) const BULK_CHECKPOINTS: &str = "PRAGMA wal_autocheckpoint = 16384";
+pub(super) const STEADY_CHECKPOINTS: &str = "PRAGMA wal_autocheckpoint = 1000";
 
 /// The selected head of every page, using the same order as `page_metadata`.
 macro_rules! selected {
@@ -144,7 +155,7 @@ fn suffixed(path: &Path, suffix: &str) -> PathBuf {
 /// committed changes waiting in the write-ahead log. SQLite's write-ahead log keeps the file
 /// consistent through crashes, so an unchanged sealed file needs no integrity scan; anything else,
 /// such as a crash before sealing or an outside edit, is scanned on open.
-fn is_sealed(path: &Path) -> bool {
+pub(super) fn is_sealed(path: &Path) -> bool {
     let log_empty = std::fs::metadata(suffixed(path, "-wal")).map_or(true, |log| log.len() == 0);
     log_empty
         && super::folder::stamp(path).is_some_and(|stamp| {

@@ -25,10 +25,16 @@ pub(super) const TABLES: &[&str] = &[
     "CREATE TEMP TABLE overlay_front_tags (revision TEXT NOT NULL, ordinal INTEGER NOT NULL, tag TEXT NOT NULL, UNIQUE(revision, ordinal))",
     // Unsaved text is searchable: a title row and one row per block, as committed pages have.
     "CREATE VIRTUAL TABLE temp.overlay_search USING fts5(revision UNINDEXED, title, text, block_id UNINDEXED, tokenize='unicode61')",
-    "CREATE TEMP TABLE overlay_tasks (revision TEXT NOT NULL, ordinal INTEGER NOT NULL, key TEXT NOT NULL, id TEXT, start INTEGER NOT NULL, raw TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL, tags TEXT NOT NULL, links TEXT NOT NULL, dates TEXT NOT NULL, completed TEXT, created TEXT, due TEXT, UNIQUE(revision, ordinal))",
+    "CREATE TEMP TABLE overlay_tasks (revision TEXT NOT NULL, ordinal INTEGER NOT NULL, key TEXT NOT NULL, id TEXT, start INTEGER NOT NULL, raw TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL, tags TEXT NOT NULL, links TEXT NOT NULL, dates TEXT NOT NULL, completed TEXT, created TEXT, due TEXT, day TEXT, UNIQUE(revision, ordinal))",
     "CREATE TEMP VIEW live_tasks AS
-       SELECT revision,ordinal,key,id,start,raw,text,state,tags,links,dates,completed,created,due FROM main.tasks
-       UNION ALL SELECT revision,ordinal,key,id,start,raw,text,state,tags,links,dates,completed,created,due FROM temp.overlay_tasks",
+       SELECT revision,ordinal,key,id,start,raw,text,state,tags,links,dates,completed,created,due,day FROM main.tasks
+       UNION ALL SELECT revision,ordinal,key,id,start,raw,text,state,tags,links,dates,completed,created,due,day FROM temp.overlay_tasks",
+    "CREATE TEMP TABLE overlay_task_links (revision TEXT NOT NULL, ordinal INTEGER NOT NULL, target TEXT NOT NULL, page_key TEXT NOT NULL, date TEXT, UNIQUE(revision, ordinal, target))",
+    "CREATE INDEX temp.overlay_task_links_by_page ON overlay_task_links(page_key)",
+    "CREATE INDEX temp.overlay_task_links_by_date ON overlay_task_links(date)",
+    "CREATE TEMP VIEW live_task_links AS
+       SELECT revision,ordinal,target,page_key,date FROM main.task_links
+       UNION ALL SELECT revision,ordinal,target,page_key,date FROM temp.overlay_task_links",
     // A new save waiting for analysis stays hidden behind its page's last analyzed revision.
     "CREATE TEMP VIEW live_pages AS
        SELECT revision,page,path,name_key,title,title_key,date,deleted,analyzed FROM main.pages p
@@ -95,7 +101,7 @@ impl QueryIndex {
                     block.id.as_deref(),
                 ))?;
             }
-            self.insert_rows("temp.overlay_", &revision, &overlay.index)
+            self.insert_rows("temp.overlay_", &[(revision.as_str(), &overlay.index)])
         })?;
         self.bump();
         Ok(())
@@ -133,6 +139,7 @@ impl QueryIndex {
             "overlay_tagged",
             "overlay_front_tags",
             "overlay_tasks",
+            "overlay_task_links",
             "overlay_search",
         ] {
             self.connection
