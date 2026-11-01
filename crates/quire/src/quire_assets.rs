@@ -1,6 +1,7 @@
 //! Quire's asset source: Zed's bundled assets, plus the reference app's tag icons (Lucide, ISC;
 //! `assets/icons/tags/LICENSE`) under `quire/icons/tags/<tone>.svg` and the page toolbar's save
-//! states under `quire/icons/save/`, and Quire's themes under `themes/quire/`.
+//! states under `quire/icons/save/`, the sidebar's Lucide icons that Zed lacks under
+//! `icons/quire/sidebar/` (where `ui::Icon::from_path` looks for embedded SVGs), and Quire's themes under `themes/quire/`.
 
 use gpui::{AssetSource, Result, SharedString};
 use std::borrow::Cow;
@@ -67,6 +68,30 @@ pub const SAVE_ICONS: &[(&str, &[u8])] = &[
     ),
 ];
 
+/// The sidebar's Lucide icons that Zed has no match for (`assets/icons/sidebar/LICENSE`).
+pub const SIDEBAR_ICONS: &[(&str, &[u8])] = &[
+    (
+        "icons/quire/sidebar/book-open.svg",
+        include_bytes!("../assets/icons/sidebar/book-open.svg"),
+    ),
+    (
+        "icons/quire/sidebar/calendar-days.svg",
+        include_bytes!("../assets/icons/sidebar/calendar-days.svg"),
+    ),
+    (
+        "icons/quire/sidebar/file-plus-corner.svg",
+        include_bytes!("../assets/icons/sidebar/file-plus-corner.svg"),
+    ),
+    (
+        "icons/quire/sidebar/layout-template.svg",
+        include_bytes!("../assets/icons/sidebar/layout-template.svg"),
+    ),
+    (
+        "icons/quire/sidebar/upload.svg",
+        include_bytes!("../assets/icons/sidebar/upload.svg"),
+    ),
+];
+
 /// Quire Light and Quire Dark, built from the reference app's palettes (`roam-theme.css`, its
 /// generated `dark-theme.css`, and `controls.css`). Zed loads every `themes/*.json` asset as a
 /// bundled theme family; `preferences` makes them the defaults.
@@ -75,9 +100,9 @@ pub const THEMES: &[(&str, &[u8])] = &[(
     include_bytes!("../assets/themes/quire.json"),
 )];
 
-/// Assets served at their own paths: the save icons and the themes.
+/// Assets served at their own paths: the save and sidebar icons and the themes.
 fn named() -> impl Iterator<Item = &'static (&'static str, &'static [u8])> {
-    SAVE_ICONS.iter().chain(THEMES)
+    SAVE_ICONS.iter().chain(SIDEBAR_ICONS).chain(THEMES)
 }
 
 fn named_asset(path: &str) -> Option<&'static [u8]> {
@@ -131,17 +156,23 @@ mod tests {
             assert!(bytes.starts_with(b"<svg"), "{path}");
             assert!(Assets.list("quire/icons/").unwrap().contains(&path));
         }
-        for (path, _) in SAVE_ICONS {
+        for (path, _) in SAVE_ICONS.iter().chain(SIDEBAR_ICONS) {
             assert!(
                 Assets.load(path).unwrap().unwrap().starts_with(b"<svg"),
                 "{path}"
             );
+            let folder = &path[..=path.rfind('/').unwrap()];
             assert!(
                 Assets
-                    .list("quire/icons/")
+                    .list(folder)
                     .unwrap()
                     .contains(&SharedString::from(*path))
             );
+        }
+        // `ui::Icon::from_path` loads only `icons/` paths from the assets; any other path is read
+        // as a raster file on disk and draws nothing.
+        for (path, _) in SIDEBAR_ICONS {
+            assert!(path.starts_with("icons/"), "{path}");
         }
         assert_eq!(TAG_ICONS.len(), TONES.len());
         assert!(
