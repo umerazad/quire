@@ -21,7 +21,7 @@ pub(in crate::editor_host::stored) struct DailyState {
     heads: Vec<String>,
     pub(in crate::editor_host::stored) editing: Option<[Entity<Editor>; 2]>,
     pub(in crate::editor_host::stored) now: Rc<dyn Fn() -> i64>,
-    task: Option<Task<()>>,
+    pub(in crate::editor_host::stored) task: Option<Task<()>>,
     /// Opens today's page once settings and the index are ready, as every launch does.
     pub(in crate::editor_host::stored) open_on_launch: bool,
 }

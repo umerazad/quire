@@ -15,6 +15,7 @@ mod backups;
 mod bench;
 mod block_move_views;
 mod document_export;
+mod example;
 mod exchange;
 mod folder;
 mod help_pane;
@@ -26,6 +27,7 @@ mod page_views;
 mod profiles;
 mod sync;
 
+pub(super) use example::launch as launch_example_notebook;
 pub(super) use folder::FolderOptions;
 pub(super) use instance::{Handover, handle_launch};
 pub(crate) use profiles::{dispatch_to_notebook, notebook_windows, open_in_profile};

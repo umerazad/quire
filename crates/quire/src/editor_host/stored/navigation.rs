@@ -1099,3 +1099,7 @@ mod live_tests;
 #[cfg(test)]
 #[path = "page_views_tests.rs"]
 mod page_views_tests;
+
+#[cfg(test)]
+#[path = "example_tests.rs"]
+mod example_tests;

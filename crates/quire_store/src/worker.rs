@@ -328,6 +328,12 @@ impl Client<NotebookStore> {
             store.save_many_if_heads(&edits)
         })
     }
+    pub fn create_if_free(
+        &self,
+        edit: Edit,
+    ) -> std::result::Result<Reply<CheckedSaves>, QueueError> {
+        self.request(edit_size(&edit), move |store| store.create_if_free(&edit))
+    }
     pub fn delete_if_heads(
         &self,
         edits: Vec<Edit>,

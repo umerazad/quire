@@ -82,6 +82,15 @@ impl NotebookBackend {
         }
     }
 
+    /// Saves a new page unless a live page already holds its path. A folder notebook creates the
+    /// note's file exclusively, so its checked save already refuses a taken path.
+    pub fn create_if_free(&self, edit: Edit) -> Answer<CheckedSaves> {
+        match self {
+            Self::Store(client) => client.create_if_free(edit),
+            Self::Folder(client) => client.save_many_if_heads(vec![edit]),
+        }
+    }
+
     pub fn save_many_if_heads(&self, edits: Vec<Edit>) -> Answer<CheckedSaves> {
         match self {
             Self::Store(client) => client.save_many_if_heads(edits),

@@ -61,7 +61,7 @@ pub enum CheckedSaves {
         heads: Vec<String>,
     },
     /// Nothing was written: a live page at `path` is inside the folder being deleted but was not
-    /// chosen with it.
+    /// chosen with it, or already holds the path of a page being created.
     Appeared {
         path: String,
     },
@@ -193,6 +193,33 @@ impl NotebookStore {
     /// the same write transaction as the saves.
     pub fn save_many_if_heads(&self, edits: &[Edit]) -> Result<CheckedSaves> {
         self.save_many_checked(edits, None)
+    }
+
+    /// Saves a new page only while it has no version and no live page holds its path, ignoring
+    /// case and Unicode normalization as page lookups do; both checks share the save's write
+    /// transaction, so two simultaneous creates of one path make one page whatever identities
+    /// they chose. A taken path answers `Appeared` and writes nothing.
+    pub fn create_if_free(&self, edit: &Edit) -> Result<CheckedSaves> {
+        ensure!(
+            edit.base.is_empty() && !edit.deleted,
+            "A new page cannot have a base version or be deleted. Create the page again."
+        );
+        self.transaction(|| {
+            if self.page_at(&edit.path)?.is_some() {
+                return Ok(CheckedSaves::Appeared {
+                    path: edit.path.clone(),
+                });
+            }
+            let heads = self.heads(&edit.page)?;
+            if !heads.is_empty() {
+                return Ok(CheckedSaves::HeadsChanged {
+                    page: edit.page.clone(),
+                    heads,
+                });
+            }
+            self.save_one(edit)
+                .map(|ack| CheckedSaves::Saved(vec![ack]))
+        })
     }
 
     /// Deletes every page in `edits` or none, as `save_many_if_heads` saves them. With `folder`,

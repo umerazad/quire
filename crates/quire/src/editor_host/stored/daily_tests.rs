@@ -288,3 +288,52 @@ fn opening_without_a_launch_keeps_the_restored_page(cx: &mut TestAppContext) {
     settle(&notebook, cx);
     assert_eq!(active(&notebook, cx), "a");
 }
+
+/// Asking for today's page again while the first request is still creating it, as a launch and
+/// a quick Today press do, makes one page and opens it without an error.
+#[gpui::test]
+fn opening_today_twice_at_once_makes_one_daily_page(cx: &mut TestAppContext) {
+    let (notebook, _, _) = journal_notebook(cx);
+    set_now(&notebook, NOW + DAY, cx);
+    let expected = format!("Journal/{}.md", title(&journal(), NOW + DAY).0);
+    notebook
+        .window
+        .update(cx, |view, window, cx| view.open_today(window, cx))
+        .unwrap();
+    wait_until(cx, "the first create to start", |cx| {
+        read(&notebook, cx, |view, _| view.nav.creating.is_some())
+    });
+    notebook
+        .window
+        .update(cx, |view, window, cx| view.open_today(window, cx))
+        .unwrap();
+    wait_until(cx, "both requests to finish", |cx| {
+        read(&notebook, cx, |view, _| {
+            view.nav.daily.task.is_none() && view.nav.creating.is_none()
+        })
+    });
+    wait_until(cx, "the daily page to open", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.page
+                .read(cx)
+                .loaded()
+                .is_some_and(|page| page.path.as_deref() == Some(expected.as_str()))
+        })
+    });
+    read(&notebook, cx, |view, _| {
+        assert_eq!(view.nav.error.as_deref(), None)
+    });
+    settle(&notebook, cx);
+    let store = NotebookStore::open(&notebook.path, "nb", "local").unwrap();
+    let created = store.page_at(&expected).unwrap().unwrap().0;
+    assert_eq!(active(&notebook, cx), created);
+    let client = read(&notebook, cx, |view, cx| view.index_client(cx).unwrap());
+    let pages = futures::executor::block_on(crate::query_index::ask(client.pages())).unwrap();
+    assert_eq!(
+        pages
+            .iter()
+            .filter(|listed| listed.page.path == expected)
+            .count(),
+        1
+    );
+}
