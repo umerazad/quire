@@ -5,6 +5,7 @@ use gpui::{App, AppContext, Entity, Focusable, KeyBinding, Window, prelude::*};
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use ui::{Button, ButtonCommon, Clickable, Label, LabelCommon, Tooltip};
 
+mod startup_failure;
 mod stored;
 
 pub(crate) use stored::{dispatch_to_notebook, notebook_windows, open_in_profile};
@@ -794,8 +795,7 @@ pub fn run() {
     };
     gpui_platform::application().with_assets(crate::quire_assets::Assets).run(move |cx| {
         if let Err(error) = init(cx) {
-            eprintln!("{error}");
-            cx.quit();
+            startup_failure::show(error, None, cx);
             return;
         }
         let fs = ::fs::RealFs::new(None, cx.background_executor().clone());
@@ -811,8 +811,7 @@ pub fn run() {
             serve_launches(listener, cx);
         }
         if let Err(error) = assets::Assets.load_fonts(cx).and_then(|()| crate::script_fonts::load(cx)) {
-            eprintln!("Cannot load Quire's bundled fonts: {error}. Rebuild the application assets.");
-            cx.quit();
+            startup_failure::show(format!("Cannot load Quire's bundled fonts: {error}. Reinstall Quire, or rebuild the application assets for a development build."), None, cx);
             return;
         }
         match reqwest_client::ReqwestClient::user_agent(concat!("Quire/", env!("CARGO_PKG_VERSION"))) {
@@ -821,29 +820,25 @@ pub fn run() {
         }
         cx.on_window_closed(|cx, _| { if cx.windows().is_empty() { cx.quit(); } }).detach();
         if let Some(options) = stored {
-            if let Err(error) = options.open(cx) {
-                eprintln!("{error}");
-                cx.quit();
+            if let Err(error) = options.clone().open(cx) {
+                startup_failure::show(error, Some(std::rc::Rc::new(move |cx| options.clone().open(cx))), cx);
             }
             return;
         }
         if let Some(options) = folder {
-            if let Err(error) = options.open(cx) {
-                eprintln!("{error}");
-                cx.quit();
+            if let Err(error) = options.clone().open(cx) {
+                startup_failure::show(error, Some(std::rc::Rc::new(move |cx| options.clone().open(cx))), cx);
             }
             return;
         }
         if !harness
             && let Some(notebook) = crate::profiles::get(crate::profiles::active(cx), cx).notebook
         {
-            match stored::launch_location(&notebook, cx) {
-                Ok(()) => return,
-                Err(error) => crate::outline::show_notice(
-                    format!("Quire could not reopen the {} notebook: {error}", crate::profiles::active(cx).label()),
-                    cx,
-                ),
+            if let Err(error) = stored::launch_location(&notebook, cx) {
+                let message = format!("Quire could not reopen the {} notebook: {error}", crate::profiles::active(cx).label());
+                startup_failure::show(message, Some(std::rc::Rc::new(move |cx| stored::launch_location(&notebook, cx))), cx);
             }
+            return;
         }
         let prefix = "# Welcome to Quire\n\n";
         let block = "- Edit this note in either pane. ^b-welcome\n  - Both panes share the same document.";

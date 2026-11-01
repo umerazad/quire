@@ -29,7 +29,7 @@ mod sync;
 pub(super) use folder::FolderOptions;
 pub(super) use instance::{Handover, handle_launch};
 pub(crate) use profiles::{dispatch_to_notebook, notebook_windows, open_in_profile};
-pub(super) use profiles::{launch_location, open_location};
+pub(super) use profiles::{launch_location, open_chosen_folder, open_location};
 
 pub(super) fn bind_keys(cx: &mut App) {
     profiles::init(cx);
@@ -130,6 +130,7 @@ impl CloseState {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct OpenOptions {
     database: PathBuf,
     notebook: String,

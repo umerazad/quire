@@ -30,6 +30,7 @@ const LISTED_RECOVERED: usize = 10;
 /// Lines of the disk version the comparison shows.
 const COMPARED_LINES: usize = 400;
 
+#[derive(Clone)]
 pub(in crate::editor_host) struct FolderOptions {
     root: PathBuf,
     page: Option<String>,
