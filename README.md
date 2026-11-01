@@ -103,7 +103,9 @@ cargo build -p quire --locked
 bun run dev
 ```
 
-On Linux, `nix develop` (or `direnv allow` once, with `.envrc`) gives a pinned shell: Rust from `rust-toolchain.toml`, bun, Node 22, the GPUI system libraries, the mold linker, Nix's Mesa Vulkan drivers (so no nixGL on Ubuntu), and the hash-pinned PDFium in `QUIRE_PDFIUM_DIR`, so `tools/fetch-pdfium.ts` is not needed there. `flake.lock` pins every input; `nix flake update` moves them. The PDFium hashes in `flake.nix` must change with `tools/pdfium.ts`.
+`make` lists shortcuts for these commands: `make setup` once per machine, then `make build`, `make run`, `make test`, `make check` (format and lints), `make gates`, `make capture`, and `make bundle`. Pass app flags with `make run ARGS="..."`.
+
+`nix develop` (or `direnv allow` once, with `.envrc`) gives a pinned shell on Linux and Apple Silicon Macs: Rust from `rust-toolchain.toml`, bun, Node 22, and the hash-pinned PDFium in `QUIRE_PDFIUM_DIR`, so `tools/fetch-pdfium.ts` is not needed there. On Linux it adds the GPUI system libraries, the mold linker, and Nix's Mesa Vulkan drivers (so no nixGL on Ubuntu). On macOS it keeps Xcode's compiler, linker and SDK, because GPUI compiles its Metal shaders with `xcrun metal`; Xcode must be installed and selected with `xcode-select`. `flake.lock` pins every input; `nix flake update` moves them. The PDFium hashes in `flake.nix` must change with `tools/pdfium.ts`.
 
 `bun run dev` requires a regular desktop terminal. The macOS Codex sandbox denies desktop services, including the pasteboard; the launcher detects that environment and explains how to proceed. Headless GPUI tests still run there. In this sandbox, build commands use `CARGO_HOME=/private/tmp/quire-cargo` because the shared Cargo cache is read-only.
 

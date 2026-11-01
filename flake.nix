@@ -23,6 +23,11 @@
           platform = "linux-arm64";
           sha256 = "ee7f7b7d5468958336a818c1cd580bdd20972846b7377b13f9a923d92d1d4674";
         };
+        aarch64-darwin = {
+          platform = "mac-arm64";
+          sha256 = "52e94ca5aa8847934330daf3f8150c190682c5ca93831468794f8b90d4392e40";
+        };
+        # No x86_64-darwin: nixpkgs-unstable dropped Intel Macs.
       };
 
       forSystem =
@@ -61,7 +66,38 @@
           ];
 
           triple = lib.toUpper (lib.replaceStrings [ "-" ] [ "_" ] pkgs.stdenv.hostPlatform.rust.rustcTarget);
+
+          shellHook = ''
+            export CARGO_HOME="''${CARGO_HOME:-$HOME/.cargo}"
+          '';
+
+          # macOS keeps Xcode's clang, linker and SDK: GPUI compiles its Metal shaders with
+          # `xcrun metal`, which Nix's SDK does not ship. The Rust package propagates Nix's
+          # clang wrapper and its flags, so the hook drops them and the build matches a plain
+          # Xcode build.
+          darwinShell = pkgs.mkShellNoCC {
+            packages = with pkgs; [
+              rust
+              bun
+              nodejs_22
+              cmake
+            ];
+            env.QUIRE_PDFIUM_DIR = "${pdfium}";
+            shellHook = shellHook + ''
+              for var in $(compgen -e | grep -E '^(NIX_(CC|BINTOOLS|CFLAGS|LDFLAGS|HARDENING|ENFORCE|DONT_SET|NO_SELF|IGNORE_LD)|(CC|CXX|LD|AR)(_FOR_BUILD)?$|MACOSX_DEPLOYMENT_TARGET$)'); do
+                unset "$var"
+              done
+              PATH=$(printf %s "$PATH" | tr : '\n' | grep -vE '/nix/store/[^/]*-(clang-wrapper|clang|cctools-binutils-darwin(-wrapper)?)-[^/]*/bin' | paste -sd : -)
+              export PATH
+              if ! /usr/bin/xcrun --find metal >/dev/null 2>&1; then
+                echo "quire: Xcode's Metal compiler was not found. Install Xcode, then run: sudo xcode-select -s /Applications/Xcode.app" >&2
+              fi
+            '';
+          };
         in
+        if pkgs.stdenv.hostPlatform.isDarwin then
+          darwinShell
+        else
         pkgs.mkShell {
           packages = with pkgs; [
             rust
@@ -84,9 +120,7 @@
             QUIRE_PDFIUM_DIR = "${pdfium}";
           };
 
-          shellHook = ''
-            export CARGO_HOME="''${CARGO_HOME:-$HOME/.cargo}"
-          '';
+          inherit shellHook;
         };
     in
     {
