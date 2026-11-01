@@ -3,12 +3,16 @@
 //! one list filtered and ordered as the reference Tasks page orders it.
 
 use super::query::{PAGE_COLUMNS, PageRef, PageRow, page_ref};
-use super::{QueryIndex, REBUILD};
+use super::{QueryIndex, REBUILD, strip_markdown};
 use anyhow::{Context as _, Result};
 use quire_core::task_query;
 use quire_core::tasks::{TaskFilter, TaskState, add_days, memberships};
 use quire_core::workspace::{TaskStatus, TaskView};
-use std::{cell::RefCell, cmp::Ordering, collections::HashMap};
+use std::{
+    cell::RefCell,
+    cmp::Ordering,
+    collections::{BTreeSet, HashMap},
+};
 
 /// How far ahead Upcoming looks, in days.
 pub const UPCOMING_DAYS: i64 = 7;
@@ -54,19 +58,6 @@ impl TaskItem {
             && self.due.as_deref().is_some_and(|due| {
                 due > today && until.as_deref().is_some_and(|until| due <= until)
             })
-    }
-
-    fn shows_in(&self, view: TaskView, today: &str) -> bool {
-        match view {
-            TaskView::Due => self.is_due(today),
-            TaskView::Upcoming => self.is_upcoming(today),
-            TaskView::Inbox => self.state == TaskState::Inbox,
-            TaskView::Next => self.state == TaskState::Next,
-            TaskView::Waiting => self.state == TaskState::Waiting,
-            TaskView::Someday => self.state == TaskState::Someday,
-            TaskView::Done => self.state == TaskState::Done,
-            TaskView::Projects => false,
-        }
     }
 }
 
@@ -139,6 +130,14 @@ pub struct TaskBoard {
     pub matching: usize,
     pub projects: Vec<ProjectSummary>,
 }
+
+/// Saved revisions whose task rows lists skip: open pages, which their unsaved rows stand for,
+/// and deleted pages.
+const SKIPPED: &str =
+    "SELECT revision FROM main.pages WHERE page IN (SELECT page FROM temp.overlay_pages)
+   UNION SELECT revision FROM main.pages WHERE analyzed=1 AND deleted=1";
+/// The states of open tasks, as SQL.
+const OPEN: &str = "'inbox','next','waiting','someday'";
 
 type TaskRow = (
     PageRow,
@@ -244,9 +243,10 @@ impl QueryIndex {
     /// The reference `linkedTasks`: tasks on other pages that link to `page`, directly or through
     /// a parent block, such as action items written under a [[Meeting]] line.
     ///
-    /// Only links that could name the page, by its name, title, or date, are resolved, and only
-    /// matching tasks are read in full: reading and sorting all 48,260 tasks at 5x on every
-    /// keystroke kept the index thread busy while typing.
+    /// Task links are indexed by page key and date, so only links that could name the page, by
+    /// its name, title, or date, are read and resolved, and only matching tasks are read in full.
+    /// Scanning every task's links on each index change took 27% of the index thread's time while
+    /// typing at 5x.
     pub fn linked_tasks(&self, page: &str) -> Result<Vec<TaskItem>> {
         self.refresh()?;
         let identity = crate::sync::json::JsString::from(page).to_json();
@@ -258,44 +258,39 @@ impl QueryIndex {
             return Ok(Vec::new());
         };
         let candidates: Vec<(String, i64, String)> = self.connection.select_bound(
-            "SELECT t.revision,t.ordinal,t.links FROM live_tasks t JOIN live_pages p ON p.revision=t.revision
-             WHERE p.deleted=0 AND p.page!=? AND t.links!='[]'",
-        )?(identity.as_str())?;
+            "SELECT k.revision,k.ordinal,k.target FROM live_task_links k JOIN live_pages p ON p.revision=k.revision
+               WHERE p.deleted=0 AND p.page!=?1 AND k.page_key IN (?2,?3)
+             UNION SELECT k.revision,k.ordinal,k.target FROM live_task_links k JOIN live_pages p ON p.revision=k.revision
+               WHERE p.deleted=0 AND p.page!=?1 AND k.date=?4",
+        )?((identity.as_str(), name.as_str(), title.as_str(), date.as_deref()))?;
+        self.count_rows(candidates.len());
         let mut names: HashMap<String, bool> = HashMap::new();
-        let mut names_page = |link: &str| -> Result<bool> {
-            if let Some(known) = names.get(link) {
-                return Ok(*known);
-            }
-            let key = super::page_key(link);
-            let could = key == name || key == title || (date.is_some() && self.date(link) == date);
-            let found = could
-                && self
-                    .resolve_page(link)?
-                    .is_some_and(|found| found.page.to_lossy_string() == page);
-            names.insert(link.to_owned(), found);
-            Ok(found)
-        };
-        let mut linked = Vec::new();
-        for (revision, ordinal, links) in candidates {
-            let mut matched = false;
-            for link in parse_list(&links)? {
-                if names_page(&link)? {
-                    matched = true;
-                    break;
+        let mut matched = BTreeSet::new();
+        for (revision, ordinal, target) in candidates {
+            let found = match names.get(&target) {
+                Some(found) => *found,
+                None => {
+                    let found = self
+                        .resolve_page(&target)?
+                        .is_some_and(|found| found.page.to_lossy_string() == page);
+                    names.insert(target, found);
+                    found
                 }
-            }
-            if matched {
-                let row: Option<TaskRow> = self
-                    .connection
-                    .select_row_bound(&task_select(" AND t.revision=? AND t.ordinal=?"))?(
-                    (
-                    revision.as_str(),
-                    ordinal,
-                )
-                )?;
-                linked.push(task_item(row.context(REBUILD)?)?);
+            };
+            if found {
+                matched.insert((revision, ordinal));
             }
         }
+        let mut task = self
+            .connection
+            .select_row_bound(&task_select(" AND t.revision=? AND t.ordinal=?"))?;
+        let mut linked = matched
+            .iter()
+            .map(|(revision, ordinal)| {
+                let row: Option<TaskRow> = task((revision.as_str(), *ordinal))?;
+                task_item(row.context(REBUILD)?)
+            })
+            .collect::<Result<Vec<_>>>()?;
         self.sort_tasks(&mut linked);
         Ok(linked)
     }
@@ -354,25 +349,26 @@ impl QueryIndex {
 
     /// Everything the Tasks browser shows, read in one step so counts, projects, and rows always
     /// describe one index state.
+    ///
+    /// Counts are tallied in SQL, project actions are read only for tasks that could belong to a
+    /// project, and the chosen list reads only the columns its filter and order need before
+    /// reading its first `limit` tasks in full: reading all 48,260 tasks at 5x took 245 ms.
     pub fn task_board(&self, query: &TaskQuery) -> Result<TaskBoard> {
-        let tasks = self.tasks()?;
-        let find = self.page_finder()?;
-        let (pages, members) = self.project_members(&tasks, &find)?;
-        let projects: Vec<String> = pages
-            .iter()
-            .map(|page| page.page.to_lossy_string())
-            .collect();
+        self.refresh()?;
+        let today = query.today.as_str();
+        let until = add_days(today, UPCOMING_DAYS);
+        let (pages, actions) = self.project_actions()?;
         let mut summaries: Vec<ProjectSummary> = pages
-            .into_iter()
+            .iter()
             .map(|page| ProjectSummary {
-                page,
+                page: page.clone(),
                 open: 0,
                 done: 0,
                 next: 0,
                 first_open: None,
             })
             .collect();
-        for (task, belongs) in tasks.iter().zip(&members) {
+        for (task, belongs) in &actions {
             for &index in belongs {
                 let summary = &mut summaries[index];
                 if task.is_open() {
@@ -386,51 +382,262 @@ impl QueryIndex {
                 }
             }
         }
-        let today = query.today.as_str();
-        let count = |view| {
-            tasks
-                .iter()
-                .filter(|task| task.shows_in(view, today))
-                .count()
-        };
         let counts = TaskCounts {
-            due: count(TaskView::Due),
-            upcoming: count(TaskView::Upcoming),
-            inbox: count(TaskView::Inbox),
-            next: count(TaskView::Next),
-            waiting: count(TaskView::Waiting),
-            someday: count(TaskView::Someday),
-            done: count(TaskView::Done),
             projects: summaries.len(),
+            ..self.task_counts(today, until.as_deref())?
         };
-        let project = query
-            .project
-            .as_deref()
-            .and_then(|id| projects.iter().position(|page| page == id));
-        let filter = TaskFilter::new(&query.filter);
-        let mut matching: Vec<&TaskItem> = tasks
-            .iter()
-            .zip(&members)
-            .filter(|(task, belongs)| {
-                task.shows_in(query.view, today)
-                    && project.is_none_or(|project| belongs.contains(&project))
-                    && filter.matches_parts(&task.text, &task.tags, &task.source.title)
-            })
-            .map(|(task, _)| task)
-            .collect();
-        matching.sort_by(|a, b| match query.view {
-            TaskView::Done => dated_first(a.completed.as_deref(), b.completed.as_deref(), true),
-            _ => dated_first(a.due.as_deref(), b.due.as_deref(), false),
+        let project = query.project.as_deref().and_then(|id| {
+            pages
+                .iter()
+                .position(|page| page.page.to_lossy_string() == id)
         });
+        let members: Option<BTreeSet<(&str, u32)>> = project.map(|project| {
+            actions
+                .iter()
+                .filter(|(_, belongs)| belongs.contains(&project))
+                .map(|(task, _)| (task.source.revision.as_str(), task.from))
+                .collect()
+        });
+        let (matching, total) = self.task_list_rows(query, until.as_deref(), members.as_ref())?;
+        let mut task = self
+            .connection
+            .select_row_bound(&task_select(" AND t.revision=? AND t.ordinal=?"))?;
+        self.count_rows(matching.len());
+        let rows = matching
+            .iter()
+            .map(|listed| {
+                let row: Option<TaskRow> = task((listed.revision.as_str(), listed.ordinal))?;
+                task_item(row.context(REBUILD)?)
+            })
+            .collect::<Result<Vec<_>>>()?;
         Ok(TaskBoard {
             counts,
-            matching: matching.len(),
-            rows: matching.into_iter().take(query.limit).cloned().collect(),
+            matching: total,
+            rows,
             projects: summaries,
         })
     }
+
+    /// Each list's count, from the state and day index alone: every saved row, less the saved
+    /// rows of skipped pages, plus unsaved rows.
+    fn task_counts(&self, today: &str, until: Option<&str>) -> Result<TaskCounts> {
+        let mut totals = [0i64; 7];
+        for (rows, sign) in [
+            ("main.tasks".to_owned(), 1),
+            (format!("main.tasks WHERE revision IN ({SKIPPED})"), -1),
+            ("temp.overlay_tasks".to_owned(), 1),
+        ] {
+            let groups: Vec<(String, i64, i64, i64)> = self.connection.select_bound(&format!(
+                "SELECT state,count(*),count(CASE WHEN day<=?1 THEN 1 END),
+                   count(CASE WHEN day>?1 AND day<=?2 THEN 1 END) FROM {rows} GROUP BY state"
+            ))?((today, until))?;
+            for (state, all, due, upcoming) in groups {
+                let state = TaskState::parse(&state).context(REBUILD)?;
+                let list = TaskState::ALL.iter().position(|each| *each == state);
+                totals[list.context(REBUILD)?] += sign * all;
+                if state != TaskState::Done {
+                    totals[5] += sign * due;
+                    totals[6] += sign * upcoming;
+                }
+            }
+        }
+        let [inbox, next, waiting, someday, done, due, upcoming] =
+            totals.map(|count| count.max(0) as usize);
+        Ok(TaskCounts {
+            due,
+            upcoming,
+            inbox,
+            next,
+            waiting,
+            someday,
+            done,
+            projects: 0,
+        })
+    }
+
+    /// The tasks of the chosen list that pass its filter and project, the first `limit` of them in
+    /// the reference order (dated first, then by page path and position), and how many pass.
+    /// Saved and unsaved rows are read from their tables directly: joining the live views per
+    /// row tripled the time of the same reads.
+    fn task_list_rows(
+        &self,
+        query: &TaskQuery,
+        until: Option<&str>,
+        members: Option<&BTreeSet<(&str, u32)>>,
+    ) -> Result<(Vec<Listed>, usize)> {
+        let filter = TaskFilter::new(&query.filter);
+        let tested = if filter.is_empty() {
+            "'','[]',''"
+        } else {
+            "t.text,t.tags,p.title"
+        };
+        let select = |condition: &str, date: &str| {
+            format!(
+                "SELECT t.revision,t.ordinal,t.start,p.path,{date},{tested}
+                 FROM main.tasks t JOIN main.pages p ON p.revision=t.revision
+                 WHERE {condition} AND t.revision NOT IN ({SKIPPED})
+                 UNION ALL SELECT t.revision,t.ordinal,t.start,p.path,{date},{tested}
+                 FROM temp.overlay_tasks t JOIN temp.overlay_pages p ON p.revision=t.revision
+                 WHERE {condition}"
+            )
+        };
+        let state = |state: TaskState| -> Result<Vec<ListedRow>> {
+            let date = match state {
+                TaskState::Done => "t.completed",
+                _ => "t.day",
+            };
+            self.connection.select_bound(&select("t.state=?1", date))?(state.as_str())
+        };
+        let rows: Vec<ListedRow> = match query.view {
+            TaskView::Projects => return Ok((Vec::new(), 0)),
+            TaskView::Due => self.connection.select_bound(&select(
+                &format!("t.state IN ({OPEN}) AND t.day<=?1"),
+                "t.day",
+            ))?(query.today.as_str())?,
+            TaskView::Upcoming => self.connection.select_bound(&select(
+                &format!("t.state IN ({OPEN}) AND t.day>?1 AND t.day<=?2"),
+                "t.day",
+            ))?((query.today.as_str(), until))?,
+            TaskView::Inbox => state(TaskState::Inbox)?,
+            TaskView::Next => state(TaskState::Next)?,
+            TaskView::Waiting => state(TaskState::Waiting)?,
+            TaskView::Someday => state(TaskState::Someday)?,
+            TaskView::Done => state(TaskState::Done)?,
+        };
+        self.count_rows(rows.len());
+        let mut listed = Vec::new();
+        for (revision, ordinal, from, path, date, (text, tags, title)) in rows {
+            if members.is_some_and(|members| !members.contains(&(revision.as_str(), from))) {
+                continue;
+            }
+            if !filter.is_empty() && !filter.matches_parts(&text, &parse_list(&tags)?, &title) {
+                continue;
+            }
+            listed.push(Listed {
+                revision,
+                ordinal,
+                from,
+                path,
+                date,
+            });
+        }
+        let total = listed.len();
+        let newest = query.view == TaskView::Done;
+        let order = |a: &Listed, b: &Listed| {
+            dated_first(a.date.as_deref(), b.date.as_deref(), newest)
+                .then_with(|| self.collator.compare(&a.path, &b.path))
+                .then(a.from.cmp(&b.from))
+        };
+        if query.limit < listed.len() {
+            listed.select_nth_unstable_by(query.limit, order);
+            listed.truncate(query.limit);
+        }
+        listed.sort_by(order);
+        Ok((listed, total))
+    }
+
+    /// Project pages ordered by title, and the tasks that belong to at least one of them, in
+    /// page path order, with the projects each belongs to. Only tasks on project pages, tasks
+    /// linking a name that could resolve to one, and tasks tagged `project/...` are read.
+    fn project_actions(&self) -> Result<ProjectActions> {
+        let pages = self.project_pages()?;
+        if pages.is_empty() {
+            return Ok((pages, Vec::new()));
+        }
+        let projects: Vec<(String, Vec<String>)> = pages
+            .iter()
+            .map(|page| {
+                let tags: Vec<String> = self.connection.select_bound(
+                    "SELECT tag FROM live_front_tags WHERE revision=? ORDER BY ordinal",
+                )?(page.revision.as_str())?;
+                Ok((page.page.to_lossy_string(), tags))
+            })
+            .collect::<Result<_>>()?;
+        let names = serde_json::to_string(
+            &pages
+                .iter()
+                .map(|page| {
+                    [
+                        Some(page.revision.clone()),
+                        Some(strip_markdown(&page.path).to_lowercase()),
+                        Some(page.title.to_lowercase()),
+                        self.date(&page.title),
+                    ]
+                })
+                .collect::<Vec<_>>(),
+        )?;
+        let candidates: Vec<(String, i64)> = self.connection.select_bound(
+            "SELECT revision,ordinal FROM live_tasks WHERE revision IN (SELECT value->>0 FROM json_each(?1))
+             UNION SELECT revision,ordinal FROM live_tasks WHERE instr(lower(tags),'project/')>0
+             UNION SELECT revision,ordinal FROM live_task_links WHERE page_key IN
+               (SELECT value->>1 FROM json_each(?1) UNION SELECT value->>2 FROM json_each(?1))
+             UNION SELECT revision,ordinal FROM live_task_links WHERE date IN (SELECT value->>3 FROM json_each(?1))",
+        )?(names.as_str())?;
+        self.count_rows(candidates.len());
+        let mut task = self
+            .connection
+            .select_row_bound(&task_select(" AND t.revision=? AND t.ordinal=?"))?;
+        let mut tasks = Vec::new();
+        for (revision, ordinal) in &candidates {
+            let row: Option<TaskRow> = task((revision.as_str(), *ordinal))?;
+            if let Some(row) = row {
+                tasks.push(task_item(row)?);
+            }
+        }
+        self.sort_tasks(&mut tasks);
+        let found: RefCell<HashMap<String, Option<String>>> = RefCell::default();
+        let find = |name: &str| {
+            found
+                .borrow_mut()
+                .entry(name.to_owned())
+                .or_insert_with(|| {
+                    self.resolve_page(name)
+                        .ok()
+                        .flatten()
+                        .map(|page| page.page.to_lossy_string())
+                })
+                .clone()
+        };
+        let actions = tasks
+            .into_iter()
+            .filter_map(|task| {
+                let belongs: Vec<usize> = memberships(
+                    &task.source.page.to_lossy_string(),
+                    &task.links,
+                    &task.tags,
+                    &projects,
+                    &find,
+                )
+                .into_iter()
+                .filter_map(|id| projects.iter().position(|(page, _)| page == id))
+                .collect();
+                (!belongs.is_empty()).then_some((task, belongs))
+            })
+            .collect();
+        Ok((pages, actions))
+    }
 }
 
+/// Project pages, and the tasks belonging to them with the projects each belongs to.
+type ProjectActions = (Vec<PageRef>, Vec<(TaskItem, Vec<usize>)>);
+
+/// A task of the chosen list as its filter and order read it.
+struct Listed {
+    revision: String,
+    ordinal: i64,
+    from: u32,
+    path: String,
+    date: Option<String>,
+}
+
+type ListedRow = (
+    String,
+    i64,
+    u32,
+    String,
+    Option<String>,
+    (String, String, String),
+);
 impl super::IndexClient {
     pub fn task_board(&self, query: TaskQuery) -> super::Answer<TaskBoard> {
         self.request(256 + query.filter.len(), move |index| {
@@ -536,3 +743,7 @@ impl QueryIndex {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "tasks_tests.rs"]
+mod tests;

@@ -28,6 +28,11 @@ impl TaskFilter {
         filter
     }
 
+    /// Whether every task matches, so a caller can skip reading what the filter would test.
+    pub fn is_empty(&self) -> bool {
+        self.needle.is_empty() && self.exclude_words.is_empty() && self.exclude_tags.is_empty()
+    }
+
     pub fn matches(&self, task: &Task, page: &str) -> bool {
         self.matches_parts(&task.text, &task.tags, page)
     }

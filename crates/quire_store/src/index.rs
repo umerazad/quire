@@ -13,6 +13,8 @@ mod references;
 mod schema;
 pub(crate) use schema::uri_path;
 mod tasks;
+#[cfg(test)]
+mod test_notebook;
 mod tools;
 
 pub use blocks::{BlockChoice, BlockPreview, HeadingTarget, PagePreview, heading_of};
@@ -150,6 +152,9 @@ pub struct QueryIndex {
     /// Changes with committed rows only, unlike `generation`, which overlays change too.
     committed: Cell<u64>,
     tag_tallies: RefCell<Option<(u64, query::TagTallies)>>,
+    /// Rows that cheapened queries read, which tests bound so the cost cannot creep back.
+    #[cfg(test)]
+    rows_read: Cell<usize>,
     releasing: RefCell<BTreeSet<String>>,
     collator: icu_collator::CollatorBorrowed<'static>,
     folder: Option<folder::FolderSource>,
@@ -222,10 +227,15 @@ impl QueryIndex {
             generation: Cell::new(0),
             committed: Cell::new(0),
             tag_tallies: RefCell::default(),
+            #[cfg(test)]
+            rows_read: Cell::new(0),
             releasing: RefCell::default(),
             folder,
         };
         overlay::create(&index.connection)?;
+        for statement in query::TAG_CHANGES.iter().chain([&query::SNIPPETS]) {
+            index.connection.exec(statement)?()?;
+        }
         index.apply_layout()?;
         Ok(index)
     }
@@ -244,6 +254,14 @@ impl QueryIndex {
         *self.sealed.borrow_mut() = sealed;
         Ok(done)
     }
+
+    #[cfg(test)]
+    fn count_rows(&self, rows: usize) {
+        self.rows_read.set(self.rows_read.get() + rows);
+    }
+
+    #[cfg(not(test))]
+    fn count_rows(&self, _: usize) {}
 
     fn transaction<T>(&self, run: impl FnOnce() -> Result<T>) -> Result<T> {
         self.connection.exec("BEGIN IMMEDIATE")?()?;
@@ -303,6 +321,15 @@ impl QueryIndex {
                     row,
                 ))?;
             }
+            let task_links: Vec<(i64, String)> =
+                self.connection
+                    .select("SELECT rowid,target FROM task_links")?()?;
+            let mut task_link = self
+                .connection
+                .exec_bound("UPDATE task_links SET date=? WHERE rowid=?")?;
+            for (row, target) in task_links {
+                task_link((self.date(&target), row))?;
+            }
             let tasks: Vec<(i64, String)> =
                 self.connection.select("SELECT rowid,dates FROM tasks")?()?;
             for (row, dates) in tasks {
@@ -314,6 +341,9 @@ impl QueryIndex {
                 )
                 )?;
             }
+            self.connection.exec(
+                "UPDATE tasks SET day=coalesce(due,(SELECT date FROM pages p WHERE p.revision=tasks.revision))",
+            )?()?;
             self.connection.exec_bound("UPDATE meta SET layout=?")?(key.as_str())?;
             Ok(())
         })
@@ -433,16 +463,17 @@ impl QueryIndex {
     /// flushes the search index once per batch instead of once per page. Each result is what
     /// [`Self::put`] returns for that revision.
     pub fn put_many(&self, analyses: &[(&str, &PageIndex)]) -> Result<Vec<bool>> {
-        let stored = self.transaction(|| {
+        let stored: Vec<bool> = self.transaction(|| {
             let mut planned = std::collections::HashSet::new();
+            let mut state = self.connection.select_row_bound(
+                "SELECT analyzed,title,EXISTS (SELECT 1 FROM pages h
+                       WHERE h.page=p.page AND h.analyzed=0 AND h.deleted=0)
+                     FROM pages p WHERE revision=?",
+            )?;
             let titles = analyses
                 .iter()
                 .map(|&(revision, _)| {
-                    let row: Option<(bool, String, bool)> = self.connection.select_row_bound(
-                        "SELECT analyzed,title,EXISTS (SELECT 1 FROM pages h
-                               WHERE h.page=p.page AND h.analyzed=0 AND h.deleted=0)
-                             FROM pages p WHERE revision=?",
-                    )?(revision)?;
+                    let row: Option<(bool, String, bool)> = state(revision)?;
                     Ok(match row {
                         None | Some((true, _, true)) => Err(false),
                         Some((false, title, _)) if planned.insert(revision) => Ok(title),
@@ -450,28 +481,34 @@ impl QueryIndex {
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
-            self.insert_search_rows(analyses.iter().zip(&titles).filter_map(
-                |((revision, analysis), title)| Some((*revision, title.as_ref().ok()?, *analysis)),
-            ))?;
-            analyses
+            let fresh: Vec<_> = analyses
                 .iter()
-                .zip(titles)
-                .map(|(&(revision, analysis), title)| match title {
-                    Ok(_) => {
-                        self.insert_rows("main.", revision, analysis)?;
-                        self.connection
-                            .exec_bound("UPDATE pages SET analyzed=1 WHERE revision=?")?(
-                            revision
-                        )?;
-                        self.connection.exec_bound(
-                            "DELETE FROM pages WHERE revision!=?1
-                               AND page=(SELECT page FROM pages WHERE revision=?1)",
-                        )?(revision)?;
-                        Ok(true)
-                    }
-                    Err(stored) => Ok(stored),
+                .zip(&titles)
+                .filter_map(|(&(revision, analysis), title)| {
+                    Some((revision, title.as_ref().ok()?, analysis))
                 })
-                .collect::<Result<Vec<_>>>()
+                .collect();
+            self.insert_search_rows(fresh.iter().copied())?;
+            let rows: Vec<_> = fresh
+                .iter()
+                .map(|&(revision, _, analysis)| (revision, analysis))
+                .collect();
+            self.insert_rows("main.", &rows)?;
+            let mut analyzed = self
+                .connection
+                .exec_bound("UPDATE pages SET analyzed=1 WHERE revision=?")?;
+            let mut superseded = self.connection.exec_bound(
+                "DELETE FROM pages WHERE revision!=?1
+                   AND page=(SELECT page FROM pages WHERE revision=?1)",
+            )?;
+            for &(revision, _) in &rows {
+                analyzed(revision)?;
+                superseded(revision)?;
+            }
+            Ok(titles
+                .into_iter()
+                .map(|title| title.map_or_else(|stored| stored, |_| true))
+                .collect())
         })?;
         if stored.contains(&true) {
             self.bump_committed();
@@ -504,53 +541,107 @@ impl QueryIndex {
         Ok(())
     }
 
-    /// Writes block, link, and tag rows into `main.` tables or the `temp.overlay_` copies.
-    fn insert_rows(&self, tables: &str, revision: &str, analysis: &PageIndex) -> Result<()> {
-        for (ordinal, tag) in analysis.front_tags.iter().enumerate() {
-            self.connection.exec_bound(&format!(
-                "INSERT INTO {tables}front_tags(revision,ordinal,tag) VALUES (?,?,?)"
-            ))?((revision, ordinal as u32, tag.as_str()))?;
-        }
-        for (ordinal, block) in analysis.blocks.iter().enumerate() {
-            self.connection.exec_bound(
-                    &format!("INSERT INTO {tables}blocks(revision,ordinal,key,id,start,finish,content_from,content_to,subtree_to,depth,kind,parent,text,content) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"),
-                )?((
-                    (revision, ordinal as u32, block.key.as_str(), block.id.as_deref()),
+    /// Writes block, link, task, and tag rows of each page into `main.` tables or the
+    /// `temp.overlay_` copies. Each statement is prepared once per call: preparing one per row
+    /// cost more than the inserts themselves during a first-open build.
+    fn insert_rows(&self, tables: &str, pages: &[(&str, &PageIndex)]) -> Result<()> {
+        let mut front_tag = self.connection.exec_bound(&format!(
+            "INSERT INTO {tables}front_tags(revision,ordinal,tag) VALUES (?,?,?)"
+        ))?;
+        let mut block_row = self.connection.exec_bound(&format!(
+            "INSERT INTO {tables}blocks(revision,ordinal,key,id,start,finish,content_from,content_to,subtree_to,depth,kind,parent,text,content) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+        ))?;
+        let mut link_row = self.connection.exec_bound(&format!(
+            "INSERT INTO {tables}links(revision,ordinal,kind,syntax,target,label,media,start,finish,text,page_key,block_key,date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+        ))?;
+        let mut task_row = self.connection.exec_bound(&format!(
+            "INSERT INTO {tables}tasks(revision,ordinal,key,id,start,raw,text,state,tags,links,dates,completed,created,due,day)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,coalesce(?14,(SELECT date FROM {tables}pages WHERE revision=?1)))"
+        ))?;
+        let mut task_link = self.connection.exec_bound(&format!(
+            "INSERT OR IGNORE INTO {tables}task_links(revision,ordinal,target,page_key,date) VALUES (?,?,?,?,?)"
+        ))?;
+        let mut tag_row = self.connection.exec_bound(&format!(
+            "INSERT INTO {tables}tagged(revision,ordinal,tag,tag_key,start,block_id,snippet) VALUES (?,?,?,?,?,?,?)"
+        ))?;
+        for &(revision, analysis) in pages {
+            for (ordinal, tag) in analysis.front_tags.iter().enumerate() {
+                front_tag((revision, ordinal as u32, tag.as_str()))?;
+            }
+            for (ordinal, block) in analysis.blocks.iter().enumerate() {
+                block_row((
+                    (
+                        revision,
+                        ordinal as u32,
+                        block.key.as_str(),
+                        block.id.as_deref(),
+                    ),
                     (block.from, block.to, block.content_from, block.content_to),
-                    (block.subtree_to, block.depth, block.kind.as_str(), block.parent.as_deref(), block.text.as_str()),
+                    (
+                        block.subtree_to,
+                        block.depth,
+                        block.kind.as_str(),
+                        block.parent.as_deref(),
+                        block.text.as_str(),
+                    ),
                     block.content.as_str(),
                 ))?;
-        }
-        for (ordinal, link) in analysis.links.iter().enumerate() {
-            let page = link.is_page_reference();
-            self.connection.exec_bound(
-                    &format!("INSERT INTO {tables}links(revision,ordinal,kind,syntax,target,label,media,start,finish,text,page_key,block_key,date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"),
-                )?((
-                    (revision, ordinal as u32, link.kind.as_str(), link.syntax.as_str(), link.target.as_str()),
-                    (link.label.as_deref(), link.media.as_deref(), link.from, link.to, link.text.as_str()),
+            }
+            for (ordinal, link) in analysis.links.iter().enumerate() {
+                let page = link.is_page_reference();
+                link_row((
+                    (
+                        revision,
+                        ordinal as u32,
+                        link.kind.as_str(),
+                        link.syntax.as_str(),
+                        link.target.as_str(),
+                    ),
+                    (
+                        link.label.as_deref(),
+                        link.media.as_deref(),
+                        link.from,
+                        link.to,
+                        link.text.as_str(),
+                    ),
                     (
                         page.then(|| page_key(&link.target)),
                         (!page).then(|| block_key(&link.target)),
                         page.then(|| self.date(&link.target)).flatten(),
                     ),
                 ))?;
-        }
-        for (ordinal, task) in analysis.tasks.iter().enumerate() {
-            let dates = serde_json::to_string(&task.dates)?;
-            let (created, due) = self.task_dates(&dates)?;
-            self.connection.exec_bound(
-                    &format!("INSERT INTO {tables}tasks(revision,ordinal,key,id,start,raw,text,state,tags,links,dates,completed,created,due) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"),
-                )?((
-                    (revision, ordinal as u32, task.key.as_str(), task.id.as_deref(), task.from),
+            }
+            for (ordinal, task) in analysis.tasks.iter().enumerate() {
+                let dates = serde_json::to_string(&task.dates)?;
+                let (created, due) = self.task_dates(&dates)?;
+                task_row((
+                    (
+                        revision,
+                        ordinal as u32,
+                        task.key.as_str(),
+                        task.id.as_deref(),
+                        task.from,
+                    ),
                     (task.raw.as_str(), task.text.as_str(), task.state.as_str()),
-                    (serde_json::to_string(&task.tags)?, serde_json::to_string(&task.links)?, dates.as_str()),
+                    (
+                        serde_json::to_string(&task.tags)?,
+                        serde_json::to_string(&task.links)?,
+                        dates.as_str(),
+                    ),
                     (task.completed.as_deref(), created, due),
                 ))?;
-        }
-        for (ordinal, tag) in analysis.tagged.iter().enumerate() {
-            self.connection.exec_bound(
-                    &format!("INSERT INTO {tables}tagged(revision,ordinal,tag,tag_key,start,block_id,snippet) VALUES (?,?,?,?,?,?,?)"),
-                )?((
+                for target in &task.links {
+                    task_link((
+                        revision,
+                        ordinal as u32,
+                        target.as_str(),
+                        page_key(target),
+                        self.date(target),
+                    ))?;
+                }
+            }
+            for (ordinal, tag) in analysis.tagged.iter().enumerate() {
+                tag_row((
                     revision,
                     ordinal as u32,
                     tag.tag.as_str(),
@@ -559,6 +650,7 @@ impl QueryIndex {
                     tag.block_id.as_deref(),
                     tag.snippet.as_str(),
                 ))?;
+            }
         }
         Ok(())
     }
@@ -924,6 +1016,14 @@ mod tests {
             (
                 "SELECT * FROM live_links l JOIN live_pages p ON p.revision=l.revision WHERE p.deleted=0 AND l.date=?",
                 "links_by_date",
+            ),
+            (
+                "SELECT * FROM live_task_links k JOIN live_pages p ON p.revision=k.revision WHERE p.deleted=0 AND k.page_key=?",
+                "task_links_by_page",
+            ),
+            (
+                "SELECT * FROM live_task_links k JOIN live_pages p ON p.revision=k.revision WHERE p.deleted=0 AND k.date=?",
+                "task_links_by_date",
             ),
             (
                 "SELECT * FROM live_blocks b JOIN live_pages p ON p.revision=b.revision WHERE p.deleted=0 AND b.id=?",

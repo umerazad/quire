@@ -4,7 +4,7 @@ use sqlez::connection::Connection;
 use std::path::{Path, PathBuf};
 
 /// Bump when the index tables change; a mismatch rebuilds the index.
-const FORMAT: i32 = 4;
+const FORMAT: i32 = 5;
 
 const TABLES: &[&str] = &[
     "CREATE TABLE meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1), notebook TEXT NOT NULL, analyzer INTEGER NOT NULL, layout TEXT NOT NULL)",
@@ -24,7 +24,13 @@ const TABLES: &[&str] = &[
     "CREATE INDEX tagged_by_key ON tagged(tag_key)",
     "CREATE TABLE front_tags (revision TEXT NOT NULL REFERENCES pages(revision) ON DELETE CASCADE, ordinal INTEGER NOT NULL, tag TEXT NOT NULL, UNIQUE(revision, ordinal))",
     // Dates keep their sources; `created` and `due` are re-derived when the daily layout changes.
-    "CREATE TABLE tasks (revision TEXT NOT NULL REFERENCES pages(revision) ON DELETE CASCADE, ordinal INTEGER NOT NULL, key TEXT NOT NULL, id TEXT, start INTEGER NOT NULL, raw TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL, tags TEXT NOT NULL, links TEXT NOT NULL, dates TEXT NOT NULL, completed TEXT, created TEXT, due TEXT, UNIQUE(revision, ordinal))",
+    // `day` is the due date, or the date of the daily page holding the task, which lists sort by.
+    "CREATE TABLE tasks (revision TEXT NOT NULL REFERENCES pages(revision) ON DELETE CASCADE, ordinal INTEGER NOT NULL, key TEXT NOT NULL, id TEXT, start INTEGER NOT NULL, raw TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL, tags TEXT NOT NULL, links TEXT NOT NULL, dates TEXT NOT NULL, completed TEXT, created TEXT, due TEXT, day TEXT, UNIQUE(revision, ordinal))",
+    "CREATE INDEX tasks_by_list ON tasks(state, day)",
+    // Each task link once, keyed as page links are, so linked tasks and project actions are lookups.
+    "CREATE TABLE task_links (revision TEXT NOT NULL REFERENCES pages(revision) ON DELETE CASCADE, ordinal INTEGER NOT NULL, target TEXT NOT NULL, page_key TEXT NOT NULL, date TEXT, UNIQUE(revision, ordinal, target))",
+    "CREATE INDEX task_links_by_page ON task_links(page_key)",
+    "CREATE INDEX task_links_by_date ON task_links(date) WHERE date IS NOT NULL",
     // Search rows mirror the reference SearchIndex: a title row per page, then one row per block.
     "CREATE TABLE search_rows (rowid INTEGER PRIMARY KEY, revision TEXT NOT NULL REFERENCES pages(revision) ON DELETE CASCADE, title TEXT NOT NULL, text TEXT NOT NULL, block_id TEXT)",
     "CREATE INDEX search_rows_by_revision ON search_rows(revision)",

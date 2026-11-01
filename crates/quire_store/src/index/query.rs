@@ -54,8 +54,32 @@ struct TagUse {
     page: String,
 }
 
+/// Records which saved tags changed, so [`QueryIndex::tag_names`] recounts only those.
+pub(super) const TAG_CHANGES: &[&str] = &[
+    "CREATE TEMP TABLE tag_changes (tag_key TEXT PRIMARY KEY) WITHOUT ROWID",
+    "CREATE TEMP TRIGGER tagged_added AFTER INSERT ON main.tagged BEGIN
+       INSERT OR IGNORE INTO temp.tag_changes VALUES (new.tag_key); END",
+    "CREATE TEMP TRIGGER tagged_removed AFTER DELETE ON main.tagged BEGIN
+       INSERT OR IGNORE INTO temp.tag_changes VALUES (old.tag_key); END",
+];
+
+/// One use of a tag: its spelling, page path, offset, and page.
+type TagUseRow = (String, String, u32, String);
+
+/// One tag's tally from all of its saved uses, or none when it has none.
+fn tally(uses: Vec<TagUseRow>) -> Option<TagTally> {
+    (!uses.is_empty()).then(|| {
+        let mut tally = TagTally {
+            count: uses.len(),
+            first: None,
+        };
+        uses.into_iter().for_each(|found| tally.consider(found));
+        tally
+    })
+}
+
 impl TagTally {
-    fn consider(&mut self, (label, path, from, page): (String, String, u32, String)) {
+    fn consider(&mut self, (label, path, from, page): TagUseRow) {
         let earlier = self.first.as_ref().is_none_or(|first| {
             utf16_order(&path, &first.path).then(from.cmp(&first.from)) == Ordering::Less
         });
@@ -404,7 +428,7 @@ impl QueryIndex {
             }
         }
         for key in stale {
-            let uses: Vec<(String, String, u32, String)> = self.connection.select_bound(
+            let uses: Vec<TagUseRow> = self.connection.select_bound(
                 "SELECT t.tag,p.path,t.start,p.page FROM main.tagged t JOIN main.pages p ON p.revision=t.revision
                  WHERE p.deleted=0 AND t.tag_key=? AND p.page NOT IN (SELECT page FROM temp.overlay_pages)",
             )?(key.as_str())?;
@@ -414,7 +438,7 @@ impl QueryIndex {
             tally.first = None;
             uses.into_iter().for_each(|found| tally.consider(found));
         }
-        let overlaid: Vec<(String, (String, String, u32, String))> = self.connection.select(
+        let overlaid: Vec<(String, TagUseRow)> = self.connection.select(
             "SELECT t.tag_key,t.tag,p.path,t.start,p.page FROM temp.overlay_tagged t
              JOIN temp.overlay_pages p ON p.revision=t.revision WHERE p.deleted=0",
         )?()?;
@@ -436,25 +460,52 @@ impl QueryIndex {
         Ok(names)
     }
 
+    /// Saved tag tallies, kept current by recounting only the tags whose rows changed since the
+    /// last call; triggers on `main.tagged` record them. Recounting every tag after each autosave
+    /// read all 198,483 tagged blocks at 5x, 146 ms on the first call after typing committed.
     fn committed_tags(&self) -> Result<TagTallies> {
         let committed = self.committed.get();
-        if let Some((at, tallies)) = &*self.tag_tallies.borrow()
+        let mut cached = self.tag_tallies.borrow_mut();
+        if let Some((at, tallies)) = &*cached
             && *at == committed
         {
             return Ok(tallies.clone());
         }
-        let rows: Vec<(String, (String, String, u32, String))> = self.connection.select(
-            "SELECT t.tag_key,t.tag,p.path,t.start,p.page FROM main.tagged t
-             JOIN main.pages p ON p.revision=t.revision WHERE p.deleted=0",
-        )?()?;
-        let mut tallies: HashMap<String, TagTally> = HashMap::new();
-        for (key, found) in rows {
-            let tally = tallies.entry(key).or_default();
-            tally.count += 1;
-            tally.consider(found);
-        }
+        let changed: Vec<String> =
+            self.connection
+                .select("DELETE FROM temp.tag_changes RETURNING tag_key")?()?;
+        const TALLY: &str = "SELECT t.tag_key,t.tag,p.path,t.start,p.page FROM main.tagged t
+             JOIN main.pages p ON p.revision=t.revision WHERE p.deleted=0";
+        let tallies = match cached.take() {
+            Some((_, tallies)) => {
+                let mut tallies = std::rc::Rc::unwrap_or_clone(tallies);
+                let mut uses = self
+                    .connection
+                    .select_bound(&format!("{TALLY} AND t.tag_key=?"))?;
+                for key in changed {
+                    let rows: Vec<(String, TagUseRow)> = uses(key.as_str())?;
+                    self.count_rows(rows.len());
+                    match tally(rows.into_iter().map(|(_, found)| found).collect()) {
+                        Some(tally) => tallies.insert(key, tally),
+                        None => tallies.remove(&key),
+                    };
+                }
+                tallies
+            }
+            None => {
+                let rows: Vec<(String, TagUseRow)> = self.connection.select(TALLY)?()?;
+                self.count_rows(rows.len());
+                let mut tallies: HashMap<String, TagTally> = HashMap::new();
+                for (key, found) in rows {
+                    let tally = tallies.entry(key).or_default();
+                    tally.count += 1;
+                    tally.consider(found);
+                }
+                tallies
+            }
+        };
         let tallies = std::rc::Rc::new(tallies);
-        *self.tag_tallies.borrow_mut() = Some((committed, tallies.clone()));
+        *cached = Some((committed, tallies.clone()));
         Ok(tallies)
     }
 
@@ -487,6 +538,24 @@ pub struct SearchHit {
     pub from: Option<u32>,
 }
 
+/// A shown row's position, page, snippet, and block ID.
+type SnippetRow = (i64, PageRow, (String, Option<String>));
+
+/// How many hits a search returns.
+const SHOWN_HITS: usize = 40;
+
+/// Where a search hit's row lives: saved rows rank before unsaved ones of equal rank.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Source {
+    Saved,
+    Overlay,
+}
+
+/// The scratch table shown rows are copied into for their snippets, inside a savepoint that is
+/// always rolled back. It matches the search tables' columns and tokenizer, and snippets read
+/// only the row itself, so they come out as the search tables would make them.
+pub(super) const SNIPPETS: &str = "CREATE VIRTUAL TABLE temp.search_snippets USING fts5(revision UNINDEXED, title, text, block_id UNINDEXED, tokenize='unicode61')";
+
 static TERM: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
     regex::Regex::new(r"[\p{L}\p{N}_-]+").expect("the search term pattern is valid")
 });
@@ -502,29 +571,105 @@ fn search_expression(query: &str) -> Option<String> {
 
 impl QueryIndex {
     /// The reference `search`: up to 40 block and title hits by bm25 rank, with 24-token snippets.
-    /// An open page is searched in its unsaved text instead of its last save.
+    /// An open page is searched in its unsaved text instead of its last save. Equal ranks keep
+    /// saved rows first, then row order.
+    ///
+    /// Only the best-ranked rows are read and given snippets: making a snippet for every match
+    /// took most of a 5x search, where "budget" matches 184,401 blocks. FTS5 cannot make snippets
+    /// for a list of rows without expanding prefixes again per row, so the shown rows are copied
+    /// into a scratch table, searched there, and rolled back.
     pub fn search(&self, query: &str) -> Result<Vec<SearchHit>> {
         self.refresh()?;
         let Some(expression) = search_expression(query) else {
             return Ok(Vec::new());
         };
-        let rows: Vec<(PageRow, (String, Option<String>))> =
+        let mut hits = self.saved_hits(&expression)?;
+        let overlaid: Vec<(i64, f64)> = self.connection.select_bound(
+            "SELECT rowid,bm25(overlay_search) AS score FROM temp.overlay_search
+             WHERE overlay_search MATCH ?1 ORDER BY score,rowid LIMIT ?2",
+        )?((expression.as_str(), SHOWN_HITS))?;
+        hits.extend(
+            overlaid
+                .into_iter()
+                .map(|(row, score)| (score, Source::Overlay, row)),
+        );
+        hits.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+        hits.truncate(SHOWN_HITS);
+        self.snippets(&expression, &hits)
+    }
+
+    /// The best-ranked saved rows of pages that are neither deleted nor open, as many as a search
+    /// shows. Rows of open pages are skipped, so the first pass reads that many more, and reads
+    /// again with a larger limit if skipped rows still left too few.
+    fn saved_hits(&self, expression: &str) -> Result<Vec<(f64, Source, i64)>> {
+        let hidden: Option<usize> = self.connection.select_row(
+            "SELECT count(*) FROM search_rows WHERE revision IN
+               (SELECT revision FROM main.pages WHERE page IN (SELECT page FROM temp.overlay_pages))",
+        )?()?;
+        let mut ranked = self.connection.select_bound(
+            "SELECT rowid,bm25(search) AS score FROM search WHERE search MATCH ?1
+             ORDER BY score,rowid LIMIT ?2",
+        )?;
+        let mut live = self.connection.select_row_bound(
+            "SELECT 1 FROM search_rows s JOIN main.pages p ON p.revision=s.revision
+             WHERE s.rowid=? AND p.deleted=0 AND p.page NOT IN (SELECT page FROM temp.overlay_pages)",
+        )?;
+        let mut limit = SHOWN_HITS + hidden.unwrap_or_default();
+        loop {
+            let rows: Vec<(i64, f64)> = ranked((expression, limit))?;
+            self.count_rows(rows.len());
+            let mut kept = Vec::new();
+            for &(row, score) in &rows {
+                if kept.len() == SHOWN_HITS {
+                    break;
+                }
+                let found: Option<i64> = live(row)?;
+                if found.is_some() {
+                    kept.push((score, Source::Saved, row));
+                }
+            }
+            if kept.len() == SHOWN_HITS || rows.len() < limit {
+                return Ok(kept);
+            }
+            limit *= 4;
+        }
+    }
+
+    /// Pages, block IDs, and snippets for the shown rows, in their order.
+    fn snippets(&self, expression: &str, hits: &[(f64, Source, i64)]) -> Result<Vec<SearchHit>> {
+        if hits.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = serde_json::to_string(
+            &hits
+                .iter()
+                .map(|(_, source, row)| (*source == Source::Overlay, *row))
+                .collect::<Vec<_>>(),
+        )?;
+        self.connection.exec("SAVEPOINT search_snippets")?()?;
+        let found = (|| -> Result<Vec<SnippetRow>> {
+            self.connection.exec_bound(
+                "INSERT INTO temp.search_snippets(rowid,revision,title,text,block_id)
+                 SELECT j.key,s.revision,s.title,s.text,s.block_id FROM json_each(?1) j
+                   JOIN search_rows s ON s.rowid=j.value->>1 WHERE NOT j.value->>0
+                 UNION ALL SELECT j.key,o.revision,o.title,o.text,o.block_id FROM json_each(?1) j
+                   JOIN temp.overlay_search o ON o.rowid=j.value->>1 WHERE j.value->>0",
+            )?(rows.as_str())?;
             self.connection.select_bound(&format!(
-                "SELECT revision,page,path,title,snippet,block_id FROM (
-               SELECT {PAGE_COLUMNS},snippet(search,2,'','',' … ',24) AS snippet,
-                 search.block_id AS block_id,bm25(search) AS rank FROM search
-               JOIN pages p ON p.revision=search.revision
-               WHERE search MATCH ?1 AND p.deleted=0
-                 AND p.page NOT IN (SELECT page FROM temp.overlay_pages)
-             UNION ALL
-               SELECT {PAGE_COLUMNS},snippet(overlay_search,2,'','',' … ',24),
-                 overlay_search.block_id,bm25(overlay_search) FROM temp.overlay_search
-               JOIN temp.overlay_pages p ON p.revision=overlay_search.revision
-               WHERE overlay_search MATCH ?1
-             ) ORDER BY rank LIMIT 40"
-            ))?(expression)?;
-        rows.into_iter()
-            .map(|(page, (snippet, block_id))| {
+                "SELECT n.rowid,{PAGE_COLUMNS},snippet(search_snippets,2,'','',' … ',24),n.block_id
+                 FROM temp.search_snippets n JOIN live_pages p ON p.revision=n.revision
+                 WHERE search_snippets MATCH ?"
+            ))?(expression)
+        })();
+        self.connection
+            .exec("ROLLBACK TO search_snippets")
+            .and_then(|mut rollback| rollback())
+            .and_then(|()| self.connection.exec("RELEASE search_snippets")?())?;
+        let mut found = found?;
+        found.sort_by_key(|(position, ..)| *position);
+        found
+            .into_iter()
+            .map(|(_, page, (snippet, block_id))| {
                 Ok(SearchHit {
                     source: page_ref(page)?,
                     snippet,
@@ -597,3 +742,7 @@ fn sql_needle(needle: &str) -> (String, bool) {
         .unwrap_or_default();
     (longest.to_owned(), false)
 }
+
+#[cfg(test)]
+#[path = "query_tests.rs"]
+mod tests;
