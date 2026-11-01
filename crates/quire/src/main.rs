@@ -177,6 +177,9 @@ mod script_fonts;
 mod title_bar;
 
 #[cfg(feature = "full-editor")]
+mod window_frame;
+
+#[cfg(feature = "full-editor")]
 mod quire_assets;
 
 #[cfg(feature = "full-editor")]

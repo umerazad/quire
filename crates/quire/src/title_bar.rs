@@ -2,12 +2,14 @@
 //! and the traffic lights sit over the top of the full-height sidebar, beside the workspace
 //! header. The strip under the lights and the header move the window, and a double click there
 //! does what the system setting says (zoom or minimize). Other platforms keep their native title
-//! bar, as the reference app does. The drag handling follows Zed's `platform_title_bar`.
+//! bar, as the reference app does, except where a Linux compositor offers none (GNOME on
+//! Wayland): there Quire draws the frame, and the header moves the window and holds the window
+//! buttons. The drag handling follows Zed's `platform_title_bar`.
 
 use gpui::{
     App, Bounds, Div, InteractiveElement as _, IntoElement, Pixels, Stateful,
     StatefulInteractiveElement as _, Styled as _, Window, WindowBounds, WindowControlArea,
-    WindowOptions, div, point, px, size,
+    WindowOptions, div, point, prelude::FluentBuilder as _, px, size,
 };
 
 /// The height of the workspace header and of the strip over the sidebar that holds the traffic
@@ -34,6 +36,15 @@ pub fn base_options() -> WindowOptions {
 /// Whether windows draw their own title bar.
 pub fn custom() -> bool {
     cfg!(target_os = "macos")
+}
+
+/// The window's tiling when Quire draws the window frame itself: on Linux when the compositor
+/// offers no server-side decorations, as GNOME on Wayland does. None where the system draws it.
+pub fn client_frame(window: &Window) -> Option<gpui::Tiling> {
+    match window.window_decorations() {
+        gpui::Decorations::Client { tiling } if cfg!(target_os = "linux") => Some(tiling),
+        _ => None,
+    }
 }
 
 /// A notebook window's first size, as the reference opens its window.
@@ -65,15 +76,17 @@ pub fn options(window_size: gpui::Size<Pixels>, cx: &App) -> WindowOptions {
 }
 
 /// Makes `element` move the window when dragged and zoom or minimize on a double click, as the
-/// system setting says. `key` names the drag state, one per region in a window. Controls inside
-/// stop their own mouse downs with [`keep_clicks`].
+/// system setting says. Where Quire draws a Linux frame, a double click maximizes and a right
+/// click opens the window menu, as Zed's title bar does. `key` names the drag state, one per
+/// region in a window. Controls inside stop their own mouse downs with [`keep_clicks`].
 pub fn drag_region(
     key: &'static str,
     element: Stateful<Div>,
     window: &mut Window,
     cx: &mut App,
 ) -> Stateful<Div> {
-    if !custom() {
+    let linux_frame = client_frame(window).is_some();
+    if !custom() && !linux_frame {
         return element;
     }
     let moving = window.use_keyed_state(key, cx, |_, _| false);
@@ -93,10 +106,20 @@ pub fn drag_region(
                 window.start_window_move();
             }
         })
-        .on_click(|event, window, _| {
-            if event.click_count() == 2 {
+        .on_click(move |event, window, _| {
+            if event.click_count() != 2 {
+                return;
+            }
+            if linux_frame {
+                window.zoom_window();
+            } else {
                 window.titlebar_double_click();
             }
+        })
+        .when(linux_frame, |element| {
+            element.on_mouse_down(gpui::MouseButton::Right, |event, window, _| {
+                window.show_window_menu(event.position);
+            })
         })
 }
 

@@ -24,6 +24,7 @@ ui = { workspace = true, optional = true }
 http_client = { workspace = true, optional = true }
 search = { workspace = true, optional = true }
 workspace = { workspace = true, optional = true }
+platform_title_bar = { workspace = true, optional = true }
 language = { workspace = true, optional = true }
 multi_buffer = { workspace = true, optional = true }
 buffer_diff = { workspace = true, optional = true }
@@ -98,4 +99,4 @@ gpui_apple.workspace = true
 [features]
 default = ["full-editor"]
 test-support = ["gpui/test-support", "gpui_platform/test-support"]
-full-editor = ["dep:quire_core", "dep:quire_store", "dep:quire_format", "dep:quire_media", "dep:image", "dep:reqwest_client", "dep:futures", "dep:rope", "dep:uuid", "dep:editor", "dep:ui", "dep:http_client", "dep:search", "dep:workspace", "dep:language", "dep:multi_buffer", "dep:grammars", "dep:tree-sitter-quire-markdown", "dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-cpp", "dep:tree-sitter-css", "dep:tree-sitter-html", "dep:tree-sitter-jsdoc", "dep:tree-sitter-json", "dep:tree-sitter-python", "dep:tree-sitter-regex", "dep:tree-sitter-rust", "dep:tree-sitter-typescript", "dep:tree-sitter-yaml", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:vim_mode_setting", "dep:assets", "dep:util", "dep:zed_actions", "dep:picker", "dep:menu", "dep:db", "dep:serde_json", "dep:serde", "dep:project", "dep:anyhow", "dep:fs", "dep:paths", "dep:buffer_diff", "dep:markdown", "dep:smol", "dep:jiff", "dep:sha2", "dep:hex", "dep:rand", "dep:async_zip", "dep:quick-xml", "dep:net"]
+full-editor = ["dep:quire_core", "dep:quire_store", "dep:quire_format", "dep:quire_media", "dep:image", "dep:reqwest_client", "dep:futures", "dep:rope", "dep:uuid", "dep:editor", "dep:ui", "dep:http_client", "dep:search", "dep:workspace", "dep:platform_title_bar", "dep:language", "dep:multi_buffer", "dep:grammars", "dep:tree-sitter-quire-markdown", "dep:tree-sitter", "dep:tree-sitter-bash", "dep:tree-sitter-cpp", "dep:tree-sitter-css", "dep:tree-sitter-html", "dep:tree-sitter-jsdoc", "dep:tree-sitter-json", "dep:tree-sitter-python", "dep:tree-sitter-regex", "dep:tree-sitter-rust", "dep:tree-sitter-typescript", "dep:tree-sitter-yaml", "dep:settings", "dep:theme", "dep:theme_settings", "dep:release_channel", "dep:semver", "dep:vim", "dep:vim_mode_setting", "dep:assets", "dep:util", "dep:zed_actions", "dep:picker", "dep:menu", "dep:db", "dep:serde_json", "dep:serde", "dep:project", "dep:anyhow", "dep:fs", "dep:paths", "dep:buffer_diff", "dep:markdown", "dep:smol", "dep:jiff", "dep:sha2", "dep:hex", "dep:rand", "dep:async_zip", "dep:quick-xml", "dep:net"]

@@ -898,6 +898,13 @@ impl StoredWindow {
             .h_full()
             .px_3()
             .bg(colors.panel_background)
+            .map(|div| {
+                let edges = gpui::Tiling {
+                    right: true,
+                    ..Default::default()
+                };
+                crate::window_frame::round(div, edges, window)
+            })
             .border_r_1()
             .border_color(colors.border)
             .children(crate::title_bar::lights_strip(window, cx))

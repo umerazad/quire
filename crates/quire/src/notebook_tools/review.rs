@@ -330,7 +330,18 @@ impl Focusable for AiChangesWindow {
 }
 
 impl Render for AiChangesWindow {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = self.window_content(window, cx);
+        crate::window_frame::titled(WINDOW_TITLE, content, window, cx)
+    }
+}
+
+impl AiChangesWindow {
+    fn window_content(
+        &mut self,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let colors = cx.theme().colors();
         v_flex()
             .key_context(CONTEXT)

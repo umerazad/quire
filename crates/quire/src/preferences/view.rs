@@ -300,6 +300,17 @@ impl Focusable for PreferencesWindow {
 
 impl Render for PreferencesWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = self.window_content(window, cx);
+        crate::window_frame::titled("Settings", content, window, cx)
+    }
+}
+
+impl PreferencesWindow {
+    fn window_content(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let ui_font = crate::app_menus::follow_zoom(window, cx);
         let shown = self.shown.clone();
         let mut order = TabOrder::default();

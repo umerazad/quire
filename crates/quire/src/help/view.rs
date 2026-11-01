@@ -166,6 +166,17 @@ fn muted(text: impl Into<gpui::SharedString>) -> Label {
 
 impl Render for HelpWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = self.window_content(window, cx);
+        crate::window_frame::titled("Help & shortcuts", content, window, cx)
+    }
+}
+
+impl HelpWindow {
+    fn window_content(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let ui_font = crate::app_menus::follow_zoom(window, cx);
         let mut order = TabOrder::default();
         let close = order.next();

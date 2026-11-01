@@ -415,6 +415,17 @@ fn path_label(path: Option<&Path>) -> String {
 
 impl Render for MigrationWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = self.window_content(window, cx);
+        crate::window_frame::titled("Move from rt", content, window, cx)
+    }
+}
+
+impl MigrationWindow {
+    fn window_content(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let ui_font = crate::app_menus::follow_zoom(window, cx);
         let busy = self.is_running();
         let active = crate::profiles::active(cx);

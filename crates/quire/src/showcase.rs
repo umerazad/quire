@@ -469,6 +469,17 @@ impl ShowcaseWindow {
 
 impl Render for ShowcaseWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = self.window_content(window, cx);
+        crate::window_frame::titled("README.md", content, window, cx)
+    }
+}
+
+impl ShowcaseWindow {
+    fn window_content(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let ui_font = crate::app_menus::follow_zoom(window, cx);
         let colors = cx.theme().colors();
         let body = match &self.tag {

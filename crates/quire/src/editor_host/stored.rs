@@ -678,7 +678,8 @@ impl Render for StoredWindow {
             .on_action(cx.listener(|this, _: &SaveAndClosePage, window, cx| {
                 this.save_and_close(window, cx)
             }));
-        Self::register_page_views(
+        let root = crate::window_frame::round(root, gpui::Tiling::default(), window);
+        let content = Self::register_page_views(
             Self::register_help(
                 Self::register_sync(
                     Self::register_backups(
@@ -807,7 +808,8 @@ impl Render for StoredWindow {
             )
         })
         .children(self.render_menu())
-        .children(bench::marker(cx))
+        .children(bench::marker(cx));
+        workspace::client_side_decorations(content, window, cx)
     }
 }
 

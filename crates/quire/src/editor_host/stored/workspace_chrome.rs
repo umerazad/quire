@@ -60,9 +60,11 @@ impl StoredWindow {
             "Switch to dark appearance"
         };
         let side_open = self.nav.side.is_some();
+        let [left_buttons, right_buttons] = crate::window_frame::controls(window, cx);
         let left = h_flex()
             .gap_1()
             .min_w_0()
+            .children(left_buttons)
             .child(self.render_sidebar_toggle())
             .child(Divider::vertical().h_4().mx_1())
             .child(
@@ -119,10 +121,16 @@ impl StoredWindow {
                     .toggle_state(side_open)
                     .tooltip(Tooltip::text("Toggle second pane"))
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_side(window, cx))),
-            );
+            )
+            .children(right_buttons);
+        let edges = gpui::Tiling {
+            left: !hidden,
+            bottom: true,
+            ..Default::default()
+        };
         crate::title_bar::drag_region(
             "quire-workspace-header",
-            h_flex()
+            crate::window_frame::round(h_flex(), edges, window)
                 .id("workspace-header")
                 .debug_selector(|| "quire-workspace-header".into())
                 .flex_none()

@@ -11616,6 +11616,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "paths",
  "picker",
+ "platform_title_bar",
  "project",
  "quick-xml 0.41.0",
  "quire_core",
