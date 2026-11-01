@@ -167,6 +167,39 @@ fn write_renders_page_links_and_live_block_previews_that_open_on_click(cx: &mut 
     assert_eq!(active(&notebook, cx), "h");
 }
 
+/// The index re-analyzes every save, so its progress comes and goes while the user works. It
+/// once took a line above the page, which moved a link 42 px down between a click's press and
+/// release under load, so the release missed the link and the click was lost.
+#[gpui::test]
+fn indexing_progress_never_moves_the_page_under_the_pointer(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&PAGES, "h", cx);
+    show_home_in_write(&notebook, cx);
+    wait_for_display(
+        &notebook,
+        "see the target and ↗\nnext\n",
+        "↗ target text",
+        cx,
+    );
+    let bounds = |selector: &'static str, cx: &mut TestAppContext| {
+        draw(&notebook, cx);
+        VisualTestContext::from_window(notebook.window.into(), cx).debug_bounds(selector)
+    };
+    let link = bounds("quire-web-link", cx).expect("a rendered page link");
+    assert_eq!(bounds("quire-index-progress", cx), None);
+
+    let index = read(&notebook, cx, |view, _| view.index.clone().unwrap());
+    index.update(cx, |index, cx| index.show_remaining(1, cx));
+    assert!(
+        bounds("quire-index-progress", cx).is_some(),
+        "the progress shows"
+    );
+    assert_eq!(
+        bounds("quire-web-link", cx),
+        Some(link),
+        "the link stays put"
+    );
+}
+
 #[gpui::test]
 fn clicking_a_tag_in_write_opens_its_tag_page_unless_the_caret_is_in_its_block(
     cx: &mut TestAppContext,

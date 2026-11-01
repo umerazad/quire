@@ -134,10 +134,11 @@ fn first_line(message: &str) -> String {
 
 /// The formatter thread: runs each request, rebuilding the engine after any failure other than
 /// Prettier rejecting the input.
-pub(crate) fn serve(jobs: mpsc::Receiver<Job>, limits: Limits) {
+pub(crate) fn serve(jobs: mpsc::Receiver<Job>, limits: Limits, gate: &Mutex<()>) {
     let watch = Arc::new(Watch::default());
     let mut engine: Option<Engine> = None;
     for job in jobs {
+        drop(gate.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
         if job.cancel.load(Ordering::Relaxed) {
             job.reply.send(Err(FormatError::Cancelled)).ok();
             continue;

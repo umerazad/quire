@@ -472,11 +472,10 @@ fn copy_code_copies_the_body_without_fences_or_container_prefixes(cx: &mut TestA
 #[gpui::test]
 fn the_format_button_shows_progress_and_survives_a_refold(cx: &mut TestAppContext) {
     init(false, cx);
-    let large: String = (0..1500)
-        .map(|i| format!("function f{i}(a,b){{return a+b*{i}}}\n"))
-        .collect();
-    let page = format!("|Intro\n\n```js\n{large}```\n\nAfter\n");
+    let page = "|Intro\n\n```js\nfunction f0(a,b){return a+b*0}\n```\n\nAfter\n".to_owned();
     let window = view(&page, true, cx);
+    let thread = cx.update(formatter);
+    let held = thread.hold();
     let mut visual = draw(window, cx);
     let button = visual
         .debug_bounds("quire-code-format-0")
@@ -504,6 +503,7 @@ fn the_format_button_shows_progress_and_survives_a_refold(cx: &mut TestAppContex
         Some(FORMATTING),
         "a caret move keeps the progress notice"
     );
+    drop(held);
     settle(window, cx);
     assert_eq!(notice(cx), None);
     assert_eq!(toolbars(window, cx), ["js · Format code · Copy code"]);

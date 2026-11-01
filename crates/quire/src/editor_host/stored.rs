@@ -384,14 +384,20 @@ impl StoredWindow {
         this
     }
 
-    fn index_status(&self, cx: &gpui::App) -> Option<gpui::SharedString> {
+    /// Why the index cannot answer, shown as a line above the page until it is fixed.
+    fn index_problem(&self, cx: &gpui::App) -> Option<gpui::SharedString> {
         match &self.index {
-            Ok(index) => {
-                let index = index.read(cx);
-                index.error().cloned().or_else(|| index.status())
-            }
+            Ok(index) => index.read(cx).error().cloned(),
             Err(error) => Some(error.clone()),
         }
+    }
+
+    /// Indexing progress. Every save is re-analyzed, so this comes and goes while the user
+    /// works; it floats over the window's corner rather than taking a line, which would move the
+    /// page under a pointer that is pressing a link.
+    fn index_progress(&self, cx: &gpui::App) -> Option<gpui::SharedString> {
+        let index = self.index.as_ref().ok()?.read(cx);
+        index.error().is_none().then(|| index.status()).flatten()
     }
 
     /// The editor for a loaded page, built once per page and kept while the window lives.
@@ -786,7 +792,7 @@ impl Render for StoredWindow {
         .when_some(self.copy_error.clone(), |div, error| {
             div.child(gpui::div().p_2().child(error))
         })
-        .when_some(self.index_status(cx), |div, error| {
+        .when_some(self.index_problem(cx), |div, error| {
             div.child(gpui::div().p_2().child(error))
         })
         .when_some(self.nav.error.clone(), |div, error| {
@@ -799,6 +805,24 @@ impl Render for StoredWindow {
             div.child(gpui::div().p_2().child("Opening notebook storage…"))
         })
         .child(self.render_body(window, cx))
+        .when_some(self.index_progress(cx), |div, progress| {
+            div.child(
+                gpui::div()
+                    .debug_selector(|| "quire-index-progress".into())
+                    .absolute()
+                    .bottom_2()
+                    .right_4()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(cx.theme().colors().elevated_surface_background)
+                    .child(
+                        ui::Label::new(progress)
+                            .size(ui::LabelSize::Small)
+                            .color(ui::Color::Muted),
+                    ),
+            )
+        })
         .when_some(self.nav.palette.clone(), |div, palette| {
             div.child(
                 gpui::div()
