@@ -14,8 +14,8 @@ mod filter;
 mod periods;
 
 pub use commands::{
-    CAPTURE_ONE, NOT_HERE, NOT_IN_CODE, NOT_IN_SELECTION, Shortcut, TaskEdit, capture,
-    created_stamp, task_at, tasks_in,
+    CAPTURE_ONE, NO_TASK, NOT_HERE, NOT_IN_CODE, NOT_IN_SELECTION, Shortcut, TaskEdit, capture,
+    created_stamp, due_in, task_at, tasks_in,
 };
 pub use dates::{
     add_days, date_phrase, is_due, is_upcoming, next_week, short_date, task_date_label,

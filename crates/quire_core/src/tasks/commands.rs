@@ -11,6 +11,8 @@ pub const NOT_HERE: &str =
     "A task cannot be added here. Place the cursor in a list block, paragraph or empty line.";
 pub const NOT_IN_SELECTION: &str =
     "A task cannot be added in this selection. Select list blocks or paragraphs.";
+pub const NO_TASK: &str =
+    "No task here to date. Place the cursor on a task line, or select task lines, and try again.";
 pub const CAPTURE_ONE: &str = "Capture one task at a time. Use its source note for longer details.";
 
 /// The task keys: toggle done (Cmd-Enter) or cycle Inbox, Next, Waiting, Someday
@@ -207,6 +209,47 @@ pub fn tasks_in(
     } else {
         created
     })
+}
+
+/// Sets the due date of the task at a caret, or of every task starting on a selected line, to
+/// `date`, or with `None` removes their due stamps. A selection ending at a line's start leaves
+/// that line out.
+pub fn due_in(
+    page: &Page,
+    tasks: &[Task],
+    days: &DailyNames,
+    selection: Range<usize>,
+    date: Option<&str>,
+) -> Result<Vec<Edit>, &'static str> {
+    let text = page.text;
+    let first = line_at(text, selection.start);
+    let chosen: Vec<&Task> = if selection.is_empty() {
+        let position = selection.start.max(text_start(text, &first));
+        block_at(page.blocks, position)
+            .and_then(|block| {
+                tasks
+                    .iter()
+                    .find(|task| task.content.start == block.content.0)
+            })
+            .into_iter()
+            .collect()
+    } else {
+        let mut last = line_at(text, selection.end);
+        if last.start == selection.end && last.start > 0 {
+            last = line_at(text, last.start - 1);
+        }
+        tasks
+            .iter()
+            .filter(|task| (first.start..=last.end).contains(&task.content.start))
+            .collect()
+    };
+    if chosen.is_empty() {
+        return Err(NO_TASK);
+    }
+    Ok(chosen
+        .into_iter()
+        .flat_map(|task| task.date_change(super::DateField::Due, date, days))
+        .collect())
 }
 
 /// Appends a captured task to a page's text, replacing a new daily page's lone empty bullet.

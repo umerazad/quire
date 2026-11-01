@@ -313,7 +313,7 @@ const LIST_CONTEXT: &str = "QuireTaskQueryList";
 /// The contexts a focused list sets: it is a list, and a control the page editor and Vim leave alone.
 const LIST_KEYS: &str = "QuireControl QuireList QuireTaskQueryList";
 /// The key context around a list's date field.
-const DATE_CONTEXT: &str = "QuireTaskQueryDate";
+pub(crate) const DATE_CONTEXT: &str = "QuireTaskQueryDate";
 
 /// Keys for task lists in page editors. Cmd/Ctrl-Enter on a query line moves focus into its
 /// list, which answers the list keys, Cmd/Ctrl-Enter to tick, Cmd/Ctrl-Shift-Enter to move to
