@@ -115,24 +115,15 @@ impl Seed {
 
 /// Holds run `run` to Tidy's limits on page `page`, or with None releases it.
 fn hold_to_tidy(run: &str, page: Option<&str>, cx: &mut App) {
-    #[cfg(unix)]
     match page {
         Some(page) => crate::notebook_tools::host::start_tidy(run, page, cx),
         None => crate::notebook_tools::host::end_tidy(run, cx),
     }
-    #[cfg(not(unix))]
-    let _ = (run, page, cx);
 }
 
 /// The tool server a question with run ID `run` attaches, or why there is none.
 fn tool_server(run: &str, cx: &App) -> Result<ToolServer, &'static str> {
-    #[cfg(unix)]
-    return crate::notebook_tools::ask_server(run, cx);
-    #[cfg(not(unix))]
-    {
-        let _ = (run, cx);
-        Err(quire_core::ai::backend::NO_TOOL_SERVER)
-    }
+    crate::notebook_tools::ask_server(run, cx)
 }
 
 /// The page the pane sits beside, and the notebook's date.
@@ -255,23 +246,15 @@ async fn label_blocks(ids: Vec<String>, index: Option<IndexClient>) -> Vec<(Stri
 /// The changes run `run` proposed, or with None those from terminal sessions, where the
 /// notebook tools exist.
 fn change_list(run: Option<&str>, cx: &mut App) -> Option<AnyView> {
-    #[cfg(unix)]
-    {
-        use crate::notebook_tools::{
-            changes::TERMINAL_RUN,
-            review::{ChangeList, RUN_TITLE, TERMINAL_TITLE},
-        };
-        let list = match run {
-            Some(run) => ChangeList::for_run(run, RUN_TITLE, cx),
-            None => ChangeList::for_run(TERMINAL_RUN, TERMINAL_TITLE, cx),
-        };
-        Some(list.into())
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (run, cx);
-        None
-    }
+    use crate::notebook_tools::{
+        changes::TERMINAL_RUN,
+        review::{ChangeList, RUN_TITLE, TERMINAL_TITLE},
+    };
+    let list = match run {
+        Some(run) => ChangeList::for_run(run, RUN_TITLE, cx),
+        None => ChangeList::for_run(TERMINAL_RUN, TERMINAL_TITLE, cx),
+    };
+    Some(list.into())
 }
 
 /// Why questions cannot run now, or None.

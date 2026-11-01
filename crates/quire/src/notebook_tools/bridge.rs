@@ -1,16 +1,19 @@
 //! The notebook bridge (reference `notebook-bridge.ts`): a private Unix socket in Quire's data
-//! folder that serves the notebook tools to local MCP servers over newline-delimited JSON. Each
+//! folder that serves the notebook tools to local MCP servers over newline-delimited JSON. The
+//! socket comes from Zed's `net` crate, as Zed's own MCP server socket does, so Windows (AF_UNIX)
+//! uses the same file, token, and framing as macOS and Linux. Each
 //! request carries the per-launch token from `bridge.json`; a call is checked here (tool, AI
 //! commands on, AI writes, input, open notebook) before the app answers it against the live
 //! notebook.
 
 use futures::{AsyncReadExt as _, AsyncWriteExt as _, StreamExt as _, channel::mpsc};
 use gpui::{App, AppContext as _, AsyncApp, Task};
+use net::async_net::{UnixListener, UnixStream};
 use quire_core::ai::tools::{
     AI_COMMANDS_OFF, NO_NOTEBOOK, WRITES_OFF, Writes, check_input, listed_tools,
 };
 use serde_json::{Value, json};
-use smol::{future::FutureExt as _, net::unix::UnixListener};
+use smol::future::FutureExt as _;
 use std::{
     cell::RefCell,
     path::{Path, PathBuf},
@@ -85,7 +88,7 @@ impl NotebookBridge {
         let socket = crate::single_instance::socket_path(&options.directory, "bridge.sock");
         std::fs::create_dir_all(&options.directory).map_err(failed)?;
         std::fs::remove_file(&socket).ok();
-        let listener = std::os::unix::net::UnixListener::bind(&socket).map_err(failed)?;
+        let listener = UnixListener::bind(&socket).map_err(failed)?;
         #[cfg(unix)]
         std::fs::set_permissions(&socket, std::os::unix::fs::PermissionsExt::from_mode(0o600))
             .map_err(failed)?;
@@ -97,7 +100,6 @@ impl NotebookBridge {
             "pid": std::process::id(),
         });
         private_write(&file, contents.to_string().as_bytes()).map_err(failed)?;
-        let listener = UnixListener::try_from(listener).map_err(failed)?;
         let accept = cx.spawn(async move |cx| {
             let connections = Rc::new(RefCell::new(Vec::new()));
             while let Ok((stream, _)) = listener.accept().await {
@@ -123,14 +125,9 @@ impl Drop for NotebookBridge {
     }
 }
 
-async fn connect(
-    stream: smol::net::unix::UnixStream,
-    token: [u8; 32],
-    options: Options,
-    cx: &mut AsyncApp,
-) {
+async fn connect(stream: UnixStream, token: [u8; 32], options: Options, cx: &mut AsyncApp) {
     let (send, mut replies) = mpsc::unbounded::<Value>();
-    let mut writer = stream.clone();
+    let (mut reader, mut writer) = stream.split();
     let writing = cx.background_spawn(async move {
         while let Some(reply) = replies.next().await {
             if writer
@@ -142,7 +139,6 @@ async fn connect(
             }
         }
     });
-    let mut reader = stream;
     let mut buffer = Vec::new();
     let mut chunk = [0; 8192];
     let mut answering = Vec::new();

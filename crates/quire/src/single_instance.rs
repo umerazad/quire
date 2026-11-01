@@ -5,9 +5,11 @@
 //! Quire is quitting it answers "busy", and the newer one waits for the socket to close.
 //!
 //! The socket follows Zed's Linux listener (`zed-<channel>.sock` in the data folder, a stale file
-//! removed when nothing answers). On Windows Quire does not hand over yet; the notebook lock still
-//! keeps a second process out of an open notebook.
+//! removed when nothing answers). It is a Unix domain socket on every OS through Zed's `net` crate,
+//! which Zed also uses for its MCP server and askpass sockets on Windows (AF_UNIX, Windows 10 1803
+//! and later), so Windows speaks the same Launch and Reply lines as macOS and Linux.
 
+use net::{UnixListener, UnixStream};
 use serde::{Deserialize, Serialize};
 use std::{
     io::{self, BufRead as _, BufReader, Write as _},
@@ -83,17 +85,14 @@ pub enum Claim {
     Running(Reply),
 }
 
-#[cfg(unix)]
-pub struct Listener(std::os::unix::net::UnixListener);
+pub struct Listener(UnixListener);
 
-#[cfg(not(unix))]
-pub struct Listener;
+/// How long either side waits for the other's line before giving up on the connection.
+const ANSWER_WITHIN: Duration = Duration::from_secs(5);
 
 /// Claims the data folder's socket for this launch, or hands the launch to the Quire holding it,
 /// retrying `attempts` times `delay` apart while that Quire is quitting.
-#[cfg(unix)]
 pub fn claim(socket: &Path, launch: &Launch, attempts: u32, delay: Duration) -> io::Result<Claim> {
-    use std::os::unix::net::{UnixListener, UnixStream};
     for _ in 0..attempts {
         match UnixStream::connect(socket) {
             Ok(stream) => match ask(stream, launch)? {
@@ -104,7 +103,7 @@ pub fn claim(socket: &Path, launch: &Launch, attempts: u32, delay: Duration) -> 
                 if matches!(
                     error.kind(),
                     io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
-                ) =>
+                ) || !socket.exists() =>
             {
                 match std::fs::remove_file(socket) {
                     Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
@@ -125,76 +124,92 @@ pub fn claim(socket: &Path, launch: &Launch, attempts: u32, delay: Duration) -> 
     ))
 }
 
-#[cfg(not(unix))]
-pub fn claim(_: &Path, _: &Launch, _: u32, _: Duration) -> io::Result<Claim> {
-    Ok(Claim::First(Listener))
+/// Reads one line from `stream` on a helper thread, giving up after `within`. Windows sockets
+/// from Zed's `net` crate have no read timeout, so the wait is bounded here on every platform.
+fn read_line_within(
+    stream: impl io::Read + Send + 'static,
+    within: Duration,
+) -> io::Result<String> {
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("QuireSocketRead".into())
+        .spawn(move || {
+            let mut line = String::new();
+            let read = BufReader::new(stream).read_line(&mut line);
+            send.send(read.map(|_| line)).ok();
+        })?;
+    receive.recv_timeout(within).unwrap_or_else(|_| {
+        Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "the other side did not answer in time",
+        ))
+    })
 }
 
-#[cfg(unix)]
-fn ask(stream: std::os::unix::net::UnixStream, launch: &Launch) -> io::Result<Reply> {
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-    let mut writer = &stream;
-    writer.write_all(&serde_json::to_vec(launch).map_err(io::Error::other)?)?;
-    writer.write_all(b"\n")?;
-    let mut line = String::new();
-    BufReader::new(&stream).read_line(&mut line)?;
+fn ask(mut stream: UnixStream, launch: &Launch) -> io::Result<Reply> {
+    let mut request = serde_json::to_vec(launch).map_err(io::Error::other)?;
+    request.push(b'\n');
+    stream.write_all(&request)?;
+    let line = read_line_within(stream, ANSWER_WITHIN)?;
     serde_json::from_str(line.trim()).map_err(io::Error::other)
 }
 
 impl Listener {
-    /// Answers launches on a background thread and passes each one that is not refused as busy
-    /// to `deliver`. Once `quitting` is set, every launch is told to wait.
-    #[cfg(unix)]
+    /// Answers launches on a background thread, each connection on its own thread so a client
+    /// that never finishes its line holds up no one, and passes each launch that is not refused
+    /// as busy to `deliver`. Once `quitting` is set, every launch is told to wait.
     pub fn serve(
         self,
         current: String,
         quitting: Arc<AtomicBool>,
-        deliver: impl Fn(Launch, Reply) + Send + 'static,
+        deliver: impl Fn(Launch, Reply) + Send + Sync + 'static,
     ) -> io::Result<()> {
+        let deliver = Arc::new(deliver);
         std::thread::Builder::new()
             .name("QuireSingleInstance".into())
             .spawn(move || {
-                for stream in self.0.incoming() {
-                    let Ok(stream) = stream else {
-                        continue;
-                    };
-                    stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
-                    let mut line = String::new();
-                    if BufReader::new(&stream).read_line(&mut line).is_err() {
-                        continue;
-                    }
-                    let Ok(launch) = serde_json::from_str::<Launch>(line.trim()) else {
-                        continue;
-                    };
-                    let reply = if quitting.load(Ordering::SeqCst) {
-                        Reply::Busy
-                    } else {
-                        reply_for(&current, &launch)
-                    };
-                    let mut writer = &stream;
-                    let answered = serde_json::to_vec(&reply)
-                        .map_err(io::Error::other)
-                        .and_then(|bytes| writer.write_all(&[bytes, b"\n".to_vec()].concat()));
-                    if answered.is_ok() && reply != Reply::Busy {
-                        deliver(launch, reply);
-                    }
+                while let Ok((stream, _)) = self.0.accept() {
+                    let (current, quitting, deliver) =
+                        (current.clone(), quitting.clone(), deliver.clone());
+                    std::thread::Builder::new()
+                        .name("QuireLaunch".into())
+                        .spawn(move || answer(stream, &current, &quitting, &*deliver))
+                        .ok();
                 }
             })
             .map(drop)
     }
-
-    #[cfg(not(unix))]
-    pub fn serve(
-        self,
-        _: String,
-        _: Arc<AtomicBool>,
-        _: impl Fn(Launch, Reply) + Send + 'static,
-    ) -> io::Result<()> {
-        Ok(())
-    }
 }
 
-#[cfg(all(test, unix))]
+fn answer(
+    mut stream: UnixStream,
+    current: &str,
+    quitting: &AtomicBool,
+    deliver: &dyn Fn(Launch, Reply),
+) {
+    let mut line = String::new();
+    if BufReader::new(&mut stream).read_line(&mut line).is_err() {
+        return;
+    }
+    let Ok(launch) = serde_json::from_str::<Launch>(line.trim()) else {
+        return;
+    };
+    let reply = if quitting.load(Ordering::SeqCst) {
+        Reply::Busy
+    } else {
+        reply_for(current, &launch)
+    };
+    let answered = serde_json::to_vec(&reply)
+        .map_err(io::Error::other)
+        .and_then(|mut bytes| {
+            bytes.push(b'\n');
+            stream.write_all(&bytes)
+        });
+    if answered.is_ok() && reply != Reply::Busy {
+        deliver(launch, reply);
+    }
+}
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::mpsc;
@@ -252,6 +267,42 @@ mod tests {
         let error = claim(&socket, &newer, 3, QUICK).err().unwrap();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert!(received.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_launch_that_never_finishes_its_line_holds_up_no_other_launch() {
+        let folder = tempfile::tempdir().unwrap();
+        let socket = folder.path().join("q.sock");
+        let Claim::First(listener) = claim(&socket, &launch("0.1.0", &[]), 1, QUICK).unwrap()
+        else {
+            panic!("the first launch must own the socket");
+        };
+        let (sender, received) = mpsc::channel();
+        listener
+            .serve(
+                "0.1.0".into(),
+                Arc::new(AtomicBool::new(false)),
+                move |launch, reply| sender.send((launch, reply)).unwrap(),
+            )
+            .unwrap();
+        let _silent = UnixStream::connect(&socket).unwrap();
+        let second = launch("0.1.0", &["--notebook-folder", "/notes"]);
+        assert!(matches!(
+            claim(&socket, &second, 1, QUICK).unwrap(),
+            Claim::Running(Reply::Focus)
+        ));
+        assert_eq!(received.recv().unwrap(), (second, Reply::Focus));
+    }
+
+    #[test]
+    fn a_running_quire_that_never_answers_is_given_up_on() {
+        let folder = tempfile::tempdir().unwrap();
+        let socket = folder.path().join("q.sock");
+        let _mute = UnixListener::bind(&socket).unwrap();
+        let mut stream = UnixStream::connect(&socket).unwrap();
+        stream.write_all(b"{}\n").unwrap();
+        let error = read_line_within(stream, QUICK).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
     }
 
     #[test]

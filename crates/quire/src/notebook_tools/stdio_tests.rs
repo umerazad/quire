@@ -3,7 +3,7 @@
 //! the test app serves.
 
 use super::bridge::{NotebookBridge, tests::options};
-use super::stdio::CLOSED_APP;
+use super::stdio::{BridgeClient, CLOSED_APP, SLOW};
 use gpui::TestAppContext;
 use serde_json::{Value, json};
 use std::{
@@ -148,6 +148,26 @@ fn serves_the_tools_from_the_running_app_and_exits_0_on_stdin_close(cx: &mut Tes
         json!({ "summary": "tasks for Some(\"ask-9\")" })
     );
     assert_eq!(switches.calls.borrow()[0].input, json!({ "due": "today" }));
+}
+
+#[test]
+fn an_app_that_takes_too_long_is_reported_as_slow_and_a_vanished_one_as_closed() {
+    use quire_core::ai::mcp::Bridge as _;
+    let folder = tempfile::tempdir().unwrap();
+    let socket = folder.path().join("bridge.sock");
+    let file = folder.path().join("bridge.json");
+    let token = "0".repeat(64);
+    std::fs::write(
+        &file,
+        json!({ "socket": socket.to_string_lossy(), "token": token }).to_string(),
+    )
+    .unwrap();
+    let mute = net::UnixListener::bind(&socket).unwrap();
+    let mut client = BridgeClient::new(file, None);
+    client.timeout = Duration::from_millis(50);
+    assert_eq!(client.list().unwrap_err(), SLOW);
+    drop(mute);
+    assert_eq!(client.list().unwrap_err(), CLOSED_APP);
 }
 
 #[gpui::test]

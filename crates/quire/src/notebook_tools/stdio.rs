@@ -1,14 +1,14 @@
 //! The Quire MCP server (reference `mcp-server.ts`): the process AI CLIs start with
 //! `quire --mcp-server`. It never reads the notebook; every call goes to the running app over the
 //! bridge named in `bridge.json`, which it reads on each request so a restarted app is picked up.
-//! Standard library only, so it starts without the app's windowing and also builds into the
-//! `quire_mcp` test example.
+//! Standard library and Zed's `net` socket only, so it starts without the app's windowing, builds
+//! into the `quire_mcp` test example, and reaches the app over AF_UNIX on Windows too.
 
+use net::UnixStream;
 use quire_core::ai::mcp::{Bridge, answer_line};
 use serde_json::{Value, json};
 use std::{
     io::{BufRead, BufReader, Write},
-    os::unix::net::UnixStream,
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -19,7 +19,7 @@ use std::{
 
 pub const CLOSED_APP: &str =
     "Quire is not running with a notebook open. Open Quire with the notebook, then retry.";
-const SLOW: &str = "Quire did not answer in time. Make sure its window is open, then retry.";
+pub const SLOW: &str = "Quire did not answer in time. Make sure its window is open, then retry.";
 const UNREADABLE: &str =
     "Quire sent a reply the tool server could not read. Update Quire, then retry.";
 const TIMEOUT: Duration = Duration::from_secs(25);
@@ -31,6 +31,8 @@ pub const RUN_VARIABLE: &str = "QUIRE_RUN";
 pub struct BridgeClient {
     pub file: PathBuf,
     pub run: Option<String>,
+    /// How long one call may take before the server reports Quire as slow.
+    pub timeout: Duration,
     next: AtomicU64,
 }
 
@@ -39,6 +41,7 @@ impl BridgeClient {
         Self {
             file,
             run,
+            timeout: TIMEOUT,
             next: AtomicU64::new(0),
         }
     }
@@ -53,32 +56,34 @@ impl BridgeClient {
             return Err(CLOSED_APP.into());
         };
         let mut stream = UnixStream::connect(socket).map_err(|_| CLOSED_APP.to_owned())?;
-        stream.set_read_timeout(Some(TIMEOUT)).ok();
         let id = self.next.fetch_add(1, Ordering::Relaxed) + 1;
         let mut request = json!({ "id": id, "token": token, "method": method });
         if let Some(params) = params {
             request["params"] = params;
         }
         writeln!(stream, "{request}").map_err(|_| CLOSED_APP.to_owned())?;
-        let mut line = String::new();
-        match BufReader::new(stream).read_line(&mut line) {
-            Ok(0) => return Err(CLOSED_APP.into()),
-            Ok(_) => {}
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                return Err(SLOW.into());
-            }
-            Err(_) => return Err(CLOSED_APP.into()),
-        }
+        let line = read_reply(stream, self.timeout)?;
         let answer: Value = serde_json::from_str(&line).map_err(|_| UNREADABLE.to_owned())?;
         match answer.get("error").and_then(Value::as_str) {
             Some(error) => Err(error.to_owned()),
             None => Ok(answer.get("result").cloned().unwrap_or(Value::Null)),
         }
+    }
+}
+
+/// Reads the app's one-line reply on a helper thread so the wait is bounded on every OS; Windows
+/// sockets from Zed's `net` crate have no read timeout.
+fn read_reply(stream: UnixStream, timeout: Duration) -> Result<String, String> {
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        let read = BufReader::new(stream).read_line(&mut line);
+        send.send(read.map(|read| (read, line))).ok();
+    });
+    match receive.recv_timeout(timeout) {
+        Ok(Ok((0, _)) | Err(_)) => Err(CLOSED_APP.into()),
+        Ok(Ok((_, line))) => Ok(line),
+        Err(_) => Err(SLOW.into()),
     }
 }
 

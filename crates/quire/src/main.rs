@@ -179,7 +179,7 @@ mod ai;
 #[cfg(feature = "full-editor")]
 mod rt_migration;
 
-#[cfg(all(feature = "full-editor", unix))]
+#[cfg(feature = "full-editor")]
 mod notebook_tools;
 
 #[path = "example_support/fonts.rs"]
@@ -1124,7 +1124,7 @@ fn run_example() {
 
 #[cfg(not(target_family = "wasm"))]
 fn main() {
-    #[cfg(all(feature = "full-editor", unix))]
+    #[cfg(feature = "full-editor")]
     if std::env::args().nth(1).as_deref() == Some(notebook_tools::SERVER_FLAG) {
         notebook_tools::stdio::run(
             paths::data_dir().join(notebook_tools::bridge::FILE_NAME),

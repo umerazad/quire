@@ -379,7 +379,6 @@ impl StoredWindow {
         this.watch_sync(window, cx);
         this.watch_live_sync(window, cx);
         this.load_settings(window, cx);
-        #[cfg(unix)]
         this.offer_notebook_tools(cx);
         bench::start(window, cx);
         this
