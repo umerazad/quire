@@ -311,7 +311,7 @@ pub fn open(cx: &mut App) {
             cx,
         ))),
         window_min_size: Some(crate::title_bar::MIN_SIZE),
-        ..Default::default()
+        ..crate::title_bar::base_options()
     };
     let opened = cx.open_window(options, |window, cx| {
         window.set_window_title("README.md");

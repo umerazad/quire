@@ -11594,6 +11594,7 @@ dependencies = [
  "buffer_diff",
  "db",
  "editor",
+ "embed-resource",
  "fs",
  "futures 0.3.34",
  "gpui",
@@ -11657,6 +11658,7 @@ dependencies = [
  "uuid",
  "vim",
  "vim_mode_setting",
+ "windows 0.62.2",
  "workspace",
  "zed_actions",
 ]

@@ -4,7 +4,9 @@
 // Usage: bun tools/bundle-linux.ts [--skip-build]
 // Install by unpacking anywhere and linking bin/quire-native into a directory on PATH; the
 // desktop entry and icons go under ~/.local/share/applications and ~/.local/share/icons.
-// The executable is `quire-native` because the Go terminal app installs `quire`.
+// The executable is `quire-native` because the Go terminal app installs `quire`. The desktop
+// entry's name, Icon, and StartupWMClass are the app ID every window sets (title_bar::APP_ID),
+// so docks match windows to it on Wayland and X11.
 import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { linkedPackages, render } from "./generate-licenses.ts";

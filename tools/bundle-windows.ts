@@ -1,15 +1,16 @@
 // Builds a Windows zip: `quire-native.exe` with pdfium.dll beside it (where quire_media looks
-// first after QUIRE_PDFIUM_LIBRARY), the icon, and the generated third-party notices.
-// Unverified: no Windows machine has run it, and rquickjs-sys has not been built for Windows.
-// Zed ships an Inno Setup installer (script/bundle-windows.ps1); Quire has no installer yet, no
-// icon embedded in the executable, and no signing. main.rs also lacks Zed's
-// `windows_subsystem = "windows"` attribute, so the executable opens a console window. `--mcp-server` is Unix-only, so it is not checked.
+// first after QUIRE_PDFIUM_LIBRARY), the icon, and the generated third-party notices. The
+// executable carries its icon (crates/quire/build.rs embeds resources/quire.rc) and, in release,
+// Zed's `windows_subsystem = "windows"`, so it opens no console window.
+// Unverified: no Windows machine has run it; the Rust code and the resource script were only
+// cross-checked from macOS. Zed ships an Inno Setup installer (script/bundle-windows.ps1); Quire
+// has no installer yet and no signing.
 // Usage: bun tools/bundle-windows.ts [--skip-build]
 import { copyFileSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { linkedPackages, render } from "./generate-licenses.ts";
 import { hostPlatform } from "./pdfium.ts";
-import { fail, hashTree, identity, inputs, licensesFile, megabytes, pdfium, quireVersion, resources, root, run, treeBytes } from "./package.ts";
+import { fail, hashTree, identity, inputs, licensesFile, mcpServer, megabytes, pdfium, quireVersion, resources, root, run, treeBytes } from "./package.ts";
 
 if (process.platform !== "win32") fail("tools/bundle-windows.ts runs on Windows. Use tools/bundle-mac.ts or tools/bundle-linux.ts elsewhere.");
 const skipBuild = process.argv.includes("--skip-build");
@@ -44,3 +45,6 @@ const record = {
 };
 writeFileSync(join(out, `${name}.inputs.json`), `${JSON.stringify(record, null, 2)}\n`);
 console.log(`Built ${zip} (${megabytes(record.sizes.zipBytes)}; unpacked ${megabytes(record.sizes.bundleBytes)}). Unsigned.`);
+const server = mcpServer(join(dir, `${identity.command}.exe`));
+if (server) fail(`The package was written but failed its check: quire-native.exe --mcp-server ${server}`);
+console.log("--mcp-server answered with no app running.");

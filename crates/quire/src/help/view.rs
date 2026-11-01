@@ -48,7 +48,7 @@ pub fn open(cx: &mut App) {
             gpui::size(px(760.), px(820.)),
             cx,
         ))),
-        ..Default::default()
+        ..crate::title_bar::base_options()
     };
     let opened = cx.open_window(options, |window, cx| {
         window.set_window_title("Help & shortcuts");

@@ -1,4 +1,7 @@
 #![cfg_attr(target_family = "wasm", no_main)]
+// Release builds on Windows open no console window, as Zed's do; `--mcp-server` still talks over
+// the standard input and output its AI client hands it.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod document;
 

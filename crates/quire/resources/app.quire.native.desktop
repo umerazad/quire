@@ -8,5 +8,6 @@ TryExec=quire-native
 Exec=quire-native
 Icon=app.quire.native
 StartupNotify=true
+StartupWMClass=app.quire.native
 Categories=Office;TextEditor;
 Keywords=notes;markdown;outline;
