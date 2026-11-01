@@ -14,6 +14,8 @@ use theme::ActiveTheme;
 mod backups;
 mod bench;
 mod block_move_views;
+#[cfg(feature = "test-support")]
+mod capture;
 mod document_export;
 mod example;
 mod exchange;
@@ -27,6 +29,8 @@ mod page_views;
 mod profiles;
 mod sync;
 
+#[cfg(feature = "test-support")]
+pub(crate) use capture::run as capture_shell;
 pub(super) use example::launch as launch_example_notebook;
 pub(super) use folder::FolderOptions;
 pub(super) use instance::{Handover, handle_launch};
@@ -661,7 +665,7 @@ impl StoredWindow {
 
 impl Render for StoredWindow {
     fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        crate::app_menus::follow_zoom(window, cx);
+        let ui_font = crate::app_menus::follow_zoom(window, cx);
         let conflict = self
             .render_folder_conflict(cx)
             .or_else(|| self.render_version_conflict(cx));
@@ -741,6 +745,7 @@ impl Render for StoredWindow {
         let profile = self.render_profile(cx);
         let root = gpui::div()
             .track_focus(&self.nav.loading_focus)
+            .font(ui_font)
             .size_full()
             .relative()
             .on_action(

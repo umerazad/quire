@@ -139,6 +139,96 @@ fn the_settings_store_starts_from_quire_defaults(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui::test]
+fn quire_themes_are_the_defaults_for_each_appearance(cx: &mut TestAppContext) {
+    init_app(cx);
+    let shown = |appearance: Appearance, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            *SystemAppearance::global_mut(cx) = SystemAppearance(appearance);
+            theme_settings::reload_theme(cx);
+            let theme = cx.theme();
+            (theme.name.to_string(), theme.appearance)
+        })
+    };
+    assert_eq!(
+        shown(Appearance::Light, cx),
+        (LIGHT_THEME.to_owned(), Appearance::Light)
+    );
+    assert_eq!(
+        shown(Appearance::Dark, cx),
+        (DARK_THEME.to_owned(), Appearance::Dark)
+    );
+    for mode in [ThemeAppearanceMode::Light, ThemeAppearanceMode::Dark] {
+        let mut content = SettingsContent::default();
+        Change::Appearance(mode).apply(&mut content);
+        let Some(ThemeSelection::Dynamic {
+            mode: chosen,
+            light,
+            dark,
+        }) = content.theme.theme
+        else {
+            panic!("appearance changes keep a light and a dark theme");
+        };
+        assert_eq!(chosen, mode);
+        assert_eq!(
+            (light.0.as_ref(), dark.0.as_ref()),
+            (LIGHT_THEME, DARK_THEME)
+        );
+    }
+}
+
+#[test]
+fn appearance_changes_replace_zeds_default_themes_but_keep_chosen_ones() {
+    let mut content = SettingsContent::default();
+    content.theme.theme = Some(ThemeSelection::Dynamic {
+        mode: ThemeAppearanceMode::System,
+        light: ThemeName(settings::DEFAULT_LIGHT_THEME.into()),
+        dark: ThemeName("Gruvbox Dark".into()),
+    });
+    Change::Appearance(ThemeAppearanceMode::Dark).apply(&mut content);
+    let Some(ThemeSelection::Dynamic { mode, light, dark }) = content.theme.theme else {
+        panic!("appearance changes keep a light and a dark theme");
+    };
+    assert_eq!(mode, ThemeAppearanceMode::Dark);
+    assert_eq!(
+        (light.0.as_ref(), dark.0.as_ref()),
+        (LIGHT_THEME, "Gruvbox Dark")
+    );
+}
+
+#[gpui::test]
+fn the_interface_uses_the_editor_font_family_as_the_reference_does(cx: &mut TestAppContext) {
+    init_app(cx);
+    let fonts = |cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let theme = ThemeSettings::get_global(cx);
+            (
+                theme.ui_font.family.to_string(),
+                theme
+                    .ui_font
+                    .fallbacks
+                    .as_ref()
+                    .map(|fallbacks| fallbacks.fallback_list().to_vec()),
+                f32::from(theme.ui_font_size(cx)),
+            )
+        })
+    };
+    let (family, fallbacks, size) = fonts(cx);
+    assert_eq!(family, DEFAULT_FONT_FAMILY);
+    assert_eq!(fallbacks, Some(FONT_FALLBACKS.map(String::from).to_vec()));
+    let mut content = SettingsContent::default();
+    Change::FontFamily("Iosevka".into()).apply(&mut content);
+    let text = serde_json::to_string(&content).unwrap();
+    cx.update(|cx| apply_user_settings(&text, cx));
+    assert_eq!(
+        fonts(cx),
+        ("Iosevka".to_owned(), fallbacks.clone(), size),
+        "the interface follows the editor family but keeps its own size"
+    );
+    restore_defaults(&mut content);
+    assert_eq!(content.theme.ui_font_family, None);
+}
+
 #[test]
 fn vim_cursors_follow_the_reference_shapes() {
     let mut content = SettingsContent::default();
