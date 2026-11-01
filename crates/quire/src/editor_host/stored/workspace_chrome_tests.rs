@@ -234,3 +234,30 @@ fn the_header_toggles_the_second_pane_with_its_own_toolbar(cx: &mut TestAppConte
     });
     assert!(second.is_none(), "the side pane draws one editor too");
 }
+
+#[gpui::test]
+fn pages_open_in_write_as_the_reference_opens_them(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::editor_host::init(cx).unwrap();
+        cx.remove_global::<crate::editor_host::PagesOpenInSource>();
+    });
+    let notebook = opened(cx);
+    assert!(writing(&notebook, cx), "a page opens in Write");
+    notebook
+        .window
+        .update(cx, |view, window, cx| view.toggle_side(window, cx))
+        .unwrap();
+    wait_until(cx, "the side pane's editor", |cx| {
+        read(&notebook, cx, |view, _| {
+            view.nav
+                .side
+                .as_ref()
+                .is_some_and(|side| side.editor.is_some())
+        })
+    });
+    let side = read(&notebook, cx, |view, cx| {
+        let editor = view.nav.side.as_ref().unwrap().editor.as_ref().unwrap();
+        editor.read(cx).writing(cx)
+    });
+    assert!(side, "the second pane opens in Write too");
+}

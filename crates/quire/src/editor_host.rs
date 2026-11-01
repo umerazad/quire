@@ -18,6 +18,15 @@ struct Initialized;
 
 impl gpui::Global for Initialized {}
 
+/// Notebook pages open in Write, as rt's do. Most window tests were written against pages that
+/// open in Source and switch when they need Write, so tests start with this set; a test of the
+/// Write default removes it.
+#[cfg(test)]
+pub(crate) struct PagesOpenInSource;
+
+#[cfg(test)]
+impl gpui::Global for PagesOpenInSource {}
+
 /// Initializes the editor host once per app. A second call is ignored: Vim and the editor
 /// register global keystroke and entity observers, and registering them again would record
 /// every Vim action twice, so `.` would replay `o` twice.
@@ -26,6 +35,8 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
         return Ok(());
     }
     cx.set_global(Initialized);
+    #[cfg(test)]
+    cx.set_global(PagesOpenInSource);
     settings::init(cx);
     crate::preferences::init(cx);
     crate::ai::settings::init(cx);
@@ -666,10 +677,18 @@ impl NotebookWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> Self {
-        let view = Self {
+        let mut view = Self {
             single: true,
             ..Self::for_page(analysis, None, window, cx)
         };
+        #[cfg(test)]
+        let write = !cx.has_global::<PagesOpenInSource>();
+        #[cfg(not(test))]
+        let write = true;
+        if write {
+            view.presentation_error =
+                crate::editor_projection::bind(&view.source, window, cx).err();
+        }
         if writes {
             view.commands
                 .update(cx, |commands, _| commands.enable_writes());

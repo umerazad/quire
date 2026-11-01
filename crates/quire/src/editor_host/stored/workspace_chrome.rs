@@ -134,7 +134,7 @@ impl StoredWindow {
                 .justify_between()
                 .border_b_1()
                 .border_color(cx.theme().colors().border_variant)
-                .bg(cx.theme().colors().title_bar_background)
+                .bg(cx.theme().colors().editor_background)
                 .child(crate::title_bar::keep_clicks(left))
                 .child(crate::title_bar::keep_clicks(right)),
             window,
