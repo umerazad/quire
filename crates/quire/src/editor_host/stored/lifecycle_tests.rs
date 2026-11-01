@@ -570,12 +570,24 @@ fn the_menu_offers_appearance_find_profiles_and_window_commands_that_dispatch(
         ("Minimize", "quire_window::Minimize"),
         ("Close Window", "quire_window::CloseWindow"),
         ("Help and Shortcuts", "quire_help::OpenHelp"),
+        ("Bring All to Front", "quire_window::BringAllToFront"),
+        ("About Quire", "quire_window::About"),
     ] {
         assert!(
             all.contains(&(name.to_owned(), action.to_owned())),
             "{name} -> {action} missing from {all:?}"
         );
     }
+    let window_menu: Vec<String> = menus
+        .iter()
+        .find(|menu| menu.name == "Window")
+        .map(|menu| actions(menu).into_iter().map(|(name, _)| name).collect())
+        .unwrap();
+    assert_eq!(
+        window_menu,
+        ["Minimize", "Zoom", "Close Window", "Bring All to Front"],
+        "rt's Window menu; macOS lists the open windows after it"
+    );
     let appearance = |cx: &mut TestAppContext| {
         cx.update(|cx| crate::app_menus::menus(cx))
             .iter()
@@ -592,8 +604,22 @@ fn the_menu_offers_appearance_find_profiles_and_window_commands_that_dispatch(
         .is_some()));
     cx.dispatch_action(opened.notebook.window.into(), crate::app_menus::Minimize);
     cx.dispatch_action(opened.notebook.window.into(), crate::app_menus::Zoom);
+    cx.dispatch_action(
+        opened.notebook.window.into(),
+        crate::app_menus::BringAllToFront,
+    );
     cx.run_until_parked();
     assert!(is_open(opened.notebook.window, cx));
+    cx.dispatch_action(opened.notebook.window.into(), crate::app_menus::About);
+    cx.run_until_parked();
+    let (message, detail) = cx.pending_prompt().expect("About shows a dialog");
+    assert_eq!(message, "Quire");
+    assert!(
+        detail.starts_with(&format!("Version {}.", env!("CARGO_PKG_VERSION"))),
+        "{detail}"
+    );
+    cx.simulate_prompt_answer("OK");
+    cx.run_until_parked();
     cx.dispatch_action(opened.notebook.window.into(), crate::app_menus::CloseWindow);
     cx.run_until_parked();
     assert!(!is_open(opened.notebook.window, cx));
