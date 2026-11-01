@@ -331,6 +331,39 @@ fn switching_profiles_saves_pending_edits_then_opens_the_profile_notebook(cx: &m
     );
 }
 
+#[gpui::test]
+fn choosing_a_profile_on_the_notebook_card_opens_its_notebook(cx: &mut TestAppContext) {
+    let opened = open_folder(&[("A.md", "- current\n")], "A.md", cx);
+    let _states = open_folders_in_tests(cx);
+    let work = folder(&[("W.md", "- work\n")]);
+    cx.update(|cx| {
+        crate::profiles::update(cx, |profiles| {
+            profiles.set_notebook(ProfileId::Work, location(work.path()))
+        })
+        .unwrap()
+    });
+    super::template_tests::click(&opened.notebook, "quire-profile-card", cx);
+    for _ in 0..3 {
+        opened
+            .notebook
+            .window
+            .update(cx, |_, window, cx| window.simulate_next_frame(cx))
+            .unwrap();
+    }
+    super::tests::draw(&opened.notebook, cx);
+    for key in ["down", "down", "enter"] {
+        cx.simulate_keystrokes(opened.notebook.window.into(), key);
+    }
+    wait_for_switch(cx, "the Work notebook to open from the card", |cx| {
+        stored_windows(cx).len() == 1 && !is_open(opened.notebook.window, cx)
+    });
+    assert_eq!(cx.update(|cx| crate::profiles::active(cx)), ProfileId::Work);
+    assert_eq!(
+        shown_root(stored_windows(cx)[0], cx),
+        fs::canonicalize(work.path()).unwrap()
+    );
+}
+
 fn profile_items(menus: &[gpui::Menu]) -> Vec<(String, bool)> {
     menus
         .iter()

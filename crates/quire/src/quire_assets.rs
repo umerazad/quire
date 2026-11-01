@@ -1,6 +1,7 @@
 //! Quire's asset source: Zed's bundled assets, plus the reference app's tag icons (Lucide, ISC;
 //! `assets/icons/tags/LICENSE`) under `quire/icons/tags/<tone>.svg` and the page toolbar's save
-//! states under `quire/icons/save/`.
+//! states under `quire/icons/save/`, and under `quire/icons/sidebar/` the sidebar's Lucide icons
+//! that Zed lacks.
 
 use gpui::{AssetSource, Result, SharedString};
 use std::borrow::Cow;
@@ -67,9 +68,34 @@ pub const SAVE_ICONS: &[(&str, &[u8])] = &[
     ),
 ];
 
+/// The sidebar's Lucide icons that Zed has no match for (`assets/icons/sidebar/LICENSE`).
+pub const SIDEBAR_ICONS: &[(&str, &[u8])] = &[
+    (
+        "quire/icons/sidebar/book-open.svg",
+        include_bytes!("../assets/icons/sidebar/book-open.svg"),
+    ),
+    (
+        "quire/icons/sidebar/calendar-days.svg",
+        include_bytes!("../assets/icons/sidebar/calendar-days.svg"),
+    ),
+    (
+        "quire/icons/sidebar/file-plus-corner.svg",
+        include_bytes!("../assets/icons/sidebar/file-plus-corner.svg"),
+    ),
+    (
+        "quire/icons/sidebar/layout-template.svg",
+        include_bytes!("../assets/icons/sidebar/layout-template.svg"),
+    ),
+    (
+        "quire/icons/sidebar/upload.svg",
+        include_bytes!("../assets/icons/sidebar/upload.svg"),
+    ),
+];
+
 fn save_icon(path: &str) -> Option<&'static [u8]> {
     SAVE_ICONS
         .iter()
+        .chain(SIDEBAR_ICONS)
         .find_map(|(icon, bytes)| (*icon == path).then_some(*bytes))
 }
 
@@ -100,6 +126,7 @@ impl AssetSource for Assets {
         paths.extend(
             SAVE_ICONS
                 .iter()
+                .chain(SIDEBAR_ICONS)
                 .map(|(icon, _)| *icon)
                 .filter(|icon| icon.starts_with(path))
                 .map(SharedString::new_static),
@@ -121,7 +148,7 @@ mod tests {
             assert!(bytes.starts_with(b"<svg"), "{path}");
             assert!(Assets.list("quire/icons/").unwrap().contains(&path));
         }
-        for (path, _) in SAVE_ICONS {
+        for (path, _) in SAVE_ICONS.iter().chain(SIDEBAR_ICONS) {
             assert!(
                 Assets.load(path).unwrap().unwrap().starts_with(b"<svg"),
                 "{path}"

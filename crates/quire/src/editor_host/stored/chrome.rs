@@ -6,10 +6,15 @@ use super::*;
 use editor::{Editor, EditorEvent};
 use gpui::{ClickEvent, FocusHandle, ScrollStrategy, UniformListScrollHandle, uniform_list};
 use quire_core::workspace::{
-    BrowserView, Destination, SHOWN_RECENT, TreeKind, TreeRow, folder_rows, in_namespace,
-    namespaces,
+    BrowserView, Destination, TreeKind, TreeRow, folder_rows, in_namespace, namespaces,
 };
 use std::collections::BTreeSet;
+
+#[cfg(test)]
+#[path = "sidebar_tests.rs"]
+mod sidebar_tests;
+#[path = "sidebar_views.rs"]
+mod sidebar_views;
 use ui::{
     Color, ContextMenu, Disableable, DropdownMenu, IconButton, IconName, LabelSize, ListItem,
     ListItemSpacing, Tab, TabBar, Toggleable, h_flex, v_flex,
@@ -27,6 +32,9 @@ pub(in crate::editor_host::stored) struct Browsers {
     /// Empty folders and attachments of a folder notebook.
     pub(in crate::editor_host::stored) on_disk: super::file_views::OnDisk,
     file_rows: FileRows,
+    /// Recent is unfolded, which the reference does not remember either.
+    pub(in crate::editor_host::stored) recent_open: bool,
+    pub(in crate::editor_host::stored) profile_menu: ui::PopoverMenuHandle<ContextMenu>,
 }
 
 /// The Files tree for the paths, folders, and expanded folders it was built from. Rendering asks
@@ -535,7 +543,7 @@ impl StoredWindow {
         &mut self,
         [heading, new_page, new_folder, refresh, tab_index]: [isize; 5],
         cx: &mut gpui::Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let open = !self.nav.workspace.chrome.files_collapsed;
         let focus = self
             .nav
@@ -573,11 +581,31 @@ impl StoredWindow {
                         };
                         Some(
                             ListItem::new(("file", index))
-                                .spacing(ListItemSpacing::Dense)
+                                .rounded()
                                 .indent_level(row.depth)
                                 .toggle_state(index == this.nav.browsers.files_selected)
-                                .start_slot(ui::Icon::new(icon).color(Color::Muted))
-                                .child(Label::new(row.name.clone()).truncate())
+                                .start_slot(
+                                    h_flex()
+                                        .gap_1p5()
+                                        .when(row.kind == TreeKind::Folder, |slot| {
+                                            slot.child(
+                                                ui::Icon::new(if expanded {
+                                                    IconName::ChevronDown
+                                                } else {
+                                                    IconName::ChevronRight
+                                                })
+                                                .size(ui::IconSize::XSmall)
+                                                .color(Color::Muted),
+                                            )
+                                        })
+                                        .child(ui::Icon::new(icon).color(Color::Muted)),
+                                )
+                                .child(
+                                    h_flex()
+                                        .h(gpui::px(36.))
+                                        .min_w_0()
+                                        .child(Label::new(row.name.clone()).truncate()),
+                                )
                                 .on_click(cx.listener(move |this, event, window, cx| {
                                     this.activate_file(index, shift(event), window, cx)
                                 }))
@@ -656,6 +684,9 @@ impl StoredWindow {
             )
             .when(open, |div| div.child(list));
         let heading = h_flex()
+            .mt_6()
+            .mb_1()
+            .pl_1()
             .justify_between()
             .child(
                 Button::new("files-heading", "FILES")
@@ -668,7 +699,7 @@ impl StoredWindow {
                         .size(ui::IconSize::XSmall)
                         .color(Color::Muted),
                     )
-                    .label_size(LabelSize::Small)
+                    .label_size(LabelSize::XSmall)
                     .color(Color::Muted)
                     .aria_expanded(open)
                     .tab_index(heading)
@@ -676,9 +707,14 @@ impl StoredWindow {
             )
             .child(
                 h_flex()
+                    .gap_1()
                     .child(
-                        IconButton::new("files-new-page", IconName::Plus)
-                            .icon_size(ui::IconSize::XSmall)
+                        ui::ButtonLike::new("files-new-page")
+                            .child(
+                                ui::Icon::from_path(sidebar_views::NEW_FILE)
+                                    .size(ui::IconSize::Small)
+                                    .color(Color::Muted),
+                            )
                             .tab_index(new_page)
                             .tooltip(ui::Tooltip::text("New page"))
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -691,7 +727,7 @@ impl StoredWindow {
                     )
                     .child(
                         IconButton::new("files-new-folder", IconName::FolderAdd)
-                            .icon_size(ui::IconSize::XSmall)
+                            .icon_size(ui::IconSize::Small)
                             .tab_index(new_folder)
                             .tooltip(ui::Tooltip::text("New folder"))
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -700,7 +736,7 @@ impl StoredWindow {
                     )
                     .child(
                         IconButton::new("refresh-files", IconName::RotateCw)
-                            .icon_size(ui::IconSize::XSmall)
+                            .icon_size(ui::IconSize::Small)
                             .tab_index(refresh)
                             .tooltip(ui::Tooltip::text("Refresh files"))
                             .on_click(cx.listener(|this, _, _, cx| this.refresh_files(cx))),
@@ -783,27 +819,16 @@ impl StoredWindow {
         )
     }
 
+    /// The left panel, top to bottom as the reference's: the brand, the notebook card, Find,
+    /// the view list, Favorites, Files, Recent, and the footer.
     pub(in crate::editor_host::stored) fn render_sidebar(
         &mut self,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let mut order = crate::tab_order::TabOrder::default();
-        let buttons: Vec<_> = self
-            .sidebar_buttons(cx)
-            .into_iter()
-            .map(|button| button.tab_index(order.next()))
-            .collect();
-        let templates = self.entry_stop(
-            "templates-entry",
-            order.next(),
-            ListItem::new("templates")
-                .spacing(ListItemSpacing::Dense)
-                .toggle_state(self.showing_templates(cx))
-                .start_slot(ui::Icon::new(IconName::FileDoc).color(Color::Muted))
-                .child(Label::new(quire_core::templates::TEMPLATES_TITLE)),
-            |this, _, window, cx| this.open_templates(window, cx),
-            cx,
-        );
+        let card = self.render_profile_card(order.next(), cx);
+        let find = self.render_find_trigger(order.next(), cx);
+        let nav = self.render_nav(&mut order, cx);
         let favorites: Vec<_> = self
             .nav
             .workspace
@@ -818,35 +843,12 @@ impl StoredWindow {
                         menu_views::Sidebar::Favorite,
                         cx,
                     )
-                    .start_slot(ui::Icon::new(IconName::Star).color(Color::Accent));
-                self.destination_stop(("favorite-entry", index), order.next(), item, favorite, cx)
-            })
-            .collect();
-        let recent: Vec<_> = self
-            .nav
-            .workspace
-            .recent
-            .iter()
-            .take(SHOWN_RECENT)
-            .enumerate()
-            .map(|(index, item)| {
-                let removing = item.clone();
-                let entry = order.next();
-                let remove = order.next();
-                let row = self
-                    .destination_item(("recent", index), item, menu_views::Sidebar::Recent, cx)
-                    .end_slot(
-                        IconButton::new(("remove-recent", index), IconName::Close)
-                            .icon_size(ui::IconSize::XSmall)
-                            .tab_index(remove)
-                            .tooltip(ui::Tooltip::text("Remove from recent"))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.nav.workspace.remove_recent(&removing);
-                                this.persist(cx);
-                                cx.notify();
-                            })),
+                    .start_slot(
+                        ui::Icon::new(IconName::Star)
+                            .size(ui::IconSize::Small)
+                            .color(Color::Accent),
                     );
-                self.destination_stop(("recent-entry", index), entry, row, item, cx)
+                self.destination_stop(("favorite-entry", index), order.next(), item, favorite, cx)
             })
             .collect();
         let files = [
@@ -856,6 +858,10 @@ impl StoredWindow {
             order.next(),
             order.next(),
         ];
+        let files = self.render_files(files, cx);
+        let recent = self.render_recent(&mut order, cx);
+        let footer = self.render_sidebar_footer(&mut order, cx);
+        let colors = cx.theme().colors();
         v_flex()
             .id("sidebar")
             .key_context("QuireSidebar")
@@ -871,72 +877,40 @@ impl StoredWindow {
                     window.focus_prev(cx)
                 }),
             )
-            .w(gpui::px(240.))
+            .w(gpui::px(sidebar_views::SIDEBAR_WIDTH))
+            .max_w(gpui::relative(sidebar_views::SIDEBAR_SHARE))
+            .flex_none()
             .h_full()
-            .p_1()
-            .gap_1()
+            .px_3()
+            .bg(colors.panel_background)
             .border_r_1()
-            .border_color(cx.theme().colors().border)
-            .child(h_flex().gap_1().flex_wrap().children(buttons))
-            .child(
-                gpui::div()
-                    .debug_selector(|| "quire-templates-entry".into())
-                    .child(templates),
-            )
+            .border_color(colors.border)
+            .children(self.render_sidebar_drag())
+            .when(!crate::title_bar::custom(), |div| div.pt_3())
+            .child(self.render_brand(cx))
+            .child(gpui::div().mb_4().child(card))
+            .child(gpui::div().mx_px().mb_5().child(find))
+            .child(nav)
             .when(!favorites.is_empty(), |div| {
                 div.child(
-                    Label::new("FAVORITES")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
+                    v_flex()
+                        .flex_none()
+                        .max_h(gpui::px(180.))
+                        .child(
+                            gpui::div()
+                                .mt_6()
+                                .mb_2()
+                                .mx_2()
+                                .child(sidebar_views::section_label("FAVORITES")),
+                        )
+                        .children(favorites),
                 )
-                .children(favorites)
             })
-            .when(!recent.is_empty(), |div| {
-                div.child(
-                    Label::new("RECENT")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-                .children(recent)
-            })
-            .child(self.render_files(files, cx))
+            .child(files)
+            .children(recent)
+            .child(footer)
     }
 
-    /// The sidebar's buttons in reading order.
-    fn sidebar_buttons(&self, cx: &mut gpui::Context<Self>) -> Vec<Button> {
-        let visit = |view| {
-            cx.listener(move |this: &mut Self, _: &ClickEvent, window, cx| {
-                this.visit(Destination::Browser { view }, window, cx)
-            })
-        };
-        let browsers = [
-            Button::new("pages", "Pages").on_click(visit(BrowserView::Pages)),
-            Button::new("daily", "Daily").on_click(visit(BrowserView::Daily)),
-            Button::new("tags", "Tags").on_click(visit(BrowserView::Tags)),
-            Button::new("tasks", "Tasks").on_click(visit(BrowserView::Tasks)),
-        ];
-        [
-            Button::new("find", "Find").on_click(cx.listener(|this, _, window, cx| {
-                this.open_palette(crate::navigation::palette::PaletteMode::Find, window, cx)
-            })),
-            Button::new("today", "Today")
-                .on_click(cx.listener(|this, _, window, cx| this.open_today(window, cx))),
-        ]
-        .into_iter()
-        .chain(browsers)
-        .chain([
-            Button::new("help", "Help & shortcuts")
-                .on_click(|_, _, cx| crate::help::view::open(cx)),
-            Button::new("readme", "README.md").on_click(|_, window, cx| {
-                window.dispatch_action(Box::new(crate::showcase::OpenShowcase), cx)
-            }),
-            Button::new("settings", "Settings")
-                .on_click(|_, _, cx| crate::preferences::view::open(cx)),
-            Button::new("appearance", "Light / Dark")
-                .on_click(|_, _, cx| crate::preferences::toggle_appearance(cx)),
-        ])
-        .collect()
-    }
     pub(in crate::editor_host::stored) fn render_tabs(
         &mut self,
         cx: &mut gpui::Context<Self>,

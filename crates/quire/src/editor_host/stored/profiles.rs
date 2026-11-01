@@ -522,44 +522,6 @@ impl StoredWindow {
         self.session.borrow().recover(cx);
     }
 
-    /// The profile line: a choice of profile, then this notebook's last backup and push, kept
-    /// apart from the page's local save status above.
-    pub(super) fn render_profile(&self, cx: &mut gpui::Context<Self>) -> gpui::Div {
-        use ui::{ButtonCommon as _, Toggleable as _};
-        let active = crate::profiles::active(cx);
-        let held = self
-            .location
-            .as_ref()
-            .and_then(|location| crate::profiles::holding(location, cx));
-        let status: gpui::SharedString = match held {
-            Some(id) => crate::profiles::status(id, &*self.clock, cx),
-            None => "This notebook belongs to no profile, so backups and Git sync are off. Choose File > Profile to open a profile's notebook.".into(),
-        };
-        gpui::div()
-            .px_2()
-            .flex()
-            .items_center()
-            .gap_1()
-            .children(ProfileId::ALL.into_iter().map(|id| {
-                let action: Box<dyn gpui::Action> = match id {
-                    ProfileId::Current => Box::new(UseCurrentProfile),
-                    ProfileId::Work => Box::new(UseWorkProfile),
-                    ProfileId::Personal => Box::new(UsePersonalProfile),
-                };
-                Button::new(
-                    gpui::SharedString::from(format!("profile-{}", id.label())),
-                    id.label(),
-                )
-                .toggle_state(id == active)
-                .tooltip(ui::Tooltip::text(format!(
-                    "Save open pages and open the {} notebook",
-                    id.label()
-                )))
-                .on_click(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx))
-            }))
-            .child(Label::new(status))
-    }
-
     /// Closes the window through its close guard, as the native close button does.
     pub(super) fn close_window(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
         if self.close.allow(CloseIntent::Window, cx) {

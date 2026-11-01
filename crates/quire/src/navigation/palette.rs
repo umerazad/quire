@@ -289,6 +289,11 @@ impl PagePalette {
         }
     }
 
+    #[cfg(test)]
+    pub fn mode(&self) -> PaletteMode {
+        self.mode
+    }
+
     /// Names the folder a created page goes into in the prompt.
     pub fn in_folder(mut self, folder: String) -> Self {
         self.folder = folder;

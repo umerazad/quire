@@ -738,7 +738,6 @@ impl Render for StoredWindow {
                         .on_click(cx.listener(|this, _, window, cx| this.toggle_sync(window, cx))),
                 )
                 .child(tools);
-        let profile = self.render_profile(cx);
         let root = gpui::div()
             .track_focus(&self.nav.loading_focus)
             .size_full()
@@ -780,7 +779,6 @@ impl Render for StoredWindow {
             cx,
         ))
         .child(header)
-        .child(profile)
         .child(self.exchange.clone())
         .child(self.backups.clone())
         .child(self.sync.clone())
