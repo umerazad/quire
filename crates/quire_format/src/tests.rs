@@ -166,3 +166,22 @@ fn error_messages_say_what_to_do_next() {
         "Code formatting stopped after 20 seconds. Split the block into smaller ones, then run Format code again."
     );
 }
+
+#[test]
+fn a_held_formatter_answers_only_after_the_hold_drops() {
+    let formatter = Formatter::default();
+    assert_eq!(
+        block_on(formatter.format("x", Parser::Babel)),
+        Ok("x;\n".to_string())
+    );
+    let held = formatter.hold();
+    let mut request = formatter.format("let  a", Parser::Babel);
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(
+        futures::FutureExt::now_or_never(&mut request),
+        None,
+        "a warm engine formats this in milliseconds, so only the hold keeps it unanswered"
+    );
+    drop(held);
+    assert_eq!(block_on(request), Ok("let a;\n".to_string()));
+}

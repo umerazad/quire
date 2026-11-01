@@ -151,6 +151,13 @@ struct Job {
 pub struct Formatter {
     jobs: Mutex<Option<mpsc::Sender<Job>>>,
     limits: Limits,
+    /// Locked by [`Formatter::hold`]; the thread takes it before each request.
+    gate: Arc<Mutex<()>>,
+}
+
+/// Keeps the formatter thread from starting a request until dropped.
+pub struct Hold<'a> {
+    _gate: std::sync::MutexGuard<'a, ()>,
 }
 
 impl Formatter {
@@ -158,6 +165,18 @@ impl Formatter {
         Self {
             jobs: Mutex::new(None),
             limits,
+            gate: Arc::default(),
+        }
+    }
+
+    /// Keeps requests waiting, unstarted and with their time limit not yet running, until the
+    /// hold drops, so a caller can observe a request in progress without racing the thread.
+    pub fn hold(&self) -> Hold<'_> {
+        Hold {
+            _gate: self
+                .gate
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
         }
     }
 
@@ -206,10 +225,11 @@ impl Formatter {
         };
         let (sender, receiver) = mpsc::channel();
         let limits = self.limits;
+        let gate = self.gate.clone();
         let started = thread::Builder::new()
             .name("quire-format".into())
             .stack_size(32 * 1024 * 1024)
-            .spawn(move || engine::serve(receiver, limits));
+            .spawn(move || engine::serve(receiver, limits, &gate));
         if started.is_err() {
             return Err(job);
         }
