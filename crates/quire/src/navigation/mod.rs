@@ -414,6 +414,17 @@ pub async fn create_page(
     create_page_with(storage, index, title, folder, NEW_PAGE_TEXT.into()).await
 }
 
+/// Where a page created with `title` in `folder` lives.
+pub fn page_path(title: &str, folder: &str) -> Result<String, String> {
+    let name = safe_page_path(title).map_err(|error| error.to_string())?;
+    let folder = folder.trim_matches('/');
+    Ok(if folder.is_empty() {
+        name
+    } else {
+        format!("{folder}/{name}")
+    })
+}
+
 /// [`create_page`] starting with `text`.
 pub async fn create_page_with(
     storage: NotebookBackend,
@@ -422,13 +433,7 @@ pub async fn create_page_with(
     folder: String,
     text: String,
 ) -> Result<String, String> {
-    let name = safe_page_path(&title).map_err(|error| error.to_string())?;
-    let folder = folder.trim_matches('/');
-    let path = if folder.is_empty() {
-        name
-    } else {
-        format!("{folder}/{name}")
-    };
+    let path = page_path(&title, &folder)?;
     let taken = index
         .path_taken(path.clone())
         .map_err(|error| error.to_string())?

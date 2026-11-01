@@ -289,6 +289,42 @@ fn opening_without_a_launch_keeps_the_restored_page(cx: &mut TestAppContext) {
     assert_eq!(active(&notebook, cx), "a");
 }
 
+/// A second Today while the first is still saving today's page starts no lookup of its own: one
+/// started then could miss that save, try a second create, and leave only the store's duplicate
+/// refusal and an unopened page.
+#[gpui::test]
+fn opening_today_while_it_is_being_created_leaves_that_create_to_open_it(cx: &mut TestAppContext) {
+    let (notebook, _, _) = journal_notebook(cx);
+    set_now(&notebook, NOW + DAY, cx);
+    let expected = format!("Journal/{}.md", title(&journal(), NOW + DAY).0);
+    notebook
+        .window
+        .update(cx, |view, window, cx| view.open_today(window, cx))
+        .unwrap();
+    wait_until(cx, "the first create to start", |cx| {
+        read(&notebook, cx, |view, _| view.creating_at(&expected))
+    });
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.open_today(window, cx);
+            assert!(view.nav.daily.task.is_none());
+            assert!(view.creating_at(&expected));
+        })
+        .unwrap();
+    wait_until(cx, "the daily page to open", |cx| {
+        read(&notebook, cx, |view, cx| {
+            view.page
+                .read(cx)
+                .loaded()
+                .is_some_and(|page| page.path.as_deref() == Some(expected.as_str()))
+        })
+    });
+    read(&notebook, cx, |view, _| {
+        assert_eq!(view.nav.error.as_deref(), None)
+    });
+}
+
 /// Asking for today's page again while the first request is still creating it, as a launch and
 /// a quick Today press do, makes one page and opens it without an error.
 #[gpui::test]

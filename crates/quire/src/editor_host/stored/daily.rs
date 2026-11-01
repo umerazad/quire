@@ -3,7 +3,11 @@
 //! browser.
 
 use super::*;
-use crate::{navigation::now_millis, notebook_backend::NotebookBackend, query_index::ask};
+use crate::{
+    navigation::{now_millis, page_path},
+    notebook_backend::NotebookBackend,
+    query_index::ask,
+};
 use editor::Editor;
 use quire_core::daily::{
     DailyCalendar, DailyLayout, detect_layout, format_daily, read_settings, write_settings,
@@ -227,7 +231,9 @@ impl StoredWindow {
         })
     }
 
-    /// The reference `openDaily`: today's existing page, else a new one from the layout.
+    /// The reference `openDaily`: today's existing page, else a new one from the layout. While
+    /// today's page is still being created, that create opens it: a fresh lookup could miss the
+    /// save in flight and try a second create, which the store refuses as a duplicate.
     pub(in crate::editor_host::stored) fn open_today(
         &mut self,
         window: &mut Window,
@@ -247,6 +253,11 @@ impl StoredWindow {
             cx.notify();
             return;
         };
+        if self.today_daily(str::to_owned).is_ok_and(|today| {
+            page_path(&today.title, &today.folder).is_ok_and(|path| self.creating_at(&path))
+        }) {
+            return;
+        }
         let layout = self.nav.daily.layout.clone();
         let lookup = client.with_generation({
             let date = date.clone();
