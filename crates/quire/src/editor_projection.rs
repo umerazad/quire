@@ -2038,6 +2038,7 @@ pub fn unbind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
             .buffer()
             .update(cx, |buffer, _| buffer.set_edit_filter(None));
         refresh(editor, &[], window, cx);
+        crate::write_style::source_urdu(editor, cx);
     });
 }
 

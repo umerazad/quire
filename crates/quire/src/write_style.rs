@@ -634,6 +634,46 @@ pub(crate) fn highlight(
     }
 }
 
+/// Sets Urdu lines in Nastaliq in Markdown views without Write's projection, such as Source,
+/// as `rt`'s `scriptLines` does in both views. Write sets them with its other styles.
+pub(crate) fn init(cx: &mut App) {
+    cx.observe_new(|editor: &mut Editor, _, cx| {
+        source_urdu(editor, cx);
+        cx.subscribe_self(|editor, event: &editor::EditorEvent, cx| {
+            if matches!(event, editor::EditorEvent::BufferEdited) {
+                source_urdu(editor, cx);
+            }
+        })
+        .detach();
+    })
+    .detach();
+}
+
+/// Sets the Urdu runs of a Markdown view outside Write in Nastaliq.
+pub(crate) fn source_urdu(editor: &mut Editor, cx: &mut Context<Editor>) {
+    let markdown = editor
+        .buffer()
+        .read(cx)
+        .as_singleton()
+        .and_then(|buffer| buffer.read(cx).language().cloned())
+        .is_some_and(|language| language.name().as_ref() == "Markdown");
+    if !markdown || crate::editor_projection::enabled(editor) {
+        return;
+    }
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let runs: Vec<_> = urdu_runs(&snapshot.text())
+        .into_iter()
+        .map(|run| {
+            snapshot.anchor_before(multi_buffer::MultiBufferOffset(run.start))
+                ..snapshot.anchor_after(multi_buffer::MultiBufferOffset(run.end))
+        })
+        .collect();
+    editor.clear_highlights(urdu_key(), cx);
+    if !runs.is_empty() {
+        editor.highlight_text(urdu_key(), runs, urdu_style(), cx);
+    }
+}
+
 /// The styles a view applies, by style, in source offsets; for tests.
 #[cfg(test)]
 pub(crate) fn applied(editor: &Editor, cx: &App) -> Vec<(Style, Vec<Range<usize>>)> {
