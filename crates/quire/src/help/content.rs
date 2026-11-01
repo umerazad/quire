@@ -63,7 +63,7 @@ pub const SECTIONS: &[HelpSection] = &[
         description: "Use page links for topics, block references for precise thoughts and embeds to work on a source subtree in place.",
         steps: &[
             "Type [[ to complete a page name, (( to find a block, or # to complete an existing tag. Use the suggestion menu to choose the result.",
-            "An inline ((block-id)) shows a compact reference. Put it alone on a line for an editable embed containing the entire subtree. {{embed: ((block-id))}} also works. Editing an embed edits its source.",
+            "An inline ((block-id)) shows a compact reference. Put it alone on a line for an editable embed containing the entire subtree. {{embed: ((block-id))}} also works. The embedded content takes the reference's place; the small ↗ at the right of its first line opens the source (Shift-click opens it beside). Move the caret onto the line to see or edit the reference itself. Editing an embed edits its source.",
             "Tags in the sidebar lists every tag with its block count. Sort by name, most blocks first or fewest blocks first; the choice is remembered. Tick tags to rename or delete them together after a preview; renaming moves nested tags too.",
             "Click a tag to browse matching blocks with parent context and expandable children. Common tags such as #inbox, #pending, #book, #quote and #idea show an icon and their own color; nested tags such as #book/fiction keep their family's look. Source always shows raw text.",
             "Shift-click page links or source links to open beside the current page. The page’s details panel shows the outline and backlinks. Mouse Back/Forward buttons navigate where supported by the operating system.",

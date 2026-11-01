@@ -94,17 +94,17 @@ fn edit_embedded_block(vim: bool, cx: &mut TestAppContext) {
     });
     wait_until(cx, "the embed headers", |cx| {
         draw(&notebook, cx);
-        cx.update(|cx| crate::embeds::header_labels(host.read(cx)))
+        cx.update(|cx| crate::embeds::labels(host.read(cx)))
             == [
-                "↳ Embedded block from Source ↗",
-                "↳ Embedded page Source ↗",
+                "Open Source",
+                "Open Source",
                 "((missing)) · unresolved. Check the reference in Source.",
             ]
     });
     assert_eq!(
         display(&notebook, &host, cx),
-        "intro\n↳\n\n\n↳\n\n\n↳\n",
-        "each reference folds into its header, with its nested editor's rows below"
+        "intro\n↳\n\n↳\n\n↳\n",
+        "each working embed starts on its reference's folded line; a broken one says why"
     );
     assert!(
         gpui::VisualTestContext::from_window(notebook.window.into(), cx)
@@ -163,27 +163,45 @@ fn edits_in_a_block_embed_persist_through_the_source_page_with_vim_off(cx: &mut 
 }
 
 #[gpui::test]
-fn the_caret_reveals_an_embed_reference_its_header_opens_the_source_and_source_view_drops_embeds(
+fn the_caret_reveals_an_embed_reference_its_link_opens_the_source_and_source_view_drops_embeds(
     cx: &mut TestAppContext,
 ) {
     let pages = [("s", "Source.md", SOURCE), ("o", "Other.md", OTHER)];
     let (notebook, host) = open_in_write(&pages, "o", 2, cx);
+    let bounds = |selector: &'static str, cx: &mut TestAppContext| {
+        gpui::VisualTestContext::from_window(notebook.window.into(), cx)
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("no {selector} drawn"))
+    };
+    let folded = bounds("quire-embed", cx);
+    let link = bounds("quire-embed-link", cx);
+    assert_eq!(
+        link.top(),
+        folded.top(),
+        "the link sits on the embed's first line"
+    );
     cx.simulate_keystrokes(notebook.window.into(), "j");
     wait_until(cx, "the revealed reference", |cx| {
         draw(&notebook, cx);
-        display(&notebook, &host, cx) == "intro\n{{embed: ((shared))}}\n\n\n↳\n\n\n↳\n"
+        display(&notebook, &host, cx) == "intro\n{{embed: ((shared))}}\n\n\n↳\n\n↳\n"
     });
+    assert_eq!(
+        bounds("quire-embed", cx).top() - folded.top(),
+        link.size.height,
+        "the revealed reference pushes the embed down one line"
+    );
     cx.simulate_keystrokes(notebook.window.into(), "k");
-    wait_until(cx, "the folded header", |cx| {
+    wait_until(cx, "the folded reference", |cx| {
         draw(&notebook, cx);
-        display(&notebook, &host, cx) == "intro\n↳\n\n\n↳\n\n\n↳\n"
+        display(&notebook, &host, cx) == "intro\n↳\n\n↳\n\n↳\n"
     });
+    assert_eq!(bounds("quire-embed", cx), folded);
 
     let mut visual = gpui::VisualTestContext::from_window(notebook.window.into(), cx);
-    let header = visual
-        .debug_bounds("quire-embed-header")
-        .expect("a rendered embed header");
-    visual.simulate_click(header.center(), Default::default());
+    let link = visual
+        .debug_bounds("quire-embed-link")
+        .expect("a rendered embed link");
+    visual.simulate_click(link.center(), Default::default());
     wait_until(cx, "the embedded block's page", |cx| {
         active(&notebook, cx) == "s"
     });
@@ -210,14 +228,14 @@ fn the_caret_reveals_an_embed_reference_its_header_opens_the_source_and_source_v
 }
 
 #[gpui::test]
-fn an_embed_header_click_survives_a_refold_between_press_and_release(cx: &mut TestAppContext) {
+fn an_embed_link_click_survives_a_refold_between_press_and_release(cx: &mut TestAppContext) {
     let pages = [("s", "Source.md", SOURCE), ("o", "Other.md", OTHER)];
     let (notebook, host) = open_in_write(&pages, "o", 2, cx);
     let mut visual = gpui::VisualTestContext::from_window(notebook.window.into(), cx);
-    let header = visual
-        .debug_bounds("quire-embed-header")
-        .expect("a rendered embed header");
-    visual.simulate_mouse_down(header.center(), gpui::MouseButton::Left, Default::default());
+    let link = visual
+        .debug_bounds("quire-embed-link")
+        .expect("a rendered embed link");
+    visual.simulate_mouse_down(link.center(), gpui::MouseButton::Left, Default::default());
     notebook
         .window
         .update(cx, |_, window, cx| {
@@ -228,7 +246,7 @@ fn an_embed_header_click_survives_a_refold_between_press_and_release(cx: &mut Te
         .unwrap();
     draw(&notebook, cx);
     let mut visual = gpui::VisualTestContext::from_window(notebook.window.into(), cx);
-    visual.simulate_mouse_up(header.center(), gpui::MouseButton::Left, Default::default());
+    visual.simulate_mouse_up(link.center(), gpui::MouseButton::Left, Default::default());
     wait_until(cx, "the embedded block's page", |cx| {
         active(&notebook, cx) == "s"
     });
@@ -240,7 +258,7 @@ fn headers(
     cx: &mut TestAppContext,
 ) -> Vec<String> {
     draw(notebook, cx);
-    cx.update(|cx| crate::embeds::header_labels(host.read(cx)))
+    cx.update(|cx| crate::embeds::labels(host.read(cx)))
 }
 
 fn wait_for_headers(
@@ -288,8 +306,8 @@ fn embeds_follow_a_renamed_source_page(cx: &mut TestAppContext) {
         &notebook,
         &host,
         &[
-            "↳ Embedded block from Renamed ↗",
-            "↳ Embedded page Renamed ↗",
+            "Open Renamed",
+            "Open Renamed",
             &format!("((missing)){UNRESOLVED}"),
         ],
         cx,
@@ -320,7 +338,7 @@ fn deleting_the_embedded_block_then_its_page_leaves_unresolved_headers(cx: &mut 
         &host,
         &[
             &format!("{{{{embed: ((shared))}}}}{UNRESOLVED}"),
-            "↳ Embedded page Source ↗",
+            "Open Source",
             &format!("((missing)){UNRESOLVED}"),
         ],
         cx,
@@ -559,7 +577,7 @@ fn an_embed_of_an_item_above_an_empty_child_resolves(cx: &mut TestAppContext) {
         ("o", "Other.md", "- ((spot))\n"),
     ];
     let (notebook, host) = open_in_write(&pages, "o", 1, cx);
-    wait_for_headers(&notebook, &host, &["↳ Embedded block from Source ↗"], cx);
+    wait_for_headers(&notebook, &host, &["Open Source"], cx);
     let editors = nested(&host, cx);
     cx.update(|cx| assert_eq!(editors[0].read(cx).text(cx), "- holder ^spot\n  - "));
 }
@@ -657,4 +675,39 @@ fn spaces_typed_at_the_end_of_an_embedded_block_stay(cx: &mut TestAppContext) {
 #[gpui::test]
 fn vim_spaces_typed_at_the_end_of_an_embedded_block_stay(cx: &mut TestAppContext) {
     type_words_at_the_end_of_an_embedded_block(true, cx);
+}
+
+/// A one-line embed adds no row: its line takes the reference's place, and revealing the
+/// reference puts it on a row of its own below.
+#[gpui::test]
+fn a_one_line_embed_takes_its_references_line(cx: &mut TestAppContext) {
+    let pages = [
+        ("s", "Source.md", "- One line ^one\n"),
+        ("o", "Other.md", "- intro\n- ((one))\n- after\n"),
+    ];
+    let (notebook, host) = open_in_write(&pages, "o", 1, cx);
+    wait_for_headers(&notebook, &host, &["Open Source"], cx);
+    assert_eq!(display(&notebook, &host, cx), "intro\n↳\nafter\n");
+    assert!(
+        gpui::VisualTestContext::from_window(notebook.window.into(), cx)
+            .debug_bounds("quire-embed-link")
+            .is_some()
+    );
+    cx.simulate_keystrokes(notebook.window.into(), "j");
+    wait_until(cx, "the revealed reference", |cx| {
+        draw(&notebook, cx);
+        display(&notebook, &host, cx) == "intro\n((one))\n\nafter\n"
+    });
+    cx.simulate_keystrokes(notebook.window.into(), "j");
+    draw(&notebook, cx);
+    assert_eq!(caret_place(&notebook, &host, cx), ("0".to_owned(), 0));
+    cx.simulate_keystrokes(notebook.window.into(), "A space x escape");
+    wait_until(cx, "the edit in the source page's store head", |_| {
+        stored_text(&notebook, "s") == "- One line x ^one\n"
+    });
+    wait_until(cx, "the folded reference", |cx| {
+        draw(&notebook, cx);
+        display(&notebook, &host, cx) == "intro\n↳\nafter\n"
+    });
+    assert_eq!(stored_text(&notebook, "o"), "- intro\n- ((one))\n- after\n");
 }

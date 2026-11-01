@@ -617,16 +617,23 @@ fn refresh(
             tasks.push(Crease::simple(range, placeholder));
         }
     }
-    for (spot, placeholder) in crate::embeds::headers(editor, cx.entity().downgrade(), type_tag) {
-        if shown(
-            editor,
-            &spot.range,
-            &spot.block,
-            &spot.source,
-            &snapshot,
-            window,
-            cx,
-        ) {
+    let embeds = crate::embeds::headers(editor, cx.entity().downgrade(), type_tag);
+    let folded: Vec<bool> = embeds
+        .iter()
+        .map(|(spot, _)| {
+            shown(
+                editor,
+                &spot.range,
+                &spot.block,
+                &spot.source,
+                &snapshot,
+                window,
+                cx,
+            )
+        })
+        .collect();
+    for ((spot, placeholder), folded) in embeds.into_iter().zip(folded.iter().copied()) {
+        if folded {
             let range = spot.range.start.to_offset(&snapshot)..spot.range.end.to_offset(&snapshot);
             tasks.push(Crease::simple(range, placeholder));
         }
@@ -682,6 +689,7 @@ fn refresh(
         window,
         cx,
     );
+    crate::embeds::lift(editor, &folded, cx);
     let count = syntax_fold_count(editor, cx);
     if let Some(projection) = editor.addon_mut::<Projection>() {
         projection.syntax_folds = count;
