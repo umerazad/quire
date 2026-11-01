@@ -103,6 +103,8 @@ cargo build -p quire --locked
 bun run dev
 ```
 
+On Linux, `nix develop` (or `direnv allow` once, with `.envrc`) gives a pinned shell: Rust from `rust-toolchain.toml`, bun, Node 22, the GPUI system libraries, the mold linker, Nix's Mesa Vulkan drivers (so no nixGL on Ubuntu), and the hash-pinned PDFium in `QUIRE_PDFIUM_DIR`, so `tools/fetch-pdfium.ts` is not needed there. `flake.lock` pins every input; `nix flake update` moves them. The PDFium hashes in `flake.nix` must change with `tools/pdfium.ts`.
+
 `bun run dev` requires a regular desktop terminal. The macOS Codex sandbox denies desktop services, including the pasteboard; the launcher detects that environment and explains how to proceed. Headless GPUI tests still run there. In this sandbox, build commands use `CARGO_HOME=/private/tmp/quire-cargo` because the shared Cargo cache is read-only.
 
 The native development app uses `QuireNative` data/config paths, separate from Zed and the Electron app. The earlier input harness is available through `cargo run -p quire -- --input-harness`. The current debug executable produces a macOS linker warning about large unwind metadata; release performance and native desktop acceptance remain unverified.

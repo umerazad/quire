@@ -5,3 +5,4 @@
 /data/
 /test-results/
 .DS_Store
+/.direnv/
