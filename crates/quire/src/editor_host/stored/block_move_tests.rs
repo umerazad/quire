@@ -233,6 +233,20 @@ fn moving_a_block_in_a_folder_notebook_rewrites_its_files(cx: &mut TestAppContex
     wait_until(cx, "Source's editor", |cx| {
         read(notebook, cx, |view, _| view.editor.is_some())
     });
+    // A move retargets the references the index knows, so wait until it has read Refs.md.
+    let client = read(notebook, cx, |view, cx| view.index_client(cx).unwrap());
+    let source = quire_store::sync::format::page_id_for_path("Source.md");
+    let refs = quire_store::sync::format::page_id_for_path("Refs.md");
+    wait_until(cx, "the index to see Refs.md link to Source", |_| {
+        futures::executor::block_on(client.relocation(source.as_str().into()).unwrap())
+            .unwrap()
+            .is_some_and(|facts| {
+                facts
+                    .candidates
+                    .iter()
+                    .any(|candidate| candidate.page.to_lossy_string() == refs)
+            })
+    });
     draw(notebook, cx);
     cx.simulate_keystrokes(notebook.window.into(), "j");
     cx.dispatch_action(notebook.window.into(), MoveBlockToPage);
