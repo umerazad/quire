@@ -824,6 +824,25 @@ fn opening_the_projection_places_input_after_its_hidden_marker(cx: &mut TestAppC
         .unwrap();
 }
 
+/// The hidden ID takes only the space that separates it from the text, so a space typed at the
+/// end of a line with an ID stays visible and the caret stays after it.
+#[gpui::test]
+fn spaces_typed_before_a_hidden_id_stay_between_words(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).expect("editor initialization"));
+    let window = projected_window(cx);
+    for key in ["shift-a", "space", "b", "space", "space", "c", "escape"] {
+        cx.simulate_keystrokes(window.into(), key);
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        cx.executor().run_until_parked();
+    }
+    window
+        .update(cx, |view, _, cx| {
+            assert_eq!(view.source.read(cx).text(cx), "- alpha b  c ^abc\n")
+        })
+        .unwrap();
+}
+
 #[gpui::test]
 fn deleting_to_visible_line_end_preserves_the_hidden_id(cx: &mut TestAppContext) {
     cx.update(|cx| init(cx).expect("editor initialization"));

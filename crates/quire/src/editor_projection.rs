@@ -378,6 +378,8 @@ fn hidden_tails(
     children.into_iter().chain(id).collect()
 }
 
+/// A block's hidden ID with the one space that separates it from the text. Spaces before that
+/// one stay visible, so a space typed at the end of the text shows and keeps the caret after it.
 fn id_range(
     block: &AnchoredBlock,
     snapshot: &MultiBufferSnapshot,
@@ -401,11 +403,9 @@ fn id_range(
     }
     start.0 += caret;
     let content = text_start(block, snapshot);
-    let gap = snapshot
-        .reversed_chars_at(start)
-        .take_while(|c| matches!(c, ' ' | '\t'))
-        .count();
-    start.0 -= gap.min(start.0.saturating_sub(content.0));
+    if start > content && matches!(snapshot.reversed_chars_at(start).next(), Some(' ' | '\t')) {
+        start.0 -= 1;
+    }
     Some(start..end)
 }
 

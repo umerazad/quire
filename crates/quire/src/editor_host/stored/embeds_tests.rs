@@ -596,3 +596,65 @@ fn embedded_blocks_underline_misspelled_words(cx: &mut TestAppContext) {
         cx.update(|cx| crate::spellcheck::underlined(embedded.read(cx), cx)) == ["Orignal"]
     });
 }
+
+/// Types `keys` one at a time, letting each reparse and refold land before the next, as a person
+/// typing does.
+fn type_slowly(notebook: &Notebook, keys: &[&str], cx: &mut TestAppContext) {
+    for key in keys {
+        cx.simulate_keystrokes(notebook.window.into(), key);
+        draw(notebook, cx);
+        cx.run_until_parked();
+        draw(notebook, cx);
+    }
+}
+
+fn type_words_at_the_end_of_an_embedded_block(vim: bool, cx: &mut TestAppContext) {
+    let pages = [("s", "Source.md", SOURCE), ("o", "Other.md", OTHER)];
+    let (notebook, host) = open_in_write(&pages, "o", 2, cx);
+    set_vim(vim, cx);
+    let editors = nested(&host, cx);
+    notebook
+        .window
+        .update(cx, |_, window, cx| {
+            window.focus(&editors[0].focus_handle(cx), cx)
+        })
+        .unwrap();
+    draw(&notebook, cx);
+    type_slowly(&notebook, if vim { &["A"] } else { &["end"] }, cx);
+    type_slowly(
+        &notebook,
+        &[
+            "space",
+            "a",
+            "space",
+            "b",
+            "backspace",
+            "c",
+            "enter",
+            "d",
+            "shift-tab",
+        ],
+        cx,
+    );
+    if vim {
+        type_slowly(&notebook, &["escape"], cx);
+    }
+    let edited = "- Original a c ^shared\n  - d\n  - Child\n";
+    cx.update(|cx| assert_eq!(editors[1].read(cx).text(cx), edited));
+    wait_until(
+        cx,
+        "the typed words in the source page's store head",
+        |_| stored_text(&notebook, "s") == edited,
+    );
+    assert_eq!(stored_text(&notebook, "o"), OTHER);
+}
+
+#[gpui::test]
+fn spaces_typed_at_the_end_of_an_embedded_block_stay(cx: &mut TestAppContext) {
+    type_words_at_the_end_of_an_embedded_block(false, cx);
+}
+
+#[gpui::test]
+fn vim_spaces_typed_at_the_end_of_an_embedded_block_stay(cx: &mut TestAppContext) {
+    type_words_at_the_end_of_an_embedded_block(true, cx);
+}
