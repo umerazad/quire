@@ -225,6 +225,66 @@ fn write_menu_restyles_lists_makes_tasks_and_toggles_marks_in_one_undo_step(
     );
 }
 
+const NESTED: [(&str, &str, &str); 2] = [
+    ("s", "Source.md", "- Root ^r\n  - one\n  - two\n"),
+    ("o", "Other.md", "- {{embed: ((r))}}\n"),
+];
+
+/// Asserts the menu at "one" in `view` offers both list styles, then numbers the children.
+fn number_from_the_menu(notebook: &Notebook, view: &Entity<Editor>, cx: &mut TestAppContext) {
+    select(notebook, view, "one", 0, 0, cx);
+    let items = open_menu(notebook, view, cx);
+    assert!(
+        items.contains(&"[x] Bullet list".to_owned())
+            && items.contains(&"[ ] Numbered list".to_owned()),
+        "{items:?}"
+    );
+    choose(notebook, &items, "Numbered list", cx);
+    assert!(
+        text(view, cx).contains("  1. one\n  2. two"),
+        "{}",
+        text(view, cx)
+    );
+}
+
+/// rt offers Bullet list and Numbered list for any editable block, so a zoom and a block embed
+/// keep them in the menu.
+#[gpui::test]
+fn list_styles_stay_in_the_menu_of_zooms_and_embeds(cx: &mut TestAppContext) {
+    let (notebook, editor) = open_page(&NESTED, true, cx);
+    select(&notebook, &editor, "Root", 0, 0, cx);
+    let zoom = if cfg!(target_os = "macos") {
+        "cmd-."
+    } else {
+        "ctrl-."
+    };
+    cx.simulate_keystrokes(notebook.window.into(), zoom);
+    draw(&notebook, cx);
+    let zoomed = read(&notebook, cx, |view, cx| {
+        let page = view.editor.as_ref().unwrap().read(cx);
+        page.zooms[0].as_ref().map(|zoom| zoom.editor.clone())
+    })
+    .expect("a zoom");
+    number_from_the_menu(&notebook, &zoomed, cx);
+
+    let pages = [NESTED[1], NESTED[0]];
+    let (notebook, host) = open_page(&pages, true, cx);
+    let nested =
+        |cx: &mut TestAppContext| cx.update(|cx| crate::embeds::nested_editors(host.read(cx)));
+    wait_until(cx, "the embed", |cx| {
+        draw(&notebook, cx);
+        nested(cx).len() == 1
+    });
+    let embed = nested(cx).remove(0);
+    notebook
+        .window
+        .update(cx, |_, window, cx| {
+            window.focus(&embed.focus_handle(cx), cx)
+        })
+        .unwrap();
+    number_from_the_menu(&notebook, &embed, cx);
+}
+
 #[gpui::test]
 fn reference_editor_keys_switch_views_copy_a_block_reference_and_redo(cx: &mut TestAppContext) {
     let (notebook, editor) = open(false, cx);

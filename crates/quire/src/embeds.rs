@@ -511,6 +511,7 @@ fn nested(
             window,
             cx,
         );
+        crate::page_menu::install(&mut nested);
         let embeds = state(&mut nested);
         embeds.chain = chain;
         embeds.outer = Some(outer);
