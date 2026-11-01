@@ -16,19 +16,19 @@ use ui::{
     LabelSize, ListItem, PopoverMenu, Toggleable, Tooltip, h_flex, v_flex,
 };
 
-const BOOK_OPEN: &str = "quire/icons/sidebar/book-open.svg";
-const CALENDAR: &str = "quire/icons/sidebar/calendar-days.svg";
-const TEMPLATE: &str = "quire/icons/sidebar/layout-template.svg";
-const UPLOAD: &str = "quire/icons/sidebar/upload.svg";
+const BOOK_OPEN: &str = "icons/quire/sidebar/book-open.svg";
+const CALENDAR: &str = "icons/quire/sidebar/calendar-days.svg";
+const TEMPLATE: &str = "icons/quire/sidebar/layout-template.svg";
+const UPLOAD: &str = "icons/quire/sidebar/upload.svg";
 pub(in crate::editor_host::stored) const NEW_FILE: &str =
-    "quire/icons/sidebar/file-plus-corner.svg";
+    "icons/quire/sidebar/file-plus-corner.svg";
 
 /// Room at the sidebar's top for the traffic lights, which sit over it on macOS.
 const WINDOW_DRAG: f32 = 55.;
-/// The reference sidebar's width, which narrows with the window as the reference's media
-/// queries narrow it.
-pub(in crate::editor_host::stored) const SIDEBAR_WIDTH: f32 = 272.;
-pub(in crate::editor_host::stored) const SIDEBAR_SHARE: f32 = 0.26;
+/// The sidebar takes 21% of the window between the reference's narrowest and widest widths, which
+/// matches its 220, 225, and 272 px media-query steps at 850, 1067, and 1440 px windows.
+pub(in crate::editor_host::stored) const SIDEBAR_WIDTH: [f32; 2] = [220., 272.];
+pub(in crate::editor_host::stored) const SIDEBAR_SHARE: f32 = 0.21;
 
 /// The view list, in the reference's order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -322,6 +322,7 @@ impl StoredWindow {
                         v_flex()
                             .flex_1()
                             .min_w_0()
+                            .items_start()
                             .child(Label::new(title).weight(FontWeight::SEMIBOLD).truncate())
                             .child(
                                 Label::new(place)

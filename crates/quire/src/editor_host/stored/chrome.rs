@@ -557,8 +557,17 @@ impl StoredWindow {
         let list = uniform_list(
             "files",
             count,
-            cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
+            cx.processor(|this, range: std::ops::Range<usize>, window, cx| {
                 let rows = this.file_rows();
+                // As in rt, the shown page's row is highlighted; while the tree has focus the
+                // keyboard's row is.
+                let focused = this
+                    .nav
+                    .browsers
+                    .files_focus
+                    .as_ref()
+                    .is_some_and(|focus| focus.contains_focused(window, cx));
+                let shown = this.page.read(cx).path(cx);
                 let attachments: BTreeSet<&str> = this
                     .nav
                     .browsers
@@ -583,7 +592,11 @@ impl StoredWindow {
                             ListItem::new(("file", index))
                                 .rounded()
                                 .indent_level(row.depth)
-                                .toggle_state(index == this.nav.browsers.files_selected)
+                                .toggle_state(if focused {
+                                    index == this.nav.browsers.files_selected
+                                } else {
+                                    shown.as_deref() == Some(row.path.as_str())
+                                })
                                 .start_slot(
                                     h_flex()
                                         .gap_1p5()
@@ -877,8 +890,9 @@ impl StoredWindow {
                     window.focus_prev(cx)
                 }),
             )
-            .w(gpui::px(sidebar_views::SIDEBAR_WIDTH))
-            .max_w(gpui::relative(sidebar_views::SIDEBAR_SHARE))
+            .w(gpui::relative(sidebar_views::SIDEBAR_SHARE))
+            .min_w(gpui::px(sidebar_views::SIDEBAR_WIDTH[0]))
+            .max_w(gpui::px(sidebar_views::SIDEBAR_WIDTH[1]))
             .flex_none()
             .h_full()
             .px_3()

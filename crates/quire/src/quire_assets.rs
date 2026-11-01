@@ -1,7 +1,7 @@
 //! Quire's asset source: Zed's bundled assets, plus the reference app's tag icons (Lucide, ISC;
 //! `assets/icons/tags/LICENSE`) under `quire/icons/tags/<tone>.svg` and the page toolbar's save
 //! states under `quire/icons/save/`, the sidebar's Lucide icons that Zed lacks under
-//! `quire/icons/sidebar/`, and Quire's themes under `themes/quire/`.
+//! `icons/quire/sidebar/` (where `ui::Icon::from_path` looks for embedded SVGs), and Quire's themes under `themes/quire/`.
 
 use gpui::{AssetSource, Result, SharedString};
 use std::borrow::Cow;
@@ -71,23 +71,23 @@ pub const SAVE_ICONS: &[(&str, &[u8])] = &[
 /// The sidebar's Lucide icons that Zed has no match for (`assets/icons/sidebar/LICENSE`).
 pub const SIDEBAR_ICONS: &[(&str, &[u8])] = &[
     (
-        "quire/icons/sidebar/book-open.svg",
+        "icons/quire/sidebar/book-open.svg",
         include_bytes!("../assets/icons/sidebar/book-open.svg"),
     ),
     (
-        "quire/icons/sidebar/calendar-days.svg",
+        "icons/quire/sidebar/calendar-days.svg",
         include_bytes!("../assets/icons/sidebar/calendar-days.svg"),
     ),
     (
-        "quire/icons/sidebar/file-plus-corner.svg",
+        "icons/quire/sidebar/file-plus-corner.svg",
         include_bytes!("../assets/icons/sidebar/file-plus-corner.svg"),
     ),
     (
-        "quire/icons/sidebar/layout-template.svg",
+        "icons/quire/sidebar/layout-template.svg",
         include_bytes!("../assets/icons/sidebar/layout-template.svg"),
     ),
     (
-        "quire/icons/sidebar/upload.svg",
+        "icons/quire/sidebar/upload.svg",
         include_bytes!("../assets/icons/sidebar/upload.svg"),
     ),
 ];
@@ -161,12 +161,18 @@ mod tests {
                 Assets.load(path).unwrap().unwrap().starts_with(b"<svg"),
                 "{path}"
             );
+            let folder = &path[..=path.rfind('/').unwrap()];
             assert!(
                 Assets
-                    .list("quire/icons/")
+                    .list(folder)
                     .unwrap()
                     .contains(&SharedString::from(*path))
             );
+        }
+        // `ui::Icon::from_path` loads only `icons/` paths from the assets; any other path is read
+        // as a raster file on disk and draws nothing.
+        for (path, _) in SIDEBAR_ICONS {
+            assert!(path.starts_with("icons/"), "{path}");
         }
         assert_eq!(TAG_ICONS.len(), TONES.len());
         assert!(
