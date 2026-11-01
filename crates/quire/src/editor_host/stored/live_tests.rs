@@ -13,7 +13,7 @@ use quire_store::{
     notebook::{Edit, NotebookStore},
     worker::{QueueError, Reply},
 };
-use std::{fs, os::unix::fs::PermissionsExt as _, path::Path};
+use std::{fs, path::Path};
 
 pub(super) struct Synced {
     pub notebook: Notebook,
@@ -299,10 +299,13 @@ fn quitting_waits_for_a_slow_publication_and_finishes_once_it_lands(cx: &mut Tes
     assert_eq!(outbox(&synced, cx), 0);
 }
 
+/// Unix only: it makes the log folder read-only through its mode bits.
+#[cfg(unix)]
 #[gpui::test]
 fn a_failed_publication_asks_at_once_keeps_the_save_and_retries_on_the_next_quit(
     cx: &mut TestAppContext,
 ) {
+    use std::os::unix::fs::PermissionsExt as _;
     let synced = open_synced("- one\n", cx);
     let live = live(&synced, cx);
     let log = synced.folder.join("devices/local/log");

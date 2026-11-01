@@ -269,6 +269,8 @@ fn moving_a_block_in_a_folder_notebook_rewrites_its_files(cx: &mut TestAppContex
 
 /// A destination note that cannot be written fails the whole move: the source note keeps the
 /// block and no reference is retargeted.
+/// Unix only: it makes the destination folder read-only through its mode bits.
+#[cfg(unix)]
 #[gpui::test]
 fn a_failed_folder_move_leaves_the_source_note_intact(cx: &mut TestAppContext) {
     use std::os::unix::fs::PermissionsExt as _;

@@ -5,7 +5,7 @@ use crate::sync_status::{NO_FOLDER, NOT_PERSONAL, ShowSync, SyncStatus, SyncWith
 use gpui::TestAppContext;
 use quire_store::git_sync::{self, Profile, Target};
 use quire_store::profiles::ProfileId;
-use std::{fs, os::unix::fs::PermissionsExt as _, path::Path, process::Command};
+use std::{fs, path::Path, process::Command};
 
 fn dispatch(notebook: &Notebook, action: impl gpui::Action, cx: &mut TestAppContext) {
     cx.dispatch_action(notebook.window.into(), action);
@@ -257,8 +257,11 @@ fn git_sync_is_personal_only_then_backs_up_pushes_and_rereads_pulled_notes(
     });
 }
 
+/// Unix only: it installs an executable Git hook through its mode bits.
+#[cfg(unix)]
 #[gpui::test]
 fn a_failed_push_shows_its_reason_until_a_later_sync_succeeds(cx: &mut TestAppContext) {
+    use std::os::unix::fs::PermissionsExt as _;
     let opened = open_folder(&[("A.md", "- kept\n")], "A.md", cx);
     let notebook = &opened.notebook;
     let elsewhere = tempfile::tempdir().unwrap();
