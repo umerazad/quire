@@ -108,6 +108,14 @@ impl FolderOptions {
         }
     }
 
+    /// Opens on the note at `page`, relative to the folder.
+    pub fn on_page(self, page: &str) -> Self {
+        Self {
+            page: Some(page.to_owned()),
+            ..self
+        }
+    }
+
     /// Starts on today's daily page, as a launch does.
     pub fn on_today(self) -> Self {
         Self {

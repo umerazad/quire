@@ -842,6 +842,13 @@ pub fn run() {
             }
             return;
         }
+        if !harness {
+            let data = paths::data_dir().clone();
+            if let Err(error) = stored::launch_example_notebook(&data, cx) {
+                startup_failure::show(error, Some(std::rc::Rc::new(move |cx| stored::launch_example_notebook(&data, cx))), cx);
+            }
+            return;
+        }
         let prefix = "# Welcome to Quire\n\n";
         let block = "- Edit this note in either pane. ^b-welcome\n  - Both panes share the same document.";
         let text = format!("{prefix}{block}\n- [ ] Try Vim, undo, and redo.\n");
