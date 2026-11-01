@@ -79,14 +79,14 @@ pub(super) fn paste(
     {
         return None;
     }
-    let copy = copy(editor, &item.text()?, cx)?;
+    let copy = fresh_copy(editor, &item.text()?, cx)?;
     editor.paste_item(&copied(&item, &copy)?, window, cx);
     Some(Handled::Done)
 }
 
 /// The clipboard text as a paste into `editor` inserts it.
 pub(super) fn pasted_text(editor: &Editor, text: String, cx: &App) -> String {
-    match copy(editor, &text, cx) {
+    match fresh_copy(editor, &text, cx) {
         Some(copy) => copy.rename(&text),
         None => text,
     }
@@ -94,13 +94,13 @@ pub(super) fn pasted_text(editor: &Editor, text: String, cx: &App) -> String {
 
 /// How pasted text becomes a copy: the fresh ID for each block ID it carries, and how its
 /// `Page#^id` references to its own blocks name the destination.
-struct Copy {
+struct FreshCopy {
     ids: HashMap<String, String>,
     destination: String,
     sources: Vec<String>,
 }
 
-impl Copy {
+impl FreshCopy {
     fn rename(&self, text: &str) -> String {
         let sources: Vec<&str> = self.sources.iter().map(String::as_str).collect();
         renamed_ids(
@@ -115,7 +115,7 @@ impl Copy {
 
 /// How `text` pasted into `editor` becomes a copy, or None when it carries no block IDs, the
 /// view is Source, or it is this notebook's cut whose IDs no open page has.
-fn copy(editor: &Editor, text: &str, cx: &App) -> Option<Copy> {
+fn fresh_copy(editor: &Editor, text: &str, cx: &App) -> Option<FreshCopy> {
     if !crate::editor_projection::enabled(editor) {
         return None;
     }
@@ -130,11 +130,13 @@ fn copy(editor: &Editor, text: &str, cx: &App) -> Option<Copy> {
         .and_then(|clipped| clipped.0.as_ref())
         .filter(|origin| origin.text == text && Some(origin.notebook) == notebook);
     if origin.is_some_and(|origin| origin.cut) {
-        let open = super::fresh_ids::open_pages(editor, cx);
+        let open: Vec<String> = super::fresh_ids::open_pages(editor, cx)
+            .into_iter()
+            .map(|(_, page)| page.read(cx).text())
+            .collect();
         let held = addresses.ids.iter().any(|range| {
             let id = &text[range.clone()];
-            open.iter()
-                .any(|(_, page)| super::fresh_ids::holds(&page.read(cx).text(), id))
+            open.iter().any(|page| super::fresh_ids::holds(page, id))
         });
         if !held {
             return None;
@@ -152,7 +154,7 @@ fn copy(editor: &Editor, text: &str, cx: &App) -> Option<Copy> {
             vec![name.to_owned(), base.to_owned()]
         })
         .unwrap_or_default();
-    Some(Copy {
+    Some(FreshCopy {
         ids: fresh_ids(text, &addresses, crate::references::new_block_id),
         destination: destination.unwrap_or_default(),
         sources,
@@ -161,7 +163,7 @@ fn copy(editor: &Editor, text: &str, cx: &App) -> Option<Copy> {
 
 /// The clipboard item with its text copied. Zed's copies carry each selection's length, so
 /// each selection's text is copied on its own and its length follows the copy.
-fn copied(item: &ClipboardItem, copy: &Copy) -> Option<ClipboardItem> {
+fn copied(item: &ClipboardItem, copy: &FreshCopy) -> Option<ClipboardItem> {
     let whole = || ClipboardItem::new_string(copy.rename(&item.text().unwrap_or_default()));
     let [ClipboardEntry::String(string)] = item.entries() else {
         return Some(whole());
