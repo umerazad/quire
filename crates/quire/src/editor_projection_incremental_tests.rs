@@ -143,19 +143,31 @@ const MIXED: &str = "# Plan 🙂 ^h1
 
 ```rust
 fn main() {}
+// - [ ] a box in code
 ```
-- last [[Page|alias]] and ~~gone~~ ^z1
+> quoted - [ ] box and #[[Roam tag]] ^q1
+- last [[Page|alias]] and ~~gone~~ #[[Roam tag]] #done ^z1
 ";
 
-fn check(window: gpui::WindowHandle<NotebookWindow>, step: &str, cx: &mut TestAppContext) {
+/// Checks Write's folds against a whole refold, and the tag icon and ligature guard folds
+/// against those last wanted; returns how many tag icon and guard folds there are.
+fn check(
+    window: gpui::WindowHandle<NotebookWindow>,
+    step: &str,
+    cx: &mut TestAppContext,
+) -> (usize, usize) {
     window
         .update(cx, |view, window, cx| {
             view.source.update(cx, |editor, cx| {
-                crate::editor_projection::check_against_whole_refold(editor, window, cx)
+                crate::editor_projection::check_against_whole_refold(editor, window, cx)?;
+                Ok::<_, String>((
+                    crate::tag_labels::check_folds(editor, cx)?,
+                    crate::task_controls::check_guards(editor, cx)?,
+                ))
             })
         })
         .unwrap()
-        .unwrap_or_else(|error| panic!("After {step}: {error}"));
+        .unwrap_or_else(|error| panic!("After {step}: {error}"))
 }
 
 fn keys(window: gpui::WindowHandle<NotebookWindow>, keys: &str, cx: &mut TestAppContext) {
@@ -168,7 +180,12 @@ fn keys(window: gpui::WindowHandle<NotebookWindow>, keys: &str, cx: &mut TestApp
 fn caret_moves_refold_as_a_whole_refold_would(cx: &mut TestAppContext) {
     cx.update(|cx| init(cx).expect("editor initialization"));
     let window = page_window(MIXED, cx);
-    check(window, "opening the page", cx);
+    let (icons, guards) = check(window, "opening the page", cx);
+    assert!(icons >= 5, "tags and Roam tags get icon folds: {icons}");
+    assert_eq!(
+        guards, 2,
+        "the quoted box and the box in code get ligature guards"
+    );
     keys(window, "j z c", cx);
     check(window, "collapsing the first task", cx);
     let lines = MIXED.lines().count();
@@ -211,7 +228,10 @@ fn edits_refold_as_a_whole_refold_would_before_and_after_the_parse(cx: &mut Test
         .update(cx, |view, _, cx| view.analysis.read(cx).source.clone())
         .unwrap();
     // Edits from outside the view, checked before the parse catches up, then after.
-    let edits: [(&str, &str, usize, &str); 6] = [
+    let edits: [(&str, &str, usize, &str); 9] = [
+        ("renaming a tag", "#next", 1, "o"),
+        ("breaking a Roam tag", "#[[Roam tag]] ^q1", 1, " "),
+        ("breaking the quoted box", "quoted - [ ]", 9, "x"),
         ("typing in a link label", "site", 2, "x"),
         ("breaking a page link", "[[Page]]", 0, "["),
         ("typing before a hidden ID", " ^b1", 0, " more"),

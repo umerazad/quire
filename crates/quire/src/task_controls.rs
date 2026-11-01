@@ -16,7 +16,7 @@ use crate::navigation::pointer_menu::{Entry, Item};
 use crate::tasks::{Due, TaskContext};
 use editor::{
     Addon, Editor, FoldPlaceholder, HighlightKey, NavigationOverlayKey, TextRegion,
-    TextRegionLayout, display_map::Crease,
+    TextRegionLayout,
 };
 use gpui::{
     AnyElement, App, Context, Entity, Focusable as _, Hsla, InteractiveElement as _,
@@ -199,6 +199,8 @@ struct TaskLines {
     lines: Vec<TaskLine>,
     hover: Arc<Hover>,
     picking: Option<Picking>,
+    /// The spacers this module placed in `- [ ]` text Write shows as written.
+    guards: crate::editor_projection::KeptFolds,
     _theme: Subscription,
 }
 
@@ -240,15 +242,19 @@ impl Addon for TaskLines {
             .picking
             .as_ref()
             .map(|picking| (picking.line.to_offset(&snapshot), picking.field.clone()));
+        // Task lines come in page order, so only those from the first that reaches the view are
+        // read.
+        let first = self
+            .lines
+            .partition_point(|line| line.range.end.to_offset(&snapshot) < visible.start);
         self.lines
             .iter()
             .enumerate()
+            .skip(first)
+            .take_while(|(_, line)| line.range.start.to_offset(&snapshot) <= visible.end)
             .filter_map(|(ordinal, line)| {
                 let range =
                     line.range.start.to_offset(&snapshot)..line.range.end.to_offset(&snapshot);
-                if range.end < visible.start || range.start > visible.end {
-                    return None;
-                }
                 let field = picking
                     .as_ref()
                     .filter(|(at, _)| *at == range.start)
@@ -725,6 +731,7 @@ pub(crate) fn sync(
             lines: Vec::new(),
             hover: Arc::default(),
             picking: None,
+            guards: Default::default(),
             _theme: theme,
         });
     }
@@ -732,14 +739,28 @@ pub(crate) fn sync(
         addon.lines = lines;
     }
     restyle(editor, cx);
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let key = crate::editor_projection::fold_key("dash guard");
     let guards: Vec<_> = dash_boxes(text, blocks)
         .into_iter()
         .filter(|space| shown(&(*space..space + 1)))
-        .filter_map(|space| Some(Crease::simple(anchor(space)?..anchor(space + 1)?, spacer())))
+        .filter_map(|space| {
+            let range = anchor(space)?..anchor(space + 1)?;
+            Some((
+                range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot),
+                key,
+            ))
+        })
         .collect();
-    let everything = MultiBufferOffset(0)..editor.buffer().read(cx).snapshot(cx).len();
-    editor.remove_folds_with_type(&[everything], TypeId::of::<DashGuard>(), false, cx);
-    editor.fold_creases(guards, false, window, cx);
+    let mut kept = editor
+        .addon_mut::<TaskLines>()
+        .map(|lines| std::mem::take(&mut lines.guards))
+        .unwrap_or_default();
+    let tag = TypeId::of::<DashGuard>();
+    crate::editor_projection::sync_folds(editor, tag, &mut kept, guards, |_| spacer(), window, cx);
+    if let Some(lines) = editor.addon_mut::<TaskLines>() {
+        lines.guards = kept;
+    }
 }
 
 /// Removes the task lines' controls, muted text, and ligature guards, when Write ends.
@@ -748,6 +769,17 @@ pub(crate) fn clear(editor: &mut Editor, cx: &mut Context<Editor>) {
     editor.clear_highlights(done_key(), cx);
     let everything = MultiBufferOffset(0)..editor.buffer().read(cx).snapshot(cx).len();
     editor.remove_folds_with_type(&[everything], TypeId::of::<DashGuard>(), false, cx);
+}
+
+/// Checks that the ligature guards are those last wanted, and how many there are; for tests.
+#[cfg(test)]
+pub(crate) fn check_guards(editor: &Editor, cx: &mut App) -> Result<usize, String> {
+    let empty = crate::editor_projection::KeptFolds::default();
+    let kept = editor
+        .addon::<TaskLines>()
+        .map_or(&empty, |lines| &lines.guards);
+    crate::editor_projection::check_kept_folds(editor, TypeId::of::<DashGuard>(), kept, cx)?;
+    Ok(kept.len())
 }
 
 /// The task lines `editor` found, as (done, dated), for tests.

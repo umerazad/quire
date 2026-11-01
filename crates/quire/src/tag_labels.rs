@@ -11,19 +11,19 @@ use crate::markdown_blocks::Block;
 use crate::page_analysis::PageAnalysis;
 use editor::{
     Addon, Editor, FoldPlaceholder, HighlightKey, NavigationOverlayKey, TextRegion,
-    TextRegionLayout, display_map::Crease,
+    TextRegionLayout,
 };
 use gpui::{
-    AnyElement, App, Entity, Focusable as _, HighlightStyle, Hsla, InteractiveElement as _,
-    IntoElement, ParentElement as _, Pixels, SharedString, StatefulInteractiveElement as _,
-    Styled as _, WeakEntity, Window, div, px, rgb, svg,
+    div, px, rgb, svg, AnyElement, App, Entity, Focusable as _, HighlightStyle, Hsla,
+    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, SharedString,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, Window,
 };
 use multi_buffer::{
     Anchor, AnchorRangeExt as _, MultiBufferOffset, MultiBufferSnapshot, ToOffset as _,
     ToPoint as _,
 };
 use quire_core::markdown::TagToken;
-use quire_core::tag_tones::{NEUTRAL, TONES, Tone, tone_index};
+use quire_core::tag_tones::{tone_index, Tone, NEUTRAL, TONES};
 use settings::Settings as _;
 use std::{
     any::{Any, TypeId},
@@ -42,9 +42,7 @@ macro_rules! keys {
 
 /// One highlight key per tone, with the neutral look last.
 fn keys() -> [HighlightKey; 25] {
-    keys!(
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24
-    )
+    keys!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24)
 }
 
 /// Whether tags are drawn as pills: the Format tags setting.
@@ -87,6 +85,8 @@ struct Pill {
 struct TagPills {
     pills: Vec<Pill>,
     dark: bool,
+    /// The icon and bracket folds this module placed.
+    folds: crate::editor_projection::KeptFolds,
 }
 
 /// How a visible pill is drawn.
@@ -141,12 +141,13 @@ impl Addon for TagPills {
         let view = editor.read(cx);
         let snapshot = view.buffer().read(cx).snapshot(cx);
         let dark = self.dark;
-        self.pills
+        // Pills come in page order, so only those from the first that reaches the view are read.
+        let first = self
+            .pills
+            .partition_point(|pill| pill.range.end.to_offset(&snapshot) < visible.start);
+        self.pills[first..]
             .iter()
-            .filter(|pill| {
-                pill.range.end.to_offset(&snapshot) >= visible.start
-                    && pill.range.start.to_offset(&snapshot) <= visible.end
-            })
+            .take_while(|pill| pill.range.start.to_offset(&snapshot) <= visible.end)
             .filter_map(|pill| {
                 let look = self.look(view, pill, &snapshot, window, cx)?;
                 let pill = pill.clone();
@@ -340,17 +341,39 @@ pub fn refresh(
     let format = formats(cx);
     let dark = !cx.theme().appearance.is_light();
     editor.update(cx, |editor, cx| {
+        // Until the analysis catches up with an edit it has no tags; keeping the tags painted
+        // spares removing every icon fold and adding it back when it does, which on a long page
+        // took most of a keystroke. The analysis refreshes the tags again once it is current.
+        if format
+            && crate::editor_projection::enabled(editor)
+            && editor.addon::<TagPills>().is_some()
+            && page.read(cx).current_inline(cx).is_none()
+        {
+            return;
+        }
         let keys = keys();
         keys.iter()
             .for_each(|key| editor.clear_highlights(*key, cx));
+        let mut kept = editor
+            .addon_mut::<TagPills>()
+            .map(|pills| std::mem::take(&mut pills.folds))
+            .unwrap_or_default();
         editor.register_addon(TagPills::default());
         let buffer = editor.buffer().read(cx);
         let snapshot = buffer.snapshot(cx);
-        let everything = MultiBufferOffset(0)..snapshot.len();
-        editor.remove_folds_with_type(&[everything], TypeId::of::<TagIcon>(), false, cx);
-        let buffer = editor.buffer().read(cx);
         if !format || !crate::editor_projection::enabled(editor) || !buffer.is_singleton() {
             editor.unregister_addon::<TagLinks>();
+            let tag = TypeId::of::<TagIcon>();
+            let none = |_| hidden_placeholder();
+            crate::editor_projection::sync_folds(
+                editor,
+                tag,
+                &mut kept,
+                Vec::new(),
+                none,
+                window,
+                cx,
+            );
             return;
         }
         let tokens = page_tags(page, || snapshot.text(), cx);
@@ -371,7 +394,11 @@ pub fn refresh(
                 ..snapshot.anchor_before(MultiBufferOffset(range.end))
         };
         let mut pills = Vec::new();
-        let mut folds = Vec::new();
+        // Each fold's range and key, and its tag's tone; a Roam tag's closing brackets have none.
+        let mut folds: Vec<(Range<MultiBufferOffset>, u64)> = Vec::new();
+        let mut tones: Vec<Option<usize>> = Vec::new();
+        let offsets =
+            |range: Range<usize>| MultiBufferOffset(range.start)..MultiBufferOffset(range.end);
         let mut groups: Vec<Vec<_>> = vec![Vec::new(); keys.len()];
         for (tone, range) in &tags {
             let text: String = snapshot
@@ -383,15 +410,13 @@ pub fn refresh(
                 continue;
             }
             let name = range.start + lead..range.end - tail;
-            folds.push(Crease::simple(
-                anchored(range.start..name.start),
-                icon_placeholder(*tone, dark),
-            ));
+            let key = crate::editor_projection::fold_key(("tag icon", *tone, dark));
+            folds.push((offsets(range.start..name.start), key));
+            tones.push(Some(*tone));
             if wiki {
-                folds.push(Crease::simple(
-                    anchored(name.end..range.end),
-                    hidden_placeholder(),
-                ));
+                let key = crate::editor_projection::fold_key("tag brackets");
+                folds.push((offsets(name.end..range.end), key));
+                tones.push(None);
             }
             groups[*tone].push(anchored(name.clone()));
             pills.push(Pill {
@@ -415,8 +440,25 @@ pub fn refresh(
                 cx,
             );
         }
-        editor.fold_creases(folds, false, window, cx);
-        editor.register_addon(TagPills { pills, dark });
+        let placeholder = |index: usize| match tones[index] {
+            Some(tone) => icon_placeholder(tone, dark),
+            None => hidden_placeholder(),
+        };
+        let tag = TypeId::of::<TagIcon>();
+        crate::editor_projection::sync_folds(
+            editor,
+            tag,
+            &mut kept,
+            folds,
+            placeholder,
+            window,
+            cx,
+        );
+        editor.register_addon(TagPills {
+            pills,
+            dark,
+            folds: kept,
+        });
         cx.notify();
     });
 }
@@ -478,15 +520,18 @@ impl editor::Addon for TagLinks {
             .focus_handle(cx)
             .is_focused(window)
             .then(|| view.selections.newest_anchor().head().to_offset(&snapshot));
+        // Links come in page order, so only those from the first that reaches the view are read.
+        let first = self
+            .links
+            .partition_point(|link| link.range.end.to_offset(&snapshot) < visible.start);
         self.links
             .iter()
             .enumerate()
+            .skip(first)
+            .take_while(|(_, link)| link.range.start.to_offset(&snapshot) <= visible.end)
             .filter(|(_, link)| {
-                let range = link.range.to_offset(&snapshot);
                 let block = link.block.to_offset(&snapshot);
-                range.end >= visible.start
-                    && range.start <= visible.end
-                    && !caret.is_some_and(|caret| block.contains(&caret) || caret == block.end)
+                !caret.is_some_and(|caret| block.contains(&caret) || caret == block.end)
             })
             .map(|(ordinal, link)| {
                 let tag = link.tag.clone();
@@ -566,6 +611,18 @@ pub fn painted(editor: &Editor, cx: &App) -> Vec<(usize, usize)> {
 }
 
 /// The tags `editor` draws as pills, as (tone index, text), for tests.
+/// Checks that the tag icon and bracket folds are those last wanted, and how many there are; for
+/// tests.
+#[cfg(test)]
+pub(crate) fn check_folds(editor: &Editor, cx: &mut App) -> Result<usize, String> {
+    let empty = crate::editor_projection::KeptFolds::default();
+    let kept = editor
+        .addon::<TagPills>()
+        .map_or(&empty, |pills| &pills.folds);
+    crate::editor_projection::check_kept_folds(editor, TypeId::of::<TagIcon>(), kept, cx)?;
+    Ok(kept.len())
+}
+
 #[cfg(test)]
 pub fn pills(editor: &Editor) -> Vec<(usize, String)> {
     editor

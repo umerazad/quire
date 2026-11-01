@@ -185,11 +185,11 @@ impl Addon for Projection {
                     render: Arc::new(move |layout, _| link_region(&editor, &link, layout)),
                 }
             });
-        let lines = self
-            .blocks
+        let shown = self.visible_blocks(&visible, &snapshot);
+        let lines = self.blocks[shown.clone()]
             .iter()
-            .enumerate()
-            .filter_map(|(ordinal, block)| {
+            .zip(shown)
+            .filter_map(|(block, ordinal)| {
                 let end = block.children?;
                 let range = block.marker.end..end;
                 let offsets = range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot);
@@ -202,7 +202,7 @@ impl Addon for Projection {
                         editor::TextRegion {
                             range,
                             render: Arc::new(move |_, _| {
-                                line_hover(ordinal, hover.clone(), editor.clone())
+                                line_hover(ordinal, end, hover.clone(), editor.clone())
                             }),
                         }
                     })
@@ -221,10 +221,33 @@ impl Addon for Projection {
     ) -> Option<Vec<editor::HostIndentGuide>> {
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
         let tones = guide_tones(cx);
+        let start = snapshot.point_to_offset(language::Point::new(visible.start.0, 0));
+        let end = snapshot.point_to_offset(language::Point::new(
+            visible.end.0,
+            snapshot.line_len(visible.end),
+        ));
+        let shown = self.visible_blocks(&(start..end), &snapshot);
+        // A guide from above the view belongs to an ancestor of its first block: the nearest
+        // block before it at each shallower depth.
+        let mut ancestors = Vec::new();
+        if let Some(first) = self.blocks.get(shown.start) {
+            let mut depth = first.depth;
+            for (ordinal, block) in self.blocks[..shown.start].iter().enumerate().rev() {
+                if depth == 0 {
+                    break;
+                }
+                if block.depth < depth {
+                    depth = block.depth;
+                    ancestors.push(ordinal);
+                }
+            }
+        }
         Some(
-            self.blocks
-                .iter()
-                .enumerate()
+            ancestors
+                .into_iter()
+                .rev()
+                .chain(shown)
+                .map(|ordinal| (ordinal, &self.blocks[ordinal]))
                 .filter_map(|(ordinal, block)| {
                     block.children?;
                     let start = snapshot.offset_to_point(block.marker.start.to_offset(&snapshot));
@@ -261,18 +284,57 @@ impl Addon for Projection {
     }
 }
 
+impl Projection {
+    /// The blocks whose markers or first lines can lie in `visible`: from the last block that
+    /// starts before it, since a block's line runs up to the next block's marker, through the last
+    /// block that starts in it.
+    fn visible_blocks(
+        &self,
+        visible: &Range<MultiBufferOffset>,
+        snapshot: &MultiBufferSnapshot,
+    ) -> Range<usize> {
+        let start = |block: &AnchoredBlock| block.marker.start.to_offset(snapshot);
+        let first = self
+            .blocks
+            .partition_point(|block| start(block) < visible.start)
+            .saturating_sub(1);
+        let end = self
+            .blocks
+            .partition_point(|block| start(block) <= visible.end);
+        first..end.max(first)
+    }
+}
+
+/// Which item the pointer is over, by where its children start: a key a bullet's placeholder
+/// keeps however blocks before it change.
+fn hover_key(children: &Anchor) -> usize {
+    let mut hasher = std::hash::DefaultHasher::new();
+    std::hash::Hash::hash(children, &mut hasher);
+    (std::hash::Hasher::finish(&hasher) as usize).min(NOT_HOVERED - 1)
+}
+
+/// An element id for a fold's placeholder, from where the fold starts, which stays the same
+/// while the fold does.
+fn fold_element_id(start: &Anchor) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    std::hash::Hash::hash(start, &mut hasher);
+    std::hash::Hasher::finish(&hasher)
+}
+
 /// Tracks the pointer over a parent item's line text, which shows its fold arrow, without taking
 /// clicks or selection from the text.
 fn line_hover(
     ordinal: usize,
+    children: Anchor,
     hover: Arc<BulletHover>,
     editor: WeakEntity<Editor>,
 ) -> gpui::AnyElement {
+    let key = hover_key(&children);
     gpui::div()
         .id(("quire-bullet-line", ordinal))
         .debug_selector(move || format!("quire-line-{ordinal}"))
         .size_full()
-        .on_hover(move |hovered, _, cx| hover.set(false, ordinal, *hovered, &editor, cx))
+        .on_hover(move |hovered, _, cx| hover.set(false, key, *hovered, &editor, cx))
         .into_any_element()
 }
 
@@ -650,7 +712,9 @@ impl Folding<'_> {
     }
 
     /// A block's checkbox, bullet, and hidden ID.
-    fn block(&mut self, ordinal: usize, block: &AnchoredBlock, at: &BlockAt, collapsed: bool) {
+    /// Their keys leave out where the block falls in the page, so a block added above leaves
+    /// the folds of those after it in place.
+    fn block(&mut self, block: &AnchoredBlock, at: &BlockAt, collapsed: bool) {
         let marker = at.start..at.checkbox;
         if !marker.is_empty() {
             let content: String = self
@@ -661,14 +725,9 @@ impl Folding<'_> {
                 .collect();
             if let Some(task) = crate::task_marker::read(&content) {
                 let range = marker.end..MultiBufferOffset(marker.end.0 + task.source.len());
-                let key = key(("checkbox", ordinal, task.source, task.checked));
+                let key = key(("checkbox", task.source, task.checked));
                 self.want(range, key, |folding| {
-                    checkbox_placeholder(
-                        folding.host.clone(),
-                        ordinal,
-                        task.source.into(),
-                        task.checked,
-                    )
+                    checkbox_placeholder(folding.host.clone(), task.source.into(), task.checked)
                 });
             }
             let label: String = self.snapshot.text_for_range(marker.clone()).collect();
@@ -678,11 +737,9 @@ impl Folding<'_> {
                 .then(|| label.trim().to_owned().into());
             let key = key((
                 "bullet",
-                ordinal,
                 number.as_ref().map(|number| number.as_ref()),
-                // Where the children start from the marker: the placeholder keeps an anchor there.
-                at.children
-                    .map(|children| children.0.saturating_sub(at.start.0)),
+                // The placeholder keeps this anchor, to fold the children and track hovering.
+                block.children,
                 collapsed,
                 self.bullets.ink,
                 self.bullets.ring,
@@ -691,7 +748,6 @@ impl Folding<'_> {
                 bullet_placeholder(
                     folding.host.clone(),
                     Bullet {
-                        ordinal,
                         number,
                         children: block.children,
                         collapsed,
@@ -798,7 +854,7 @@ fn fold_within(
     for index in indices {
         let at = &layout.blocks[index];
         let folded = at.children.is_some_and(|at| collapsed.contains(&at));
-        folding.block(index, &blocks[index], at, folded);
+        folding.block(&blocks[index], at, folded);
     }
     for kind in KINDS {
         for (index, at) in layout.syntax_mut(kind).iter_mut().enumerate() {
@@ -811,6 +867,120 @@ fn fold_within(
     folding
         .wanted
         .retain(|wanted| scope.meets(&wanted.placed.range));
+}
+
+/// The folds another module placed beside Write's, with a key for what each placeholder shows.
+#[derive(Default)]
+pub(crate) struct KeptFolds(Vec<(Range<Anchor>, u64)>);
+
+impl KeptFolds {
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+/// A key for what a fold's placeholder shows, for [`sync_folds`].
+pub(crate) fn fold_key(parts: impl std::hash::Hash) -> u64 {
+    key(parts)
+}
+
+/// Makes the folds of `type_tag` exactly `wanted`, each a range and a key for its placeholder,
+/// removing and adding only those that differ from the folds in the view, so a long page is not
+/// refolded whole. `placeholder` builds the placeholder of the `wanted` entry at an index.
+pub(crate) fn sync_folds(
+    editor: &mut Editor,
+    type_tag: TypeId,
+    kept: &mut KeptFolds,
+    wanted: Vec<(Range<MultiBufferOffset>, u64)>,
+    placeholder: impl Fn(usize) -> FoldPlaceholder,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let mut keys: HashMap<(usize, usize), Vec<u64>> = HashMap::new();
+    for (range, key) in &kept.0 {
+        let range = range.start.to_offset(&snapshot).0..range.end.to_offset(&snapshot).0;
+        keys.entry((range.start, range.end)).or_default().push(*key);
+    }
+    let display = editor.display_snapshot(cx);
+    let mut current: Vec<Placed> = display
+        .folds_in_range(MultiBufferOffset(0)..snapshot.len())
+        .filter(|fold| fold.placeholder.type_tag == Some(type_tag))
+        .map(|fold| {
+            let range = fold.range.start.to_offset(&snapshot)..fold.range.end.to_offset(&snapshot);
+            let key = keys
+                .get_mut(&(range.start.0, range.end.0))
+                .and_then(|keys| keys.pop())
+                .unwrap_or(incremental::STALE);
+            Placed { range, key }
+        })
+        .collect();
+    current.sort();
+    let mut placed: Vec<Placed> = wanted
+        .iter()
+        .filter(|(range, _)| !range.is_empty())
+        .map(|(range, key)| Placed {
+            range: range.clone(),
+            key: *key,
+        })
+        .collect();
+    let scope = incremental::difference(&current, &mut placed, |range| {
+        incremental::widen(range, &snapshot)
+    });
+    kept.0 = wanted
+        .iter()
+        .map(|(range, key)| {
+            (
+                snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end),
+                *key,
+            )
+        })
+        .collect();
+    if scope.is_empty() {
+        return;
+    }
+    editor.remove_folds_with_type(scope.ranges(), type_tag, false, cx);
+    let creases = wanted
+        .iter()
+        .enumerate()
+        .filter(|(_, (range, _))| !range.is_empty() && scope.meets(range))
+        .map(|(index, (range, _))| Crease::simple(range.clone(), placeholder(index)))
+        .collect();
+    editor.fold_creases(creases, false, window, cx);
+}
+
+/// Checks that the folds of `type_tag` in the view are exactly those `kept` records as last
+/// wanted, which is what removing them all and folding the wanted ones would leave; for tests.
+#[cfg(test)]
+pub(crate) fn check_kept_folds(
+    editor: &Editor,
+    type_tag: TypeId,
+    kept: &KeptFolds,
+    cx: &mut App,
+) -> Result<(), String> {
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let mut wanted: Vec<_> = kept
+        .0
+        .iter()
+        .map(|(range, _)| range.start.to_offset(&snapshot).0..range.end.to_offset(&snapshot).0)
+        .filter(|range| !range.is_empty())
+        .collect();
+    wanted.sort_by_key(|range| (range.start, range.end));
+    let display = editor.display_snapshot(cx);
+    let mut folded: Vec<_> = display
+        .folds_in_range(MultiBufferOffset(0)..snapshot.len())
+        .filter(|fold| fold.placeholder.type_tag == Some(type_tag))
+        .map(|fold| fold.range.start.to_offset(&snapshot).0..fold.range.end.to_offset(&snapshot).0)
+        .collect();
+    folded.sort_by_key(|range| (range.start, range.end));
+    if wanted == folded {
+        Ok(())
+    } else {
+        Err(format!(
+            "The view folds {folded:?}, but the folds last wanted are {wanted:?}."
+        ))
+    }
 }
 
 /// Write's folds that meet `scope`, by fold.
@@ -939,9 +1109,9 @@ fn refold_with(
                 .into_iter()
                 .map(|range| range.start)
                 .collect();
-            for (ordinal, (block, at)) in blocks.iter().zip(&layout.blocks).enumerate() {
+            for (block, at) in blocks.iter().zip(&layout.blocks) {
                 let folded = at.children.is_some_and(|at| collapsed.contains(&at));
-                folding.block(ordinal, block, at, folded);
+                folding.block(block, at, folded);
             }
             for kind in KINDS {
                 for (index, at) in layout.syntax(kind).iter().enumerate() {
@@ -1143,7 +1313,6 @@ impl BulletHover {
 }
 
 struct Bullet {
-    ordinal: usize,
     /// A numbered item's marker, such as `2.`, shown in place of the dot.
     number: Option<gpui::SharedString>,
     /// Where the item's children start, when it has any.
@@ -1168,15 +1337,17 @@ fn bullet_placeholder(editor: WeakEntity<Editor>, bullet: Bullet) -> FoldPlaceho
         render: Arc::new(move |_, range, _| {
             use gpui::{InteractiveElement as _, ParentElement as _, Styled as _, px, rgb};
             let Bullet {
-                ordinal,
                 number,
                 children,
                 collapsed,
                 palette,
                 hover,
             } = &*bullet;
+            // Ids follow the fold, so a block added above leaves this one's placeholder as it was.
+            let id = fold_element_id(&range.start);
+            let key = children.as_ref().map(hover_key);
             let (ink, ring) = (rgb(palette.ink), rgb(palette.ring));
-            let group = gpui::SharedString::from(format!("quire-bullet-{ordinal}"));
+            let group = gpui::SharedString::from(format!("quire-bullet-{id}"));
             let mark = match number {
                 Some(number) => gpui::div()
                     .px(px(3.))
@@ -1197,7 +1368,7 @@ fn bullet_placeholder(editor: WeakEntity<Editor>, bullet: Bullet) -> FoldPlaceho
             };
             let zoom_editor = editor.clone();
             let text_start = range.end;
-            let bullet = pointer_control(("quire-bullet", *ordinal))
+            let bullet = pointer_control(("quire-bullet", id as usize))
                 .debug_selector(|| "quire-bullet".into())
                 .group(group)
                 .flex()
@@ -1218,10 +1389,12 @@ fn bullet_placeholder(editor: WeakEntity<Editor>, bullet: Bullet) -> FoldPlaceho
                         .ok();
                 });
             let mut slot = gpui::div().flex_none().w(px(16.));
-            if let Some(children) = children.filter(|_| *collapsed || hover.shows(*ordinal)) {
+            if let Some(children) =
+                children.filter(|_| *collapsed || key.is_some_and(|key| hover.shows(key)))
+            {
                 let fold_editor = editor.clone();
                 slot = slot.child(
-                    pointer_control(("quire-bullet-fold", *ordinal))
+                    pointer_control(("quire-bullet-fold", id as usize))
                         .debug_selector(|| "quire-bullet-fold".into())
                         .flex()
                         .items_center()
@@ -1257,15 +1430,18 @@ fn bullet_placeholder(editor: WeakEntity<Editor>, bullet: Bullet) -> FoldPlaceho
             }
             let hover = hover.clone();
             let hover_editor = editor.clone();
-            let ordinal = *ordinal;
+            // Only an item with children shows an arrow, so only its hover is tracked.
+            let key = key.unwrap_or(NOT_HOVERED);
             gpui::div()
-                .id(("quire-bullet-marker", ordinal))
+                .id(("quire-bullet-marker", id as usize))
                 .flex()
                 .items_center()
                 .h_full()
                 .mr(px(2.))
                 .on_hover(move |hovered, _, cx| {
-                    hover.set(true, ordinal, *hovered, &hover_editor, cx)
+                    if key != NOT_HOVERED {
+                        hover.set(true, key, *hovered, &hover_editor, cx)
+                    }
                 })
                 .child(slot)
                 .child(bullet)
@@ -1844,7 +2020,6 @@ pub fn references_changed(editor: &mut Editor, window: &mut Window, cx: &mut Con
 
 fn checkbox_placeholder(
     editor: WeakEntity<Editor>,
-    ordinal: usize,
     source: String,
     checked: bool,
 ) -> FoldPlaceholder {
@@ -1856,8 +2031,10 @@ fn checkbox_placeholder(
         render: Arc::new(move |_, range, cx| {
             let editor = editor.clone();
             let source = source.clone();
-            let group = gpui::SharedString::from(format!("quire-task-checkbox-{ordinal}"));
-            inline_control(("quire-task-checkbox", ordinal), editor.clone())
+            // Ids follow the fold, so a block added above leaves this one's placeholder as it was.
+            let id = fold_element_id(&range.start) as usize;
+            let group = gpui::SharedString::from(format!("quire-task-checkbox-{id}"));
+            inline_control(("quire-task-checkbox", id), editor.clone())
                 .debug_selector(|| "quire-task-checkbox".into())
                 .group(group.clone())
                 .h_full()
