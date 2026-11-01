@@ -327,20 +327,13 @@ impl StoredWindow {
         .on_action(cx.listener(|this, _: &CancelExchange, _, cx| this.cancel_exchange(cx)))
     }
 
-    /// Export as Markdown for the shown page, and the notebook-wide import and export.
+    /// The notebook-wide import and export. The shown page's exports are in its page actions.
     pub(super) fn render_exchange_buttons(&self, cx: &mut gpui::Context<Self>) -> gpui::Div {
         use gpui::{ParentElement as _, Styled as _};
-        use ui::{Button, Clickable as _, prelude::FluentBuilder as _};
+        use ui::{Button, Clickable as _};
         gpui::div()
             .flex()
             .gap_2()
-            .when(self.shown_page(cx).is_some(), |div| {
-                div.child(
-                    Button::new("export-page-markdown", "Export as Markdown…")
-                        .on_click(cx.listener(|this, _, _, cx| this.export_shown_page(cx))),
-                )
-                .children(self.render_document_export_buttons(cx))
-            })
             .child(
                 Button::new("import-markdown-folder", "Import a Markdown folder…")
                     .on_click(cx.listener(|this, _, _, cx| this.import_markdown_folder(cx))),

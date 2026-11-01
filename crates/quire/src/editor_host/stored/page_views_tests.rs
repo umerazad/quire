@@ -65,13 +65,12 @@ fn the_header_names_the_kind_of_page_and_counts_blocks_and_reading_time(cx: &mut
     let source = read(&notebook, cx, |view, cx| {
         assert_eq!(view.page_kind("Plan"), "A PAGE IN YOUR NOTEBOOK");
         assert_eq!(view.page_kind("2026-10-31"), "DAILY NOTE");
-        let editor = view.editor.as_ref().unwrap().read(cx);
-        assert!(
-            editor.status.is_some(),
-            "the status bar shows the page's path and words"
-        );
-        editor.source.clone()
+        view.editor.as_ref().unwrap().read(cx).source.clone()
     });
+    assert!(
+        drawn(&notebook, "quire-page-status", cx),
+        "the status bar shows the page's path and words"
+    );
     assert_eq!(
         source.update(cx, |editor, cx| editor.placeholder_text(cx)),
         Some(super::super::page_views::EMPTY_PAGE.to_owned())

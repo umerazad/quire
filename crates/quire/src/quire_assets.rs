@@ -67,9 +67,23 @@ pub const SAVE_ICONS: &[(&str, &[u8])] = &[
     ),
 ];
 
+/// The workspace header's icons Zed lacks (Lucide, ISC; `assets/icons/chrome/LICENSE`): the
+/// light and dark appearance toggle.
+pub const CHROME_ICONS: &[(&str, &[u8])] = &[
+    (
+        "quire/icons/chrome/sun.svg",
+        include_bytes!("../assets/icons/chrome/sun.svg"),
+    ),
+    (
+        "quire/icons/chrome/moon.svg",
+        include_bytes!("../assets/icons/chrome/moon.svg"),
+    ),
+];
+
 fn save_icon(path: &str) -> Option<&'static [u8]> {
     SAVE_ICONS
         .iter()
+        .chain(CHROME_ICONS)
         .find_map(|(icon, bytes)| (*icon == path).then_some(*bytes))
 }
 
@@ -100,6 +114,7 @@ impl AssetSource for Assets {
         paths.extend(
             SAVE_ICONS
                 .iter()
+                .chain(CHROME_ICONS)
                 .map(|(icon, _)| *icon)
                 .filter(|icon| icon.starts_with(path))
                 .map(SharedString::new_static),
@@ -121,7 +136,7 @@ mod tests {
             assert!(bytes.starts_with(b"<svg"), "{path}");
             assert!(Assets.list("quire/icons/").unwrap().contains(&path));
         }
-        for (path, _) in SAVE_ICONS {
+        for (path, _) in SAVE_ICONS.iter().chain(CHROME_ICONS) {
             assert!(
                 Assets.load(path).unwrap().unwrap().starts_with(b"<svg"),
                 "{path}"

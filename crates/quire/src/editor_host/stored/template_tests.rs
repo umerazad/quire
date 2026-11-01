@@ -103,6 +103,11 @@ fn the_sidebar_entry_creates_templates_with_starters_and_the_guide_adds_examples
     cx: &mut TestAppContext,
 ) {
     let notebook = open_notebook(&[("w", "Alpha.md", "- \n")], "w", cx);
+    // Tall enough that the guide's second example sits above the page's status bar unscrolled.
+    cx.simulate_window_resize(
+        notebook.window.into(),
+        gpui::size(gpui::px(1920.), gpui::px(1400.)),
+    );
     assert!(!read(&notebook, cx, |view, cx| view.showing_templates(cx)));
     open_templates(&notebook, cx);
     let page = active(&notebook, cx);

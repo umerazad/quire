@@ -89,7 +89,7 @@ impl StoredWindow {
             .map(|(root, _)| root.to_path_buf())
     }
 
-    fn deploy_menu(
+    pub(in crate::editor_host::stored) fn deploy_menu(
         &mut self,
         name: String,
         entries: Vec<Entry>,

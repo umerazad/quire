@@ -42,6 +42,8 @@ mod task_views;
 mod template_views;
 #[path = "tool_views.rs"]
 mod tool_views;
+#[path = "workspace_chrome.rs"]
+mod workspace_chrome;
 
 pub(super) struct Navigation {
     file: WorkspaceFile,
@@ -772,15 +774,7 @@ impl StoredWindow {
         let writes = page.read(cx).persistence().is_some();
         let focus = side.focus;
         let previous = window.focused(cx);
-        let editor = cx.new(|cx| {
-            let editor = NotebookWindow::for_page(analysis, None, window, cx);
-            if writes {
-                editor
-                    .commands
-                    .update(cx, |commands, _| commands.enable_writes());
-            }
-            editor
-        });
+        let editor = cx.new(|cx| NotebookWindow::for_notebook_page(analysis, writes, window, cx));
         self.link_editors(&editor, window, cx);
         self.track_editor_focus(&editor, window, cx);
         match (focus, previous) {
@@ -788,7 +782,7 @@ impl StoredWindow {
             (false, Some(previous)) => window.focus(&previous, cx),
             (false, None) => window.blur(cx),
         }
-        self.attach_page_info(&page, &editor, cx);
+        self.attach_page_info(&page, cx);
         Self::invite_writing(&editor, window, cx);
         self.keep_reading_position(&editor, &page, true, window, cx);
         if let Some(side) = &mut self.nav.side {
@@ -820,6 +814,8 @@ impl StoredWindow {
         }
     }
 
+    /// The panes under the tab strip: the main pane, then the AI answer, the side pane, Help,
+    /// and README.md beside it. A page pane has its toolbar above and its status bar below.
     pub(super) fn render_body(
         &mut self,
         window: &mut Window,
@@ -829,26 +825,30 @@ impl StoredWindow {
             .tag_content()
             .or(self.task_content())
             .or(self.answer_tab_content());
+        let mut page_editor = None;
         let content = match (self.nav.view, shown) {
             (Some(BrowserView::Tags | BrowserView::Tasks | BrowserView::Ai), Some(view))
             | (None, Some(view)) => view,
             (Some(view), _) => self.render_browser(view, window, cx).into_any_element(),
             (None, None) => match self.editor.clone() {
-                Some(editor) => gpui::div()
-                    .flex()
-                    .flex_1()
-                    .min_h_0()
-                    .child(
-                        gpui::div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .min_w_0()
-                            .child(self.render_page_header(&self.page, cx))
-                            .child(gpui::div().flex_1().min_h_0().child(editor)),
-                    )
-                    .children(self.render_details(cx))
-                    .into_any_element(),
+                Some(editor) => {
+                    page_editor = Some(editor.clone());
+                    gpui::div()
+                        .flex()
+                        .flex_1()
+                        .min_h_0()
+                        .child(
+                            gpui::div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .min_w_0()
+                                .child(self.render_page_header(&self.page, cx))
+                                .child(gpui::div().flex_1().min_h_0().child(editor)),
+                        )
+                        .children(self.render_details(cx))
+                        .into_any_element()
+                }
                 None => gpui::div().into_any_element(),
             },
         };
@@ -858,7 +858,9 @@ impl StoredWindow {
             .flex_1()
             .min_w_0()
             .min_h_0()
-            .child(self.render_tabs(cx))
+            .when_some(page_editor.as_ref(), |main, editor| {
+                main.child(self.render_page_toolbar(editor, cx))
+            })
             .child(match self.shown_templates_guide(cx) {
                 Some(guide) => gpui::div()
                     .flex()
@@ -880,6 +882,9 @@ impl StoredWindow {
                 let listing = tasks.read(cx).lists_tasks();
                 main.child(tasks)
                     .when(!listing, |main| main.children(self.shown_references(cx)))
+            })
+            .when_some(page_editor.as_ref(), |main, editor| {
+                main.child(self.render_status_bar(&self.page, editor, cx))
             });
         let side = self
             .nav
@@ -888,8 +893,9 @@ impl StoredWindow {
             .and_then(|side| Some((side.page.clone(), side.editor.clone()?)))
             .map(|(page, editor)| {
                 (
-                    self.render_side_tools(&page, cx),
+                    self.render_side_toolbar(&page, &editor, cx),
                     self.render_page_header(&page, cx),
+                    self.render_status_bar(&page, &editor, cx),
                     editor,
                     self.render_side_details(&page, cx),
                 )
@@ -901,9 +907,6 @@ impl StoredWindow {
             .flex()
             .flex_1()
             .min_h_0()
-            .when(!self.nav.workspace.chrome.sidebar_hidden, |div| {
-                div.child(self.render_sidebar(cx))
-            })
             .child(main)
             .when_some(answer, |div, pane| {
                 div.child(
@@ -916,7 +919,7 @@ impl StoredWindow {
                         .child(pane),
                 )
             })
-            .when_some(side, |div, (tools, header, editor, details)| {
+            .when_some(side, |div, (tools, header, status, editor, details)| {
                 div.child(
                     gpui::div()
                         .flex()
@@ -943,7 +946,8 @@ impl StoredWindow {
                                 )
                                 .children(details),
                         )
-                        .children(self.render_side_references(cx)),
+                        .children(self.render_side_references(cx))
+                        .child(status),
                 )
             })
             .when_some(help, |div, pane| div.child(pane))
@@ -1102,3 +1106,7 @@ mod page_views_tests;
 #[cfg(test)]
 #[path = "example_tests.rs"]
 mod example_tests;
+
+#[cfg(test)]
+#[path = "workspace_chrome_tests.rs"]
+mod workspace_chrome_tests;

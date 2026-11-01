@@ -4,7 +4,7 @@
 //! README.md, the rendering showcase, beside the page.
 
 use super::*;
-use crate::app_menus::{ShowNotebookFolder, TogglePageDetails, ToggleSidebar, ToggleVim};
+use crate::app_menus::{ShowNotebookFolder, TogglePageDetails, ToggleSidebar};
 use crate::navigation::Jump;
 use crate::page_details::{Heading, PageFacts, PageInfo};
 use crate::showcase::{CloseShowcase, OpenShowcase, ShowcaseWindow};
@@ -13,8 +13,8 @@ use quire_core::markdown::{plural, reading_minutes};
 use quire_core::workspace::Destination;
 use settings::Settings as _;
 use ui::{
-    Color, Disableable as _, Headline, HeadlineSize, Icon, IconButton, IconName, IconSize,
-    LabelSize, ListItem, ListItemSpacing, Toggleable as _, Tooltip, h_flex, v_flex,
+    Color, Headline, HeadlineSize, Icon, IconButton, IconName, IconSize, LabelSize, ListItem,
+    ListItemSpacing, Toggleable as _, Tooltip, h_flex, v_flex,
 };
 
 /// The placeholder of an empty page.
@@ -148,27 +148,23 @@ impl StoredWindow {
         Self::show_in_file_manager(&target, cx);
     }
 
-    /// The page's figures, kept for the page while the window lives, shown in `editor`'s
-    /// status bar.
+    /// The page's figures, kept for the page while the window lives, shown in its pane's
+    /// header and status bar.
     pub(super) fn attach_page_info(
         &mut self,
         page: &Entity<OpenPage>,
-        editor: &Entity<NotebookWindow>,
         cx: &mut gpui::Context<Self>,
     ) {
         let Some(analysis) = page.read(cx).loaded().map(|loaded| loaded.analysis.clone()) else {
             return;
         };
-        let info = match self.chrome.infos.get(&page.entity_id()) {
-            Some(info) => info.clone(),
-            None => {
-                let info = cx.new(|cx| PageInfo::new(page.clone(), analysis, cx));
-                cx.observe(&info, |_, _, cx| cx.notify()).detach();
-                self.chrome.infos.insert(page.entity_id(), info.clone());
-                info
-            }
-        };
-        editor.update(cx, |editor, _| editor.status = Some(info.into()));
+        if let std::collections::hash_map::Entry::Vacant(entry) =
+            self.chrome.infos.entry(page.entity_id())
+        {
+            let info = cx.new(|cx| PageInfo::new(analysis, cx));
+            cx.observe(&info, |_, _, cx| cx.notify()).detach();
+            entry.insert(info);
+        }
     }
 
     /// What an empty page says in each of its editors, as the reference editor does.
@@ -243,7 +239,11 @@ impl StoredWindow {
         Self::save_status(&self.page, "quire-save-indicator", cx)
     }
 
-    fn save_status(page: &Entity<OpenPage>, selector: &'static str, cx: &App) -> Vec<AnyElement> {
+    pub(super) fn save_status(
+        page: &Entity<OpenPage>,
+        selector: &'static str,
+        cx: &App,
+    ) -> Vec<AnyElement> {
         let page = page.read(cx);
         let status = page.status(cx);
         let Some(state) = SaveState::of(page, cx) else {
@@ -266,81 +266,6 @@ impl StoredWindow {
         std::iter::once(icon)
             .chain(notice.then(|| Label::new(status).into_any_element()))
             .collect()
-    }
-
-    /// The tools at the end of the page toolbar, as the reference orders them.
-    pub(super) fn render_page_tools(&self, cx: &mut gpui::Context<Self>) -> gpui::Div {
-        let showing_page = self.nav.view.is_none() && self.nav.tags.shown.is_none();
-        let page = self.page.read(cx);
-        let daily = showing_page
-            && self
-                .nav
-                .title(page.id())
-                .is_some_and(|title| self.daily_date_of(title).is_some());
-        let vim = crate::preferences::Preferences::current(cx).vim;
-        h_flex()
-            .ml_auto()
-            .gap_1()
-            .when(daily, |tools| {
-                let blocked = tidy_blocked(page, cx);
-                tools.child(
-                    Button::new("tidy-day", "Tidy")
-                        .start_icon(Icon::new(IconName::Sparkle).size(IconSize::Small))
-                        .disabled(blocked.is_some())
-                        .tooltip(Tooltip::text(blocked.unwrap_or(
-                            "Propose links, task states and due dates for this day. Nothing changes until you apply it.",
-                        )))
-                        .on_click(cx.listener(|this, _, window, cx| this.tidy_shown(window, cx))),
-                )
-            })
-            .child(
-                Button::new("vim-toggle", "Vim")
-                    .toggle_state(vim)
-                    .tooltip(Tooltip::text("Toggle Vim bindings for all editors"))
-                    .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleVim), cx)),
-            )
-            .child(
-                IconButton::new("page-details", IconName::Link)
-                    .toggle_state(self.chrome.details)
-                    .disabled(!showing_page)
-                    .tooltip(Tooltip::text("Page outline and backlinks"))
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(TogglePageDetails), cx)
-                    }),
-            )
-            .child(
-                IconButton::new("show-notebook-folder", IconName::FolderOpen)
-                    .tooltip(Tooltip::text("Show notebook folder"))
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(ShowNotebookFolder), cx)
-                    }),
-            )
-    }
-
-    /// The side pane's own toolbar, as rt's second page pane has one: its page's save icon and
-    /// its details toggle.
-    pub(super) fn render_side_tools(
-        &self,
-        page: &Entity<OpenPage>,
-        cx: &mut gpui::Context<Self>,
-    ) -> AnyElement {
-        h_flex()
-            .px_2()
-            .pt_1()
-            .gap_1()
-            .children(Self::save_status(page, "quire-side-save-indicator", cx))
-            .child(gpui::div().flex_1())
-            .child(
-                gpui::div()
-                    .debug_selector(|| "quire-side-details-toggle".into())
-                    .child(
-                        IconButton::new("side-page-details", IconName::Link)
-                            .toggle_state(self.chrome.side_details)
-                            .tooltip(Tooltip::text("Page outline and backlinks"))
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_details(true, cx))),
-                    ),
-            )
-            .into_any_element()
     }
 
     pub(super) fn render_sidebar_toggle(&self) -> IconButton {
@@ -373,7 +298,7 @@ impl StoredWindow {
         }
     }
 
-    fn toggle_details(&mut self, side: bool, cx: &mut gpui::Context<Self>) {
+    pub(super) fn toggle_details(&mut self, side: bool, cx: &mut gpui::Context<Self>) {
         if side {
             self.chrome.side_details = !self.chrome.side_details;
             cx.notify();

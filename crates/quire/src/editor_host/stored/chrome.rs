@@ -11,8 +11,8 @@ use quire_core::workspace::{
 };
 use std::collections::BTreeSet;
 use ui::{
-    Color, ContextMenu, Disableable, DropdownMenu, IconButton, IconName, LabelSize, ListItem,
-    ListItemSpacing, Tab, TabBar, Toggleable, h_flex, v_flex,
+    Color, ContextMenu, DropdownMenu, IconButton, IconName, LabelSize, ListItem, ListItemSpacing,
+    Tab, TabBar, Toggleable, h_flex, v_flex,
 };
 
 #[derive(Default)]
@@ -930,10 +930,6 @@ impl StoredWindow {
             Button::new("readme", "README.md").on_click(|_, window, cx| {
                 window.dispatch_action(Box::new(crate::showcase::OpenShowcase), cx)
             }),
-            Button::new("settings", "Settings")
-                .on_click(|_, _, cx| crate::preferences::view::open(cx)),
-            Button::new("appearance", "Light / Dark")
-                .on_click(|_, _, cx| crate::preferences::toggle_appearance(cx)),
         ])
         .collect()
     }
@@ -1019,39 +1015,19 @@ impl StoredWindow {
             .active
             .as_ref()
             .is_some_and(|active| self.nav.workspace.is_favorite(active));
-        TabBar::new("tabs")
-            .start_child(
-                IconButton::new("back", IconName::ArrowLeft)
-                    .disabled(!self.nav.history.can_go_back())
-                    .tooltip(ui::Tooltip::text("Back"))
-                    .on_click(cx.listener(|this, _, window, cx| this.go(true, window, cx))),
+        TabBar::new("tabs").children(tabs).end_child(
+            IconButton::new(
+                "favorite",
+                if favorite {
+                    IconName::StarFilled
+                } else {
+                    IconName::Star
+                },
             )
-            .start_child(
-                IconButton::new("forward", IconName::ArrowRight)
-                    .disabled(!self.nav.history.can_go_forward())
-                    .tooltip(ui::Tooltip::text("Forward"))
-                    .on_click(cx.listener(|this, _, window, cx| this.go(false, window, cx))),
-            )
-            .children(tabs)
-            .end_child(
-                IconButton::new(
-                    "favorite",
-                    if favorite {
-                        IconName::StarFilled
-                    } else {
-                        IconName::Star
-                    },
-                )
-                .toggle_state(favorite)
-                .tooltip(ui::Tooltip::text("Toggle favorite"))
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_favorite(cx))),
-            )
-            .end_child(
-                IconButton::new("side-pane", IconName::Split)
-                    .toggle_state(self.nav.side.is_some())
-                    .tooltip(ui::Tooltip::text("Toggle second pane"))
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_side(window, cx))),
-            )
+            .toggle_state(favorite)
+            .tooltip(ui::Tooltip::text("Toggle favorite"))
+            .on_click(cx.listener(|this, _, _, cx| this.toggle_favorite(cx))),
+        )
     }
 
     pub(in crate::editor_host::stored) fn render_browser(

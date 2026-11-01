@@ -3,11 +3,9 @@
 //! main thread whenever the page's analysis catches up with its text, and the last figures stay
 //! on screen meanwhile, so typing never waits for them.
 
-use crate::notebook_session::OpenPage;
 use crate::page_analysis::PageAnalysis;
-use gpui::{AppContext as _, Context, Entity, IntoElement, Render, Subscription, Task, Window};
+use gpui::{AppContext as _, Context, Entity, Subscription, Task};
 use language::BufferSnapshot;
-use ui::{Color, Icon, IconName, IconSize, Label, LabelCommon as _, LabelSize, prelude::*};
 
 /// A heading on the page, and where the caret goes when it is chosen.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,9 +52,8 @@ pub fn facts(snapshot: &BufferSnapshot) -> Option<PageFacts> {
     })
 }
 
-/// A page's figures, kept current, drawn as the end of its editor's status bar.
+/// A page's figures, kept current for its header, status bar, and details panel.
 pub struct PageInfo {
-    page: Entity<OpenPage>,
     analysis: Entity<PageAnalysis>,
     facts: Option<PageFacts>,
     /// The version the figures describe, or are being worked out for.
@@ -66,14 +63,9 @@ pub struct PageInfo {
 }
 
 impl PageInfo {
-    pub fn new(
-        page: Entity<OpenPage>,
-        analysis: Entity<PageAnalysis>,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(analysis: Entity<PageAnalysis>, cx: &mut Context<Self>) -> Self {
         let subscription = cx.observe(&analysis, |this, _, cx| this.count(cx));
         let mut this = Self {
-            page,
             analysis,
             facts: None,
             counted: None,
@@ -112,48 +104,6 @@ impl PageInfo {
             })
             .ok();
         }));
-    }
-}
-
-impl Render for PageInfo {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let path = self.page.read(cx).path(cx);
-        let meta = self.facts.as_ref().map(|facts| {
-            format!(
-                "{} · Markdown · UTF-8",
-                quire_core::markdown::plural(facts.words, "word")
-            )
-        });
-        h_flex()
-            .id("page-status")
-            .gap_3()
-            .min_w_0()
-            .when_some(path, |row, path| {
-                row.child(
-                    h_flex()
-                        .gap_1()
-                        .min_w_0()
-                        .child(
-                            Icon::new(IconName::FileTextOutlined)
-                                .size(IconSize::XSmall)
-                                .color(Color::Muted),
-                        )
-                        .child(
-                            Label::new(path)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                                .truncate(),
-                        ),
-                )
-            })
-            .when_some(meta, |row, meta| {
-                row.child(
-                    Label::new(meta)
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .single_line(),
-                )
-            })
     }
 }
 
