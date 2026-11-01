@@ -196,13 +196,16 @@ fn linked_references_order_daily_pages_follow_saves_and_open_sources(cx: &mut Te
 fn opening_a_reference_reveals_its_block(cx: &mut TestAppContext) {
     let notebook = open_notebook(&PEOPLE, "ana", cx);
     let panel = panel(&notebook, cx);
-    let rows = cx.read(|cx| panel.read(cx).rows());
-    let index = rows
-        .iter()
-        .position(
+    // The panel can settle on an answer from before the last page was analyzed; the index
+    // announces the change once it has sealed, so wait for the row rather than the first answer.
+    let mut index = None;
+    wait_until(cx, "the deck reference", |cx| {
+        index = cx.read(|cx| panel.read(cx).rows()).iter().position(
             |row| matches!(row, ContextRow::Block { text, .. } if text == "[[Ana]] sent the deck"),
-        )
-        .unwrap();
+        );
+        index.is_some()
+    });
+    let index = index.expect("the wait found the row");
     notebook
         .window
         .update(cx, |view, window, cx| view.focus_references(window, cx))
