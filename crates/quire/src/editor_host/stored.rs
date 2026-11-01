@@ -664,7 +664,6 @@ impl Render for StoredWindow {
             .or_else(|| self.render_version_conflict(cx));
         let loading = self.page.read(cx).is_loading();
         let header = self.render_workspace_header(window, cx);
-        let profile = self.render_profile(cx);
         let root = gpui::div()
             .track_focus(&self.nav.loading_focus)
             .font(ui_font)
@@ -701,21 +700,7 @@ impl Render for StoredWindow {
         .flex()
         .bg(cx.theme().colors().editor_background)
         .when(!self.nav.workspace.chrome.sidebar_hidden, |div| {
-            div.child(
-                gpui::div()
-                    .flex()
-                    .flex_col()
-                    .flex_none()
-                    .h_full()
-                    .bg(cx.theme().colors().panel_background)
-                    .children(crate::title_bar::lights_strip(window, cx))
-                    .child(
-                        gpui::div()
-                            .flex_1()
-                            .min_h_0()
-                            .child(self.render_sidebar(cx)),
-                    ),
-            )
+            div.child(self.render_sidebar(window, cx))
         })
         .child(
             gpui::div()
@@ -726,8 +711,6 @@ impl Render for StoredWindow {
                 .min_h_0()
                 .child(header)
                 .child(self.render_tabs(cx))
-                .child(profile)
-                .child(self.render_exchange_buttons(cx))
                 .child(self.exchange.clone())
                 .child(self.backups.clone())
                 .child(self.sync.clone())

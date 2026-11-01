@@ -326,31 +326,6 @@ impl StoredWindow {
         )
         .on_action(cx.listener(|this, _: &CancelExchange, _, cx| this.cancel_exchange(cx)))
     }
-
-    /// The notebook-wide import and export. The shown page's exports are in its page actions.
-    pub(super) fn render_exchange_buttons(&self, cx: &mut gpui::Context<Self>) -> gpui::Div {
-        use gpui::{ParentElement as _, Styled as _};
-        use ui::{Button, Clickable as _};
-        gpui::div()
-            .flex()
-            .gap_2()
-            .child(
-                Button::new("import-markdown-folder", "Import a Markdown folder…")
-                    .on_click(cx.listener(|this, _, _, cx| this.import_markdown_folder(cx))),
-            )
-            .child(
-                Button::new("export-notebook-markdown", "Export notebook as Markdown…")
-                    .on_click(cx.listener(|this, _, window, cx| this.export_notebook(window, cx))),
-            )
-            .child(
-                Button::new("import-roam-data", "Import Roam data…")
-                    .on_click(cx.listener(|this, _, _, cx| this.import_roam_data(cx))),
-            )
-            .child(
-                Button::new("export-roam-json", "Export Roam JSON…")
-                    .on_click(cx.listener(|this, _, window, cx| this.export_roam_json(window, cx))),
-            )
-    }
 }
 
 async fn import(

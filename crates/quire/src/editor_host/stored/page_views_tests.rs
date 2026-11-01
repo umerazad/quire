@@ -230,16 +230,16 @@ async fn the_vim_button_and_sidebar_toggle_change_what_they_name(cx: &mut TestAp
     dispatch(&notebook, ToggleVim, cx);
     assert!(vim(cx));
 
-    assert!(drawn(&notebook, "quire-templates-entry", cx));
+    assert!(drawn(&notebook, "quire-nav-templates", cx));
     dispatch(&notebook, ToggleSidebar, cx);
     assert!(read(&notebook, cx, |view, _| view
         .nav
         .workspace
         .chrome
         .sidebar_hidden));
-    assert!(!drawn(&notebook, "quire-templates-entry", cx));
+    assert!(!drawn(&notebook, "quire-nav-templates", cx));
     dispatch(&notebook, ToggleSidebar, cx);
-    assert!(drawn(&notebook, "quire-templates-entry", cx));
+    assert!(drawn(&notebook, "quire-nav-templates", cx));
 }
 
 #[gpui::test]

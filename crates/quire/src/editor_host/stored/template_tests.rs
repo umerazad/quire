@@ -57,7 +57,7 @@ pub(super) fn click(notebook: &Notebook, selector: &'static str, cx: &mut TestAp
 
 /// Clicks the pinned Templates entry and waits for the page it opens.
 pub(super) fn open_templates(notebook: &Notebook, cx: &mut TestAppContext) {
-    click(notebook, "quire-templates-entry", cx);
+    click(notebook, "quire-nav-templates", cx);
     let state = |cx: &mut TestAppContext| {
         read(notebook, cx, |view, cx| {
             (
@@ -177,22 +177,18 @@ pub(super) fn press(notebook: &Notebook, key: &str, cx: &mut TestAppContext) {
     crate::tab_order::press(notebook.window.into(), key, cx);
 }
 
-/// The FILES heading, New page, New folder, and Refresh files: the stops between the recents
-/// and the tree.
+/// The FILES heading, New page, New folder, and Refresh files: the stops between Favorites and
+/// the tree.
 const FILES_HEADING_STOPS: usize = 4;
+/// Pages, Tags, Daily notes, and Help & shortcuts: the view list's entries after Templates.
+const VIEWS_AFTER_TEMPLATES: usize = 4;
 
 #[gpui::test]
 fn the_keyboard_reaches_the_templates_entry_and_the_guides_add_buttons(cx: &mut TestAppContext) {
     let notebook = open_notebook(&[("w", "Alpha.md", "- \n")], "w", cx);
     let entries_after_templates = |cx: &mut TestAppContext| {
         read(&notebook, cx, |view, _| {
-            let workspace = &view.nav.workspace;
-            workspace.favorites.len()
-                + 2 * workspace
-                    .recent
-                    .len()
-                    .min(quire_core::workspace::SHOWN_RECENT)
-                + FILES_HEADING_STOPS
+            VIEWS_AFTER_TEMPLATES + view.nav.workspace.favorites.len() + FILES_HEADING_STOPS
         })
     };
     cx.dispatch_action(notebook.window.into(), crate::navigation::FocusFiles);

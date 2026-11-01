@@ -179,7 +179,11 @@ fn the_header_moves_the_window_beside_the_sidebar_and_holds_its_controls(cx: &mu
     assert!(crumbs.left() > header.left() && crumbs.right() < header.right());
     if crate::title_bar::custom() {
         let lights = bounds(&notebook, "quire-title-bar", cx);
-        assert_eq!(lights.origin, point(px(0.), px(0.)));
+        assert_eq!(lights.top(), px(0.));
+        assert!(
+            lights.left() <= px(21.),
+            "the strip starts where the lights do"
+        );
         assert!(
             lights.right() <= header.left(),
             "the lights sit over the sidebar"
