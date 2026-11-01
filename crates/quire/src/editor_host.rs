@@ -455,6 +455,11 @@ impl NotebookWindow {
         }
     }
 
+    /// The page editor, then the second pane's editor.
+    pub(crate) fn editors(&self) -> [&Entity<Editor>; 2] {
+        [&self.source, &self.second]
+    }
+
     #[cfg(test)]
     pub(crate) fn second_editor(&self) -> &Entity<Editor> {
         &self.second

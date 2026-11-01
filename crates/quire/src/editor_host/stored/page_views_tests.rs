@@ -403,6 +403,43 @@ fn readme_opens_beside_the_page_in_place_of_help(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn the_readme_pane_resolves_in_its_own_notebook_never_this_one(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&[("plan", "Plan.md", PLAN)], "plan", cx);
+    dispatch(&notebook, crate::showcase::OpenShowcase, cx);
+    let (pane_hosts, notebook_host, client) = read(&notebook, cx, |view, cx| {
+        let showcase = view.chrome.showcase.clone().unwrap();
+        let hosts = showcase.read(cx).notebook.read(cx).editors().map(|editor| {
+            crate::references::host(editor.read(cx))
+                .unwrap()
+                .entity_id()
+        });
+        (
+            hosts,
+            view.links.host.entity_id(),
+            view.index_client(cx).unwrap(),
+        )
+    });
+    assert!(
+        pane_hosts.iter().all(|host| *host != notebook_host),
+        "the sample's links never resolve in the notebook"
+    );
+    let search = |query: &str| {
+        futures::executor::block_on(crate::query_index::ask(client.search(query.into())))
+            .unwrap()
+            .into_iter()
+            .map(|hit| hit.source.path)
+            .collect::<Vec<_>>()
+    };
+    wait_until(cx, "the notebook's own page in its search", |_| {
+        search("idea") == ["Plan.md"]
+    });
+    assert!(
+        search("Rendering").is_empty(),
+        "the sample stays out of the notebook's queries"
+    );
+}
+
+#[gpui::test]
 fn daily_notes_show_one_remembered_month(cx: &mut TestAppContext) {
     let notebook = open_notebook(
         &[
