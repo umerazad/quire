@@ -563,3 +563,36 @@ fn an_embed_of_an_item_above_an_empty_child_resolves(cx: &mut TestAppContext) {
     let editors = nested(&host, cx);
     cx.update(|cx| assert_eq!(editors[0].read(cx).text(cx), "- holder ^spot\n  - "));
 }
+
+/// Knows every word but one, and never reaches the system's dictionary.
+struct OneWrongWord(&'static str);
+
+impl crate::spellcheck::Speller for OneWrongWord {
+    fn misspelled(&self, words: &[&str]) -> Vec<bool> {
+        words.iter().map(|word| *word == self.0).collect()
+    }
+    fn guesses(&self, _: &str) -> Vec<String> {
+        Vec::new()
+    }
+    fn learn(&self, _: &str) {}
+}
+
+/// An embedded block is checked like the page around it, through the embedded page's analysis.
+#[gpui::test]
+fn embedded_blocks_underline_misspelled_words(cx: &mut TestAppContext) {
+    let pages = [
+        ("s", "Source.md", "- Orignal text ^shared\n  - Child\n"),
+        ("o", "Other.md", "- intro\n- {{embed: ((shared))}}\n"),
+    ];
+    let (notebook, editor) = open_in_write(&pages, "o", 1, cx);
+    cx.update(|cx| {
+        crate::spellcheck::set_speller(std::sync::Arc::new(OneWrongWord("Orignal")), cx)
+    });
+    let embedded = nested(&editor, cx).remove(0);
+    wait_until(cx, "the embed's underline", |cx| {
+        draw(&notebook, cx);
+        cx.executor().advance_clock(crate::spellcheck::QUIET * 2);
+        cx.run_until_parked();
+        cx.update(|cx| crate::spellcheck::underlined(embedded.read(cx), cx)) == ["Orignal"]
+    });
+}
