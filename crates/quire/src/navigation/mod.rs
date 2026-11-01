@@ -17,7 +17,11 @@ pub mod tasks;
 use crate::notebook_backend::NotebookBackend;
 use gpui::{App, Context, InteractiveElement, KeyBinding, Window};
 use quire_core::{markdown::safe_page_path, workspace::Workspace};
-use quire_store::{index::IndexClient, notebook::Edit, sync::format::page_id_for_path};
+use quire_store::{
+    index::IndexClient,
+    notebook::{CheckedSaves, Edit},
+    sync::format::page_id_for_path,
+};
 use serde_json::{Map, Value};
 use std::{
     path::{Path, PathBuf},
@@ -430,10 +434,11 @@ pub async fn create_page_with(
         .map_err(|error| error.to_string())?
         .await
         .map_err(|error| format!("{error:#}"))?;
+    let exists = || {
+        format!("A page named {path} already exists. Open it with Find, or choose another title.")
+    };
     if taken {
-        return Err(format!(
-            "A page named {path} already exists. Open it with Find, or choose another title."
-        ));
+        return Err(exists());
     }
     let derived = page_id_for_path(&path);
     let heads = storage
@@ -442,24 +447,66 @@ pub async fn create_page_with(
         .await
         .map_err(|error| format!("{error:#}"))?;
     let page = if heads.is_empty() {
-        derived
+        derived.clone()
+    } else if lives_at(&storage, heads, &path).await? {
+        return Err(exists());
     } else {
         format!("p-{}", uuid::Uuid::new_v4())
     };
-    storage
-        .save(Edit {
-            page: page.clone(),
-            base: Vec::new(),
-            path,
-            text,
-            deleted: false,
-            created: now_millis() as u64,
-            recovery: None,
-        })
+    let edit = Edit {
+        page: page.clone(),
+        base: Vec::new(),
+        path: path.clone(),
+        text,
+        deleted: false,
+        created: now_millis() as u64,
+        recovery: None,
+    };
+    let failed = |error: anyhow::Error| {
+        format!("Cannot create the page: {error:#}. Check free space, then retry.")
+    };
+    if page != derived {
+        storage
+            .save(edit)
+            .map_err(|error| error.to_string())?
+            .await
+            .map_err(failed)?;
+        return Ok(page);
+    }
+    // The index answers only after a save is read, so a create of the same title that started
+    // first may have saved since: saving only while the page has no version refuses this one.
+    match storage
+        .save_many_if_heads(vec![edit])
         .map_err(|error| error.to_string())?
         .await
-        .map_err(|error| {
-            format!("Cannot create the page: {error:#}. Check free space, then retry.")
-        })?;
-    Ok(page)
+        .map_err(failed)?
+    {
+        CheckedSaves::Saved(_) => Ok(page),
+        CheckedSaves::HeadsChanged { .. } | CheckedSaves::Appeared { .. } => Err(exists()),
+    }
+}
+
+/// Whether the page with these current versions is live at `path`, rather than renamed away from
+/// the path its identity was derived from, or deleted.
+async fn lives_at(
+    storage: &NotebookBackend,
+    heads: Vec<String>,
+    path: &str,
+) -> Result<bool, String> {
+    for head in heads {
+        let record = storage
+            .get(head)
+            .map_err(|error| error.to_string())?
+            .await
+            .map_err(|error| format!("{error:#}"))?;
+        if let Some(record) = record {
+            let root = record.root();
+            if root.field("path").as_str() == Some(path)
+                && root.field("deleted").as_bool() != Some(true)
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
