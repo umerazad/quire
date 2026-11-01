@@ -1,17 +1,22 @@
 //! Tags as soft labels in Write, coloured by the reference tag tones, while the Format tags
 //! setting is on: a rounded pill in the tag's tone with the tone's icon before the name, as the
-//! reference app draws them. The icon takes the place of the `#` and the name keeps its place, so
-//! text layout, the caret, and clicks are those of the plain text. While the caret is on a tag's
-//! line the pill steps back to its outline and the `#` shows, as the reference hides the icon in
-//! the block being edited. Source always shows raw text, and the Markdown itself never changes.
+//! reference app draws them. Roam's `#[[name]]` tags are pills too. A fold puts the icon in the
+//! place of the `#` (and of a Roam tag's brackets), wide enough to draw it whole, so the caret
+//! steps over it as one character and the name stays plain, editable text. The folds change only
+//! when the page's tags do, never on a caret move. While the caret is on a tag's line the pill
+//! steps back to its outline over the name as written, as the reference does in the block being
+//! edited. Source always shows raw text, and the Markdown itself never changes.
 
 use crate::markdown_blocks::Block;
 use crate::page_analysis::PageAnalysis;
-use editor::{Addon, Editor, HighlightKey, NavigationOverlayKey, TextRegion, TextRegionLayout};
+use editor::{
+    Addon, Editor, FoldPlaceholder, HighlightKey, NavigationOverlayKey, TextRegion,
+    TextRegionLayout, display_map::Crease,
+};
 use gpui::{
     AnyElement, App, Entity, Focusable as _, HighlightStyle, Hsla, InteractiveElement as _,
     IntoElement, ParentElement as _, Pixels, SharedString, StatefulInteractiveElement as _,
-    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _, px, rgb, svg,
+    Styled as _, WeakEntity, Window, div, px, rgb, svg,
 };
 use multi_buffer::{
     Anchor, AnchorRangeExt as _, MultiBufferOffset, MultiBufferSnapshot, ToOffset as _,
@@ -20,7 +25,11 @@ use multi_buffer::{
 use quire_core::markdown::TagToken;
 use quire_core::tag_tones::{NEUTRAL, TONES, Tone, tone_index};
 use settings::Settings as _;
-use std::{any::Any, ops::Range, sync::Arc};
+use std::{
+    any::{Any, TypeId},
+    ops::Range,
+    sync::Arc,
+};
 use theme::ActiveTheme as _;
 
 struct ToneKey<const N: usize>;
@@ -36,6 +45,11 @@ fn keys() -> [HighlightKey; 25] {
     keys!(
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24
     )
+}
+
+/// Whether tags are drawn as pills: the Format tags setting.
+pub(crate) fn formats(cx: &App) -> bool {
+    crate::preferences::QuirePreferences::get_global(cx).format_tags
 }
 
 /// The tone index of each tag range on the page, with `TONES.len()` for the neutral look.
@@ -54,11 +68,17 @@ fn tone(index: usize) -> &'static Tone {
     TONES.get(index).unwrap_or(&NEUTRAL)
 }
 
+/// Marks the folds that draw tag icons.
+struct TagIcon;
+
 /// A tag drawn as a pill.
 #[derive(Clone)]
 struct Pill {
     tone: usize,
+    /// The whole tag, `#` or brackets included.
     range: Range<Anchor>,
+    /// The name after the icon.
+    name: Range<Anchor>,
     text: SharedString,
 }
 
@@ -72,9 +92,9 @@ struct TagPills {
 /// How a visible pill is drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Look {
-    /// Filled, with the tone's icon in place of the `#`.
+    /// Filled, with the icon and the name.
     Full,
-    /// Only the outline, over the plain text, while it is being edited or selected.
+    /// Only the outline, over the name as written, while it is being edited or selected.
     Outline,
 }
 
@@ -131,7 +151,7 @@ impl Addon for TagPills {
                 let look = self.look(view, pill, &snapshot, window, cx)?;
                 let pill = pill.clone();
                 Some(TextRegion {
-                    range: pill.range.clone(),
+                    range: pill.name.clone(),
                     render: Arc::new(move |layout, cx| render(&pill, look, dark, layout, cx)),
                 })
             })
@@ -152,6 +172,77 @@ fn pill_height(font_size: Pixels, line_height: Pixels) -> Pixels {
     (font_size * 1.4).min(line_height)
 }
 
+/// The icon's side, a little smaller than the text as the reference draws it.
+fn icon_size(font_size: Pixels) -> Pixels {
+    (font_size * 0.8).round()
+}
+
+const ICON_PAD: Pixels = px(4.);
+const ICON_GAP: Pixels = px(3.);
+
+/// How wide the fold that draws a tag's icon is: the pill's padding, the icon, and a gap.
+fn icon_width(font_size: Pixels) -> Pixels {
+    ICON_PAD + icon_size(font_size) + ICON_GAP
+}
+
+fn ink(tone_index: usize, dark: bool) -> Hsla {
+    let (ink, _) = if dark {
+        tone(tone_index).dark
+    } else {
+        tone(tone_index).light
+    };
+    rgb(ink).into()
+}
+
+fn icon(tone_index: usize) -> SharedString {
+    TONES
+        .get(tone_index)
+        .and_then(|tone| crate::quire_assets::tag_icon_path(tone.name))
+        .unwrap_or_else(|| ui::IconName::Hash.path().into())
+}
+
+fn icon_element(tone_index: usize, ink: Hsla, font_size: Pixels) -> impl IntoElement {
+    svg()
+        .path(icon(tone_index))
+        .size(icon_size(font_size))
+        .flex_none()
+        .text_color(ink)
+}
+
+/// The fold in place of a tag's `#` (or `#[[`): the tag's icon, in the pill's left end.
+fn icon_placeholder(tone_index: usize, dark: bool) -> FoldPlaceholder {
+    FoldPlaceholder {
+        collapsed_text: Some("#".into()),
+        constrain_width: false,
+        merge_adjacent: false,
+        type_tag: Some(TypeId::of::<TagIcon>()),
+        render: Arc::new(move |_, _, cx| {
+            let font_size = theme_settings::ThemeSettings::get_global(cx).buffer_font_size(cx);
+            div()
+                .debug_selector(|| "quire-tag-icon".into())
+                .flex_none()
+                .w(icon_width(font_size))
+                .h_full()
+                .flex()
+                .items_center()
+                .pl(ICON_PAD)
+                .child(icon_element(tone_index, ink(tone_index, dark), font_size))
+                .into_any_element()
+        }),
+    }
+}
+
+/// The fold over a Roam tag's closing brackets.
+fn hidden_placeholder() -> FoldPlaceholder {
+    FoldPlaceholder {
+        collapsed_text: Some("".into()),
+        constrain_width: false,
+        merge_adjacent: false,
+        type_tag: Some(TypeId::of::<TagIcon>()),
+        render: Arc::new(|_, _, _| div().into_any_element()),
+    }
+}
+
 fn render(
     pill: &Pill,
     look: Look,
@@ -159,84 +250,94 @@ fn render(
     layout: &TextRegionLayout,
     cx: &mut App,
 ) -> AnyElement {
-    let (ink, background) = if dark {
-        tone(pill.tone).dark
+    let background = if dark {
+        tone(pill.tone).dark.1
     } else {
-        tone(pill.tone).light
+        tone(pill.tone).light.1
     };
-    let ink: Hsla = rgb(ink).into();
+    let ink = ink(pill.tone, dark);
     let theme = theme_settings::ThemeSettings::get_global(cx);
     let font = theme.buffer_font.clone();
     let font_size = theme.buffer_font_size(cx);
-    let icon = TONES
-        .get(pill.tone)
-        .and_then(|tone| crate::quire_assets::tag_icon_path(tone.name));
+    let lead = icon_width(font_size);
     let single = layout.fragments.len() == 1;
+    let name = pill
+        .text
+        .trim_start_matches("#[[")
+        .trim_start_matches('#')
+        .trim_end_matches("]]")
+        .to_owned();
     div()
         .size_full()
-        .children(layout.fragments.iter().map(|bounds| {
+        .children(layout.fragments.iter().enumerate().map(|(index, bounds)| {
             let local = bounds.origin - layout.bounds.origin;
             let height = pill_height(font_size, bounds.size.height);
+            let left = if index == 0 { lead } else { px(2.) };
             let shape = div()
                 .absolute()
-                .left(local.x - px(2.))
+                .left(local.x - left)
                 .top(local.y + (bounds.size.height - height) / 2.)
-                .w(bounds.size.width + px(4.))
+                .w(bounds.size.width + left + px(4.))
                 .h(height)
                 .rounded_full()
                 .border_1()
-                .border_color(ink.opacity(0.16));
+                .border_color(ink.opacity(0.18));
             if look == Look::Outline || !single {
                 return shape.into_any_element();
             }
-            let name = match icon {
-                Some(_) => pill.text.strip_prefix('#').unwrap_or(&pill.text),
-                None => &pill.text,
-            };
             shape
                 .debug_selector(|| "quire-tag-pill".into())
                 .bg(rgb(background))
                 .flex()
                 .items_center()
-                .justify_end()
-                .px(px(2.))
+                .pl(ICON_PAD - px(1.))
                 .overflow_hidden()
-                .when_some(icon.clone(), |shape, icon| {
-                    shape.child(
-                        div().flex_1().flex().justify_center().child(
-                            svg()
-                                .path(icon)
-                                .size(font_size * 0.86)
-                                .flex_none()
-                                .text_color(ink),
-                        ),
-                    )
-                })
+                .child(icon_element(pill.tone, ink, font_size))
                 .child(
                     div()
                         .flex_none()
+                        .ml(ICON_GAP)
                         .whitespace_nowrap()
                         .font(font.clone())
                         .text_size(font_size)
                         .line_height(height)
                         .text_color(ink)
-                        .child(SharedString::from(name.to_owned())),
+                        .child(SharedString::from(name.clone())),
                 )
                 .into_any_element()
         }))
         .into_any_element()
 }
 
+/// The page's tags, Roam `#[[name]]` tags included, by start.
+fn page_tags(
+    page: &Entity<PageAnalysis>,
+    text: impl FnOnce() -> String,
+    cx: &App,
+) -> Vec<TagToken> {
+    let Some(inline) = page.read(cx).current_inline(cx) else {
+        return Vec::new();
+    };
+    let mut tags = inline.tags.to_vec();
+    if !inline.references.is_empty() {
+        let text = text();
+        if text.contains("#[[") {
+            tags.extend(quire_core::markdown::wiki_tags(&text, &inline.references));
+            tags.sort_by_key(|tag| tag.range.start);
+        }
+    }
+    tags
+}
+
 /// Paints the page's tags in `editor` when it shows Write and Format tags is on; clears them
 /// otherwise. Editors over excerpts are left alone.
-pub fn refresh(editor: &Entity<Editor>, page: &Entity<PageAnalysis>, cx: &mut App) {
-    let format = crate::preferences::QuirePreferences::get_global(cx).format_tags;
-    let tokens: Vec<TagToken> = page
-        .read(cx)
-        .current_inline(cx)
-        .map(|inline| inline.tags.to_vec())
-        .unwrap_or_default();
-    let tags = toned(&tokens);
+pub fn refresh(
+    editor: &Entity<Editor>,
+    page: &Entity<PageAnalysis>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let format = formats(cx);
     let dark = !cx.theme().appearance.is_light();
     editor.update(cx, |editor, cx| {
         let keys = keys();
@@ -244,11 +345,16 @@ pub fn refresh(editor: &Entity<Editor>, page: &Entity<PageAnalysis>, cx: &mut Ap
             .for_each(|key| editor.clear_highlights(*key, cx));
         editor.register_addon(TagPills::default());
         let buffer = editor.buffer().read(cx);
+        let snapshot = buffer.snapshot(cx);
+        let everything = MultiBufferOffset(0)..snapshot.len();
+        editor.remove_folds_with_type(&[everything], TypeId::of::<TagIcon>(), false, cx);
+        let buffer = editor.buffer().read(cx);
         if !format || !crate::editor_projection::enabled(editor) || !buffer.is_singleton() {
             editor.unregister_addon::<TagLinks>();
             return;
         }
-        let snapshot = buffer.snapshot(cx);
+        let tokens = page_tags(page, || snapshot.text(), cx);
+        let tags = toned(&tokens);
         // Blocks are parsed only for tags to link: parsing the whole page on every edit took
         // most of each keystroke's work on a 1 MiB page without tags.
         let blocks = (!tokens.is_empty())
@@ -260,45 +366,56 @@ pub fn refresh(editor: &Entity<Editor>, page: &Entity<PageAnalysis>, cx: &mut Ap
             &snapshot,
         );
         editor.register_addon(links);
-        let anchored = |range: &Range<usize>| {
+        let anchored = |range: Range<usize>| {
             snapshot.anchor_after(MultiBufferOffset(range.start))
                 ..snapshot.anchor_before(MultiBufferOffset(range.end))
         };
-        let pills = tags
-            .iter()
-            .map(|(tone, range)| Pill {
-                tone: *tone,
-                range: anchored(range),
-                text: snapshot
-                    .text_for_range(MultiBufferOffset(range.start)..MultiBufferOffset(range.end))
-                    .collect::<String>()
-                    .into(),
-            })
-            .filter(|pill| !pill.text.is_empty())
-            .collect::<Vec<_>>();
+        let mut pills = Vec::new();
+        let mut folds = Vec::new();
         let mut groups: Vec<Vec<_>> = vec![Vec::new(); keys.len()];
-        for (index, range) in &tags {
-            groups[*index].push(anchored(range));
+        for (tone, range) in &tags {
+            let text: String = snapshot
+                .text_for_range(MultiBufferOffset(range.start)..MultiBufferOffset(range.end))
+                .collect();
+            let wiki = text.starts_with("#[[") && text.ends_with("]]");
+            let (lead, tail) = if wiki { (3, 2) } else { (1, 0) };
+            if text.len() <= lead + tail {
+                continue;
+            }
+            let name = range.start + lead..range.end - tail;
+            folds.push(Crease::simple(
+                anchored(range.start..name.start),
+                icon_placeholder(*tone, dark),
+            ));
+            if wiki {
+                folds.push(Crease::simple(
+                    anchored(name.end..range.end),
+                    hidden_placeholder(),
+                ));
+            }
+            groups[*tone].push(anchored(name.clone()));
+            pills.push(Pill {
+                tone: *tone,
+                range: anchored(range.clone()),
+                name: anchored(name),
+                text: text.into(),
+            });
         }
         for (index, ranges) in groups.into_iter().enumerate() {
             if ranges.is_empty() {
                 continue;
             }
-            let (ink, _) = if dark {
-                tone(index).dark
-            } else {
-                tone(index).light
-            };
             editor.highlight_text(
                 keys[index],
                 ranges,
                 HighlightStyle {
-                    color: Some(rgb(ink).into()),
+                    color: Some(ink(index, dark)),
                     ..Default::default()
                 },
                 cx,
             );
         }
+        editor.fold_creases(folds, false, window, cx);
         editor.register_addon(TagPills { pills, dark });
         cx.notify();
     });
@@ -498,6 +615,49 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         assert!(parsed(cx), "a tag is linked to its block");
+    }
+
+    #[gpui::test]
+    fn icons_replace_the_hash_and_roam_tags_are_pills(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::editor_host::init(cx).unwrap());
+        let text = "- Wait #[[waiting]] and #idea or #[[Some Page]]\n";
+        let page = cx.add_window(|window, cx| {
+            let mut view = crate::editor_host::NotebookWindow::new(text, window, cx);
+            view.show_written(window, cx);
+            view
+        });
+        cx.run_until_parked();
+        let (shown, pills) = page
+            .update(cx, |view, window, cx| {
+                let editor = view.second_editor().clone();
+                let shown = editor.update(cx, |editor, cx| {
+                    editor.snapshot(window, cx).display_snapshot.text()
+                });
+                (shown, pills(editor.read(cx)))
+            })
+            .unwrap();
+        assert_eq!(shown, "Wait #waiting and #idea or #Some Page\n");
+        assert_eq!(
+            pills,
+            vec![
+                (tone_index("waiting").unwrap(), "#[[waiting]]".to_owned()),
+                (tone_index("idea").unwrap(), "#idea".to_owned()),
+                (TONES.len(), "#[[Some Page]]".to_owned()),
+            ]
+        );
+        let mut visual = gpui::VisualTestContext::from_window(page.into(), cx);
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        let icon = visual.debug_bounds("quire-tag-icon").expect("tag icon");
+        let font_size = visual
+            .update(|_, cx| theme_settings::ThemeSettings::get_global(cx).buffer_font_size(cx));
+        assert_eq!(
+            icon.size.width,
+            icon_width(font_size),
+            "the icon is drawn whole"
+        );
+        assert!(icon.size.width > icon_size(font_size));
+        page.update(cx, |view, _, cx| assert_eq!(view.source_text(cx), text))
+            .unwrap();
     }
 
     #[gpui::test]

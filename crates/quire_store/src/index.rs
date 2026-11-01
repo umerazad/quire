@@ -23,8 +23,8 @@ pub use overlay::Overlay;
 pub use query::{Backlink, PageRef, SearchHit, TagCount, TaggedBlock};
 pub use references::{Facet, FacetKind, Outline, ReferenceBlock, SHOWN_CHILDREN};
 pub use tasks::{
-    ProjectSummary, TaskBoard, TaskCounts, TaskItem, TaskList, TaskListGroup, TaskListQuery,
-    TaskQuery, UPCOMING_DAYS,
+    ProjectSummary, TASK_TAG_LIMIT, TaskBoard, TaskCounts, TaskItem, TaskList, TaskListGroup,
+    TaskListQuery, TaskQuery, UPCOMING_DAYS,
 };
 
 use crate::notebook::{PageMetadata, read_revision, revision_metadata};

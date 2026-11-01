@@ -6,9 +6,9 @@
 use quire_core::daily::{DailyCalendar, DailyLayout};
 use quire_core::markdown::{Reference, ReferenceKind, ReferenceMedia, ReferenceSyntax, TagToken};
 use quire_core::tasks::{
-    Action, DailyNames, DateField, Edit, Page, PageBlock, Shortcut, Task, TaskFilter, TaskState,
-    add_days, capture, created_stamp, is_due, is_upcoming, project_membership, short_date, task_at,
-    task_date_label, tasks_in,
+    Action, Candidate, DailyNames, DateField, DateTerm, Edit, Page, PageBlock, Period, Shortcut,
+    Task, TaskFilter, TaskState, add_days, capture, created_stamp, date_range, is_due, is_upcoming,
+    next_week, project_membership, short_date, task_at, task_date_label, tasks_in,
 };
 use serde_json::{Value, json};
 use std::{ops::Range, sync::LazyLock};
@@ -453,7 +453,7 @@ fn date_helpers_match_the_frozen_vectors() {
 fn filters_match_the_frozen_vectors() {
     let tasks = VECTORS["filterTasks"].as_array().unwrap();
     for vector in VECTORS["filters"].as_array().unwrap() {
-        let filter = TaskFilter::new(vector["query"].as_str().unwrap());
+        let filter = TaskFilter::new(vector["query"].as_str().unwrap(), "2026-10-30");
         let actual: Vec<bool> = tasks
             .iter()
             .map(|task| {
@@ -463,11 +463,309 @@ fn filters_match_the_frozen_vectors() {
                     .iter()
                     .map(|tag| tag.as_str().unwrap().into())
                     .collect();
-                filter.matches_parts(task[0].as_str().unwrap(), &tags, "Daily")
+                filter.matches_parts(&Candidate {
+                    text: task[0].as_str().unwrap(),
+                    tags: &tags,
+                    page: "Daily",
+                    state: TaskState::Inbox,
+                    due: None,
+                    completed: None,
+                })
             })
             .collect();
         assert_eq!(json!(actual), vector["results"], "{vector}");
     }
+}
+
+fn range(word: &str, today: &str) -> (String, String) {
+    date_range(word, today).unwrap_or_else(|error| panic!("{word}: {error}"))
+}
+
+fn span(first: &str, last: &str) -> (String, String) {
+    (first.to_owned(), last.to_owned())
+}
+
+#[test]
+fn periods_name_days_weeks_months_and_years_around_today() {
+    // 2026-10-30 is a Friday.
+    let today = "2026-10-30";
+    for (word, expected) in [
+        ("today", span(today, today)),
+        ("Yesterday", span("2026-10-29", "2026-10-29")),
+        ("tomorrow", span("2026-10-31", "2026-10-31")),
+        ("week", span("2026-10-26", "2026-11-01")),
+        ("last-week", span("2026-10-19", "2026-10-25")),
+        ("next-week", span("2026-11-02", "2026-11-08")),
+        ("month", span("2026-10-01", "2026-10-31")),
+        ("last-month", span("2026-09-01", "2026-09-30")),
+        ("next-month", span("2026-11-01", "2026-11-30")),
+        ("year", span("2026-01-01", "2026-12-31")),
+        ("last-year", span("2025-01-01", "2025-12-31")),
+        ("next-year", span("2027-01-01", "2027-12-31")),
+        ("2026-02-14", span("2026-02-14", "2026-02-14")),
+        ("2026-02", span("2026-02-01", "2026-02-28")),
+        ("2028-02", span("2028-02-01", "2028-02-29")),
+        ("2024", span("2024-01-01", "2024-12-31")),
+        ("2026-10-01..2026-10-15", span("2026-10-01", "2026-10-15")),
+        ("2026-12-30..2027-01-02", span("2026-12-30", "2027-01-02")),
+    ] {
+        assert_eq!(range(word, today), expected, "{word}");
+    }
+    assert_eq!(
+        range("week", "2026-11-01"),
+        span("2026-10-26", "2026-11-01"),
+        "Sunday ends its week"
+    );
+    assert_eq!(
+        range("week", "2026-10-26"),
+        span("2026-10-26", "2026-11-01"),
+        "Monday starts its week"
+    );
+    assert_eq!(
+        range("week", "2026-12-31"),
+        span("2026-12-28", "2027-01-03"),
+        "a week spans the new year"
+    );
+    assert_eq!(
+        range("tomorrow", "2026-12-31"),
+        span("2027-01-01", "2027-01-01")
+    );
+    assert_eq!(
+        range("next-month", "2026-12-15"),
+        span("2027-01-01", "2027-01-31")
+    );
+    assert_eq!(
+        range("last-month", "2026-03-31"),
+        span("2026-02-01", "2026-02-28")
+    );
+    assert_eq!(
+        range("last-month", "2024-03-31"),
+        span("2024-02-01", "2024-02-29")
+    );
+    assert_eq!(
+        range("month", "2024-02-10"),
+        span("2024-02-01", "2024-02-29")
+    );
+    assert_eq!(
+        range("yesterday", "2024-03-01"),
+        span("2024-02-29", "2024-02-29")
+    );
+}
+
+#[test]
+fn unreadable_periods_say_what_to_type() {
+    let today = "2026-10-30";
+    for (word, expected) in [
+        ("soon", "\"soon\" is not a period. Type one of today,"),
+        ("", "A period is missing. Type one of today,"),
+        ("2026-02-30", "\"2026-02-30\" is not a period."),
+        ("2026-13", "\"2026-13\" is not a period."),
+        ("2026-1-5", "\"2026-1-5\" is not a period."),
+        (
+            "2026-10-15..2026-10-01",
+            "\"2026-10-15..2026-10-01\" ends before it starts. Put the earlier date first: 2026-10-01..2026-10-15.",
+        ),
+        (
+            "2026-10-01..soon",
+            "\"2026-10-01..soon\" is not a date range. Type two YYYY-MM-DD dates joined by ..",
+        ),
+    ] {
+        let error = date_range(word, today).unwrap_err();
+        assert!(error.starts_with(expected), "{word}: {error}");
+    }
+    assert!(
+        date_range("week", "someday")
+            .unwrap_err()
+            .contains("Type a YYYY-MM-DD date instead"),
+        "a missing today is named"
+    );
+    let parsed = |token: &str| DateTerm::parse(token);
+    assert_eq!(parsed("due"), None, "a bare word is no date term");
+    assert_eq!(parsed("project:x"), None);
+    assert_eq!(parsed("DUE:None"), Some(Ok(DateTerm::NoDue)));
+    assert_eq!(parsed("due:overdue"), Some(Ok(DateTerm::Overdue)));
+    assert_eq!(
+        parsed("done:week"),
+        Some(Ok(DateTerm::Done(Period::Week(0))))
+    );
+    let overdone = parsed("done:overdue").unwrap().unwrap_err();
+    assert!(overdone.contains("Type due:overdue"), "{overdone}");
+    let typo = parsed("due:sooon").unwrap().unwrap_err();
+    assert!(
+        typo.starts_with("In \"due:sooon\": \"sooon\" is not a period.")
+            && typo.ends_with("For due: also overdue or none."),
+        "{typo}"
+    );
+}
+
+#[test]
+fn next_week_is_the_monday_after_today() {
+    for (today, monday) in [
+        ("2026-10-30", "2026-11-02"),
+        ("2026-11-01", "2026-11-02"),
+        ("2026-11-02", "2026-11-09"),
+        ("2026-12-29", "2027-01-04"),
+        ("2024-02-27", "2024-03-04"),
+    ] {
+        assert_eq!(next_week(today).as_deref(), Some(monday), "{today}");
+    }
+    assert_eq!(next_week("soon"), None);
+}
+
+#[test]
+fn filters_keep_tasks_by_dates_tags_and_states() {
+    let today = "2026-10-30";
+    let tags = |names: &[&str]| {
+        names
+            .iter()
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>()
+    };
+    let tasks = [
+        (
+            "done today",
+            tags(&[]),
+            TaskState::Done,
+            None,
+            Some("2026-10-30"),
+        ),
+        (
+            "done monday",
+            tags(&["#work"]),
+            TaskState::Done,
+            Some("2026-10-20"),
+            Some("2026-10-26"),
+        ),
+        (
+            "done last year",
+            tags(&[]),
+            TaskState::Done,
+            None,
+            Some("2025-06-01"),
+        ),
+        (
+            "due today",
+            tags(&["#work/billing"]),
+            TaskState::Next,
+            Some("2026-10-30"),
+            None,
+        ),
+        (
+            "overdue",
+            tags(&["#someday"]),
+            TaskState::Someday,
+            Some("2026-10-02"),
+            None,
+        ),
+        ("undated", tags(&[]), TaskState::Inbox, None, None),
+        (
+            "due next month",
+            tags(&["#workshop"]),
+            TaskState::Waiting,
+            Some("2026-11-12"),
+            None,
+        ),
+    ];
+    let matching = |query: &str| -> Vec<&str> {
+        let filter = TaskFilter::new(query, today);
+        assert_eq!(filter.error(), None, "{query}");
+        tasks
+            .iter()
+            .filter(|(text, tags, state, due, completed)| {
+                filter.matches_parts(&Candidate {
+                    text,
+                    tags,
+                    page: "Work",
+                    state: *state,
+                    due: *due,
+                    completed: *completed,
+                })
+            })
+            .map(|(text, ..)| *text)
+            .collect()
+    };
+    assert_eq!(matching("done:today"), ["done today"]);
+    assert_eq!(matching("done:yesterday"), Vec::<&str>::new());
+    assert_eq!(matching("done:week"), ["done today", "done monday"]);
+    assert_eq!(matching("DONE:2026-10-26"), ["done monday"]);
+    assert_eq!(matching("done:2025"), ["done last year"]);
+    assert_eq!(matching("done:year -done:today"), ["done monday"]);
+    assert_eq!(matching("due:today"), ["due today"]);
+    assert_eq!(
+        matching("due:month"),
+        ["done monday", "due today", "overdue"]
+    );
+    assert_eq!(matching("due:next-month"), ["due next month"]);
+    assert_eq!(
+        matching("due:overdue"),
+        ["overdue"],
+        "done tasks are never overdue"
+    );
+    assert_eq!(
+        matching("due:none"),
+        ["done today", "done last year", "undated"]
+    );
+    assert_eq!(
+        matching("-due:none"),
+        ["done monday", "due today", "overdue", "due next month"]
+    );
+    assert_eq!(
+        matching("#work"),
+        ["done monday", "due today"],
+        "nested tags match"
+    );
+    assert_eq!(
+        matching("-#work"),
+        [
+            "done today",
+            "done last year",
+            "overdue",
+            "undated",
+            "due next month"
+        ]
+    );
+    assert_eq!(matching("#someday"), ["overdue"]);
+    assert_eq!(
+        matching("#inbox"),
+        ["undated"],
+        "a state tag matches the state, tagged or not"
+    );
+    assert_eq!(
+        matching("-#done -due:none"),
+        ["due today", "overdue", "due next month"]
+    );
+    assert_eq!(matching("#work due:week"), ["due today"]);
+    assert_eq!(matching("due -#work"), ["overdue", "due next month"]);
+
+    let broken = TaskFilter::new("done: due today", today);
+    assert!(
+        broken
+            .error()
+            .is_some_and(|error| error.starts_with("In \"done:\": A period is missing.")),
+        "{:?}",
+        broken.error()
+    );
+    assert!(broken.tests_text(), "the readable words still filter");
+}
+
+#[test]
+fn toggling_a_term_adds_removes_or_replaces_its_kind() {
+    assert_eq!(TaskFilter::toggle("", "due:today"), "due:today");
+    assert_eq!(TaskFilter::toggle("plan due:today", "due:today"), "plan");
+    assert_eq!(TaskFilter::toggle("plan DUE:today", "due:today"), "plan");
+    assert_eq!(
+        TaskFilter::toggle("plan due:today  #work", "due:week"),
+        "plan #work due:week",
+        "a second due: term replaces the first"
+    );
+    assert_eq!(
+        TaskFilter::toggle("-due:none done:week", "due:overdue"),
+        "done:week due:overdue"
+    );
+    assert_eq!(TaskFilter::toggle("#work", "#home"), "#work #home");
+    assert_eq!(TaskFilter::toggle("#work #home", "#work"), "#home");
+    assert!(TaskFilter::has_term("a Done:Week b", "done:week"));
+    assert!(!TaskFilter::has_term("done:weeks", "done:week"));
 }
 
 #[test]

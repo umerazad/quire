@@ -35,6 +35,14 @@ pub fn add_days(iso: &str, days: i64) -> Option<String> {
     ))
 }
 
+/// The Monday after `today`: tomorrow on a Sunday, a week ahead on a Monday. None when `today`
+/// is not a date in the supported range.
+pub fn next_week(today: &str) -> Option<String> {
+    let (year, month, day) = parts(today)?;
+    let weekday = Date::new(year, month, day).ok()?.weekday();
+    add_days(today, 7 - i64::from(weekday.to_monday_zero_offset()))
+}
+
 /// Open with a due date today or earlier.
 pub fn is_due(task: &Task, today: &str) -> bool {
     task.state != TaskState::Done && task.due.as_deref().is_some_and(|due| due <= today)

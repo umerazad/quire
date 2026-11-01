@@ -1,6 +1,7 @@
-//! The Tasks browser: capture, the Due, Upcoming, Inbox, Next, Waiting, Someday, and Done lists,
-//! and Projects with their next actions. Rows tick, change state, take dates, and change in bulk
-//! through `task_edit`, which writes every touched page or none.
+//! The Tasks browser: capture, the Due, Upcoming, Inbox, Next, Waiting, Someday, Done, and All
+//! lists, and Projects with their next actions. Rows tick, change state, take dates, and change
+//! in bulk through `task_edit`, which writes every touched page or none. Quick filter chips and
+//! a tag menu toggle terms in the filter text, which stays the one source of the filter.
 
 use super::{list_keys, live::Live, tag_edits::Writers};
 use crate::task_edit::{self, CaptureProject, CaptureTo, TaskChange, TaskRef};
@@ -8,17 +9,19 @@ use crate::tasks::{CycleTask, ToggleTask};
 use editor::{Editor, EditorEvent};
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy,
-    SharedString, Subscription, Task, UniformListScrollHandle, Window, uniform_list,
+    SharedString, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, uniform_list,
 };
 use quire_core::{
-    tasks::{Action, DateField, TaskState, date_phrase, short_date},
+    tasks::{
+        Action, DateField, TaskFilter, TaskState, add_days, date_phrase, next_week, short_date,
+    },
     workspace::{ProjectStatus, TaskChoices, TaskView},
 };
 use quire_store::index::{IndexClient, ProjectSummary, TaskBoard, TaskItem, TaskQuery};
 use ui::{
-    Button, ButtonStyle, Checkbox, Color, ContextMenu, Disableable, DropdownMenu, Label,
-    LabelCommon, LabelSize, ListItem, ListItemSpacing, PopoverMenu, ToggleState, Toggleable,
-    prelude::*, v_flex,
+    Button, ButtonLike, ButtonSize, ButtonStyle, Checkbox, Color, ContextMenu, Disableable,
+    DropdownMenu, IconButton, Label, LabelCommon, LabelSize, ListItem, ListItemSpacing,
+    PopoverMenu, ToggleState, Toggleable, Tooltip, prelude::*, v_flex,
 };
 
 gpui::actions!(
@@ -44,8 +47,205 @@ gpui::actions!(
         FocusTaskFilter,
         /// Lists the highlighted project's actions.
         ReviewProject,
+        /// Makes the selected tasks, or the highlighted one, due tomorrow.
+        PushDueTomorrow,
+        /// Makes the selected tasks, or the highlighted one, due next Monday.
+        PushDueNextWeek,
     ]
 );
+
+/// A quick due date one click or key sets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DuePush {
+    Tomorrow,
+    /// The Monday after today.
+    NextWeek,
+}
+
+impl DuePush {
+    pub fn date(self, today: &str) -> Option<String> {
+        match self {
+            Self::Tomorrow => add_days(today, 1),
+            Self::NextWeek => next_week(today),
+        }
+    }
+
+    /// The button's tooltip, naming the date it sets.
+    pub fn tooltip(self, today: &str) -> String {
+        let date = self
+            .date(today)
+            .map(|date| short_date(&date, today))
+            .unwrap_or_default();
+        match self {
+            Self::Tomorrow => format!("Due tomorrow, {date} (T)"),
+            Self::NextWeek => format!("Due next week, Monday {date} (W)"),
+        }
+    }
+}
+
+/// The calendar icon that opens the due date menu, from the sidebar's Lucide set.
+const CALENDAR: &str = "icons/quire/sidebar/calendar-days.svg";
+
+/// The calendar menu and the push buttons ending an open task's row, in the Tasks browser and in
+/// live task lists. `set` gives the task at `index` a due date, or with None clears it; `pick`
+/// opens its typed date field. Menus are built only when opened, so long lists build none.
+pub(crate) fn quick_dates<V: 'static>(
+    prefix: &'static str,
+    index: usize,
+    task: &TaskItem,
+    today: &str,
+    view: WeakEntity<V>,
+    set: fn(&mut V, usize, Option<String>, &mut Context<V>),
+    pick: fn(&mut V, usize, &mut Window, &mut Context<V>),
+) -> impl IntoElement + use<V> {
+    let has_due = task.due.is_some();
+    let today = today.to_owned();
+    let menu_view = view.clone();
+    let menu_today = today.clone();
+    let menu = PopoverMenu::new(SharedString::from(format!("{prefix}-dates-{index}")))
+        .trigger(
+            ButtonLike::new(SharedString::from(format!("{prefix}-dates-button-{index}")))
+                .size(ButtonSize::Compact)
+                .child(
+                    Icon::from_path(CALENDAR)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+                .tooltip(Tooltip::text("Set the due date")),
+        )
+        .menu(move |window, cx| {
+            let view = menu_view.clone();
+            let today = menu_today.clone();
+            Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
+                let label = |name: &str, date: &Option<String>| match date {
+                    Some(date) => format!("{name} · {}", short_date(date, &today)),
+                    None => name.to_owned(),
+                };
+                let choices = [
+                    ("Today", Some(today.clone())),
+                    ("Tomorrow", DuePush::Tomorrow.date(&today)),
+                    ("Next week", DuePush::NextWeek.date(&today)),
+                ];
+                for (name, date) in choices {
+                    let view = view.clone();
+                    menu = menu.entry(label(name, &date), None, move |_, cx| {
+                        let date = date.clone();
+                        view.update(cx, |this, cx| set(this, index, date, cx)).ok();
+                    });
+                }
+                let picker = view.clone();
+                menu = menu.entry("Pick a date…", None, move |window, cx| {
+                    picker
+                        .update(cx, |this, cx| pick(this, index, window, cx))
+                        .ok();
+                });
+                if has_due {
+                    let view = view.clone();
+                    menu = menu
+                        .separator()
+                        .entry("Clear due date", None, move |_, cx| {
+                            view.update(cx, |this, cx| set(this, index, None, cx)).ok();
+                        });
+                }
+                menu
+            }))
+        });
+    let push = move |push: DuePush, name: &str, icon: IconName| {
+        let view = view.clone();
+        let date = push.date(&today);
+        gpui::div()
+            .debug_selector({
+                let name = name.to_owned();
+                move || format!("quire-{prefix}-{name}-{index}")
+            })
+            .child(
+                IconButton::new(SharedString::from(format!("{prefix}-{name}-{index}")), icon)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .size(ButtonSize::Compact)
+                    .tooltip(Tooltip::text(push.tooltip(&today)))
+                    .on_click(move |_, _, cx| {
+                        let date = date.clone();
+                        view.update(cx, |this, cx| set(this, index, date, cx)).ok();
+                    }),
+            )
+    };
+    h_flex()
+        .gap_0p5()
+        .child(
+            gpui::div()
+                .debug_selector(move || format!("quire-{prefix}-dates-{index}"))
+                .child(menu),
+        )
+        .when(task.is_open(), |row| {
+            row.child(push(DuePush::Tomorrow, "tomorrow", IconName::ArrowRight))
+                .child(push(DuePush::NextWeek, "next-week", IconName::FastForward))
+        })
+}
+
+/// A quick filter chip: its label in each kind of list and the term it toggles.
+struct Chip {
+    label: &'static str,
+    /// The label in All, where due and done chips sit side by side.
+    long: &'static str,
+    term: &'static str,
+}
+
+const DUE_CHIPS: [Chip; 5] = [
+    Chip {
+        label: "Due today",
+        long: "Due today",
+        term: "due:today",
+    },
+    Chip {
+        label: "This week",
+        long: "Due this week",
+        term: "due:week",
+    },
+    Chip {
+        label: "This month",
+        long: "Due this month",
+        term: "due:month",
+    },
+    Chip {
+        label: "Overdue",
+        long: "Overdue",
+        term: "due:overdue",
+    },
+    Chip {
+        label: "No due date",
+        long: "No due date",
+        term: "due:none",
+    },
+];
+
+const DONE_CHIPS: [Chip; 5] = [
+    Chip {
+        label: "Today",
+        long: "Done today",
+        term: "done:today",
+    },
+    Chip {
+        label: "Yesterday",
+        long: "Done yesterday",
+        term: "done:yesterday",
+    },
+    Chip {
+        label: "This week",
+        long: "Done this week",
+        term: "done:week",
+    },
+    Chip {
+        label: "This month",
+        long: "Done this month",
+        term: "done:month",
+    },
+    Chip {
+        label: "This year",
+        long: "Done this year",
+        term: "done:year",
+    },
+];
 
 /// Rows listed before "Show more".
 pub const PAGE: usize = 40;
@@ -57,9 +257,9 @@ const CAPTURE_PLACEHOLDER: &str = if cfg!(target_os = "macos") {
     "What needs your attention? (Ctrl-Shift-T)"
 };
 const LIST_KEYS: &str = if cfg!(target_os = "macos") {
-    "Space selects · 1–5 move to Inbox, Next, Waiting, Someday, Done · ⌘Enter ticks · D, C, ⇧D set dates · Enter opens · [ and ] switch lists"
+    "Space selects · 1–5 move to Inbox, Next, Waiting, Someday, Done · ⌘Enter ticks · D, C, ⇧D set dates · T, W due tomorrow, next week · Enter opens · [ and ] switch lists"
 } else {
-    "Space selects · 1–5 move to Inbox, Next, Waiting, Someday, Done · Ctrl-Enter ticks · D, C, Shift-D set dates · Enter opens · [ and ] switch lists"
+    "Space selects · 1–5 move to Inbox, Next, Waiting, Someday, Done · Ctrl-Enter ticks · D, C, Shift-D set dates · T, W due tomorrow, next week · Enter opens · [ and ] switch lists"
 };
 
 pub enum TasksEvent {
@@ -87,6 +287,7 @@ fn empty_text(view: TaskView) -> &'static str {
         TaskView::Waiting => "Nothing is waiting on someone else.",
         TaskView::Someday => "Keep possibilities here until you choose to act.",
         TaskView::Done => "Completed actions will appear here.",
+        TaskView::All => "No actions yet. Capture whatever needs your attention.",
         TaskView::Projects => {
             "Give an outcome a home. Create a project, or mark a page with #project."
         }
@@ -137,6 +338,8 @@ struct DateEdit {
 
 pub struct TasksView {
     pub(crate) board: Live<TaskBoard>,
+    /// The tags tasks carry, with how many carry each, for the tag menu.
+    pub(crate) tags: Live<Vec<(String, usize)>>,
     pub(crate) choices: TaskChoices,
     pub(crate) filter: Entity<Editor>,
     pub(crate) capture: Entity<Editor>,
@@ -210,6 +413,7 @@ impl TasksView {
         let limit = choices.limit.max(PAGE);
         Self {
             board: Live::default(),
+            tags: Live::default(),
             choices,
             filter,
             capture,
@@ -239,6 +443,50 @@ impl TasksView {
         self.client = Some(client.clone());
         self.today = today;
         self.query(cx);
+        let answer = client.with_generation(|index| index.task_tags());
+        self.tags.request(
+            answer,
+            cx,
+            |this| &mut this.tags,
+            |error| {
+                format!("Cannot list task tags: {error}. Wait for indexing to finish, then retry.")
+            },
+        );
+    }
+
+    /// Replaces the filter text, with the caret at its end; the edit lists the tasks again and
+    /// is remembered.
+    pub fn set_filter(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.filter.update(cx, |filter, cx| {
+            filter.set_text(text, window, cx);
+            filter.move_to_end(&editor::actions::MoveToEnd, window, cx);
+        });
+    }
+
+    /// Adds `term` to the filter, or takes it out when it is there; a date term replaces any
+    /// other of its kind.
+    pub fn toggle_term(&mut self, term: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.filter.read(cx).text(cx);
+        self.set_filter(&TaskFilter::toggle(&text, term), window, cx);
+    }
+
+    /// Puts `done:` in the filter and focuses it, for a completion date or period to be typed.
+    pub fn type_done_date(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.filter.read(cx).text(cx);
+        let mut text = TaskFilter::toggle(&text, "done:");
+        if !TaskFilter::has_term(&text, "done:") {
+            text = TaskFilter::toggle(&text, "done:");
+        }
+        self.set_filter(&text, window, cx);
+        window.focus(&self.filter.focus_handle(cx), cx);
+    }
+
+    /// Why the filter cannot be read as typed, saying what to type.
+    pub fn filter_error(&self, cx: &App) -> Option<String> {
+        let text = self.filter.read(cx).text(cx);
+        TaskFilter::new(&text, &self.today)
+            .error()
+            .map(str::to_owned)
     }
 
     fn query(&mut self, cx: &mut Context<Self>) {
@@ -614,6 +862,45 @@ impl TasksView {
         )
     }
 
+    /// Gives the task at `index` the due date `date`, or with None clears it, as its calendar
+    /// menu and push buttons do.
+    pub fn set_due(&mut self, index: usize, date: Option<String>, cx: &mut Context<Self>) {
+        let Some(task) = self.rows().get(index) else {
+            return;
+        };
+        let task = TaskRef::from(task);
+        let today = self.today.clone();
+        self.highlighted = index;
+        self.run(
+            vec![task],
+            TaskChange::Date(DateField::Due, date.clone()),
+            move |_| match date {
+                Some(date) => format!("Due {}.", short_date(&date, &today)),
+                None => "Cleared the due date.".into(),
+            },
+            cx,
+        );
+    }
+
+    /// Makes the selected tasks, or the highlighted one, due on `push`'s date.
+    pub fn push_due(&mut self, push: DuePush, cx: &mut Context<Self>) {
+        let Some(date) = push.date(&self.today) else {
+            return;
+        };
+        let tasks = self.targets();
+        let shown = short_date(&date, &self.today);
+        self.run(
+            tasks,
+            TaskChange::Date(DateField::Due, Some(date)),
+            move |count| format!("Made {} due {shown}.", plural(count, "task", "tasks")),
+            cx,
+        );
+    }
+
+    fn pick_due(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.edit_date(index, DateField::Due, window, cx)
+    }
+
     /// Opens the date field for the highlighted task's created, due, or completed date.
     pub fn edit_date(
         &mut self,
@@ -787,7 +1074,7 @@ impl TasksView {
 
     #[cfg(test)]
     pub fn idle(&self) -> bool {
-        self.work.is_none() && self.board.settled()
+        self.work.is_none() && self.board.settled() && self.tags.settled()
     }
 }
 
@@ -943,7 +1230,17 @@ impl TasksView {
                             .child(state),
                     ),
             )
-            .end_slot(h_flex().gap_1().children(chips))
+            .end_slot(h_flex().gap_1().children(chips).when(!done, |slot| {
+                slot.child(quick_dates(
+                    "task",
+                    index,
+                    task,
+                    today,
+                    cx.entity().downgrade(),
+                    Self::set_due,
+                    Self::pick_due,
+                ))
+            }))
             .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
                 this.open(index, event.modifiers().shift, cx)
             }))
@@ -1093,6 +1390,97 @@ impl TasksView {
         DropdownMenu::new(id, label, menu)
     }
 
+    /// The quick filter chips for the shown list and the tag menu. Each toggles its term in the
+    /// filter text, and a chip shows as on while its term is there.
+    fn render_chips(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let view = self.choices.view;
+        let text = self.filter.read(cx).text(cx);
+        let groups: &[&[Chip]] = match view {
+            TaskView::Done => &[&DONE_CHIPS],
+            TaskView::All => &[&DUE_CHIPS, &DONE_CHIPS],
+            _ => &[&DUE_CHIPS],
+        };
+        let long = view == TaskView::All;
+        let chip = |label: String, term: &'static str, on: bool, cx: &mut Context<Self>| {
+            gpui::div()
+                .debug_selector(move || format!("quire-task-chip-{term}"))
+                .child(
+                    Button::new(SharedString::from(format!("task-chip-{term}")), label)
+                        .label_size(LabelSize::Small)
+                        .style(ButtonStyle::Subtle)
+                        .toggle_state(on)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.toggle_term(term, window, cx)
+                        })),
+                )
+        };
+        let mut row = h_flex().gap_1().flex_wrap();
+        for chips in groups {
+            for each in chips.iter() {
+                let label = if long { each.long } else { each.label };
+                let on = TaskFilter::has_term(&text, each.term);
+                row = row.child(chip(label.to_owned(), each.term, on, cx));
+            }
+        }
+        if matches!(view, TaskView::Done | TaskView::All) {
+            let typing = TaskFilter::has_term(&text, "done:");
+            row = row.child(
+                gpui::div()
+                    .debug_selector(|| "quire-task-chip-done-on".into())
+                    .child(
+                        Button::new(
+                            "task-chip-done-on",
+                            if long { "Done on…" } else { "On date…" },
+                        )
+                        .label_size(LabelSize::Small)
+                        .style(ButtonStyle::Subtle)
+                        .toggle_state(typing)
+                        .tooltip(Tooltip::text(
+                            "Type a date, YYYY-MM, YYYY, or FROM..TO after done:",
+                        ))
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.type_done_date(window, cx)),
+                        ),
+                    ),
+            );
+        }
+        let tags = self.tags.value.clone();
+        let chosen = tags
+            .iter()
+            .filter(|(tag, _)| TaskFilter::has_term(&text, tag))
+            .count();
+        let label = match chosen {
+            0 => "Tag".to_owned(),
+            count => format!("Tags ({count})"),
+        };
+        let this = cx.entity().downgrade();
+        let menu = ContextMenu::build(window, cx, move |mut menu, _, _| {
+            if tags.is_empty() {
+                return menu.label("No task carries a tag yet.");
+            }
+            for (tag, uses) in tags {
+                let this = this.clone();
+                let on = TaskFilter::has_term(&text, &tag);
+                menu = menu.toggleable_entry(
+                    format!("{tag} ({uses})"),
+                    on,
+                    IconPosition::Start,
+                    None,
+                    move |window, cx| {
+                        this.update(cx, |this, cx| this.toggle_term(&tag, window, cx))
+                            .ok();
+                    },
+                );
+            }
+            menu
+        });
+        row.child(DropdownMenu::new("filter-tag", label, menu))
+    }
+
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = self.selected_count();
         h_flex()
@@ -1200,6 +1588,8 @@ impl Render for TasksView {
                     cx,
                 ))
             });
+        let chips = (!projects_view).then(|| self.render_chips(window, cx));
+        let filter_error = (!projects_view).then(|| self.filter_error(cx)).flatten();
         let heading = if projects_view {
             plural(self.shown_projects(cx).len(), "project", "projects")
         } else {
@@ -1351,6 +1741,16 @@ impl Render for TasksView {
                 cx.listener(|this, _: &MoveToSomeday, _, cx| this.move_to(TaskState::Someday, cx)),
             )
             .on_action(cx.listener(|this, _: &MoveToDone, _, cx| this.move_to(TaskState::Done, cx)))
+            .on_action(
+                cx.listener(|this, _: &PushDueTomorrow, _, cx| {
+                    this.push_due(DuePush::Tomorrow, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &PushDueNextWeek, _, cx| {
+                    this.push_due(DuePush::NextWeek, cx)
+                }),
+            )
             .on_action(cx.listener(|this, _: &NextTaskView, _, cx| this.step_view(1, cx)))
             .on_action(cx.listener(|this, _: &PreviousTaskView, _, cx| this.step_view(-1, cx)))
             .on_action(cx.listener(|this, _: &FocusTaskFilter, window, cx| {
@@ -1377,6 +1777,10 @@ impl Render for TasksView {
             .child(capture)
             .child(tabs)
             .child(filters)
+            .children(chips)
+            .when_some(filter_error, |root, error| {
+                root.child(Label::new(error).size(LabelSize::Small).color(Color::Error))
+            })
             .when_some(new_project, |root, row| root.child(row))
             .child(
                 h_flex().gap_2().child(Label::new(view.label())).child(

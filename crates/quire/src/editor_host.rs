@@ -366,7 +366,7 @@ impl NotebookWindow {
         }
         self.number_lines(editor, cx);
         window.focus(&editor.focus_handle(cx), cx);
-        self.refresh_tags(cx);
+        self.refresh_tags(window, cx);
         cx.notify();
     }
 
@@ -432,7 +432,7 @@ impl NotebookWindow {
                 window.focus(&zoom.editor.focus_handle(cx), cx);
                 self.zooms[pane] = Some(zoom);
                 crate::outline::set_notice(None, cx);
-                self.refresh_tags(cx);
+                self.refresh_tags(window, cx);
             }
             Err(message) => crate::outline::set_notice(Some(message), cx),
         }
@@ -594,10 +594,10 @@ impl NotebookWindow {
         Self::for_page(analysis, excerpt, window, cx)
     }
 
-    fn refresh_tags(&mut self, cx: &mut gpui::Context<Self>) {
+    fn refresh_tags(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
         let zooms = self.zooms.iter().flatten().map(|zoom| &zoom.editor);
         for editor in [&self.source, &self.second].into_iter().chain(zooms) {
-            crate::tag_labels::refresh(editor, &self.analysis, cx);
+            crate::tag_labels::refresh(editor, &self.analysis, window, cx);
             crate::spellcheck::attach(editor, &self.analysis, cx);
         }
     }
@@ -656,15 +656,19 @@ impl NotebookWindow {
         cx.observe(&commands, |_, _, cx| cx.notify()).detach();
         cx.observe(&source_search, |_, _, cx| cx.notify()).detach();
         cx.observe(&second_search, |_, _, cx| cx.notify()).detach();
-        cx.observe(&analysis, |this, _, cx| {
-            this.refresh_tags(cx);
+        cx.observe_in(&analysis, window, |this, _, window, cx| {
+            this.refresh_tags(window, cx);
             cx.notify()
         })
         .detach();
-        cx.observe_global::<settings::SettingsStore>(|this, cx| this.refresh_tags(cx))
-            .detach();
-        cx.observe_global::<theme::GlobalTheme>(|this, cx| this.refresh_tags(cx))
-            .detach();
+        cx.observe_global_in::<settings::SettingsStore>(window, |this, window, cx| {
+            this.refresh_tags(window, cx)
+        })
+        .detach();
+        cx.observe_global_in::<theme::GlobalTheme>(window, |this, window, cx| {
+            this.refresh_tags(window, cx)
+        })
+        .detach();
         cx.observe_global::<crate::outline::Notice>(|_, cx| cx.notify())
             .detach();
         crate::preferences::follow_system_appearance(window, cx);

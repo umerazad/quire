@@ -269,6 +269,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("d", tasks::EditDueDate, Some("QuireTaskList")),
         KeyBinding::new("c", tasks::EditCreatedDate, Some("QuireTaskList")),
         KeyBinding::new("shift-d", tasks::EditCompletedDate, Some("QuireTaskList")),
+        KeyBinding::new("t", tasks::PushDueTomorrow, Some("QuireTaskList")),
+        KeyBinding::new("w", tasks::PushDueNextWeek, Some("QuireTaskList")),
         KeyBinding::new("]", tasks::NextTaskView, Some("QuireTaskList")),
         KeyBinding::new("[", tasks::PreviousTaskView, Some("QuireTaskList")),
         KeyBinding::new("/", tasks::FocusTaskFilter, Some("QuireTaskList")),

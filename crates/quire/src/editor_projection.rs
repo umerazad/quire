@@ -340,7 +340,7 @@ fn text_start(block: &AnchoredBlock, snapshot: &MultiBufferSnapshot) -> MultiBuf
     let prefix: String = snapshot
         .chars_at(start)
         .take(crate::task_marker::PREFIX_CHAR_LIMIT)
-        .take_while(|c| *c != '\n')
+        .take_while(|c| !matches!(c, '\n' | '\r'))
         .collect();
     let Some(task) = crate::task_marker::read(&prefix) else {
         return start;
@@ -656,7 +656,7 @@ impl Folding<'_> {
             let content: String = self
                 .snapshot
                 .chars_at(marker.end)
-                .take_while(|c| *c != '\n')
+                .take_while(|c| !matches!(c, '\n' | '\r'))
                 .take(crate::task_marker::PREFIX_CHAR_LIMIT)
                 .collect();
             if let Some(task) = crate::task_marker::read(&content) {
@@ -1853,11 +1853,18 @@ fn checkbox_placeholder(
         constrain_width: false,
         merge_adjacent: false,
         type_tag: Some(TypeId::of::<Projection>()),
-        render: Arc::new(move |_, range, _| {
+        render: Arc::new(move |_, range, cx| {
             let editor = editor.clone();
             let source = source.clone();
+            let group = gpui::SharedString::from(format!("quire-task-checkbox-{ordinal}"));
             inline_control(("quire-task-checkbox", ordinal), editor.clone())
                 .debug_selector(|| "quire-task-checkbox".into())
+                .group(group.clone())
+                .h_full()
+                .flex()
+                .items_center()
+                .pr(gpui::px(6.))
+                .cursor_pointer()
                 .role(gpui::Role::CheckBox)
                 .aria_label(if checked {
                     "Mark task incomplete"
@@ -1869,7 +1876,7 @@ fn checkbox_placeholder(
                 } else {
                     gpui::Toggled::False
                 })
-                .child(ui::Checkbox::new("task-marker", checked.into()).visualization_only(true))
+                .child(crate::task_controls::checkbox(checked, group, cx))
                 .on_click(move |_, window, cx| {
                     cx.stop_propagation();
                     editor
@@ -2267,6 +2274,14 @@ fn apply_blocks(
             .any(|(braces, ..)| braces.start < range.end && range.start < braces.end)
     };
     links.retain(|link| !in_query(&link.range));
+    if crate::tag_labels::formats(cx) {
+        let tags = quire_core::markdown::wiki_tags(&page_text, references);
+        links.retain(|link| {
+            !tags
+                .iter()
+                .any(|tag| tag.range.start + 1 == link.range.start)
+        });
+    }
     let previews: Vec<_> = previews
         .into_iter()
         .filter(|preview| !in_query(&preview.range))
@@ -2339,6 +2354,7 @@ fn apply_blocks(
         })
         .collect();
     crate::code_format::toolbar::sync(editor, toolbars);
+    crate::task_controls::sync(editor, &page_text, blocks, shown, anchor, window, cx);
     let lists = queries
         .into_iter()
         .filter(|(braces, ..)| shown(braces))
@@ -2522,6 +2538,7 @@ pub fn unbind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
         crate::media::clear(editor, cx);
         crate::task_lists::clear(editor, cx);
         crate::code_format::toolbar::clear(editor);
+        crate::task_controls::clear(editor, cx);
         editor
             .buffer()
             .update(cx, |buffer, _| buffer.set_edit_filter(None));
