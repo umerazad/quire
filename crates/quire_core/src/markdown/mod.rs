@@ -15,7 +15,7 @@ pub(crate) mod copies;
 pub use copies::{Addresses, block_id_range, copy_with_new_ids, fresh_ids, renamed_ids};
 
 mod tags;
-pub use tags::{TagToken, tag_completion_range, tags};
+pub use tags::{TagToken, tag_completion_range, tags, wiki_tags};
 
 mod words;
 pub use words::{count_words, plural, reading_minutes};

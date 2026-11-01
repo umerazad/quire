@@ -7,8 +7,8 @@ use quire_core::daily::{DailyCalendar, DailyLayout};
 use quire_core::markdown::{Reference, ReferenceKind, ReferenceMedia, ReferenceSyntax, TagToken};
 use quire_core::tasks::{
     Action, DailyNames, DateField, Edit, Page, PageBlock, Shortcut, Task, TaskFilter, TaskState,
-    add_days, capture, created_stamp, is_due, is_upcoming, project_membership, short_date, task_at,
-    task_date_label, tasks_in,
+    add_days, capture, created_stamp, is_due, is_upcoming, next_week, project_membership,
+    short_date, task_at, task_date_label, tasks_in,
 };
 use serde_json::{Value, json};
 use std::{ops::Range, sync::LazyLock};
@@ -681,4 +681,14 @@ fn typed_dates_read_relative_phrases_weekdays_and_iso_dates() {
         let error = quire_core::tasks::date_phrase(phrase, today).unwrap_err();
         assert!(error.contains("is not a date"), "{phrase:?}: {error}");
     }
+}
+
+#[test]
+fn next_week_is_the_monday_after_today() {
+    // 2026-11-01 is a Sunday.
+    assert_eq!(next_week("2026-11-01").as_deref(), Some("2026-11-02"));
+    assert_eq!(next_week("2026-11-02").as_deref(), Some("2026-11-09"));
+    assert_eq!(next_week("2026-11-06").as_deref(), Some("2026-11-09"));
+    assert_eq!(next_week("2026-12-29").as_deref(), Some("2027-01-04"));
+    assert_eq!(next_week("not a date"), None);
 }

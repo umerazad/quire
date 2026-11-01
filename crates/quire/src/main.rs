@@ -126,6 +126,9 @@ mod task_marker;
 mod tasks;
 
 #[cfg(feature = "full-editor")]
+mod task_controls;
+
+#[cfg(feature = "full-editor")]
 mod references;
 
 #[cfg(feature = "full-editor")]

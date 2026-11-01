@@ -1,6 +1,8 @@
 //! Task commands in page editors: Cmd-Enter toggles done and Cmd-Shift-Enter cycles Inbox, Next,
 //! Waiting, Someday (Ctrl on other platforms), at the caret or across a selection, and the
-//! Write view's checkbox toggles through the same command. Each command is one undoable source
+//! Write view's checkbox toggles through the same command. The due commands set, push to
+//! tomorrow or next Monday, or clear the due date the same way, for the keys and Write's task
+//! controls (`crate::task_controls`). Each command is one undoable source
 //! transaction through the Zed editor, so Write, Source, and every view of the page's shared
 //! buffer see it. Semantics live in `quire_core::tasks`; this module supplies the native
 //! Markdown analysis and the clock.
@@ -20,7 +22,15 @@ actions!(
         /// Completes the task at the caret, reopens a done one, or makes the line a task.
         ToggleTask,
         /// Moves the task at the caret to its next state: Inbox, Next, Waiting, Someday.
-        CycleTask
+        CycleTask,
+        /// Makes the task at the caret, or every selected task, due tomorrow.
+        DueTomorrow,
+        /// Makes the task at the caret, or every selected task, due next Monday.
+        DueNextWeek,
+        /// Removes the due date of the task at the caret, or of every selected task.
+        ClearDueDate,
+        /// Opens a field after the task at the caret to type its due date.
+        SetDueDate
     ]
 );
 
@@ -84,6 +94,42 @@ pub fn init(cx: &mut App) {
                     .detach(),
             }
         }
+        let dated = |due: Due| {
+            let handle = handle.clone();
+            move |window: &mut Window, cx: &mut App| {
+                let handled = handle.upgrade().is_some_and(|editor| {
+                    editor.update(cx, |editor, cx| set_due(editor, &due, None, window, cx))
+                });
+                if !handled {
+                    cx.propagate();
+                }
+            }
+        };
+        let tomorrow = dated(Due::Tomorrow);
+        let next_week = dated(Due::NextWeek);
+        let clear = dated(Due::Clear);
+        editor
+            .register_action(move |_: &DueTomorrow, window, cx| tomorrow(window, cx))
+            .detach();
+        editor
+            .register_action(move |_: &DueNextWeek, window, cx| next_week(window, cx))
+            .detach();
+        editor
+            .register_action(move |_: &ClearDueDate, window, cx| clear(window, cx))
+            .detach();
+        let handle = handle.clone();
+        editor
+            .register_action(move |_: &SetDueDate, window, cx| {
+                let handled = handle.upgrade().is_some_and(|editor| {
+                    editor.update(cx, |editor, cx| {
+                        crate::task_controls::pick_at_caret(editor, window, cx)
+                    })
+                });
+                if !handled {
+                    cx.propagate();
+                }
+            })
+            .detach();
     })
     .detach();
     let platform = |mac: &'static str, other: &'static str| {
@@ -102,6 +148,21 @@ pub fn init(cx: &mut App) {
         KeyBinding::new(
             platform("cmd-shift-enter", "ctrl-shift-enter"),
             CycleTask,
+            Some(CONTEXT),
+        ),
+        KeyBinding::new(
+            platform("cmd-alt-t", "alt-shift-t"),
+            DueTomorrow,
+            Some(CONTEXT),
+        ),
+        KeyBinding::new(
+            platform("cmd-alt-n", "alt-shift-n"),
+            DueNextWeek,
+            Some(CONTEXT),
+        ),
+        KeyBinding::new(
+            platform("cmd-shift-d", "ctrl-shift-d"),
+            SetDueDate,
             Some(CONTEXT),
         ),
     ]);
@@ -182,6 +243,99 @@ fn run(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> bool {
+    run_planned(
+        editor,
+        at,
+        window,
+        cx,
+        |page, tasks, days, today, (tail, head)| {
+            if tail == head {
+                quire_core::tasks::task_at(page, tasks, days, today, head, (tail, head), shortcut)
+            } else {
+                quire_core::tasks::tasks_in(
+                    page,
+                    tasks,
+                    days,
+                    today,
+                    tail.min(head)..tail.max(head),
+                    shortcut,
+                )
+                .map(|edits| TaskEdit {
+                    edits,
+                    selection: None,
+                })
+            }
+        },
+    )
+}
+
+/// A due date the due commands set, or none to clear it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Due {
+    Today,
+    Tomorrow,
+    NextWeek,
+    On(String),
+    Clear,
+}
+
+impl Due {
+    /// The ISO date this sets, counted from `today`; `None` clears the due date.
+    pub fn date(&self, today: &str) -> Option<String> {
+        match self {
+            Self::Today => Some(today.to_owned()),
+            Self::Tomorrow => quire_core::tasks::add_days(today, 1),
+            Self::NextWeek => quire_core::tasks::next_week(today),
+            Self::On(date) => Some(date.clone()),
+            Self::Clear => None,
+        }
+    }
+}
+
+const NO_DATE: &str = "Cannot count that due date from today. Pick the date with Set due date.";
+
+/// Sets or clears the due date of the task at every caret and of every task on selected lines,
+/// as one undoable change. `at` (a view offset) replaces the selections, for a task's controls.
+pub(crate) fn set_due(
+    editor: &mut Editor,
+    due: &Due,
+    at: Option<usize>,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> bool {
+    run_planned(
+        editor,
+        at,
+        window,
+        cx,
+        |page, tasks, days, today, (tail, head)| {
+            let date = due.date(today);
+            if date.is_none() && *due != Due::Clear {
+                return Err(NO_DATE);
+            }
+            quire_core::tasks::due_in(
+                page,
+                tasks,
+                days,
+                tail.min(head)..tail.max(head),
+                date.as_deref(),
+            )
+            .map(|edits| TaskEdit {
+                edits,
+                selection: None,
+            })
+        },
+    )
+}
+
+/// Runs a planned task change at every caret and across every selection, as [`run`] describes.
+fn run_planned(
+    editor: &mut Editor,
+    at: Option<usize>,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+    plan: impl Fn(&Page, &[Task], &DailyNames, &str, (usize, usize)) -> Result<TaskEdit, &'static str>,
+) -> bool {
     let multi = editor.buffer().read(cx).snapshot(cx);
     let offset = |anchor: &multi_buffer::Anchor| anchor.to_offset(&multi).0;
     let newest = editor.selections.newest_anchor();
@@ -239,32 +393,7 @@ fn run(
         let tasks: Vec<Task> = page.tasks(&days);
         ranges
             .iter()
-            .map(|&(tail, head)| {
-                if tail == head {
-                    quire_core::tasks::task_at(
-                        page,
-                        &tasks,
-                        &days,
-                        &today,
-                        head,
-                        (tail, head),
-                        shortcut,
-                    )
-                } else {
-                    quire_core::tasks::tasks_in(
-                        page,
-                        &tasks,
-                        &days,
-                        &today,
-                        tail.min(head)..tail.max(head),
-                        shortcut,
-                    )
-                    .map(|edits| TaskEdit {
-                        edits,
-                        selection: None,
-                    })
-                }
-            })
+            .map(|&range| plan(page, &tasks, &days, &today, range))
             .collect()
     });
     match combine(planned) {
