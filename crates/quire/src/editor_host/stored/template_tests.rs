@@ -26,12 +26,13 @@ fn shown_path(notebook: &Notebook, cx: &mut TestAppContext) -> Option<String> {
 }
 
 /// Whether nothing can redraw the window soon: every open page is saved with no save in flight,
-/// the index has analyzed every save, and no index status line is shown above the sidebar.
+/// the index has analyzed every save, and it shows no progress or problem.
 fn quiet(notebook: &Notebook, cx: &mut TestAppContext) -> bool {
     let client = read(notebook, cx, |view, cx| view.index_client(cx).unwrap());
     futures::executor::block_on(client.unanalyzed().unwrap()).unwrap() == 0
         && read(notebook, cx, |view, cx| {
-            view.index_status(cx).is_none()
+            view.index_problem(cx).is_none()
+                && view.index_progress(cx).is_none()
                 && view.session.borrow().open_pages().iter().all(|page| {
                     page.read(cx).persistence().is_none_or(|persistence| {
                         let persistence = persistence.read(cx);
@@ -42,7 +43,7 @@ fn quiet(notebook: &Notebook, cx: &mut TestAppContext) -> bool {
 }
 
 /// Clicks once the window is quiet. A GPUI test click runs the executor between the press and
-/// the release, so a save reply or an index status line appearing then would move the layout
+/// the release, so a save reply or an index problem line appearing then would move the layout
 /// under the pointer and lose the click.
 pub(super) fn click(notebook: &Notebook, selector: &'static str, cx: &mut TestAppContext) {
     wait_until(cx, "a quiet window", |cx| quiet(notebook, cx));

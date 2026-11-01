@@ -357,6 +357,13 @@ impl IndexSync {
             remaining => format!("Indexing notebook: {remaining} pages left").into(),
         })
     }
+
+    /// Reports `remaining` pages left until the index next reports progress itself.
+    #[cfg(test)]
+    pub(crate) fn show_remaining(&mut self, remaining: usize, cx: &mut Context<Self>) {
+        self.remaining = remaining;
+        cx.notify();
+    }
 }
 
 #[cfg(feature = "test-support")]
