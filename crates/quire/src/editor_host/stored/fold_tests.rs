@@ -172,3 +172,52 @@ fn folded_blocks_come_back_when_the_page_opens_again(cx: &mut TestAppContext) {
         !saved_folds(&notebook).contains("Other")
     });
 }
+
+/// A fold made or opened in a zoom reaches the page's view while the zoom is still open, not
+/// only when the page opens again.
+#[gpui::test]
+fn folds_made_in_a_zoom_reach_the_page_view_at_once(cx: &mut TestAppContext) {
+    let page = "- Parent ^p\n  - Child ^c\n    - Grand\n- Last\n";
+    let notebook = open_notebook(&[("s", "Source.md", page)], "s", cx);
+    show_written(&notebook, cx);
+    let editor = write_editor(&notebook, cx);
+    let at = editor::MultiBufferOffset(page.find("Parent").unwrap());
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            view.focus_active(window, cx);
+            editor.update(cx, |editor, cx| {
+                editor.change_selections(Default::default(), window, cx, |selections| {
+                    selections.select_ranges([at..at])
+                });
+                window.focus(&gpui::Focusable::focus_handle(editor, cx), cx);
+            });
+        })
+        .unwrap();
+    draw(&notebook, cx);
+    let zoom = if cfg!(target_os = "macos") {
+        "cmd-."
+    } else {
+        "ctrl-."
+    };
+    cx.simulate_keystrokes(notebook.window.into(), zoom);
+    let zoomed = read(&notebook, cx, |view, cx| {
+        let page = view.editor.clone().expect("an open page");
+        let page = page.read(cx);
+        (0..2)
+            .find(|&pane| page.zooms[pane].is_some())
+            .map(|pane| page.shown(pane))
+            .expect("a zoom")
+    });
+    assert_ne!(zoomed, editor, "the zoom has its own view");
+    draw(&notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "j z c");
+    assert_eq!(shown(&zoomed, cx), "Parent\n  Child⋯");
+    wait_until(cx, "the page view to fold Child", |cx| {
+        shown(&editor, cx) == "Parent\n  Child⋯\nLast\n"
+    });
+    cx.simulate_keystrokes(notebook.window.into(), "z o");
+    wait_until(cx, "the page view to open Child", |cx| {
+        shown(&editor, cx) == "Parent\n  Child\n    Grand\nLast\n"
+    });
+}

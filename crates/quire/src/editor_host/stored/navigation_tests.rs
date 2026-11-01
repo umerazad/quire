@@ -106,6 +106,17 @@ pub(super) fn settle(notebook: &Notebook, cx: &mut TestAppContext) {
     wait_until(cx, "indexing", |_| {
         futures::executor::block_on(client.unanalyzed().unwrap()).unwrap() == 0
     });
+    // Views re-run their queries when the index sync announces the analyzed pages, which can
+    // come a step after the index itself has none left.
+    let (generation, ()) =
+        futures::executor::block_on(client.with_generation(|_| Ok(())).unwrap()).unwrap();
+    wait_until(cx, "the index sync to announce the analyzed pages", |cx| {
+        read(notebook, cx, |view, cx| {
+            view.index
+                .as_ref()
+                .is_ok_and(|index| index.read(cx).announced_generation() >= generation)
+        })
+    });
     notebook
         .window
         .update(cx, |view, _, cx| view.refresh_catalogue(cx))

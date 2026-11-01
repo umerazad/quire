@@ -43,6 +43,9 @@ actions!(
         DeleteBackward,
         /// Delete at a block's text end pulls in the next block.
         DeleteForward,
+        /// Alt-Backspace at a block's text start merges it into the block above, as Backspace
+        /// does; elsewhere it goes on to the platform's word deletion.
+        MergeBackward,
         /// Cmd-Backspace (Ctrl-Backspace off macOS) deletes back to the list item's text start,
         /// keeping its marker.
         DeleteToTextStart,
@@ -157,11 +160,25 @@ pub fn init(cx: &mut App) {
             move_block(editor, false, window, cx)
         });
         register(editor, cx, |editor, _: &DeleteBackward, window, cx| {
-            merge(editor, false, window, cx)
+            delete_empty_link(editor, window, cx).or_else(|| merge(editor, false, window, cx))
         });
         register(editor, cx, |editor, _: &DeleteForward, window, cx| {
             merge(editor, true, window, cx)
         });
+        register(editor, cx, |editor, _: &MergeBackward, window, cx| {
+            merge(editor, false, window, cx)
+        });
+        register(
+            editor,
+            cx,
+            |editor, action: &editor::actions::SelectToEndOfLine, window, cx| {
+                crate::editor_projection::enabled(editor).then(|| {
+                    editor.select_to_end_of_line(action, window, cx);
+                    crate::editor_projection::select_to_text_end(editor, window, cx);
+                    Handled::Done
+                })
+            },
+        );
         register(editor, cx, |editor, _: &DeleteToTextStart, window, cx| {
             delete_to_text_start(editor, window, cx)
         });
@@ -224,6 +241,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("shift-tab", OutdentBlock, Some(WRITE_INPUT)),
         KeyBinding::new("backspace", DeleteBackward, Some(WRITE_INPUT)),
         KeyBinding::new("delete", DeleteForward, Some(WRITE_INPUT)),
+        KeyBinding::new("alt-backspace", MergeBackward, Some(WRITE_INPUT)),
         KeyBinding::new(platform("cmd-v", "ctrl-v"), PasteBlocks, Some(WRITE_INPUT)),
         KeyBinding::new(
             platform("cmd-a", "ctrl-a"),
@@ -294,8 +312,8 @@ fn bind_keys(cx: &mut App) {
         ),
         KeyBinding::new(">", IndentLine, Some(WRITE_VISUAL)),
         KeyBinding::new("<", OutdentLine, Some(WRITE_VISUAL)),
-        // rt binds Mod-Backspace everywhere. Quire binds no word deletion to Ctrl-Backspace, so
-        // off macOS it is free for the same command.
+        // rt binds Mod-Backspace everywhere, ahead of the platform's line or word deletion, which
+        // runs when the caret is not after a list item's text start.
         KeyBinding::new(
             platform("cmd-backspace", "ctrl-backspace"),
             DeleteToTextStart,
@@ -898,6 +916,17 @@ fn move_block(
     finish(editor, &page, outcome, window, cx)
 }
 
+fn delete_empty_link(
+    editor: &mut Editor,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> Option<Handled> {
+    let page = page(editor, cx)?;
+    let plan = model::delete_empty_link(&page.text, page.caret()?)?;
+    apply(editor, &page, plan, window, cx);
+    Some(Handled::Done)
+}
+
 fn merge(
     editor: &mut Editor,
     forward: bool,
@@ -906,10 +935,6 @@ fn merge(
 ) -> Option<Handled> {
     let page = page(editor, cx)?;
     let head = page.caret()?;
-    if !forward && let Some(plan) = model::delete_empty_link(&page.text, head) {
-        apply(editor, &page, plan, window, cx);
-        return Some(Handled::Done);
-    }
     let outcome = if forward {
         model::merge_forward(&page.text, &page.blocks, head)
     } else {
@@ -947,8 +972,14 @@ fn delete_to_text_start(
     cx: &mut Context<Editor>,
 ) -> Option<Handled> {
     let page = page(editor, cx)?;
-    let plan = model::delete_to_text_start(&page.text, &page.blocks, page.caret()?)?;
-    apply(editor, &page, plan, window, cx);
+    let head = page.caret()?;
+    match model::delete_to_text_start(&page.text, &page.blocks, head) {
+        Some(plan) => apply(editor, &page, plan, window, cx),
+        // At the text start the line deletion would remove the hidden marker; Write keeps it.
+        None if model::list_line(&page.text, &page.blocks, head)
+            .is_some_and(|(_, bounds)| bounds.text_start == head) => {}
+        None => return None,
+    }
     Some(Handled::Done)
 }
 

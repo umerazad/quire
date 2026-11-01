@@ -104,28 +104,26 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
         KeyBinding::new(shortcuts[4], editor::actions::Cut, Some(EDITOR_CONTEXT)),
         KeyBinding::new(shortcuts[5], editor::actions::Paste, Some(EDITOR_CONTEXT)),
     ]);
-    let mut keymap =
-        settings::KeymapFile::parse(settings::vim_keymap().as_ref()).map_err(|error| {
-            format!("Cannot read the bundled Vim bindings: {error}. Rebuild or reinstall Quire.")
-        })?;
-    keymap.retain_sections(|section| editor_vim_context(&section.context));
-    keymap.constrain_contexts("!QuireControl");
-    match keymap.load_keymap(cx) {
-        settings::KeymapFileLoadResult::Success { key_bindings } => cx.bind_keys(key_bindings),
-        settings::KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => {
-            return Err(format!(
-                "Cannot load Quire Vim bindings: {error_message:?}. Rebuild or reinstall Quire."
-            ));
-        }
-        settings::KeymapFileLoadResult::JsonParseFailure { error } => {
-            return Err(format!(
-                "Cannot parse Quire Vim bindings: {error}. Rebuild or reinstall Quire."
-            ));
-        }
-    }
+    load_keymap(
+        if cfg!(target_os = "macos") {
+            TEXT_KEYS_MACOS
+        } else {
+            TEXT_KEYS_OTHER
+        },
+        "text editing",
+        |_| true,
+        cx,
+    )?;
+    load_keymap(
+        settings::vim_keymap().as_ref(),
+        "Vim",
+        editor_vim_context,
+        cx,
+    )?;
     crate::editor_search::bind_keys(cx);
     crate::editor_command::bind_keys(cx);
     crate::outline::init(cx);
+    crate::write_style::init(cx);
     crate::block_move::init(cx);
     crate::code_format::init(cx);
     crate::task_lists::init(cx);
@@ -178,6 +176,82 @@ fn write_and_source_keys() -> [KeyBinding; 3] {
             KeyBinding::new("ctrl-shift-m", TogglePresentation, Some(EDITOR_CONTEXT)),
             KeyBinding::new("ctrl-y", editor::actions::Redo, Some(without_vim)),
         ]
+    }
+}
+
+/// Selection, word, line, and page keys as the platform's text fields and `rt`'s CodeMirror
+/// standard keymap bind them. Write's own bindings, such as moving blocks, sit in deeper contexts
+/// and win where they apply.
+const TEXT_KEYS_MACOS: &str = r#"[{"context": "Editor", "bindings": {
+    "shift-left": "editor::SelectLeft",
+    "shift-right": "editor::SelectRight",
+    "shift-up": "editor::SelectUp",
+    "shift-down": "editor::SelectDown",
+    "shift-home": ["editor::SelectToBeginningOfLine", {"stop_at_soft_wraps": true, "stop_at_indent": true}],
+    "shift-end": ["editor::SelectToEndOfLine", {"stop_at_soft_wraps": true}],
+    "cmd-left": ["editor::MoveToBeginningOfLine", {"stop_at_soft_wraps": true, "stop_at_indent": true}],
+    "cmd-right": ["editor::MoveToEndOfLine", {"stop_at_soft_wraps": true}],
+    "cmd-shift-left": ["editor::SelectToBeginningOfLine", {"stop_at_soft_wraps": true, "stop_at_indent": true}],
+    "cmd-shift-right": ["editor::SelectToEndOfLine", {"stop_at_soft_wraps": true}],
+    "alt-left": "editor::MoveToPreviousWordStart",
+    "alt-right": "editor::MoveToNextWordEnd",
+    "alt-shift-left": "editor::SelectToPreviousWordStart",
+    "alt-shift-right": "editor::SelectToNextWordEnd",
+    "cmd-up": "editor::MoveToBeginning",
+    "cmd-down": "editor::MoveToEnd",
+    "cmd-shift-up": "editor::SelectToBeginning",
+    "cmd-shift-down": "editor::SelectToEnd",
+    "pageup": "editor::MovePageUp",
+    "pagedown": "editor::MovePageDown",
+    "alt-backspace": "editor::DeleteToPreviousWordStart",
+    "alt-delete": "editor::DeleteToNextWordEnd",
+    "cmd-backspace": "editor::DeleteToBeginningOfLine"
+}}]"#;
+
+const TEXT_KEYS_OTHER: &str = r#"[{"context": "Editor", "bindings": {
+    "shift-left": "editor::SelectLeft",
+    "shift-right": "editor::SelectRight",
+    "shift-up": "editor::SelectUp",
+    "shift-down": "editor::SelectDown",
+    "shift-home": ["editor::SelectToBeginningOfLine", {"stop_at_soft_wraps": true, "stop_at_indent": true}],
+    "shift-end": ["editor::SelectToEndOfLine", {"stop_at_soft_wraps": true}],
+    "ctrl-left": "editor::MoveToPreviousWordStart",
+    "ctrl-right": "editor::MoveToNextWordEnd",
+    "ctrl-shift-left": "editor::SelectToPreviousWordStart",
+    "ctrl-shift-right": "editor::SelectToNextWordEnd",
+    "ctrl-home": "editor::MoveToBeginning",
+    "ctrl-end": "editor::MoveToEnd",
+    "ctrl-shift-home": "editor::SelectToBeginning",
+    "ctrl-shift-end": "editor::SelectToEnd",
+    "pageup": "editor::MovePageUp",
+    "pagedown": "editor::MovePageDown",
+    "ctrl-backspace": "editor::DeleteToPreviousWordStart",
+    "ctrl-delete": "editor::DeleteToNextWordEnd"
+}}]"#;
+
+/// Binds the sections of a bundled keymap whose context `keep` accepts, outside Quire's own controls.
+fn load_keymap(
+    source: &str,
+    name: &str,
+    keep: impl Fn(&str) -> bool,
+    cx: &mut App,
+) -> Result<(), String> {
+    let mut keymap = settings::KeymapFile::parse(source).map_err(|error| {
+        format!("Cannot read the bundled {name} bindings: {error}. Rebuild or reinstall Quire.")
+    })?;
+    keymap.retain_sections(|section| keep(&section.context));
+    keymap.constrain_contexts("!QuireControl");
+    match keymap.load_keymap(cx) {
+        settings::KeymapFileLoadResult::Success { key_bindings } => {
+            cx.bind_keys(key_bindings);
+            Ok(())
+        }
+        settings::KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => Err(format!(
+            "Cannot load Quire {name} bindings: {error_message:?}. Rebuild or reinstall Quire."
+        )),
+        settings::KeymapFileLoadResult::JsonParseFailure { error } => Err(format!(
+            "Cannot parse Quire {name} bindings: {error}. Rebuild or reinstall Quire."
+        )),
     }
 }
 

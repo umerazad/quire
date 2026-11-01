@@ -301,3 +301,72 @@ fn urdu_lines_are_set_in_nastaliq_in_write(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+/// rt's `scriptLines` sets Urdu lines in Nastaliq in Source as in Write, and Source follows edits.
+#[gpui::test]
+fn urdu_lines_are_set_in_nastaliq_in_source(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).unwrap());
+    let text = "- عربي فقط\n- یہ اردو ہے\n";
+    let window = projected(text, cx);
+    window
+        .update(cx, |view, window, cx| {
+            let editor = view.second.clone();
+            view.change_presentation(&editor, window, cx);
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+    let urdu = |cx: &mut TestAppContext| {
+        window
+            .update(cx, |view, _, cx| {
+                let editor = view.second.read(cx);
+                assert!(!crate::editor_projection::enabled(editor), "Source");
+                let text = editor.text(cx);
+                let (style, ranges) =
+                    crate::write_style::urdu_applied(editor, cx).unwrap_or_default();
+                if !ranges.is_empty() {
+                    assert_eq!(style.font_family, Some(crate::script_fonts::URDU));
+                }
+                ranges
+                    .into_iter()
+                    .map(|range| text[range].to_owned())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap()
+    };
+    assert_eq!(urdu(cx), ["یہ", "اردو", "ہے"]);
+    window
+        .update(cx, |view, _, cx| {
+            view.second.update(cx, |editor, cx| {
+                let end = editor.buffer().read(cx).len(cx);
+                editor.buffer().update(cx, |buffer, cx| {
+                    buffer.edit([(end..end, "- ٹھیک\n")], None, cx)
+                })
+            })
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert_eq!(urdu(cx), ["یہ", "اردو", "ہے", "ٹھیک"]);
+}
+
+#[gpui::test]
+fn a_page_opened_in_source_sets_urdu_in_nastaliq(cx: &mut TestAppContext) {
+    cx.update(|cx| init(cx).unwrap());
+    let text = "- یہ اردو ہے\n";
+    let window = cx.add_window(|window, cx| {
+        let buffer = crate::markdown::buffer(text, cx);
+        Editor::for_buffer(buffer, None, window, cx)
+    });
+    cx.executor().run_until_parked();
+    window
+        .update(cx, |editor, _, cx| {
+            let (_, ranges) = crate::write_style::urdu_applied(editor, cx).expect("Urdu runs");
+            assert_eq!(
+                ranges
+                    .into_iter()
+                    .map(|range| &text[range])
+                    .collect::<Vec<_>>(),
+                ["یہ", "اردو", "ہے"]
+            );
+        })
+        .unwrap();
+}

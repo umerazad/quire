@@ -522,6 +522,7 @@ fn nested(
     }
     crate::references::install(&nested, &host, window, cx);
     crate::editor_projection::bind(&nested, window, cx).ok()?;
+    crate::spellcheck::attach(&nested, &analysis, cx);
     Some(Content::Editor {
         editor: nested,
         _model: model,

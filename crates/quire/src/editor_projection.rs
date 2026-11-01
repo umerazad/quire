@@ -360,6 +360,24 @@ fn text_start(block: &AnchoredBlock, snapshot: &MultiBufferSnapshot) -> MultiBuf
     MultiBufferOffset(marker_end.0 + gap)
 }
 
+/// What Write hides after a block's text: its ID, and when it is collapsed, the ID through its
+/// children.
+fn hidden_tails(
+    block: &AnchoredBlock,
+    collapsed: &[Range<MultiBufferOffset>],
+    snapshot: &MultiBufferSnapshot,
+) -> Vec<Range<MultiBufferOffset>> {
+    let id = id_range(block, snapshot);
+    let children = block
+        .children
+        .map(|at| at.to_offset(snapshot))
+        .and_then(|children| {
+            let fold = collapsed.iter().find(|fold| fold.start == children)?;
+            Some(id.as_ref().map_or(children, |id| id.start)..fold.end)
+        });
+    children.into_iter().chain(id).collect()
+}
+
 fn id_range(
     block: &AnchoredBlock,
     snapshot: &MultiBufferSnapshot,
@@ -1492,6 +1510,45 @@ fn clamp_carets(
     }
 }
 
+/// After a selection to the line end (Shift-End, Cmd-Shift-Right), ends each selection that
+/// stopped inside a hidden ID or collapsed children at the text before them, as `rt`'s
+/// `toTextEnd` does, so typing over the selection keeps them.
+pub(crate) fn select_to_text_end(
+    editor: &mut Editor,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    let Some(blocks) = editor
+        .addon::<Projection>()
+        .map(|projection| projection.blocks.clone())
+    else {
+        return;
+    };
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let collapsed = crate::outline::folds::collapsed(editor, cx);
+    let hidden: Vec<_> = blocks
+        .iter()
+        .flat_map(|block| hidden_tails(block, &collapsed, &snapshot))
+        .collect();
+    let selections: Vec<_> = editor
+        .selections
+        .disjoint_anchors_arc()
+        .iter()
+        .map(|selection| {
+            let mut selection = selection.clone().map(|anchor| anchor.to_offset(&snapshot));
+            let head = selection.head();
+            if let Some(hidden) = hidden
+                .iter()
+                .find(|hidden| hidden.start < head && head <= hidden.end)
+            {
+                selection.set_head(hidden.start, selection.goal);
+            }
+            selection
+        })
+        .collect();
+    editor.change_selections(Default::default(), window, cx, |s| s.select(selections));
+}
+
 fn filter_edits(
     edits: &mut [ViewEdit],
     protected: &[AnchoredBlock],
@@ -1981,6 +2038,7 @@ pub fn unbind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
             .buffer()
             .update(cx, |buffer, _| buffer.set_edit_filter(None));
         refresh(editor, &[], window, cx);
+        crate::write_style::source_urdu(editor, cx);
     });
 }
 

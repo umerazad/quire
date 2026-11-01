@@ -210,6 +210,7 @@ pub(crate) fn blocks_changed(
         && let Some((store, page)) = persisted(editor, cx)
     {
         state(editor).restored = true;
+        store.watch(&page, cx.entity().downgrade(), window.window_handle());
         let root = view_root(editor, blocks, cx);
         let ranges = super::fold_store::resolve(&text, blocks, &store.marks(&page))
             .into_iter()
@@ -280,7 +281,52 @@ fn remember(editor: &mut Editor, text: &str, blocks: &[Block], cx: &mut Context<
     folded.sort_unstable();
     folded.dedup();
     state(editor).saved = super::fold_store::marks(text, blocks, &current);
-    store.save(&page, super::fold_store::marks(text, blocks, &folded), cx);
+    store.save(
+        &page,
+        super::fold_store::marks(text, blocks, &folded),
+        cx.entity_id(),
+        cx,
+    );
+}
+
+/// Makes the view's folds the page's saved folds, after another view of the page, such as a zoom
+/// or an embed, changed them. A Source view, or one whose saved folds are not applied yet, waits.
+pub(super) fn sync(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
+    if !crate::editor_projection::enabled(editor) || !state(editor).restored {
+        return;
+    }
+    let (Some((store, page)), Some(buffer)) = (persisted(editor, cx), source_buffer(editor, cx))
+    else {
+        return;
+    };
+    let snapshot = buffer.read(cx).snapshot();
+    let Some(blocks) = crate::markdown_blocks::current_blocks(&snapshot) else {
+        return;
+    };
+    let text = snapshot.text();
+    let root = view_root(editor, &blocks, cx);
+    let wanted: Vec<_> = super::fold_store::resolve(&text, &blocks, &store.marks(&page))
+        .into_iter()
+        .filter(|block| Some(block.from) != root)
+        .filter_map(children)
+        .filter_map(|range| view_range(editor, &buffer, range, cx))
+        .collect();
+    let extra: Vec<_> = collapsed(editor, cx)
+        .into_iter()
+        .filter(|range| !wanted.contains(range))
+        .collect();
+    unfold(editor, &extra, cx);
+    let current = collapsed(editor, cx);
+    let missing = wanted
+        .into_iter()
+        .filter(|range| !current.contains(range))
+        .collect();
+    refold(editor, missing, window, cx);
+    let folded: Vec<usize> = collapsed_source(editor, cx)
+        .into_iter()
+        .map(|range| range.start)
+        .collect();
+    state(editor).saved = super::fold_store::marks(&text, &blocks, &folded);
 }
 
 /// Follows fold changes from any source, Zed's gutter and fold actions included: Write shows the

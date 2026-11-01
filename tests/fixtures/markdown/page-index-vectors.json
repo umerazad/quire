@@ -73986,5 +73986,215 @@
   "links": [],
   "tagged": [],
   "frontTags": []
+ },
+ {
+  "name": "blocks-fence-opens-at-eof-after-item",
+  "source": "- [ ] code\n```",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 10,
+    "contentFrom": 2,
+    "contentTo": 10,
+    "subtreeTo": 10,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "[ ] code"
+   },
+   {
+    "key": "at-11",
+    "id": null,
+    "from": 11,
+    "to": 14,
+    "contentFrom": 11,
+    "contentTo": 14,
+    "subtreeTo": 14,
+    "depth": 0,
+    "kind": "code",
+    "parent": null,
+    "text": "```"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-fence-with-info-opens-at-eof",
+  "source": "a\n~~~ js",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 1,
+    "contentFrom": 0,
+    "contentTo": 1,
+    "subtreeTo": 1,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "a"
+   },
+   {
+    "key": "at-2",
+    "id": null,
+    "from": 2,
+    "to": 8,
+    "contentFrom": 2,
+    "contentTo": 8,
+    "subtreeTo": 8,
+    "depth": 0,
+    "kind": "code",
+    "parent": null,
+    "text": "~~~ js"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-fence-closes-at-eof",
+  "source": "```\nx\n```",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 9,
+    "contentFrom": 0,
+    "contentTo": 9,
+    "subtreeTo": 9,
+    "depth": 0,
+    "kind": "code",
+    "parent": null,
+    "text": "```\nx\n```"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-fence-text-ending-in-backticks",
+  "source": "- a\n```\n- b\nP [[x]] ```\n- c\n```\n- d",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 3,
+    "contentFrom": 2,
+    "contentTo": 3,
+    "subtreeTo": 3,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "a"
+   },
+   {
+    "key": "at-4",
+    "id": null,
+    "from": 4,
+    "to": 31,
+    "contentFrom": 4,
+    "contentTo": 31,
+    "subtreeTo": 31,
+    "depth": 0,
+    "kind": "code",
+    "parent": null,
+    "text": "```\n- b\nP [[x]] ```\n- c\n```"
+   },
+   {
+    "key": "at-32",
+    "id": null,
+    "from": 32,
+    "to": 35,
+    "contentFrom": 34,
+    "contentTo": 35,
+    "subtreeTo": 35,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "d"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-fence-text-ending-in-backticks-in-item",
+  "source": "- a\n  ```\n  x ```\n  ```\n- b\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 23,
+    "contentFrom": 2,
+    "contentTo": 23,
+    "subtreeTo": 23,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "a\n  ```\n  x ```\n  ```"
+   },
+   {
+    "key": "at-24",
+    "id": null,
+    "from": 24,
+    "to": 27,
+    "contentFrom": 26,
+    "contentTo": 27,
+    "subtreeTo": 27,
+    "depth": 0,
+    "kind": "list",
+    "parent": null,
+    "text": "b"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
+ },
+ {
+  "name": "blocks-fence-text-ending-in-tildes-in-quote",
+  "source": "> ~~~\n> x ~~~\n> ~~~\nafter\n",
+  "blocks": [
+   {
+    "key": "at-0",
+    "id": null,
+    "from": 0,
+    "to": 19,
+    "contentFrom": 0,
+    "contentTo": 19,
+    "subtreeTo": 19,
+    "depth": 0,
+    "kind": "quote",
+    "parent": null,
+    "text": "> ~~~\n> x ~~~\n> ~~~"
+   },
+   {
+    "key": "at-20",
+    "id": null,
+    "from": 20,
+    "to": 25,
+    "contentFrom": 20,
+    "contentTo": 25,
+    "subtreeTo": 25,
+    "depth": 0,
+    "kind": "paragraph",
+    "parent": null,
+    "text": "after"
+   }
+  ],
+  "links": [],
+  "tagged": [],
+  "frontTags": []
  }
 ]

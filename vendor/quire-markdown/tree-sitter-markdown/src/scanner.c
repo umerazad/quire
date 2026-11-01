@@ -191,6 +191,9 @@ static const uint8_t STATE_FIRST_LINE_PIPE = 0x1 << 6;
 // A list marker ended at EOF, so its item still needs the empty line Lezer
 // sees there
 static const uint8_t STATE_EMPTY_ITEM_AT_EOF = 0x1 << 2;
+// A code fence opened at EOF, so it still needs the line ending Lezer sees
+// there
+static const uint8_t STATE_FENCE_AT_EOF = 0x1 << 3;
 
 static size_t roundup_32(size_t x) {
     x--;
@@ -396,6 +399,9 @@ typedef struct {
     uint8_t column;
     // The delimiter length of the currently open fenced code block
     uint8_t fenced_code_block_delimiter_length;
+    // The column where the current line's content starts, after its container
+    // prefixes, capped at 255. A fence closes only there, as in Lezer.
+    uint8_t line_column;
 
     bool simulate;
 
@@ -403,6 +409,8 @@ typedef struct {
     // interrupt check fed by every advance while it is active.
     size_t advanced;
     TableRows rows;
+    // Transient: whether this call starts where the line's content starts.
+    bool line_start;
 } Scanner;
 
 static void reserve_blocks(Scanner *s, size_t count) {
@@ -475,6 +483,7 @@ static unsigned serialize(Scanner *s, char *buffer) {
     buffer[size++] = (char)s->indentation;
     buffer[size++] = (char)s->column;
     buffer[size++] = (char)s->fenced_code_block_delimiter_length;
+    buffer[size++] = (char)s->line_column;
     size_t blocks_count = s->open_blocks.size;
     // The buffer is fixed-size (TREE_SITTER_SERIALIZATION_BUFFER_SIZE), and deep
     // nesting (240+ open blocks) doesn't fit; writing past the end corrupts the
@@ -511,6 +520,7 @@ static void deserialize(Scanner *s, const char *buffer, unsigned length) {
     s->indentation = 0;
     s->column = 0;
     s->fenced_code_block_delimiter_length = 0;
+    s->line_column = 0;
     if (length > 0) {
         size_t size = 0;
         s->state = (uint8_t)buffer[size++];
@@ -518,6 +528,7 @@ static void deserialize(Scanner *s, const char *buffer, unsigned length) {
         s->indentation = (uint8_t)buffer[size++];
         s->column = (uint8_t)buffer[size++];
         s->fenced_code_block_delimiter_length = (uint8_t)buffer[size++];
+        s->line_column = (uint8_t)buffer[size++];
         size_t blocks_count = (uint8_t)buffer[size++];
         if (blocks_count > 0) {
             reserve_blocks(s, blocks_count);
@@ -694,6 +705,19 @@ static bool match(Scanner *s, TSLexer *lexer, Block block) {
     return false;
 }
 
+// A fence line that ends at EOF still needs the line ending Lezer sees there.
+static void fence_at_eof(Scanner *s, TSLexer *lexer) {
+    if (!s->simulate && lexer->eof(lexer)) {
+        s->state |= STATE_FENCE_AT_EOF;
+    }
+}
+
+// The lexer's column on its line, capped to fit the scanner state.
+static uint8_t line_column(TSLexer *lexer) {
+    uint32_t column = lexer->get_column(lexer);
+    return column > UINT8_MAX ? UINT8_MAX : (uint8_t)column;
+}
+
 static bool parse_fenced_code_block(Scanner *s, const char delimiter,
                                     TSLexer *lexer, const bool *valid_symbols) {
     // count the number of backticks
@@ -706,14 +730,17 @@ static bool parse_fenced_code_block(Scanner *s, const char delimiter,
     // If this is able to close a fenced code block then that is the only valid
     // interpretation. It can only close a fenced code block if the number of
     // backticks is at least the number of backticks of the opening delimiter.
-    // Also it cannot be indented more than 3 spaces.
+    // Also it cannot be indented more than 3 spaces, and, as in Lezer, it must
+    // start the line's content rather than follow text on the line.
     if ((delimiter == '`' ? valid_symbols[FENCED_CODE_BLOCK_END_BACKTICK]
                           : valid_symbols[FENCED_CODE_BLOCK_END_TILDE]) &&
-        s->indentation < 4 && level >= s->fenced_code_block_delimiter_length) {
+        s->line_start && s->indentation < 4 &&
+        level >= s->fenced_code_block_delimiter_length) {
         while (lexer->lookahead == ' ' || lexer->lookahead == '\t') {
             advance(s, lexer);
         }
-        if (lexer->lookahead == '\n' || lexer->lookahead == '\r') {
+        if (at_line_end(lexer)) {
+            fence_at_eof(s, lexer);
             s->fenced_code_block_delimiter_length = 0;
             lexer->result_symbol = delimiter == '`'
                                        ? FENCED_CODE_BLOCK_END_BACKTICK
@@ -727,15 +754,12 @@ static bool parse_fenced_code_block(Scanner *s, const char delimiter,
                           : valid_symbols[FENCED_CODE_BLOCK_START_TILDE]) &&
         level >= 3) {
         bool info_string_has_backtick = false;
-        if (delimiter == '`') {
-            while (lexer->lookahead != '\n' && lexer->lookahead != '\r' &&
-                   !lexer->eof(lexer)) {
-                if (lexer->lookahead == '`') {
-                    info_string_has_backtick = true;
-                    break;
-                }
-                advance(s, lexer);
+        while (!at_line_end(lexer)) {
+            if (delimiter == '`' && lexer->lookahead == '`') {
+                info_string_has_backtick = true;
+                break;
             }
+            advance(s, lexer);
         }
         // If it does not then choose to interpret this as the start of a fenced
         // code block.
@@ -743,8 +767,10 @@ static bool parse_fenced_code_block(Scanner *s, const char delimiter,
             lexer->result_symbol = delimiter == '`'
                                        ? FENCED_CODE_BLOCK_START_BACKTICK
                                        : FENCED_CODE_BLOCK_START_TILDE;
-            if (!s->simulate)
+            if (!s->simulate) {
                 push_block(s, FENCED_CODE_BLOCK);
+                fence_at_eof(s, lexer);
+            }
             // Remember the length of the delimiter for later, since we need it
             // to decide whether a sequence of backticks can close the block.
             s->fenced_code_block_delimiter_length = level;
@@ -1628,6 +1654,11 @@ static bool scan(Scanner *s, TSLexer *lexer, const bool *valid_symbols) {
             lexer->result_symbol = BLANK_LINE_START;
             return true;
         }
+        if ((s->state & STATE_FENCE_AT_EOF) && valid_symbols[LINE_ENDING]) {
+            s->state &= ~STATE_FENCE_AT_EOF;
+            lexer->result_symbol = LINE_ENDING;
+            return true;
+        }
         if (s->open_blocks.size > 0) {
             lexer->result_symbol = BLOCK_CLOSE;
             if (!s->simulate)
@@ -1646,6 +1677,12 @@ static bool scan(Scanner *s, TSLexer *lexer, const bool *valid_symbols) {
             !valid_symbols[PIPE_TABLE_START]) {
             return paragraph_pipe_check(s, lexer, -1);
         }
+        // Only a call where the line's content starts may close a fence. The
+        // column is read only there, since reading it is not free.
+        s->line_start =
+            !(valid_symbols[FENCED_CODE_BLOCK_END_BACKTICK] ||
+              valid_symbols[FENCED_CODE_BLOCK_END_TILDE]) ||
+            line_column(lexer) == s->line_column;
         // Parse any preceeding whitespace and remember its length. This makes a
         // lot of parsing quite a bit easier.
         for (;;) {
@@ -1766,6 +1803,7 @@ static bool scan(Scanner *s, TSLexer *lexer, const bool *valid_symbols) {
         if (partial_success) {
             if (s->matched == s->open_blocks.size) {
                 s->state &= (~STATE_MATCHING);
+                s->line_column = line_column(lexer);
             }
             lexer->result_symbol = BLOCK_CONTINUATION;
             return true;
@@ -1776,6 +1814,7 @@ static bool scan(Scanner *s, TSLexer *lexer, const bool *valid_symbols) {
             pop_block(s);
             if (s->matched == s->open_blocks.size) {
                 s->state &= (~STATE_MATCHING);
+                s->line_column = line_column(lexer);
             }
             return true;
         }
@@ -1904,6 +1943,7 @@ void *tree_sitter_quire_markdown_external_scanner_create(void) {
     deserialize(s, NULL, 0);
     s->advanced = 0;
     s->rows.active = false;
+    s->line_start = true;
 
     return s;
 }
@@ -1912,6 +1952,7 @@ bool tree_sitter_quire_markdown_external_scanner_scan(void *payload, TSLexer *le
                                                 const bool *valid_symbols) {
     Scanner *scanner = (Scanner *)payload;
     scanner->simulate = false;
+    scanner->line_start = true;
     scanner->advanced = 0;
     scanner->rows.active = false;
     return scan(scanner, lexer, valid_symbols);

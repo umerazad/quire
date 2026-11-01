@@ -1,7 +1,8 @@
-//! Spelling in page editors, in Write and Source, as the reference app's editor gets it from
-//! Chromium. The system checker (`Speller`) judges each prose word once per session; the page
-//! analysis's gaps keep code, URLs, references, tags, HTML, and front matter out. A check runs
-//! off the UI thread after the view or text has been quiet for [`QUIET`], over the visible rows
+//! Spelling in page editors, in Write, Source, and embedded blocks, as the reference app's
+//! editor gets it from Chromium. The system checker (`Speller`) judges each prose word once per
+//! session; the page analysis's gaps keep code, URLs, references, tags, HTML, and front matter
+//! out. A check runs off the UI thread after the view or text has been quiet for [`QUIET`], over
+//! the visible rows
 //! and a screen above and below, and leaves the word being typed alone until the caret leaves
 //! it. Misspelled words get a wavy underline in the theme's error colour; a right-click on one
 //! offers the checker's guesses, Learn spelling, and Ignore spelling at the top of the page menu.
@@ -82,6 +83,21 @@ pub(crate) fn set_speller(speller: Arc<dyn Speller>, cx: &mut App) {
         speller: Some(speller),
         misspelled: Arc::default(),
     });
+}
+
+/// The words an editor underlines, in page order.
+#[cfg(test)]
+pub(crate) fn underlined(editor: &Editor, cx: &App) -> Vec<String> {
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    editor
+        .text_highlights(key(), cx)
+        .map(|(_, ranges)| {
+            ranges
+                .iter()
+                .map(|range| snapshot.text_for_range(range.clone()).collect())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The Settings hint for Check spelling, which says when this system has no checker.

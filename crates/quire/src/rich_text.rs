@@ -256,11 +256,17 @@ impl Found {
 pub fn analyze(source: &str) -> Rich {
     let marker = quire_core::tasks::read_marker(source);
     let body = &source[marker.as_ref().map_or(0, |marker| marker.prefix_len)..];
-    let task = marker.map(|marker| marker.checked);
+    Rich {
+        task: marker.map(|marker| marker.checked),
+        ..inline(body)
+    }
+}
+
+/// Reads inline Markdown, such as a table cell's, into what shows; it has no task marker.
+pub fn inline(body: &str) -> Rich {
     let Some(tree) = parse(body) else {
         return Rich {
             text: body.replace(['\n', '\t'], " ").into(),
-            task,
             ..Rich::default()
         };
     };
@@ -306,11 +312,11 @@ pub fn analyze(source: &str) -> Rich {
         found.marks.push((tag.range.clone(), Mark::Tag(tone)));
         found.links.push((tag.range, RowLink::Tag(tag.text)));
     }
-    build(body, found, task)
+    build(body, found)
 }
 
 /// Applies the hidden ranges and maps every look and link into the shown text.
-fn build(body: &str, found: Found, task: Option<bool>) -> Rich {
+fn build(body: &str, found: Found) -> Rich {
     let mut hidden: Vec<_> = found
         .hidden
         .into_iter()
@@ -363,7 +369,7 @@ fn build(body: &str, found: Found, task: Option<bool>) -> Rich {
             .filter(|(range, _)| shown(range))
             .collect(),
         text: text.into(),
-        task,
+        task: None,
     }
 }
 
@@ -415,9 +421,17 @@ fn tone_colors(tone: usize, cx: &App) -> (Hsla, Hsla) {
 
 /// The text runs that draw `rich`, in `color` where no mark says otherwise.
 pub fn runs(rich: &Rich, color: Hsla, cx: &App) -> Vec<TextRun> {
-    let settings = theme_settings::ThemeSettings::get_global(cx);
-    let base = settings.ui_font.clone();
-    let code = settings.buffer_font.clone();
+    let base = theme_settings::ThemeSettings::get_global(cx)
+        .ui_font
+        .clone();
+    runs_in(rich, color, base, cx)
+}
+
+/// The text runs that draw `rich` in `base`, as `runs` does in the interface font.
+pub fn runs_in(rich: &Rich, color: Hsla, base: gpui::Font, cx: &App) -> Vec<TextRun> {
+    let code = theme_settings::ThemeSettings::get_global(cx)
+        .buffer_font
+        .clone();
     let colors = cx.theme().colors();
     let mut cuts: Vec<usize> = rich
         .marks
