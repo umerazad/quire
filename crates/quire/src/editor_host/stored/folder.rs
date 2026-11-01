@@ -30,6 +30,7 @@ const LISTED_RECOVERED: usize = 10;
 /// Lines of the disk version the comparison shows.
 const COMPARED_LINES: usize = 400;
 
+#[derive(Clone)]
 pub(in crate::editor_host) struct FolderOptions {
     root: PathBuf,
     page: Option<String>,
@@ -192,7 +193,7 @@ fn show_folder_window_at(
     let mut session =
         NotebookSession::open_folder(root.clone(), state.clone(), Some(system_trash(cx)))?;
     let page = session.open_page(page, cx);
-    let options = crate::title_bar::options(1100., 760., cx);
+    let options = crate::title_bar::options(crate::title_bar::NOTEBOOK_SIZE, cx);
     let notebook = format!("folder:{}", root.display());
     cx.open_window(options, move |window, cx| {
         window.set_window_title("Quire Native");

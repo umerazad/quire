@@ -6,6 +6,7 @@
 //! placeholder saying what to do.
 
 pub(crate) mod attach;
+mod file_view;
 mod image_view;
 pub(crate) mod load;
 mod pdf_view;
@@ -14,6 +15,7 @@ use editor::{
     Addon, Editor, FoldPlaceholder,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
+use file_view::FileView;
 use gpui::{
     Context, Entity, Focusable as _, Pixels, SharedString, Subscription, WeakEntity, Window,
     prelude::*, px,
@@ -53,11 +55,14 @@ pub struct Found {
     pub kind: Option<MediaKind>,
 }
 
-/// Whether a reference embeds an image or PDF rather than a page or block.
+/// Whether a reference embeds an image, a PDF, or another file rather than a page or block.
 pub fn is_media_embed(reference: &Reference) -> bool {
+    let embed = reference.kind == quire_core::markdown::ReferenceKind::Embed;
     reference.media.is_some()
-        || (reference.kind == quire_core::markdown::ReferenceKind::Embed
-            && media_kind(&reference.target).is_some())
+        || (embed && media_kind(&reference.target).is_some())
+        || (embed
+            && reference.syntax == quire_core::markdown::ReferenceSyntax::Wiki
+            && file_view::is_file(&reference.target))
 }
 
 /// The media in a page outside code: Markdown images and media embeds, in text order.
@@ -170,6 +175,7 @@ pub(crate) struct Spot {
 enum View {
     Image(Entity<ImageView>),
     Pdf(Entity<PdfView>),
+    File(Entity<FileView>),
 }
 
 impl View {
@@ -177,6 +183,7 @@ impl View {
         match self {
             Self::Image(view) => view.read(cx).height(),
             Self::Pdf(view) => view.read(cx).height(),
+            Self::File(view) => view.read(cx).height(),
         }
     }
 
@@ -190,6 +197,7 @@ impl View {
             Self::Pdf(view) => view.update(cx, |view, _| {
                 fit(view.width()).then(|| view.set_width(width)).is_some()
             }),
+            Self::File(_) => false,
         }
     }
 
@@ -197,6 +205,7 @@ impl View {
         match self {
             Self::Image(view) => view.clone().into(),
             Self::Pdf(view) => view.clone().into(),
+            Self::File(view) => view.clone().into(),
         }
     }
 }
@@ -287,7 +296,13 @@ pub(crate) fn sync(
     let line_height = line_height(editor, window, cx);
     let width = column_width(editor);
     for (spot, target) in created {
-        let label = header_label(&spot, &target);
+        let file = spot.kind.is_none()
+            && media_kind(&spot.target).is_none()
+            && file_view::is_file(&spot.target);
+        let label = match file {
+            true => format!("File · {}", spot.target).into(),
+            false => header_label(&spot, &target),
+        };
         let kind = target
             .as_ref()
             .map(|target| target.kind)
@@ -295,6 +310,9 @@ pub(crate) fn sync(
             .or(spot.kind)
             .or_else(|| media_kind(&spot.target));
         let view = match kind {
+            _ if file => {
+                View::File(cx.new(|_| FileView::new(&spot.target, path.as_deref(), files.clone())))
+            }
             Some(MediaKind::Pdf) => {
                 View::Pdf(cx.new(|cx| PdfView::new(target, files.clone(), window, cx)))
             }
@@ -336,6 +354,9 @@ pub(crate) fn sync(
                 resize(editor, window, cx);
             }),
             View::Pdf(entity) => cx.observe_in(entity, window, |editor, _, window, cx| {
+                resize(editor, window, cx);
+            }),
+            View::File(entity) => cx.observe_in(entity, window, |editor, _, window, cx| {
                 resize(editor, window, cx);
             }),
         };
@@ -480,7 +501,25 @@ pub(crate) fn images(editor: &Editor) -> Vec<Entity<ImageView>> {
                 .iter()
                 .filter_map(|shown| match &shown.view {
                     View::Image(view) => Some(view.clone()),
-                    View::Pdf(_) => None,
+                    View::Pdf(_) | View::File(_) => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The file embeds this view shows, in page order.
+#[cfg(test)]
+pub(crate) fn file_embeds(editor: &Editor) -> Vec<Entity<FileView>> {
+    editor
+        .addon::<Media>()
+        .map(|media| {
+            media
+                .shown
+                .iter()
+                .filter_map(|shown| match &shown.view {
+                    View::File(view) => Some(view.clone()),
+                    View::Image(_) | View::Pdf(_) => None,
                 })
                 .collect()
         })
@@ -498,7 +537,7 @@ pub(crate) fn pdfs(editor: &Editor) -> Vec<Entity<PdfView>> {
                 .iter()
                 .filter_map(|shown| match &shown.view {
                     View::Pdf(view) => Some(view.clone()),
-                    View::Image(_) => None,
+                    View::Image(_) | View::File(_) => None,
                 })
                 .collect()
         })
@@ -518,6 +557,7 @@ pub(crate) fn fitted(editor: &Editor, cx: &gpui::App) -> Vec<(u32, f32)> {
                     let width = match &shown.view {
                         View::Image(view) => view.read(cx).width(),
                         View::Pdf(view) => view.read(cx).width(),
+                        View::File(_) => px(0.),
                     };
                     (shown.rows, f32::from(width))
                 })

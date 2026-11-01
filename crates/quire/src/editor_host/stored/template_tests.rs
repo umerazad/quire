@@ -166,13 +166,14 @@ fn the_sidebar_entry_reuses_a_templates_page_whatever_its_case(cx: &mut TestAppC
 
 /// Presses `key` once the window is quiet, so no reply moves focus between the press and the
 /// release that clicks a focused control.
-fn press(notebook: &Notebook, key: &str, cx: &mut TestAppContext) {
+pub(super) fn press(notebook: &Notebook, key: &str, cx: &mut TestAppContext) {
     wait_until(cx, "a quiet window", |cx| quiet(notebook, cx));
     crate::tab_order::press(notebook.window.into(), key, cx);
 }
 
-/// The FILES heading and Refresh files, the stops between the recents and the tree.
-const FILES_HEADING_STOPS: usize = 2;
+/// The FILES heading, New page, New folder, and Refresh files: the stops between the recents
+/// and the tree.
+const FILES_HEADING_STOPS: usize = 4;
 
 #[gpui::test]
 fn the_keyboard_reaches_the_templates_entry_and_the_guides_add_buttons(cx: &mut TestAppContext) {

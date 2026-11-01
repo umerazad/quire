@@ -1,5 +1,6 @@
 //! Opening page history for the shown page, and following a restore: the restored page shows its
-//! new version through its open buffer or the page list, and a restored copy opens.
+//! new version through its open buffer or the page list, and a restored copy opens. Also the
+//! toolbar's Attach…, the other page action that acts on the shown page's editor.
 
 use super::*;
 use crate::navigation::page_history::{Clock, PageHistory, PageHistoryEvent};
@@ -15,6 +16,17 @@ impl StoredWindow {
                 .clone()
                 .unwrap_or_else(quire_core::daily::DailyCalendar::utc),
         )
+    }
+
+    /// Attach… in the page toolbar, the reference Page actions > Add attachment: asks for files
+    /// and links them at the page's caret, as Mod-Alt-A does there.
+    pub(in crate::editor_host::stored) fn attach_files(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.focus_active(window, cx);
+        window.dispatch_action(Box::new(crate::media::attach::AttachFile), cx);
     }
 
     pub(in crate::editor_host::stored) fn show_history(

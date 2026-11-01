@@ -468,6 +468,39 @@ fn rt_backups_restore_as_new_notebooks_and_the_backups_stay_unchanged() {
 }
 
 #[test]
+fn backups_made_under_the_threadnote_name_are_listed_and_left_in_place() {
+    let fixture = fixture();
+    let destination = fixture.rt.parent().unwrap().join("older backups");
+    copy_dir(
+        &fixture.rt.join("backups/Quire"),
+        &destination.join("Threadnote"),
+    );
+    let kinds = |backups: Vec<RtBackup>| -> Vec<RtBackupKind> {
+        backups.iter().map(|backup| backup.kind).collect()
+    };
+    let legacy = list_backups(&destination);
+    assert_eq!(
+        kinds(legacy.clone()),
+        [RtBackupKind::Quire, RtBackupKind::Folder]
+    );
+    assert!(
+        legacy
+            .iter()
+            .all(|backup| backup.path.starts_with(destination.join("Threadnote")))
+    );
+    assert!(
+        !destination.join("Quire").exists(),
+        "rt's folders stay as they are"
+    );
+
+    copy_dir(
+        &fixture.rt.join("backups/Quire"),
+        &destination.join("Quire"),
+    );
+    assert_eq!(list_backups(&destination).len(), 4, "both names are listed");
+}
+
+#[test]
 fn after_editing_in_quire_rt_sees_every_save_once_publication_is_confirmed() {
     let fixture = fixture();
     fixture.migrate();

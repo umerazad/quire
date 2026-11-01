@@ -50,8 +50,93 @@ gpui::actions!(
         ShowNotebookFolder,
         /// Turns Vim bindings on or off for every editor.
         ToggleVim,
+        /// Brings every Quire window in front of other applications' windows.
+        BringAllToFront,
+        /// Shows Quire's version and its third-party licenses.
+        About,
     ]
 );
+
+/// The third-party notices the packaging scripts write beside the application.
+pub const LICENSES: &str = "THIRD-PARTY-LICENSES.md";
+
+/// Where a packaged Quire keeps [`LICENSES`], from its executable: beside it on Windows, in the
+/// bundle's Resources on macOS, and under `share/doc/quire-native` on Linux. None for a build
+/// that has no notices, such as a development build.
+pub fn licenses_file(executable: &std::path::Path) -> Option<std::path::PathBuf> {
+    let folder = executable.parent()?;
+    [
+        folder.join(LICENSES),
+        folder.join("../Resources").join(LICENSES),
+        folder.join("../share/doc/quire-native").join(LICENSES),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+}
+
+/// What About says: the version, and where the licenses are or why there are none.
+pub fn about_detail(licenses: Option<&std::path::Path>) -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    match licenses {
+        Some(path) => format!(
+            "Version {version}. Quire includes open source software; View Licenses opens their notices in {}.",
+            path.display()
+        ),
+        None => format!(
+            "Version {version}. This build has no {LICENSES}; the packaging scripts write it beside a packaged Quire. Build a package to read the third-party licenses."
+        ),
+    }
+}
+
+/// Shows About in the active window, once the menu action that asked has finished.
+fn about(cx: &mut App) {
+    let Some(window) = cx.active_window().or_else(|| cx.windows().first().copied()) else {
+        return;
+    };
+    let licenses = std::env::current_exe()
+        .ok()
+        .and_then(|executable| licenses_file(&executable));
+    cx.defer(move |cx| {
+        let detail = about_detail(licenses.as_deref());
+        let answers: &[&str] = match licenses {
+            Some(_) => &["OK", "View Licenses"],
+            None => &["OK"],
+        };
+        window
+            .update(cx, |_, window, cx| {
+                let answer =
+                    window.prompt(gpui::PromptLevel::Info, "Quire", Some(&detail), answers, cx);
+                cx.spawn(async move |cx| {
+                    if answer.await == Ok(1)
+                        && let Some(path) = licenses
+                    {
+                        cx.update(|cx| cx.open_with_system(&path));
+                    }
+                })
+                .detach();
+            })
+            .ok();
+    });
+}
+
+/// Activates every window, then the one that was in front, so all of Quire comes forward in
+/// its order.
+fn bring_all_to_front(cx: &mut App) {
+    let front = cx.active_window();
+    let windows = cx.windows();
+    cx.defer(move |cx| {
+        for window in windows.iter().filter(|window| Some(**window) != front) {
+            window
+                .update(cx, |_, window, _| window.activate_window())
+                .ok();
+        }
+        if let Some(front) = front {
+            front
+                .update(cx, |_, window, _| window.activate_window())
+                .ok();
+        }
+    });
+}
 
 pub fn init(cx: &mut App) {
     let on_active = |act: fn(&mut gpui::Window)| {
@@ -69,6 +154,8 @@ pub fn init(cx: &mut App) {
     cx.on_action(move |_: &Zoom, cx| zoom(cx));
     cx.on_action(move |_: &ToggleFullScreen, cx| full_screen(cx));
     cx.on_action(move |_: &CloseWindow, cx| close(cx));
+    cx.on_action(|_: &BringAllToFront, cx| bring_all_to_front(cx));
+    cx.on_action(|_: &About, cx| about(cx));
     cx.on_action(|_: &HideQuire, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
@@ -164,6 +251,8 @@ pub fn menus(cx: &App) -> Vec<Menu> {
     let mut menus = Vec::new();
     if cfg!(target_os = "macos") {
         menus.push(Menu::new("Quire").items([
+            MenuItem::action("About Quire", About),
+            MenuItem::separator(),
             MenuItem::action("Settings…", OpenPreferences),
             MenuItem::separator(),
             MenuItem::action("Hide Quire", HideQuire),
@@ -282,13 +371,60 @@ pub fn menus(cx: &App) -> Vec<Menu> {
         MenuItem::separator(),
         MenuItem::action("Enter Full Screen", ToggleFullScreen),
     ]));
+    // macOS lists the open windows at the end of the menu named Window.
     menus.push(Menu::new("Window").items([
         MenuItem::action("Minimize", Minimize),
         MenuItem::action("Zoom", Zoom),
+        MenuItem::separator(),
+        MenuItem::action("Close Window", CloseWindow),
+        MenuItem::action("Bring All to Front", BringAllToFront),
     ]));
-    menus.push(Menu::new("Help").items([
+    let mut help = vec![
         MenuItem::action("Help and Shortcuts", OpenHelp),
         MenuItem::action("README Sample", OpenShowcase),
-    ]));
+    ];
+    if !cfg!(target_os = "macos") {
+        help.extend([
+            MenuItem::separator(),
+            MenuItem::action("About Quire", About),
+        ]);
+    }
+    menus.push(Menu::new("Help").items(help));
     menus
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn about_finds_the_licenses_in_each_package_layout() {
+        for (executable, notices) in [
+            ("Quire/quire-native.exe", "Quire/THIRD-PARTY-LICENSES.md"),
+            (
+                "Quire.app/Contents/MacOS/quire-native",
+                "Quire.app/Contents/Resources/THIRD-PARTY-LICENSES.md",
+            ),
+            (
+                "quire/bin/quire-native",
+                "quire/share/doc/quire-native/THIRD-PARTY-LICENSES.md",
+            ),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let (executable, notices) = (root.path().join(executable), root.path().join(notices));
+            std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+            assert_eq!(licenses_file(&executable), None, "no notices yet");
+            std::fs::create_dir_all(notices.parent().unwrap()).unwrap();
+            std::fs::write(&notices, "notices").unwrap();
+            let found = licenses_file(&executable).unwrap();
+            assert_eq!(
+                std::fs::canonicalize(found).unwrap(),
+                std::fs::canonicalize(&notices).unwrap()
+            );
+            assert!(about_detail(Some(&notices)).contains("View Licenses"));
+        }
+        let missing = about_detail(None);
+        assert!(missing.contains("no THIRD-PARTY-LICENSES.md"), "{missing}");
+        assert!(missing.contains("Build a package"), "{missing}");
+    }
 }

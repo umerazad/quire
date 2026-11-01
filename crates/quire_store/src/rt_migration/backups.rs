@@ -182,10 +182,11 @@ fn verify(backup: &Path, manifest: &Manifest) -> Result<()> {
 }
 
 /// The completed `rt` backups below the backup folder `destination`, newest first. Folders
-/// without a valid manifest are left out, as `rt` lists them.
+/// without a valid manifest are left out, as `rt` lists them. Backups made before `rt` was
+/// renamed sit under `Threadnote`; `rt` renames that folder to `Quire` on its next backup
+/// (`adoptLegacyBackups`), and this lists both without changing `rt`'s folders.
 pub fn list_backups(destination: &Path) -> Vec<RtBackup> {
     let mut backups = Vec::new();
-    let quire = destination.join("Quire");
     let children = |path: &Path| -> Vec<PathBuf> {
         fs::read_dir(path)
             .into_iter()
@@ -196,7 +197,8 @@ pub fn list_backups(destination: &Path) -> Vec<RtBackup> {
             .map(|entry| entry.path())
             .collect()
     };
-    for profile in children(&quire) {
+    let named = ["Quire", "Threadnote"].map(|name| destination.join(name));
+    for profile in named.iter().flat_map(|folder| children(folder)) {
         for notebook in children(&profile) {
             for backup in children(&notebook) {
                 if let Ok((manifest, kind)) = manifest(&backup) {

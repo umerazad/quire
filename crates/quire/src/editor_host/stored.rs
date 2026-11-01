@@ -29,7 +29,7 @@ mod sync;
 pub(super) use folder::FolderOptions;
 pub(super) use instance::{Handover, handle_launch};
 pub(crate) use profiles::{dispatch_to_notebook, notebook_windows, open_in_profile};
-pub(super) use profiles::{launch_location, open_location};
+pub(super) use profiles::{launch_location, open_chosen_folder, open_location};
 
 pub(super) fn bind_keys(cx: &mut App) {
     profiles::init(cx);
@@ -130,6 +130,7 @@ impl CloseState {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct OpenOptions {
     database: PathBuf,
     notebook: String,
@@ -208,7 +209,7 @@ impl OpenOptions {
         let mut session =
             NotebookSession::open_synced(self.database, self.notebook, self.writer, self.folder)?;
         let page = session.open_page(self.page, cx);
-        let options = crate::title_bar::options(1100., 760., cx);
+        let options = crate::title_bar::options(crate::title_bar::NOTEBOOK_SIZE, cx);
         cx.open_window(options, move |window, cx| {
             window.set_window_title("Quire Native");
             cx.new(|cx| {
@@ -697,6 +698,9 @@ impl Render for StoredWindow {
                         ))
                         .child(Button::new("move-page", "Move…").on_click(
                             cx.listener(|this, _, window, cx| this.move_shown_page(window, cx)),
+                        ))
+                        .child(Button::new("attach-file", "Attach…").on_click(
+                            cx.listener(|this, _, window, cx| this.attach_files(window, cx)),
                         ))
                         .child(Button::new("page-history", "History…").on_click(
                             cx.listener(|this, _, window, cx| this.show_history(window, cx)),

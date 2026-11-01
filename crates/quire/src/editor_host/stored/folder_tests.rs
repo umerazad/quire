@@ -1414,3 +1414,100 @@ fn renaming_a_folder_without_notes_moves_it_with_its_files(cx: &mut TestAppConte
         "pdf"
     );
 }
+
+/// Moves focus from the Files tree back `stops` controls and presses Enter there.
+fn press_files_heading_button(notebook: &Notebook, stops: usize, cx: &mut TestAppContext) {
+    cx.dispatch_action(notebook.window.into(), crate::navigation::FocusFiles);
+    for _ in 0..stops {
+        super::template_tests::press(notebook, "shift-tab", cx);
+    }
+    super::template_tests::press(notebook, "enter", cx);
+    cx.run_until_parked();
+}
+
+fn type_folder(notebook: &Notebook, name: &str, cx: &mut TestAppContext) {
+    notebook
+        .window
+        .update(cx, |view, window, cx| {
+            let dialog = view.nav.dialog.clone().unwrap();
+            dialog.update(cx, |dialog, cx| dialog.select_name(window, cx));
+        })
+        .unwrap();
+    cx.simulate_input(notebook.window.into(), name);
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+}
+
+#[gpui::test]
+fn the_files_heading_new_folder_creates_the_folder_on_disk(cx: &mut TestAppContext) {
+    let opened = open_folder(
+        &[("Welcome.md", "- hi\n"), ("Scans/receipt.pdf", "pdf")],
+        "Welcome.md",
+        cx,
+    );
+    let notebook = &opened.notebook;
+    wait_until(cx, "Files to list the folder of attachments", |cx| {
+        read(notebook, cx, |view, _| {
+            view.nav.browsers.on_disk.folders == ["Scans"]
+        })
+    });
+
+    press_files_heading_button(notebook, 2, cx);
+    let typed = read(notebook, cx, |view, cx| {
+        view.nav
+            .dialog
+            .as_ref()
+            .and_then(|dialog| dialog.read(cx).name(cx))
+    });
+    assert_eq!(typed.as_deref(), Some(""), "New folder starts at the root");
+    type_folder(notebook, "scans", cx);
+    assert_eq!(
+        dialog_error(notebook, cx).as_deref(),
+        Some("scans already exists. Choose another name for the new folder."),
+        "an empty folder on disk is taken"
+    );
+
+    fs::create_dir(opened.file("Late")).unwrap();
+    type_folder(notebook, "Late", cx);
+    wait_until(cx, "the refusal from disk", |cx| {
+        dialog_error(notebook, cx).is_some_and(|error| error.contains("Late already exists"))
+    });
+
+    type_folder(notebook, "Ideas/Later", cx);
+    wait_until(cx, "the new folder", |cx| {
+        read(notebook, cx, |view, _| view.nav.dialog.is_none())
+    });
+    assert!(opened.file("Ideas/Later").is_dir());
+    wait_until(cx, "Files to show the new folder", |cx| {
+        read(notebook, cx, |view, _| {
+            view.nav
+                .browsers
+                .on_disk
+                .folders
+                .contains(&"Ideas/Later".to_owned())
+                && view.file_rows().iter().any(|row| row.path == "Ideas")
+        })
+    });
+}
+
+#[gpui::test]
+fn the_files_heading_new_page_asks_for_a_page_at_the_root(cx: &mut TestAppContext) {
+    let opened = open_folder(&[("Projects/A.md", "- a\n")], "Projects/A.md", cx);
+    let notebook = &opened.notebook;
+    super::move_tests::select_file(notebook, "Projects", cx);
+    press_files_heading_button(notebook, 3, cx);
+    assert!(read(notebook, cx, |view, _| view.nav.palette.is_some()));
+    cx.simulate_input(notebook.window.into(), "Fresh");
+    wait_until(cx, "the create row", |cx| {
+        read(notebook, cx, |view, cx| {
+            view.nav.palette.as_ref().is_some_and(|picker| {
+                let picker = picker.read(cx);
+                picker.query(cx) == "Fresh" && picker.delegate.settled()
+            })
+        })
+    });
+    draw(notebook, cx);
+    cx.simulate_keystrokes(notebook.window.into(), "enter");
+    wait_until(cx, "the new page at the root", |_| {
+        opened.file("Fresh.md").exists()
+    });
+}

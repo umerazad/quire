@@ -311,6 +311,40 @@ pub struct OpenPage {
 }
 
 impl OpenPage {
+    /// A page that lives only in `analysis`'s buffer and is never saved, such as the README
+    /// sample. It is ready at once; `client` answers the notebook-wide writes made beside it.
+    pub fn in_memory(
+        id: String,
+        path: String,
+        analysis: Entity<PageAnalysis>,
+        client: NotebookBackend,
+        cx: &App,
+    ) -> Self {
+        let baseline = analysis.read(cx).source.read(cx).snapshot();
+        let (original, _) = quire_core::source_text::SourceText::prepare(baseline.text());
+        Self {
+            id,
+            writer: None,
+            client,
+            ready: futures::future::ready(Ok(())).boxed().shared(),
+            editing: Rc::new(Cell::new(true)),
+            state: LoadState::Ready(LoadedPage {
+                analysis,
+                source: Arc::new(StoredSource::rebased(original, baseline)),
+                persistence: None,
+                heads: Vec::new(),
+                path: Some(path),
+                recovered: false,
+                deleted: false,
+                loaded_revision_bodies: 0,
+                load_time: Duration::ZERO,
+                conflict: None,
+            }),
+            status: SharedString::default(),
+            task: None,
+        }
+    }
+
     pub fn id(&self) -> &str {
         &self.id
     }

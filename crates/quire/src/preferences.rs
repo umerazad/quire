@@ -75,6 +75,14 @@ impl Settings for QuirePreferences {
 /// The Electron app's defaults, layered over Zed's own.
 pub fn apply_defaults(content: &mut SettingsContent) {
     content.vim_mode = Some(true);
+    // The reference's Vim cursors: an underline in Normal mode and a bar in Insert mode.
+    let cursors = content
+        .vim
+        .get_or_insert_default()
+        .cursor_shape
+        .get_or_insert_default();
+    cursors.normal = Some(settings::CursorShape::Underline);
+    cursors.insert = Some(settings::VimInsertModeCursorShape::Bar);
     content
         .session
         .get_or_insert_default()

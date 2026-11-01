@@ -282,3 +282,41 @@ fn a_folder_without_notes_moves_whole_unless_a_note_appeared_or_the_target_exist
     );
     assert!(refused("Scans", "Again").contains("no longer in the notebook"));
 }
+
+#[test]
+fn a_new_folder_is_created_on_disk_with_its_parents_unless_the_path_is_taken() {
+    let opened = fixture(&[("Taken/Note.md", "- taken"), ("Scans/receipt.pdf", "pdf")]);
+    let notebook = &opened.notebook;
+    let refused = |folder: &str| notebook.create_folder(folder).unwrap_err().to_string();
+    assert!(refused("taken").contains("already exists"));
+    assert!(refused("Scans/receipt.pdf").contains("already exists"));
+    assert!(refused("../Out").contains("Invalid folder path"));
+    assert!(refused(".hidden").contains("Invalid folder path"));
+
+    notebook.create_folder("Archive/2024/Empty").unwrap();
+    assert!(opened.folder.join("Archive/2024/Empty").is_dir());
+    assert!(
+        !opened
+            .folder
+            .join("Archive/2024/Empty/Placeholder.md")
+            .exists()
+    );
+    assert!(
+        notebook
+            .listing()
+            .folders
+            .contains(&"Archive/2024/Empty".to_owned())
+    );
+    assert!(refused("Archive/2024/Empty").contains("already exists"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_new_folder_refuses_a_parent_that_links_out_of_the_notebook() {
+    let opened = fixture(&[("Keep.md", "- keep")]);
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), opened.folder.join("Linked")).unwrap();
+    let error = opened.notebook.create_folder("Linked/Inner").unwrap_err();
+    assert!(error.to_string().contains("link"), "{error:#}");
+    assert!(!outside.path().join("Inner").exists());
+}

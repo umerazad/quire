@@ -259,3 +259,45 @@ fn folder_notebooks_show_media_by_relative_path_and_refuse_escapes(cx: &mut Test
     );
     drop(folder);
 }
+
+#[gpui::test]
+fn a_file_embed_opens_the_file_with_the_system(cx: &mut TestAppContext) {
+    serve(cx);
+    let page = "- Files\n![[report.zip]]\n![[missing.docx]]\n";
+    let (notebook, folder) = open_folder(
+        &[
+            ("Page.md", page.as_bytes().to_vec()),
+            ("report.zip", b"zip".to_vec()),
+        ],
+        "Page.md",
+        cx,
+    );
+    let editor = enter_write(&notebook, cx);
+    wait_until(cx, "the file embeds", |cx| {
+        draw(&notebook, cx);
+        cx.update(|cx| crate::media::file_embeds(editor.read(cx)).len() == 2)
+    });
+    assert_eq!(
+        cx.update(|cx| crate::media::header_labels(editor.read(cx))),
+        ["File · report.zip", "File · missing.docx"]
+    );
+    let [report, missing] = cx
+        .update(|cx| crate::media::file_embeds(editor.read(cx)))
+        .try_into()
+        .ok()
+        .unwrap();
+    report.update(cx, |view, cx| view.open(cx));
+    wait_until(cx, "the system application", |cx| cx.opened_url().is_some());
+    let opened = cx.opened_url().unwrap();
+    assert!(
+        opened.starts_with("file://") && opened.ends_with("/report.zip"),
+        "{opened}"
+    );
+    missing.update(cx, |view, cx| view.open(cx));
+    wait_until(cx, "the missing file's message", |cx| {
+        missing.read_with(cx, |view, _| view.error().is_some())
+    });
+    let message = missing.read_with(cx, |view, _| view.error().cloned().unwrap());
+    assert!(message.contains("missing.docx"), "{message}");
+    drop(folder);
+}

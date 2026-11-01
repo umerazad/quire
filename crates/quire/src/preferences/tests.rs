@@ -140,6 +140,18 @@ fn the_settings_store_starts_from_quire_defaults(cx: &mut TestAppContext) {
 }
 
 #[test]
+fn vim_cursors_follow_the_reference_shapes() {
+    let mut content = SettingsContent::default();
+    apply_defaults(&mut content);
+    let cursors = content.vim.unwrap().cursor_shape.unwrap();
+    assert_eq!(cursors.normal, Some(settings::CursorShape::Underline));
+    assert_eq!(
+        cursors.insert,
+        Some(settings::VimInsertModeCursorShape::Bar)
+    );
+}
+
+#[test]
 fn validation_rejects_what_the_reference_rejects() {
     let invalid = [
         (

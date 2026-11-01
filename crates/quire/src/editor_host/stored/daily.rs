@@ -381,6 +381,21 @@ impl StoredWindow {
         }));
     }
 
+    /// How many dates have more than one daily page, as the reference `dailyDuplicates` counts.
+    pub(in crate::editor_host::stored) fn daily_duplicates(&self) -> usize {
+        let mut dates: Vec<&str> = self
+            .nav
+            .pages
+            .iter()
+            .filter_map(|listed| listed.date.as_deref())
+            .collect();
+        dates.sort_unstable();
+        dates
+            .chunk_by(|a, b| a == b)
+            .filter(|same| same.len() > 1)
+            .count()
+    }
+
     pub(in crate::editor_host::stored) fn render_daily_settings(
         &mut self,
         cx: &mut gpui::Context<Self>,
@@ -421,6 +436,13 @@ impl StoredWindow {
                         ))
                     }),
             )
+            .when_some(duplicates_notice(self.daily_duplicates()), |div, notice| {
+                div.child(
+                    Label::new(notice)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+            })
             .when_some(self.nav.daily.read_only.clone(), |div, warning| {
                 div.child(
                     Label::new(warning)
@@ -466,4 +488,16 @@ impl StoredWindow {
                     )
             })
     }
+}
+
+/// The reference notice for dates with more than one daily page, or None when there are none.
+pub(in crate::editor_host::stored) fn duplicates_notice(dates: usize) -> Option<String> {
+    let count = match dates {
+        0 => return None,
+        1 => "1 date has".to_owned(),
+        dates => format!("{dates} dates have"),
+    };
+    Some(format!(
+        "{count} more than one daily page; the one in the daily folder opens. The Daily list marks the others with \"also\" to tidy them."
+    ))
 }

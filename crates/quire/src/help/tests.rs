@@ -235,6 +235,30 @@ fn help_names_only_menu_items_that_exist(cx: &mut TestAppContext) {
     );
 }
 
+#[test]
+fn help_names_only_page_controls_quire_has() {
+    let text = content::SECTIONS
+        .iter()
+        .flat_map(|section| section.steps.iter().chain([&section.description]))
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for missing in ["Page actions", "Browser Back"] {
+        assert!(
+            !text.contains(missing),
+            "Help names {missing}, which Quire lacks"
+        );
+    }
+    let toolbar = include_str!("../editor_host/stored.rs");
+    for control in ["Attach…", "History…"] {
+        assert!(text.contains(control), "Help guides to {control}");
+        assert!(
+            toolbar.contains(&format!("\"{control}\")")),
+            "the page toolbar has {control}"
+        );
+    }
+}
+
 #[gpui::test]
 fn the_ai_and_page_keys_help_names_are_bound(cx: &mut TestAppContext) {
     init_app(cx);

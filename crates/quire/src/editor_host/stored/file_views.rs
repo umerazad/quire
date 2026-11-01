@@ -260,6 +260,8 @@ impl StoredWindow {
             })
             .map(str::to_owned)
             .chain(self.nav.workspace.folders.iter().cloned())
+            .chain(self.nav.browsers.on_disk.folders.iter().cloned())
+            .chain(self.nav.browsers.on_disk.files.iter().cloned())
             .collect();
         let writers = self.writers();
         let dialog = cx.new(|cx| FileDialog::new_folder(parent, taken, writers, window, cx));
@@ -270,6 +272,7 @@ impl StoredWindow {
     fn folder_created(&mut self, folder: &str, cx: &mut gpui::Context<Self>) {
         self.nav.workspace.add_folder(folder);
         self.persist(cx);
+        self.refresh_on_disk(cx);
         if let Some(index) = self
             .file_rows()
             .iter()
