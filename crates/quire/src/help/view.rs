@@ -166,7 +166,7 @@ fn muted(text: impl Into<gpui::SharedString>) -> Label {
 
 impl Render for HelpWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        crate::app_menus::follow_zoom(window, cx);
+        let ui_font = crate::app_menus::follow_zoom(window, cx);
         let mut order = TabOrder::default();
         let close = order.next();
         let search = tab_order::field(&self.search, &mut order, window, cx).flex_1();
@@ -244,6 +244,7 @@ impl Render for HelpWindow {
         let settings = order.next();
         let show_all = order.next();
         let root = v_flex()
+            .font(ui_font)
             .key_context(CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::cancel));

@@ -59,7 +59,7 @@ pub(super) struct Navigation {
     /// Renamed or moved pages, until the page list shows each at its new path with its title.
     pub(super) renamed: Vec<crate::file_actions::Renamed>,
     pub(super) pages: Vec<ListedPage>,
-    catalogue: Option<Task<()>>,
+    pub(super) catalogue: Option<Task<()>>,
     saving: Option<Task<()>>,
     /// A save of view state waiting for typing or scrolling to pause.
     remembering: Option<Task<()>>,

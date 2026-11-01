@@ -381,6 +381,10 @@
     {
       "path": "crates/gpui/src/style.rs",
       "change": "Add HighlightStyle::font_family (Option<&'static str>, keeping the style Copy): TextStyle::highlight replaces the run's family and keeps its fallbacks, highlight() lets the later style win, and Hash covers it. Quire sets Urdu lines' Arabic-script runs in Noto Nastaliq Urdu with it, as rt sets lang=ur lines in Quire Urdu; upstream highlights could not change a run's font. Covered by quire's write_style tests."
+    },
+    {
+      "path": "crates/gpui/src/app/headless_app_context.rs",
+      "change": "Add HeadlessAppContext::simulate_window_resize and simulate_window_appearance, forwarding to the TestWindow as TestAppContext does, so Quire's --capture-shell tool can render a notebook window at a chosen size and light or dark appearance without showing it. Existing methods are unchanged."
     }
   ]
 }

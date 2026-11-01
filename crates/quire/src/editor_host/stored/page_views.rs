@@ -9,7 +9,6 @@ use crate::navigation::Jump;
 use crate::page_details::{Heading, PageFacts, PageInfo};
 use crate::showcase::{CloseShowcase, OpenShowcase, ShowcaseWindow};
 use gpui::{AnyElement, EntityId, SharedString};
-use quire_core::markdown::{plural, reading_minutes};
 use quire_core::workspace::Destination;
 use settings::Settings as _;
 use ui::{
@@ -54,9 +53,9 @@ impl SaveState {
 
     fn icon(self) -> Icon {
         let (path, color) = match self {
-            Self::Saved => ("quire/icons/save/saved.svg", Color::Success),
-            Self::Pending => ("quire/icons/save/pending.svg", Color::Warning),
-            Self::Failed => ("quire/icons/save/failed.svg", Color::Error),
+            Self::Saved => ("icons/quire/save/saved.svg", Color::Success),
+            Self::Pending => ("icons/quire/save/pending.svg", Color::Warning),
+            Self::Failed => ("icons/quire/save/failed.svg", Color::Error),
         };
         Icon::from_path(path).size(IconSize::Small).color(color)
     }
@@ -77,15 +76,6 @@ impl SaveState {
             Self::Pending => Some(Color::Warning),
             Self::Failed => Some(Color::Error),
         }
-    }
-}
-
-/// "3 blocks · 1 min read", as the reference header counts them.
-pub(super) fn subtitle(facts: &PageFacts) -> String {
-    let blocks = plural(facts.blocks, "block");
-    match facts.words {
-        0 => blocks,
-        words => format!("{blocks} · {} min read", reading_minutes(words)),
     }
 }
 
@@ -193,43 +183,17 @@ impl StoredWindow {
             .cloned()
     }
 
-    /// The eyebrow over a page's title: a daily note under the notebook's daily layout, or a page.
-    pub(super) fn page_kind(&self, title: &str) -> &'static str {
-        if self.daily_date_of(title).is_some() {
-            "DAILY NOTE"
-        } else {
-            "A PAGE IN YOUR NOTEBOOK"
-        }
-    }
-
-    /// The page's kind, title, and size above its editor.
+    /// The page's title above its editor. rt's markup also has a kind eyebrow and a size line,
+    /// which the theme it ships hides, so Quire draws the title alone; the details panel keeps
+    /// the figures.
     pub(super) fn render_page_header(&self, page: &Entity<OpenPage>, cx: &App) -> AnyElement {
         let title = self.destination_label(&Destination::page(page.read(cx).id()), cx);
-        let kind = self.page_kind(&title);
-        let facts = self.page_facts(page, cx);
-        v_flex()
+        gpui::div()
+            .debug_selector(|| "quire-page-title".into())
             .px_4()
-            .pt_3()
-            .pb_1()
-            .gap_1()
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        Icon::new(IconName::FileTextOutlined)
-                            .size(IconSize::XSmall)
-                            .color(Color::Muted),
-                    )
-                    .child(Label::new(kind).size(LabelSize::XSmall).color(Color::Muted)),
-            )
+            .pt_4()
+            .pb_2()
             .child(Headline::new(title).size(HeadlineSize::Large))
-            .when_some(facts, |header, facts| {
-                header.child(
-                    Label::new(subtitle(&facts))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-            })
             .into_any_element()
     }
 

@@ -45,6 +45,9 @@ pub const FONT_FALLBACKS: [&str; 3] = [
     crate::script_fonts::ARABIC,
 ];
 pub const DEFAULT_FONT_SIZE: f32 = 16.;
+/// Quire's themes, built from the reference app's light and dark palettes; see `quire_assets`.
+pub const LIGHT_THEME: &str = "Quire Light";
+pub const DARK_THEME: &str = "Quire Dark";
 pub const DEFAULT_LINE_SPACING: f32 = 1.85;
 pub const FONT_SIZES: std::ops::RangeInclusive<f32> = 10.0..=40.0;
 pub const LINE_SPACINGS: std::ops::RangeInclusive<f32> = 1.2..=2.5;
@@ -88,13 +91,17 @@ pub fn apply_defaults(content: &mut SettingsContent) {
         .get_or_insert_default()
         .restore_unsaved_buffers = Some(false);
     let theme = content.theme.as_mut();
-    theme.buffer_font_family = Some(FontFamilyName(DEFAULT_FONT_FAMILY.into()));
-    theme.buffer_font_fallbacks = Some(
+    let fallbacks = || {
         FONT_FALLBACKS
             .iter()
             .map(|family| FontFamilyName((*family).into()))
-            .collect(),
-    );
+            .collect()
+    };
+    theme.buffer_font_family = Some(FontFamilyName(DEFAULT_FONT_FAMILY.into()));
+    theme.buffer_font_fallbacks = Some(fallbacks());
+    // The reference draws its interface in the editor font as well.
+    theme.ui_font_family = Some(FontFamilyName(DEFAULT_FONT_FAMILY.into()));
+    theme.ui_font_fallbacks = Some(fallbacks());
     theme.buffer_font_size = Some(FontSize(DEFAULT_FONT_SIZE));
     theme.buffer_line_height = Some(BufferLineHeight::Custom(DEFAULT_LINE_SPACING));
     theme.theme = Some(selection(ThemeAppearanceMode::System, None));
@@ -114,12 +121,20 @@ pub fn apply_defaults(content: &mut SettingsContent) {
 }
 
 fn selection(mode: ThemeAppearanceMode, current: Option<&ThemeSelection>) -> ThemeSelection {
+    // Earlier builds wrote Zed's default themes with every appearance change; nobody chose them.
+    let chosen = |name: &ThemeName, zed_default: &str, quire: &str| {
+        ThemeName(if name.0.as_ref() == zed_default {
+            quire.into()
+        } else {
+            name.0.clone()
+        })
+    };
     let (light, dark) = match current {
-        Some(ThemeSelection::Dynamic { light, dark, .. }) => (light.clone(), dark.clone()),
-        _ => (
-            ThemeName(settings::DEFAULT_LIGHT_THEME.into()),
-            ThemeName(settings::DEFAULT_DARK_THEME.into()),
+        Some(ThemeSelection::Dynamic { light, dark, .. }) => (
+            chosen(light, settings::DEFAULT_LIGHT_THEME, LIGHT_THEME),
+            chosen(dark, settings::DEFAULT_DARK_THEME, DARK_THEME),
         ),
+        _ => (ThemeName(LIGHT_THEME.into()), ThemeName(DARK_THEME.into())),
     };
     ThemeSelection::Dynamic { mode, light, dark }
 }
@@ -251,8 +266,10 @@ impl Change {
             Self::Spellcheck(enabled) => {
                 content.quire.get_or_insert_default().spellcheck = Some(*enabled)
             }
+            // As in the reference, the interface follows the editor's font family, not its size.
             Self::FontFamily(family) => {
-                theme.buffer_font_family = Some(FontFamilyName(family.trim().into()))
+                theme.buffer_font_family = Some(FontFamilyName(family.trim().into()));
+                theme.ui_font_family = Some(FontFamilyName(family.trim().into()));
             }
             Self::FontSize(size) => theme.buffer_font_size = Some(FontSize(*size)),
             Self::LineSpacing(spacing) => {
@@ -266,6 +283,7 @@ impl Change {
 pub fn restore_defaults(content: &mut SettingsContent) {
     let theme = content.theme.as_mut();
     theme.buffer_font_family = None;
+    theme.ui_font_family = None;
     theme.buffer_font_size = None;
     theme.buffer_line_height = None;
     if let Some(ThemeSelection::Dynamic { mode, .. }) = theme.theme.as_mut() {

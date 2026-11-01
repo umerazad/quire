@@ -2,7 +2,7 @@
 //! indicator and tab dots, toolbar toggles, zoom, the README pane, the Daily notes month, and
 //! the Files heading, each against the reference behavior it ports.
 
-use super::super::page_views::{SaveState, subtitle, tidy_blocked};
+use super::super::page_views::{SaveState, tidy_blocked};
 use super::tests::{Notebook, caret_text, draw, open_notebook, read, wait_until};
 use crate::app_menus::{
     ActualSize, ShowNotebookFolder, TogglePageDetails, ToggleSidebar, ToggleVim, ZoomIn, ZoomOut,
@@ -43,28 +43,14 @@ fn drawn(notebook: &Notebook, selector: &'static str, cx: &mut TestAppContext) -
 }
 
 #[gpui::test]
-fn the_header_names_the_kind_of_page_and_counts_blocks_and_reading_time(cx: &mut TestAppContext) {
-    let notebook = open_notebook(
-        &[
-            ("plan", "Plan.md", PLAN),
-            ("day", "2026-10-31.md", "- a day\n"),
-        ],
-        "plan",
-        cx,
-    );
+fn the_page_shows_its_title_and_counts_blocks_words_and_ids(cx: &mut TestAppContext) {
+    let notebook = open_notebook(&[("plan", "Plan.md", PLAN)], "plan", cx);
     let facts = facts(&notebook, cx);
     assert_eq!(facts.blocks, 3);
     assert_eq!(facts.ids, 1);
     assert_eq!(facts.words, 6);
-    assert_eq!(subtitle(&facts), "3 blocks · 1 min read");
-    assert_eq!(
-        subtitle(&PageFacts::default()),
-        "0 blocks",
-        "an empty page has no reading time"
-    );
+    assert!(drawn(&notebook, "quire-page-title", cx));
     let source = read(&notebook, cx, |view, cx| {
-        assert_eq!(view.page_kind("Plan"), "A PAGE IN YOUR NOTEBOOK");
-        assert_eq!(view.page_kind("2026-10-31"), "DAILY NOTE");
         view.editor.as_ref().unwrap().read(cx).source.clone()
     });
     assert!(

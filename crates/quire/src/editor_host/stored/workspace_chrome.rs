@@ -19,8 +19,8 @@ use ui::{
 /// The page actions menu's name, as the reference labels its button.
 pub(in crate::editor_host::stored) const PAGE_ACTIONS: &str = "Page actions";
 
-const SUN: &str = "quire/icons/chrome/sun.svg";
-const MOON: &str = "quire/icons/chrome/moon.svg";
+const SUN: &str = "icons/quire/chrome/sun.svg";
+const MOON: &str = "icons/quire/chrome/moon.svg";
 
 impl StoredWindow {
     /// The notebook's name at the start of the breadcrumb: its folder's name.

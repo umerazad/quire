@@ -1,6 +1,8 @@
 //! Quire's asset source: Zed's bundled assets, plus the reference app's tag icons (Lucide, ISC;
 //! `assets/icons/tags/LICENSE`) under `quire/icons/tags/<tone>.svg` and the page toolbar's save
-//! states under `quire/icons/save/`.
+//! states under `icons/quire/save/`, the header's light and dark icons under
+//! `icons/quire/chrome/` (under `icons/`, which `Icon::from_path` reads as embedded SVGs), and
+//! Quire's themes under `themes/quire/`.
 
 use gpui::{AssetSource, Result, SharedString};
 use std::borrow::Cow;
@@ -54,37 +56,47 @@ pub fn tag_icon_path(name: &str) -> Option<SharedString> {
 /// The save indicator's shapes: a circle when saved, a diamond while saving, a warning triangle.
 pub const SAVE_ICONS: &[(&str, &[u8])] = &[
     (
-        "quire/icons/save/saved.svg",
+        "icons/quire/save/saved.svg",
         include_bytes!("../assets/icons/save/saved.svg"),
     ),
     (
-        "quire/icons/save/pending.svg",
+        "icons/quire/save/pending.svg",
         include_bytes!("../assets/icons/save/pending.svg"),
     ),
     (
-        "quire/icons/save/failed.svg",
+        "icons/quire/save/failed.svg",
         include_bytes!("../assets/icons/save/failed.svg"),
     ),
 ];
+
+/// Quire Light and Quire Dark, built from the reference app's palettes (`roam-theme.css`, its
+/// generated `dark-theme.css`, and `controls.css`). Zed loads every `themes/*.json` asset as a
+/// bundled theme family; `preferences` makes them the defaults.
+pub const THEMES: &[(&str, &[u8])] = &[(
+    "themes/quire/quire.json",
+    include_bytes!("../assets/themes/quire.json"),
+)];
 
 /// The workspace header's icons Zed lacks (Lucide, ISC; `assets/icons/chrome/LICENSE`): the
 /// light and dark appearance toggle.
 pub const CHROME_ICONS: &[(&str, &[u8])] = &[
     (
-        "quire/icons/chrome/sun.svg",
+        "icons/quire/chrome/sun.svg",
         include_bytes!("../assets/icons/chrome/sun.svg"),
     ),
     (
-        "quire/icons/chrome/moon.svg",
+        "icons/quire/chrome/moon.svg",
         include_bytes!("../assets/icons/chrome/moon.svg"),
     ),
 ];
 
-fn save_icon(path: &str) -> Option<&'static [u8]> {
-    SAVE_ICONS
-        .iter()
-        .chain(CHROME_ICONS)
-        .find_map(|(icon, bytes)| (*icon == path).then_some(*bytes))
+/// Assets served at their own paths: the save and chrome icons and the themes.
+fn named() -> impl Iterator<Item = &'static (&'static str, &'static [u8])> {
+    SAVE_ICONS.iter().chain(CHROME_ICONS).chain(THEMES)
+}
+
+fn named_asset(path: &str) -> Option<&'static [u8]> {
+    named().find_map(|(icon, bytes)| (*icon == path).then_some(*bytes))
 }
 
 fn tag_icon(path: &str) -> Option<&'static [u8]> {
@@ -96,7 +108,7 @@ fn tag_icon(path: &str) -> Option<&'static [u8]> {
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
-        match tag_icon(path).or_else(|| save_icon(path)) {
+        match tag_icon(path).or_else(|| named_asset(path)) {
             Some(bytes) => Ok(Some(Cow::Borrowed(bytes))),
             None => assets::Assets.load(path),
         }
@@ -112,11 +124,9 @@ impl AssetSource for Assets {
                 .map(SharedString::from),
         );
         paths.extend(
-            SAVE_ICONS
-                .iter()
-                .chain(CHROME_ICONS)
-                .map(|(icon, _)| *icon)
-                .filter(|icon| icon.starts_with(path))
+            named()
+                .map(|(asset, _)| *asset)
+                .filter(|asset| asset.starts_with(path))
                 .map(SharedString::new_static),
         );
         Ok(paths)
@@ -138,12 +148,16 @@ mod tests {
         }
         for (path, _) in SAVE_ICONS.iter().chain(CHROME_ICONS) {
             assert!(
+                path.starts_with("icons/"),
+                "Icon::from_path draws {path} as an external image, which never shows; put it under icons/"
+            );
+            assert!(
                 Assets.load(path).unwrap().unwrap().starts_with(b"<svg"),
                 "{path}"
             );
             assert!(
                 Assets
-                    .list("quire/icons/")
+                    .list("icons/quire/")
                     .unwrap()
                     .contains(&SharedString::from(*path))
             );

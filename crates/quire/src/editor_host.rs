@@ -8,6 +8,8 @@ use ui::{Button, ButtonCommon, Clickable, Label, LabelCommon, Tooltip};
 mod startup_failure;
 mod stored;
 
+#[cfg(feature = "test-support")]
+pub(crate) use stored::capture_shell;
 pub(crate) use stored::{dispatch_to_notebook, notebook_windows, open_in_profile};
 
 gpui::actions!(quire, [TogglePresentation]);
@@ -44,7 +46,10 @@ pub(super) fn init(cx: &mut App) -> Result<(), String> {
     crate::help::init(cx);
     crate::rt_migration::view::init(cx);
     crate::showcase::init(cx);
-    theme_settings::init(theme::LoadThemes::All(Box::new(assets::Assets)), cx);
+    theme_settings::init(
+        theme::LoadThemes::All(Box::new(crate::quire_assets::Assets)),
+        cx,
+    );
     crate::markdown::init(cx)?;
     crate::media::init(cx);
     release_channel::init(semver::Version::new(0, 1, 0), cx);
@@ -359,9 +364,18 @@ impl NotebookWindow {
                     model.read(cx).message().or(self.presentation_error.take());
             }
         }
+        self.number_lines(editor, cx);
         window.focus(&editor.focus_handle(cx), cx);
         self.refresh_tags(cx);
         cx.notify();
+    }
+
+    /// A notebook page numbers its lines in Source only, as rt's editor does.
+    fn number_lines(&self, editor: &Entity<Editor>, cx: &mut gpui::Context<Self>) {
+        if self.single {
+            let source = !crate::editor_projection::enabled(editor.read(cx));
+            editor.update(cx, |editor, cx| editor.set_show_line_numbers(source, cx));
+        }
     }
 
     fn toggle_presentation(
@@ -689,6 +703,7 @@ impl NotebookWindow {
             view.presentation_error =
                 crate::editor_projection::bind(&view.source, window, cx).err();
         }
+        view.number_lines(&view.source, cx);
         if writes {
             view.commands
                 .update(cx, |commands, _| commands.enable_writes());
