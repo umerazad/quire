@@ -13,6 +13,8 @@ mod words;
 mod macos;
 #[cfg(test)]
 mod tests;
+#[cfg(all(target_os = "windows", not(test)))]
+mod windows;
 
 use crate::navigation::pointer_menu::{Entry, Item};
 use crate::page_analysis::PageAnalysis;
@@ -66,7 +68,9 @@ impl Global for Spelling {}
 fn system_speller() -> Option<Arc<dyn Speller>> {
     #[cfg(all(target_os = "macos", not(test)))]
     return Some(Arc::new(macos::SystemSpeller::new()));
-    #[cfg(not(all(target_os = "macos", not(test))))]
+    #[cfg(all(target_os = "windows", not(test)))]
+    return windows::SystemSpeller::new().map(|speller| Arc::new(speller) as Arc<dyn Speller>);
+    #[cfg(not(all(any(target_os = "macos", target_os = "windows"), not(test))))]
     None
 }
 
@@ -105,7 +109,7 @@ pub fn preference_hint(cx: &App) -> &'static str {
     if speller(cx).is_some() {
         "Underline misspelled words in pages, using this computer's dictionary. Right-click a word for suggestions."
     } else {
-        "Spelling uses the macOS dictionary; this system has none connected yet."
+        "Spelling uses the system dictionary on macOS and Windows; this system has none Quire can use."
     }
 }
 
