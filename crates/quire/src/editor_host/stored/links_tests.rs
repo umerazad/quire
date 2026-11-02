@@ -1,8 +1,23 @@
 use super::super::*;
-use super::tests::{Notebook, active, caret_text, draw, key, open_notebook, read, wait_until};
+use super::tests::{Notebook, active, caret_text, draw, open_notebook, read, wait_until};
 use crate::references::{Follow, Target};
 use gpui::TestAppContext;
 use quire_core::workspace::Destination;
+
+/// Back, as `navigation::bind_keys` binds it: Cmd-[ on macOS, Alt-Left elsewhere.
+const BACK: &str = if cfg!(target_os = "macos") {
+    "cmd-["
+} else {
+    "alt-left"
+};
+
+/// Follows the link beside. Off macOS Ctrl-W closes the tab ahead of Vim (`inside_pages`), so
+/// Vim's Ctrl-W D is out of reach there; Zed's Alt-F12 runs the same `GoToDefinitionSplit`.
+const BESIDE: &str = if cfg!(target_os = "macos") {
+    "ctrl-w d"
+} else {
+    "alt-f12"
+};
 
 pub(in crate::editor_host::stored) const PAGES: [(&str, &str, &str); 3] = [
     (
@@ -54,9 +69,9 @@ fn vim_keys_follow_page_and_block_links_beside_and_to_backlinks(cx: &mut TestApp
     cx.simulate_keystrokes(notebook.window.into(), "f T g d");
     wait_until(cx, "Target to open", |cx| active(&notebook, cx) == "t");
 
-    cx.simulate_keystrokes(notebook.window.into(), &key("["));
+    cx.simulate_keystrokes(notebook.window.into(), BACK);
     focus_home(&notebook, cx);
-    cx.simulate_keystrokes(notebook.window.into(), "f ( ctrl-w d");
+    cx.simulate_keystrokes(notebook.window.into(), &format!("f ( {BESIDE}"));
     wait_until(cx, "the block's page beside", |cx| {
         side(&notebook, cx).as_deref() == Some("t")
             && read(&notebook, cx, |view, _| view.nav.jump.is_none())
@@ -81,7 +96,7 @@ fn vim_keys_follow_page_and_block_links_beside_and_to_backlinks(cx: &mut TestApp
                 .unwrap()
     });
 
-    cx.simulate_keystrokes(notebook.window.into(), &key("["));
+    cx.simulate_keystrokes(notebook.window.into(), BACK);
     focus_home(&notebook, cx);
     cx.simulate_keystrokes(notebook.window.into(), "j f M g d");
     wait_until(cx, "the missing page to be created", |cx| {
@@ -192,7 +207,7 @@ fn a_heading_link_opens_its_page_and_says_when_the_heading_is_missing(cx: &mut T
         caret_text(&notebook, false, cx).ends_with("Goal")
     });
 
-    cx.simulate_keystrokes(notebook.window.into(), &key("["));
+    cx.simulate_keystrokes(notebook.window.into(), BACK);
     focus_home(&notebook, cx);
     cx.simulate_keystrokes(notebook.window.into(), "f N g d");
     wait_until(cx, "Target to open again", |cx| {

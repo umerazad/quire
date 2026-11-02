@@ -154,11 +154,17 @@ mod tests {
         let tries = Rc::new(Cell::new(0));
         let retry: Retry = Rc::new({
             let tries = tries.clone();
-            move |_| {
+            move |cx| {
                 tries.set(tries.get() + 1);
                 match tries.get() {
                     1 => Err("Still locked. Close the other Quire, then try again.".into()),
-                    _ => Ok(()),
+                    // A retry that works opens the notebook's window, as the real one does;
+                    // without it, closing the dialog off macOS would close the last window and
+                    // quit.
+                    _ => cx
+                        .open_window(WindowOptions::default(), |_, cx| cx.new(|_| gpui::Empty))
+                        .map(drop)
+                        .map_err(|error| error.to_string()),
                 }
             }
         });
