@@ -364,3 +364,29 @@ async fn the_preference_turns_spelling_off_and_on_live(cx: &mut TestAppContext) 
     settle(window, cx);
     assert_eq!(underlined(&source, cx), ["Teh", "labell", "wrodd", "boldd"]);
 }
+
+#[gpui::test]
+fn every_write_row_end_is_found_without_overflow(cx: &mut TestAppContext) {
+    let page = format!(
+        "{PAGE}- [ ] Next action #next 📅 [[November 3rd, 2026]]\n- {{{{[[TODO]]}}}} Roam todo #[[waiting]]\n- [x] Done ✅ 2026-10-31"
+    );
+    let window = open(&page, page_speller(), cx);
+    let [_, second] = editors(window, cx);
+    window
+        .update(cx, |view, window, cx| view.show_written(window, cx))
+        .unwrap();
+    settle(window, cx);
+    second.update(cx, |editor, cx| {
+        assert!(crate::editor_projection::enabled(editor));
+        let display = editor.display_snapshot(cx);
+        let buffer = display.buffer_snapshot();
+        for row in 0..=display.max_point().row().0 {
+            let end = row_end(&display, DisplayRow(row));
+            assert_eq!(
+                end.column,
+                buffer.line_len(multi_buffer::MultiBufferRow(end.row)),
+                "display row {row} ends at its line's end"
+            );
+        }
+    });
+}

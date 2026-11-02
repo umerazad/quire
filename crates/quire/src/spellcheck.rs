@@ -20,7 +20,7 @@ use crate::navigation::pointer_menu::{Entry, Item};
 use crate::page_analysis::PageAnalysis;
 use editor::{
     Addon, DisplayPoint, Editor, EditorEvent, HighlightKey, NavigationOverlayKey,
-    display_map::DisplayRow,
+    display_map::{DisplayRow, DisplaySnapshot},
 };
 use gpui::{
     App, AppContext as _, BorrowAppContext as _, Entity, Global, HighlightStyle, Subscription,
@@ -306,6 +306,13 @@ impl Job {
     }
 }
 
+/// The end of a display row in the buffer. The column is the row's own length: clipping
+/// `u32::MAX` overflows in Zed's fold map on a row with a fold that hides more text than its
+/// placeholder shows, which Write folds do on most rows.
+fn row_end(display: &DisplaySnapshot, row: DisplayRow) -> text::Point {
+    DisplayPoint::new(row, display.line_len(row)).to_point(display)
+}
+
 /// The page's lines shown in the editor, with a screen above and below, in page offsets.
 fn visible_lines(
     editor: &mut Editor,
@@ -321,11 +328,7 @@ fn visible_lines(
     let last = display.max_point().row().0;
     let row = |row: f64| DisplayRow((row.max(0.) as u32).min(last));
     let start = DisplayPoint::new(row(top - rows), 0).to_point(&display);
-    let end = display.clip_point(
-        DisplayPoint::new(row(top + 2. * rows), u32::MAX),
-        text::Bias::Left,
-    );
-    let end = end.to_point(&display);
+    let end = row_end(&display, row(top + 2. * rows));
     let multi = display.buffer_snapshot();
     let id = page.remote_id();
     let mut lines: Vec<Range<usize>> = multi
