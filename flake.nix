@@ -71,18 +71,82 @@
             export CARGO_HOME="''${CARGO_HOME:-$HOME/.cargo}"
           '';
 
+          # Cross targets for `make all` on a Mac: x86_64 Linux and both Windows architectures.
+          crossTargets = [
+            "x86_64-unknown-linux-gnu"
+            "x86_64-pc-windows-msvc"
+            "aarch64-pc-windows-msvc"
+          ];
+
+          # The x86_64 Linux libraries the app links by name (xcb, xkbcommon, fontconfig) and the
+          # ones their pkg-config files require. Fetched prebuilt from the Nix cache; zig supplies
+          # glibc. At run time the binary loads the distribution's own copies.
+          linuxPkgs = import nixpkgs { system = "x86_64-linux"; };
+          linuxSysroot = pkgs.symlinkJoin {
+            name = "quire-linux-x64-libs";
+            paths = lib.concatMap (p: [
+              (lib.getLib p)
+              (lib.getDev p)
+            ]) (
+              with linuxPkgs;
+              [
+                libxcb
+                libxau
+                libxdmcp
+                libxkbcommon
+                fontconfig
+                freetype
+                expat
+                zlib
+                bzip2
+                libpng
+                brotli
+              ]
+            );
+          };
+
+          # Only the LLVM tools cargo-xwin calls for the Windows targets. Putting all of LLVM's
+          # bin on PATH would shadow Xcode's clang for the Mac build.
+          llvm = pkgs.llvmPackages;
+          # Wrappers for two C dependencies that do not cross-compile from a Mac as is; each
+          # script says why.
+          wrapper =
+            name:
+            pkgs.writeShellScript name (
+              lib.replaceStrings [ "@llvm@" ] [ "${llvm.clang-unwrapped}" ] (builtins.readFile ./nix/${name}.sh)
+            );
+          windowsTools = pkgs.runCommand "quire-windows-cross-tools" { } ''
+            mkdir -p $out/bin
+            ln -s ${llvm.lld}/bin/lld-link ${llvm.llvm}/bin/llvm-lib ${llvm.llvm}/bin/llvm-rc \
+              ${llvm.llvm}/bin/llvm-ar $out/bin/
+            ln -s ${wrapper "clang"} $out/bin/clang
+            ln -s ${wrapper "clang-cl"} $out/bin/clang-cl
+          '';
+
           # macOS keeps Xcode's clang, linker and SDK: GPUI compiles its Metal shaders with
           # `xcrun metal`, which Nix's SDK does not ship. The Rust package propagates Nix's
           # clang wrapper and its flags, so the hook drops them and the build matches a plain
           # Xcode build.
           darwinShell = pkgs.mkShellNoCC {
             packages = with pkgs; [
-              rust
+              (rust.override { targets = crossTargets; })
               bun
-              nodejs_22
+              nodejs_26
               cmake
+              pkg-config
+              cargo-zigbuild
+              zig
+              cargo-xwin
+              windowsTools
             ];
-            env.QUIRE_PDFIUM_DIR = "${pdfium}";
+            env = {
+              QUIRE_PDFIUM_DIR = "${pdfium}";
+              PKG_CONFIG_PATH_x86_64_unknown_linux_gnu = "${linuxSysroot}/lib/pkgconfig";
+              PKG_CONFIG_ALLOW_CROSS = "1";
+              # The Nix libraries above need a newer glibc than the binary targets; the binary
+              # loads the distribution's own copies, so their glibc needs are not checked here.
+              CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-L native=${linuxSysroot}/lib -C link-arg=-Wl,--allow-shlib-undefined";
+            };
             shellHook = shellHook + ''
               for var in $(compgen -e | grep -E '^(NIX_(CC|BINTOOLS|CFLAGS|LDFLAGS|HARDENING|ENFORCE|DONT_SET|NO_SELF|IGNORE_LD)|(CC|CXX|LD|AR)(_FOR_BUILD)?$|MACOSX_DEPLOYMENT_TARGET$)'); do
                 unset "$var"
@@ -102,7 +166,7 @@
           packages = with pkgs; [
             rust
             bun
-            nodejs_22
+            nodejs_26
             pkg-config
             cmake
             clang

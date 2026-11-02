@@ -3,7 +3,6 @@
 # so `bash tools/gates.sh && git commit` never commits a red tree.
 set -uo pipefail
 cd "$(dirname "$0")/.."
-export CARGO_HOME="${CARGO_HOME:-/private/tmp/quire-cargo}"
 zed="${ZED_CHECKOUT:-../zed}"
 log="$(mktemp -d)"
 fail() {

@@ -18245,8 +18245,3 @@ dependencies = [
  "syn 2.0.117",
  "winnow 1.0.2",
 ]
-
-[[patch.unused]]
-name = "crash-context"
-version = "0.8.0"
-source = "git+https://github.com/rust-minidump/minidump-writer?rev=911b04e09b79b736cc15cbe712e83e2d3f348bb9#911b04e09b79b736cc15cbe712e83e2d3f348bb9"

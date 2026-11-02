@@ -1,5 +1,5 @@
 # Common tasks. Run `make` or `make help` for the list. Every target wraps a command the README
-# documents, so each works the same with or without `nix develop`.
+# documents. The cross targets (`make all` on a Mac) need the tools `nix develop` provides.
 
 SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
@@ -22,19 +22,45 @@ else
   BUNDLE_SCRIPT := tools/bundle-windows.ts
 endif
 
+# Cross targets. Linux binaries need glibc $(GLIBC) or newer, so they run on Ubuntu 22.04 and later.
+LINUX_X64 := x86_64-unknown-linux-gnu
+WINDOWS_X64 := x86_64-pc-windows-msvc
+WINDOWS_ARM64 := aarch64-pc-windows-msvc
+GLIBC ?= 2.35
+
+need = @command -v $(1) >/dev/null || { echo "$(1) is missing: it cross-compiles for $(2). Run nix develop (or direnv allow) first, then make again." >&2; exit 1; }
+
 # Extra arguments for `make run` and `make capture`, e.g. make run ARGS="--notebook-folder ~/notes".
 ARGS ?=
 
-.PHONY: help setup pdfium build release run test test-quick vitest fmt fmt-check lint check gates bench capture bundle clean
+.PHONY: help all mac linux-x64 windows-x64 windows-arm64 setup pdfium build release run test test-quick vitest fmt fmt-check lint check gates bench capture bundle clean
 
 help: ## List the targets
-	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  make %-11s %s\n", $$1, $$2}'
+	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  make %-14s %s\n", $$1, $$2}'
 
 setup: pdfium ## Install JS tools and fetch PDFium (once per machine)
 	$(BUN) install --frozen-lockfile
 
 pdfium: ## Fetch the pinned PDFium, unless QUIRE_PDFIUM_DIR (nix develop) supplies it
 	@if [ -n "$${QUIRE_PDFIUM_DIR:-}" ]; then echo "PDFium comes from $$QUIRE_PDFIUM_DIR"; else $(BUN) tools/fetch-pdfium.ts; fi
+
+all: mac linux-x64 windows-x64 windows-arm64 ## Debug builds for this Mac, x86_64 Linux, and x86_64 and ARM64 Windows
+
+mac: ## Debug build for this Mac (target/debug/quire)
+	@[ "$(UNAME)" = Darwin ] || { echo "make mac builds on macOS only; this is $(UNAME). Use make build." >&2; exit 1; }
+	$(CARGO) build -p quire --locked
+
+linux-x64: ## Debug build for x86_64 Linux (target/x86_64-unknown-linux-gnu/debug/quire)
+	$(call need,cargo-zigbuild,Linux)
+	$(CARGO) zigbuild -p quire --locked --target $(LINUX_X64).$(GLIBC)
+
+windows-x64: ## Debug build for x86_64 Windows (target/x86_64-pc-windows-msvc/debug/quire.exe)
+	$(call need,cargo-xwin,Windows)
+	$(CARGO) xwin build -p quire --locked --target $(WINDOWS_X64)
+
+windows-arm64: ## Debug build for ARM64 Windows (target/aarch64-pc-windows-msvc/debug/quire.exe)
+	$(call need,cargo-xwin,Windows)
+	$(CARGO) xwin build -p quire --locked --target $(WINDOWS_ARM64)
 
 build: ## Debug build of the app (target/debug/quire)
 	$(CARGO) build -p quire --locked
