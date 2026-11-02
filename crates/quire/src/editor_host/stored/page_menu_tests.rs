@@ -2,6 +2,7 @@
 //! and selection, each running the editor action its keys run.
 
 use super::super::*;
+use super::links_tests::set_vim;
 use super::tests::{Notebook, draw, open_notebook, read, wait_until};
 use editor::{Editor, MultiBufferOffset, SelectionEffects};
 use gpui::{Modifiers, MouseButton, TestAppContext, point, px};
@@ -288,7 +289,7 @@ fn list_styles_stay_in_the_menu_of_zooms_and_embeds(cx: &mut TestAppContext) {
 #[gpui::test]
 fn reference_editor_keys_switch_views_copy_a_block_reference_and_redo(cx: &mut TestAppContext) {
     let (notebook, editor) = open(false, cx);
-    cx.update(|cx| crate::preferences::change(crate::preferences::Change::Vim(false), cx));
+    set_vim(false, cx);
     cx.run_until_parked();
     let key = super::tests::key;
     let presented = |cx: &mut TestAppContext| {
@@ -325,7 +326,7 @@ fn reference_editor_keys_switch_views_copy_a_block_reference_and_redo(cx: &mut T
 #[gpui::test]
 fn vim_keeps_ctrl_e_and_ctrl_y_off_macos(cx: &mut TestAppContext) {
     let (notebook, editor) = open(false, cx);
-    cx.update(|cx| crate::preferences::change(crate::preferences::Change::Vim(true), cx));
+    set_vim(true, cx);
     cx.run_until_parked();
     cx.simulate_keystrokes(notebook.window.into(), "ctrl-e");
     draw(&notebook, cx);

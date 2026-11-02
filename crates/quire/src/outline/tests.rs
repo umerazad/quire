@@ -7,6 +7,19 @@ const MOD: &str = if cfg!(target_os = "macos") {
     "ctrl"
 };
 
+/// CodeMirror's fold keys, which rt uses and `outline.rs` binds: Cmd-Alt on macOS,
+/// Ctrl-Shift elsewhere.
+pub(super) const FOLD: &str = if cfg!(target_os = "macos") {
+    "cmd-alt-["
+} else {
+    "ctrl-shift-["
+};
+pub(super) const UNFOLD: &str = if cfg!(target_os = "macos") {
+    "cmd-alt-]"
+} else {
+    "ctrl-shift-]"
+};
+
 /// A Write view of `marked`, whose `|` is the caret, with Vim on or off.
 pub(super) fn write_view(marked: &str, vim: bool, cx: &mut TestAppContext) -> WindowHandle<Editor> {
     cx.update(|cx| {
@@ -379,7 +392,7 @@ fn line_end_keys_stop_before_a_hidden_id_and_collapsed_children(cx: &mut TestApp
         }
     }
     let window = write_view("- Pa|rent ^p\n  - Kid\n- Next\n", false, cx);
-    keys(window, &format!("{MOD}-alt-["), cx);
+    keys(window, FOLD, cx);
     assert_eq!(displayed(window, cx), "Parent⋯\nNext\n");
     keys(window, "shift-end", cx);
     assert_eq!(selected(window, cx), "- Pa[rent] ^p\n  - Kid\n- Next\n");
@@ -436,10 +449,10 @@ fn folding_collapses_children_and_enter_adds_a_sibling(cx: &mut TestAppContext) 
     assert_eq!(displayed(window, cx), "Parent\n  Kid\n    Grand\n\nAfter\n");
 
     let window = write_view("- Parent\n  - Kid|\n- After\n", false, cx);
-    keys(window, &format!("{MOD}-alt-["), cx);
+    keys(window, FOLD, cx);
     assert_eq!(state(window, cx), "- Parent|\n  - Kid\n- After\n");
     assert_eq!(displayed(window, cx), "Parent⋯\nAfter\n");
-    keys(window, &format!("{MOD}-alt-]"), cx);
+    keys(window, UNFOLD, cx);
     assert_eq!(displayed(window, cx), "Parent\n  Kid\nAfter\n");
 }
 
@@ -684,7 +697,7 @@ fn source_view_keeps_ordinary_editing(cx: &mut TestAppContext) {
 #[gpui::test]
 fn merging_never_edits_collapsed_children(cx: &mut TestAppContext) {
     let window = write_view("- Parent|\n  - Kid\n- After\n", false, cx);
-    keys(window, &format!("{MOD}-alt-["), cx);
+    keys(window, FOLD, cx);
     expect(window, &[("delete", "- Parent|\n  - Kid\n- After\n")], cx);
     place(window, "- Parent\n  - Kid\n- ".len(), cx);
     expect(
@@ -693,7 +706,7 @@ fn merging_never_edits_collapsed_children(cx: &mut TestAppContext) {
         cx,
     );
     place(window, "- Parent".len(), cx);
-    keys(window, &format!("{MOD}-alt-]"), cx);
+    keys(window, UNFOLD, cx);
     place(window, "- Parent\n  - Kid\n- ".len(), cx);
     expect(window, &[("backspace", "- Parent\n  - Kid|After\n")], cx);
 }

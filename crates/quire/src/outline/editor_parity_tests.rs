@@ -2,7 +2,7 @@
 //! native Write view. Each case names the rt test it ports; `|` marks the caret. Typing goes
 //! through key events, as a writer types, rather than rt's direct document dispatches.
 
-use super::tests::{displayed, keys, state, write_view};
+use super::tests::{FOLD, displayed, keys, state, write_view};
 use gpui::{AppContext as _, TestAppContext};
 
 struct Case {
@@ -85,7 +85,7 @@ const CASES: &[Case] = &[
         page: "- Parent| ^p\n  - Kid\n- After\n",
         vim: false,
         steps: &[
-            ("MOD-alt-[ right", "- Parent ^p\n  - Kid\n- |After\n"),
+            ("FOLD right", "- Parent ^p\n  - Kid\n- |After\n"),
             ("left", "- Parent| ^p\n  - Kid\n- After\n"),
         ],
     },
@@ -146,7 +146,7 @@ fn outline_scenarios_match_rt_editor_tests(cx: &mut TestAppContext) {
     for case in CASES {
         let window = write_view(case.page, case.vim, cx);
         for (input, expected) in case.steps {
-            keys(window, &input.replace("MOD", MOD), cx);
+            keys(window, &input.replace("FOLD", FOLD).replace("MOD", MOD), cx);
             assert_eq!(state(window, cx), *expected, "{}: after {input:?}", case.rt);
         }
     }
