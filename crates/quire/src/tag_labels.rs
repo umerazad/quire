@@ -14,16 +14,16 @@ use editor::{
     TextRegionLayout,
 };
 use gpui::{
-    div, px, rgb, svg, AnyElement, App, Entity, Focusable as _, HighlightStyle, Hsla,
-    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, SharedString,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, Window,
+    AnyElement, App, Entity, Focusable as _, HighlightStyle, Hsla, InteractiveElement as _,
+    IntoElement, ParentElement as _, Pixels, SharedString, StatefulInteractiveElement as _,
+    Styled as _, WeakEntity, Window, div, px, rgb, svg,
 };
 use multi_buffer::{
     Anchor, AnchorRangeExt as _, MultiBufferOffset, MultiBufferSnapshot, ToOffset as _,
     ToPoint as _,
 };
 use quire_core::markdown::TagToken;
-use quire_core::tag_tones::{tone_index, Tone, NEUTRAL, TONES};
+use quire_core::tag_tones::{NEUTRAL, TONES, Tone, tone_index};
 use settings::Settings as _;
 use std::{
     any::{Any, TypeId},
@@ -42,7 +42,9 @@ macro_rules! keys {
 
 /// One highlight key per tone, with the neutral look last.
 fn keys() -> [HighlightKey; 25] {
-    keys!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24)
+    keys!(
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24
+    )
 }
 
 /// Whether tags are drawn as pills: the Format tags setting.
@@ -344,10 +346,15 @@ pub fn refresh(
         // Until the analysis catches up with an edit it has no tags; keeping the tags painted
         // spares removing every icon fold and adding it back when it does, which on a long page
         // took most of a keystroke. The analysis refreshes the tags again once it is current.
+        // A tag deleted whole would leave its icon behind, so that case refolds from the text now.
         if format
             && crate::editor_projection::enabled(editor)
-            && editor.addon::<TagPills>().is_some()
             && page.read(cx).current_inline(cx).is_none()
+            && editor.addon::<TagPills>().is_some_and(|pills| {
+                !pills
+                    .folds
+                    .any_emptied(&editor.buffer().read(cx).snapshot(cx))
+            })
         {
             return;
         }

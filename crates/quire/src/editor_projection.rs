@@ -874,6 +874,13 @@ fn fold_within(
 pub(crate) struct KeptFolds(Vec<(Range<Anchor>, u64)>);
 
 impl KeptFolds {
+    /// Whether an edit deleted all the text of a fold, which then draws its placeholder alone.
+    pub(crate) fn any_emptied(&self, snapshot: &MultiBufferSnapshot) -> bool {
+        self.0
+            .iter()
+            .any(|(range, _)| range.end.to_offset(snapshot) <= range.start.to_offset(snapshot))
+    }
+
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.0.len()
