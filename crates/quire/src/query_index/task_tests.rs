@@ -254,6 +254,9 @@ async fn task_lists_match_the_shared_fixture(cx: &mut TestAppContext) {
         let source = case["query"].as_str().unwrap();
         let query = match (ListQuery::parse(source), case["error"].as_str()) {
             (Err(error), Some(expected)) => {
+                // Quire's unknown-term message also offers the date terms rt lacks.
+                let expected =
+                    expected.replace("project:Name, by:", "project:Name, due:, done:, by:");
                 assert_eq!(error, expected, "{source:?}");
                 continue;
             }

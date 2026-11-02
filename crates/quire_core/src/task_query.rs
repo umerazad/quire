@@ -1,14 +1,15 @@
 //! Live task lists written in a page as `{{tasks: QUERY}}` or `{{[[tasks]]: QUERY}}`. A query
 //! holds states (`inbox`, `next`, `waiting`, `someday`, `done`, `open`, `due`, `upcoming`,
-//! `all`; several match any of them, none means `open`), `#tag`, `[[Page]]`, `here` (the page
-//! holding the query), `project:Name`, words and `"quoted words"`, each but the states
-//! negatable with `-`, and `by:page|project|state`, `sort:page|due`, and `limit:N` (50 by
-//! default). Every term other than a state must hold; an empty query means `here`. Ported from
-//! rt `5ea5c22310ff` `src/core/task-query.ts`.
+//! `all`; several match any of them, none means `open`, or `all` when a `done:` term asks for
+//! completed tasks), `#tag`, `[[Page]]`, `here` (the page holding the query), `project:Name`,
+//! `done:PERIOD`, `due:PERIOD`, `due:overdue`, `due:none`, words and `"quoted words"`, each but
+//! the states negatable with `-`, and `by:page|project|state`, `sort:page|due`, and `limit:N`
+//! (50 by default). Every term other than a state must hold; an empty query means `here`.
+//! Ported from rt `5ea5c22310ff` `src/core/task-query.ts`; the date terms are Quire's own.
 
 use crate::markdown::{JS_SPACE, js_space};
 use crate::reference_filter::{UNCLOSED_QUOTE, query_tokens};
-use crate::tasks::{TaskState, add_days, strip_id};
+use crate::tasks::{DateTerm, DateTest, TaskState, add_days, strip_id};
 use regex::Regex;
 use std::{cmp::Ordering, collections::HashMap, ops::Range, sync::LazyLock};
 
@@ -95,6 +96,8 @@ pub struct TaskQuery {
     pub not_projects: Vec<String>,
     pub words: Vec<String>,
     pub not_words: Vec<String>,
+    pub dates: Vec<DateTerm>,
+    pub not_dates: Vec<DateTerm>,
     pub by: Option<Grouping>,
     pub sort: Order,
     pub limit: usize,
@@ -112,6 +115,10 @@ static UNKNOWN_TERM: LazyLock<Regex> = LazyLock::new(|| {
     let space = &JS_SPACE[1..JS_SPACE.len() - 1];
     Regex::new(&format!(r"^[a-zA-Z]+:[^{space}]")).expect("the unknown term pattern is valid")
 });
+
+/// The terms an unknown term's error offers instead.
+pub const TERMS: &str =
+    "a state, #tag, [[Page]], project:Name, due:, done:, by:, sort:, limit: or words";
 
 /// A block whose first line, apart from a trailing `^id`, is one task query.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -191,6 +198,8 @@ impl TaskQuery {
             not_projects: Vec::new(),
             words: Vec::new(),
             not_words: Vec::new(),
+            dates: Vec::new(),
+            not_dates: Vec::new(),
             by: None,
             sort: Order::Page,
             limit: DEFAULT_LIMIT,
@@ -221,6 +230,13 @@ impl TaskQuery {
                 pick(&mut query.pages, &mut query.not_pages, lower);
             } else if let Some(view) = View::parse(&lower).filter(|_| !negated) {
                 query.views.push(view);
+            } else if let Some(term) = DateTerm::parse(body) {
+                let term = term?;
+                if negated {
+                    query.not_dates.push(term);
+                } else {
+                    query.dates.push(term);
+                }
             } else if lower.starts_with("project:") && utf16_len(body) > 8 {
                 let name = lower["project:".len()..].to_owned();
                 pick(&mut query.projects, &mut query.not_projects, name);
@@ -254,9 +270,7 @@ impl TaskQuery {
                 }
                 query.limit = value as usize;
             } else if UNKNOWN_TERM.is_match(body) {
-                return Err(format!(
-                    "Unknown term \"{body}\". Use a state, #tag, [[Page]], project:Name, by:, sort:, limit: or words."
-                ));
+                return Err(format!("Unknown term \"{body}\". Use {TERMS}."));
             } else {
                 pick(&mut query.words, &mut query.not_words, lower);
             }
@@ -294,6 +308,7 @@ pub struct Listed<'a> {
     pub links: &'a [String],
     pub state: TaskState,
     pub due: Option<&'a str>,
+    pub completed: Option<&'a str>,
 }
 
 /// A project page by identity and title.
@@ -434,10 +449,25 @@ pub fn run(query: &TaskQuery, tasks: &[Listed], notebook: &Notebook) -> TaskList
                 .is_some_and(|of| of.contains(project))
         })
     };
-    let views: &[View] = if query.views.is_empty() {
-        &[View::Open]
-    } else {
-        &query.views
+    let asks_done = query
+        .dates
+        .iter()
+        .any(|term| matches!(term, DateTerm::Done(_)));
+    let views: &[View] = match (query.views.is_empty(), asks_done) {
+        (false, _) => &query.views,
+        (true, true) => &[View::All],
+        (true, false) => &[View::Open],
+    };
+    let place = |terms: &[DateTerm]| -> Vec<Option<DateTest>> {
+        terms
+            .iter()
+            .map(|term| term.resolve(notebook.today).ok())
+            .collect()
+    };
+    let (dates, not_dates) = (place(&query.dates), place(&query.not_dates));
+    let dated = |task: &Listed, test: &Option<DateTest>| {
+        test.as_ref()
+            .is_some_and(|test| test.matches(task.state, task.due, task.completed))
     };
     let until = add_days(notebook.today, UPCOMING_DAYS);
     let mut matched: Vec<usize> = tasks
@@ -457,6 +487,8 @@ pub fn run(query: &TaskQuery, tasks: &[Listed], notebook: &Notebook) -> TaskList
                     .not_projects
                     .iter()
                     .any(|name| in_project(*index, name))
+                && dates.iter().all(|test| dated(task, test))
+                && !not_dates.iter().any(|test| dated(task, test))
                 && query
                     .words
                     .iter()

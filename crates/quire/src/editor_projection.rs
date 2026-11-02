@@ -14,6 +14,10 @@ use std::{
     },
 };
 
+mod incremental;
+
+use incremental::{BlockAt, KINDS, Kind, Layout, Placed, Scope, SyntaxAt};
+
 pub struct BlockSyntax {
     pub marker: Range<MultiBufferOffset>,
     pub id: Option<Range<MultiBufferOffset>>,
@@ -34,7 +38,7 @@ struct AnchoredBlock {
 
 struct Projection {
     blocks: Arc<[AnchoredBlock]>,
-    links: Vec<AnchoredLink>,
+    links: Arc<[AnchoredLink]>,
     previews: Vec<AnchoredPreview>,
     /// Each previewed block's text by reference target; `None` when the target is unresolved.
     preview_text: HashMap<String, Option<String>>,
@@ -51,6 +55,8 @@ struct Projection {
     /// Whether the view's highlights show `style`; a parse or theme change clears it.
     styled: bool,
     hover: Arc<BulletHover>,
+    /// Where the last refresh placed folds and found caret-dependent syntax.
+    layout: Option<Layout>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -179,11 +185,11 @@ impl Addon for Projection {
                     render: Arc::new(move |layout, _| link_region(&editor, &link, layout)),
                 }
             });
-        let lines = self
-            .blocks
+        let shown = self.visible_blocks(&visible, &snapshot);
+        let lines = self.blocks[shown.clone()]
             .iter()
-            .enumerate()
-            .filter_map(|(ordinal, block)| {
+            .zip(shown)
+            .filter_map(|(block, ordinal)| {
                 let end = block.children?;
                 let range = block.marker.end..end;
                 let offsets = range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot);
@@ -196,7 +202,7 @@ impl Addon for Projection {
                         editor::TextRegion {
                             range,
                             render: Arc::new(move |_, _| {
-                                line_hover(ordinal, hover.clone(), editor.clone())
+                                line_hover(ordinal, end, hover.clone(), editor.clone())
                             }),
                         }
                     })
@@ -215,10 +221,33 @@ impl Addon for Projection {
     ) -> Option<Vec<editor::HostIndentGuide>> {
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
         let tones = guide_tones(cx);
+        let start = snapshot.point_to_offset(language::Point::new(visible.start.0, 0));
+        let end = snapshot.point_to_offset(language::Point::new(
+            visible.end.0,
+            snapshot.line_len(visible.end),
+        ));
+        let shown = self.visible_blocks(&(start..end), &snapshot);
+        // A guide from above the view belongs to an ancestor of its first block: the nearest
+        // block before it at each shallower depth.
+        let mut ancestors = Vec::new();
+        if let Some(first) = self.blocks.get(shown.start) {
+            let mut depth = first.depth;
+            for (ordinal, block) in self.blocks[..shown.start].iter().enumerate().rev() {
+                if depth == 0 {
+                    break;
+                }
+                if block.depth < depth {
+                    depth = block.depth;
+                    ancestors.push(ordinal);
+                }
+            }
+        }
         Some(
-            self.blocks
-                .iter()
-                .enumerate()
+            ancestors
+                .into_iter()
+                .rev()
+                .chain(shown)
+                .map(|ordinal| (ordinal, &self.blocks[ordinal]))
                 .filter_map(|(ordinal, block)| {
                     block.children?;
                     let start = snapshot.offset_to_point(block.marker.start.to_offset(&snapshot));
@@ -255,18 +284,57 @@ impl Addon for Projection {
     }
 }
 
+impl Projection {
+    /// The blocks whose markers or first lines can lie in `visible`: from the last block that
+    /// starts before it, since a block's line runs up to the next block's marker, through the last
+    /// block that starts in it.
+    fn visible_blocks(
+        &self,
+        visible: &Range<MultiBufferOffset>,
+        snapshot: &MultiBufferSnapshot,
+    ) -> Range<usize> {
+        let start = |block: &AnchoredBlock| block.marker.start.to_offset(snapshot);
+        let first = self
+            .blocks
+            .partition_point(|block| start(block) < visible.start)
+            .saturating_sub(1);
+        let end = self
+            .blocks
+            .partition_point(|block| start(block) <= visible.end);
+        first..end.max(first)
+    }
+}
+
+/// Which item the pointer is over, by where its children start: a key a bullet's placeholder
+/// keeps however blocks before it change.
+fn hover_key(children: &Anchor) -> usize {
+    let mut hasher = std::hash::DefaultHasher::new();
+    std::hash::Hash::hash(children, &mut hasher);
+    (std::hash::Hasher::finish(&hasher) as usize).min(NOT_HOVERED - 1)
+}
+
+/// An element id for a fold's placeholder, from where the fold starts, which stays the same
+/// while the fold does.
+fn fold_element_id(start: &Anchor) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    std::hash::Hash::hash(start, &mut hasher);
+    std::hash::Hasher::finish(&hasher)
+}
+
 /// Tracks the pointer over a parent item's line text, which shows its fold arrow, without taking
 /// clicks or selection from the text.
 fn line_hover(
     ordinal: usize,
+    children: Anchor,
     hover: Arc<BulletHover>,
     editor: WeakEntity<Editor>,
 ) -> gpui::AnyElement {
+    let key = hover_key(&children);
     gpui::div()
         .id(("quire-bullet-line", ordinal))
         .debug_selector(move || format!("quire-line-{ordinal}"))
         .size_full()
-        .on_hover(move |hovered, _, cx| hover.set(false, ordinal, *hovered, &editor, cx))
+        .on_hover(move |hovered, _, cx| hover.set(false, key, *hovered, &editor, cx))
         .into_any_element()
 }
 
@@ -320,21 +388,8 @@ fn shown(
     window: &Window,
     cx: &App,
 ) -> bool {
-    if editor.focus_handle(cx).is_focused(window) {
-        let head = editor
-            .selections
-            .disjoint_anchors_arc()
-            .last()
-            .map(|selection| selection.head().to_offset(snapshot));
-        if head.is_some_and(|head| {
-            block.start.to_offset(snapshot) <= head && head <= block.end.to_offset(snapshot)
-        }) {
-            return false;
-        }
-    }
-    let start = range.start.to_offset(snapshot);
-    let end = range.end.to_offset(snapshot);
-    end.0.saturating_sub(start.0) == source.len() && snapshot.contains_str_at(start, source)
+    let caret = source_caret(editor, snapshot, window, cx);
+    syntax_at(range, block, source, caret, snapshot).shown
 }
 
 fn text_start(block: &AnchoredBlock, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
@@ -347,7 +402,7 @@ fn text_start(block: &AnchoredBlock, snapshot: &MultiBufferSnapshot) -> MultiBuf
     let prefix: String = snapshot
         .chars_at(start)
         .take(crate::task_marker::PREFIX_CHAR_LIMIT)
-        .take_while(|c| *c != '\n')
+        .take_while(|c| !matches!(c, '\n' | '\r'))
         .collect();
     let Some(task) = crate::task_marker::read(&prefix) else {
         return start;
@@ -409,129 +464,716 @@ fn id_range(
     Some(start..end)
 }
 
+/// How much a refresh refolds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Refold {
+    /// Every fold: when Write starts or stops, the theme changes, or a fold command outside
+    /// Write removed some of its folds.
+    All,
+    /// The folds that differ from those placed, after a parse or a decoration's change.
+    Changed,
+    /// The syntax whose block the caret entered or left, and the lines edited since the last
+    /// refresh. A caret move on a long page refolds a line or two instead of the page.
+    Caret,
+}
+
 fn refresh(
     editor: &mut Editor,
-    blocks: &[AnchoredBlock],
+    blocks: &Arc<[AnchoredBlock]>,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    let snapshot = editor.buffer().read(cx).snapshot(cx);
-    let collapsed: Vec<MultiBufferOffset> = crate::outline::folds::collapsed(editor, cx)
-        .into_iter()
-        .map(|range| range.start)
-        .collect();
-    let palette = BulletPalette::of(cx);
-    let hover = editor
-        .addon::<Projection>()
-        .map(|projection| projection.hover.clone())
-        .unwrap_or_default();
-    let mut hidden = Vec::new();
-    let mut tasks = Vec::new();
-    for (ordinal, block) in blocks.iter().enumerate() {
-        let marker = block.marker.start.to_offset(&snapshot)..block.marker.end.to_offset(&snapshot);
+    refold_with(editor, blocks, Refold::Changed, window, cx);
+}
+
+/// The caret that shows source in place of rendered syntax: the last selection's head while the
+/// editor has focus.
+fn source_caret(
+    editor: &Editor,
+    snapshot: &MultiBufferSnapshot,
+    window: &Window,
+    cx: &App,
+) -> Option<MultiBufferOffset> {
+    if !editor.focus_handle(cx).is_focused(window) {
+        return None;
+    }
+    editor
+        .selections
+        .disjoint_anchors_arc()
+        .last()
+        .map(|selection| selection.head().to_offset(snapshot))
+}
+
+/// Where syntax sits, whether its text is still `source`, and whether it renders with the caret
+/// at `caret`.
+fn syntax_at(
+    range: &Range<Anchor>,
+    block: &Range<Anchor>,
+    source: &str,
+    caret: Option<MultiBufferOffset>,
+    snapshot: &MultiBufferSnapshot,
+) -> SyntaxAt {
+    let range = range.start.to_offset(snapshot)..range.end.to_offset(snapshot);
+    let block = block.start.to_offset(snapshot)..block.end.to_offset(snapshot);
+    let intact = range.end.0.saturating_sub(range.start.0) == source.len()
+        && snapshot.contains_str_at(range.start, source);
+    let mut at = SyntaxAt {
+        range,
+        block,
+        intact,
+        shown: false,
+    };
+    at.shown = at.renders(caret);
+    at
+}
+
+fn block_at(block: &AnchoredBlock, snapshot: &MultiBufferSnapshot) -> BlockAt {
+    BlockAt {
+        start: block.marker.start.to_offset(snapshot),
+        checkbox: block.marker.end.to_offset(snapshot),
+        content: text_start(block, snapshot),
+        id: id_range(block, snapshot),
+        children: block.children.map(|at| at.to_offset(snapshot)),
+    }
+}
+
+/// A decoration another module draws over syntax: a task list, media, code toolbar, or embed.
+struct Header {
+    range: Range<Anchor>,
+    block: Range<Anchor>,
+    source: String,
+    placeholder: FoldPlaceholder,
+}
+
+/// The syntax a refresh renders, by kind, in the order the layout lists it.
+#[derive(Default)]
+struct Sources {
+    marks: Arc<[crate::write_style::Anchored]>,
+    previews: Vec<(AnchoredPreview, Option<String>)>,
+    headers: [Vec<Header>; 4],
+    links: Arc<[AnchoredLink]>,
+}
+
+impl Sources {
+    fn read(editor: &Editor, host: &WeakEntity<Editor>, cx: &App) -> Self {
+        let Some(projection) = editor.addon::<Projection>() else {
+            return Self::default();
+        };
+        let type_tag = TypeId::of::<Projection>();
+        let header = |(range, block, source, placeholder)| Header {
+            range,
+            block,
+            source,
+            placeholder,
+        };
+        Self {
+            marks: projection.style.hidden.clone(),
+            previews: projection
+                .previews
+                .iter()
+                .filter_map(|preview| {
+                    let text = projection.preview_text.get(&preview.target)?;
+                    Some((preview.clone(), text.clone()))
+                })
+                .collect(),
+            headers: [
+                crate::task_lists::headers(editor, host.clone(), type_tag)
+                    .into_iter()
+                    .map(|(spot, placeholder)| (spot.range, spot.block, spot.source, placeholder))
+                    .map(header)
+                    .collect(),
+                crate::media::headers(editor, host.clone(), type_tag)
+                    .into_iter()
+                    .map(|(spot, placeholder)| (spot.range, spot.block, spot.source, placeholder))
+                    .map(header)
+                    .collect(),
+                crate::code_format::toolbar::headers(editor, host.clone(), type_tag, cx)
+                    .into_iter()
+                    .map(|(spot, placeholder)| (spot.range, spot.block, spot.source, placeholder))
+                    .map(header)
+                    .collect(),
+                crate::embeds::headers(editor, host.clone(), type_tag)
+                    .into_iter()
+                    .map(|(spot, placeholder)| (spot.range, spot.block, spot.source, placeholder))
+                    .map(header)
+                    .collect(),
+            ],
+            links: projection.links.clone(),
+        }
+    }
+
+    fn headers(&self, kind: Kind) -> &[Header] {
+        match kind {
+            Kind::List => &self.headers[0],
+            Kind::Media => &self.headers[1],
+            Kind::Toolbar => &self.headers[2],
+            Kind::Embed => &self.headers[3],
+            Kind::Mark | Kind::Preview | Kind::Link => &[],
+        }
+    }
+
+    fn len(&self, kind: Kind) -> usize {
+        match kind {
+            Kind::Mark => self.marks.len(),
+            Kind::Preview => self.previews.len(),
+            Kind::Link => self.links.len(),
+            _ => self.headers(kind).len(),
+        }
+    }
+
+    /// The range, block, and source of the `index`th syntax of `kind`.
+    fn anchors(&self, kind: Kind, index: usize) -> (&Range<Anchor>, &Range<Anchor>, &str) {
+        match kind {
+            Kind::Mark => {
+                let mark = &self.marks[index];
+                (&mark.range, &mark.block, &mark.source)
+            }
+            Kind::Preview => {
+                let (preview, _) = &self.previews[index];
+                (&preview.range, &preview.block, &preview.source)
+            }
+            Kind::Link => {
+                let link = &self.links[index];
+                (&link.range, &link.block, &link.data.source)
+            }
+            _ => {
+                let header = &self.headers(kind)[index];
+                (&header.range, &header.block, &header.source)
+            }
+        }
+    }
+
+    fn syntax_at(
+        &self,
+        kind: Kind,
+        index: usize,
+        caret: Option<MultiBufferOffset>,
+        snapshot: &MultiBufferSnapshot,
+    ) -> SyntaxAt {
+        let (range, block, source) = self.anchors(kind, index);
+        syntax_at(range, block, source, caret, snapshot)
+    }
+}
+
+/// A fold a refresh wants, with the key the layout remembers it by, and its crease unless only
+/// keys were asked for.
+struct Wanted {
+    placed: Placed,
+    crease: Option<Crease<MultiBufferOffset>>,
+}
+
+/// The key of folds whose placeholder shows nothing, hiding syntax.
+const HIDDEN: u64 = 0;
+
+fn key(parts: impl std::hash::Hash) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    parts.hash(&mut hasher);
+    match std::hash::Hasher::finish(&hasher) {
+        HIDDEN | incremental::STALE => 1,
+        key => key,
+    }
+}
+
+/// What every refresh of one view shares: the editor, the caret, and the looks of the moment.
+struct Folding<'a> {
+    host: WeakEntity<Editor>,
+    snapshot: &'a MultiBufferSnapshot,
+    hidden: FoldPlaceholder,
+    bullets: BulletPalette,
+    external: ExternalPalette,
+    hover: Arc<BulletHover>,
+    /// The caret that shows source in place of rendered syntax.
+    caret: Option<MultiBufferOffset>,
+    generation: u64,
+    /// Whether to list only the keys of wanted folds, to compare with those placed.
+    keys_only: bool,
+    wanted: Vec<Wanted>,
+}
+
+impl Folding<'_> {
+    fn want(
+        &mut self,
+        range: Range<MultiBufferOffset>,
+        key: u64,
+        placeholder: impl FnOnce(&Self) -> FoldPlaceholder,
+    ) {
+        if range.is_empty() {
+            return;
+        }
+        let crease = (!self.keys_only).then(|| Crease::simple(range.clone(), placeholder(self)));
+        self.wanted.push(Wanted {
+            placed: Placed { range, key },
+            crease,
+        });
+    }
+
+    fn hide(&mut self, range: Range<MultiBufferOffset>) {
+        self.want(range, HIDDEN, |folding| folding.hidden.clone());
+    }
+
+    /// A block's checkbox, bullet, and hidden ID.
+    /// Their keys leave out where the block falls in the page, so a block added above leaves
+    /// the folds of those after it in place.
+    fn block(&mut self, block: &AnchoredBlock, at: &BlockAt, collapsed: bool) {
+        let marker = at.start..at.checkbox;
         if !marker.is_empty() {
-            let content: String = snapshot
+            let content: String = self
+                .snapshot
                 .chars_at(marker.end)
-                .take_while(|c| *c != '\n')
+                .take_while(|c| !matches!(c, '\n' | '\r'))
                 .take(crate::task_marker::PREFIX_CHAR_LIMIT)
                 .collect();
             if let Some(task) = crate::task_marker::read(&content) {
                 let range = marker.end..MultiBufferOffset(marker.end.0 + task.source.len());
-                tasks.push(Crease::simple(
-                    range,
-                    checkbox_placeholder(
-                        cx.entity().downgrade(),
-                        ordinal,
-                        task.source.into(),
-                        task.checked,
-                    ),
-                ));
+                let key = key(("checkbox", task.source, task.checked));
+                self.want(range, key, |folding| {
+                    checkbox_placeholder(folding.host.clone(), task.source.into(), task.checked)
+                });
             }
-            let label: String = snapshot.text_for_range(marker.clone()).collect();
-            let number = label
+            let label: String = self.snapshot.text_for_range(marker.clone()).collect();
+            let number: Option<gpui::SharedString> = label
                 .trim()
                 .starts_with(|c: char| c.is_ascii_digit())
                 .then(|| label.trim().to_owned().into());
-            let collapsed = block
-                .children
-                .is_some_and(|at| collapsed.contains(&at.to_offset(&snapshot)));
-            tasks.push(Crease::simple(
-                marker,
+            let key = key((
+                "bullet",
+                number.as_ref().map(|number| number.as_ref()),
+                // The placeholder keeps this anchor, to fold the children and track hovering.
+                block.children,
+                collapsed,
+                self.bullets.ink,
+                self.bullets.ring,
+            ));
+            self.want(marker, key, |folding| {
                 bullet_placeholder(
-                    cx.entity().downgrade(),
+                    folding.host.clone(),
                     Bullet {
-                        ordinal,
                         number,
                         children: block.children,
                         collapsed,
-                        palette,
-                        hover: hover.clone(),
+                        palette: folding.bullets,
+                        hover: folding.hover.clone(),
                     },
-                ),
-            ));
+                )
+            });
         }
-        if let Some(id) = id_range(block, &snapshot) {
-            hidden.push(id);
+        if let Some(id) = &at.id {
+            self.hide(id.clone());
         }
     }
-    editor.remove_folds_with_type(
-        &[MultiBufferOffset(0)..snapshot.len()],
-        TypeId::of::<Projection>(),
-        false,
+
+    /// The folds that render the `index`th syntax of `kind`, when it renders.
+    fn syntax(&mut self, sources: &Sources, kind: Kind, index: usize, at: &SyntaxAt) {
+        if !at.shown {
+            return;
+        }
+        match kind {
+            Kind::Mark => self.hide(at.range.clone()),
+            Kind::Preview => {
+                let (preview, text) = &sources.previews[index];
+                let key = key(("preview", index, &preview.target, &preview.source, text));
+                self.want(at.range.clone(), key, |folding| {
+                    preview_placeholder(folding.host.clone(), index, preview.clone(), text.clone())
+                });
+            }
+            Kind::List | Kind::Media | Kind::Toolbar | Kind::Embed => {
+                // Other modules draw these from their own state, so each refresh places them anew.
+                let key = key(("header", self.generation, kind as usize, index));
+                self.want(at.range.clone(), key, |_| {
+                    sources.headers(kind)[index].placeholder.clone()
+                });
+            }
+            Kind::Link => {
+                let link = &sources.links[index];
+                let snapshot = self.snapshot;
+                let (start, end) = (at.range.start, at.range.end);
+                let label_start = link.label.start.to_offset(snapshot);
+                let label_end = link.label.end.to_offset(snapshot);
+                if !link.is_external() {
+                    self.hide(start..label_start);
+                    self.hide(label_end..end);
+                    return;
+                }
+                if start < label_start {
+                    self.hide(start..label_start);
+                }
+                // A bare URL has no syntax after it to carry the arrow, so its last character does.
+                let kept = (label_end == end)
+                    .then(|| snapshot.reversed_chars_at(end).next())
+                    .flatten();
+                let trailing = match kept {
+                    Some(last) => MultiBufferOffset(end.0 - last.len_utf8())..end,
+                    None => label_end..end,
+                };
+                let palette = self.external;
+                let key = key((
+                    "arrow",
+                    link.id,
+                    &link.data.source,
+                    link.url(),
+                    kept,
+                    palette.ink,
+                    palette.line,
+                    palette.arrow,
+                ));
+                self.want(trailing, key, |folding| {
+                    arrow_placeholder(folding.host.clone(), link.clone(), kept, palette)
+                });
+            }
+        }
+    }
+}
+
+/// Lists the wanted folds that meet `scope`, reading again the blocks and syntax there.
+fn fold_within(
+    editor: &Editor,
+    folding: &mut Folding,
+    layout: &mut Layout,
+    blocks: &[AnchoredBlock],
+    sources: &Sources,
+    scope: &Scope,
+    cx: &mut App,
+) {
+    let snapshot = folding.snapshot;
+    let indices = layout.blocks_meeting(scope);
+    let children: Vec<MultiBufferOffset> = indices
+        .iter()
+        .filter_map(|index| layout.blocks[*index].children)
+        .collect();
+    let collapsed: Vec<MultiBufferOffset> = match (children.iter().min(), children.iter().max()) {
+        (Some(first), Some(last)) => crate::outline::folds::collapsed_in(
+            editor,
+            incremental::widen(&(*first..*last), snapshot),
+            cx,
+        )
+        .into_iter()
+        .map(|range| range.start)
+        .collect(),
+        _ => Vec::new(),
+    };
+    for index in indices {
+        let at = &layout.blocks[index];
+        let folded = at.children.is_some_and(|at| collapsed.contains(&at));
+        folding.block(&blocks[index], at, folded);
+    }
+    for kind in KINDS {
+        for (index, at) in layout.syntax_mut(kind).iter_mut().enumerate() {
+            if scope.meets(&at.range) {
+                *at = sources.syntax_at(kind, index, folding.caret, snapshot);
+                folding.syntax(sources, kind, index, at);
+            }
+        }
+    }
+    folding
+        .wanted
+        .retain(|wanted| scope.meets(&wanted.placed.range));
+}
+
+/// The folds another module placed beside Write's, with a key for what each placeholder shows.
+#[derive(Default)]
+pub(crate) struct KeptFolds(Vec<(Range<Anchor>, u64)>);
+
+impl KeptFolds {
+    /// Whether an edit deleted all the text of a fold, which then draws its placeholder alone.
+    pub(crate) fn any_emptied(&self, snapshot: &MultiBufferSnapshot) -> bool {
+        self.0
+            .iter()
+            .any(|(range, _)| range.end.to_offset(snapshot) <= range.start.to_offset(snapshot))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+/// A key for what a fold's placeholder shows, for [`sync_folds`].
+pub(crate) fn fold_key(parts: impl std::hash::Hash) -> u64 {
+    key(parts)
+}
+
+/// Makes the folds of `type_tag` exactly `wanted`, each a range and a key for its placeholder,
+/// removing and adding only those that differ from the folds in the view, so a long page is not
+/// refolded whole. `placeholder` builds the placeholder of the `wanted` entry at an index.
+pub(crate) fn sync_folds(
+    editor: &mut Editor,
+    type_tag: TypeId,
+    kept: &mut KeptFolds,
+    wanted: Vec<(Range<MultiBufferOffset>, u64)>,
+    placeholder: impl Fn(usize) -> FoldPlaceholder,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let mut keys: HashMap<(usize, usize), Vec<u64>> = HashMap::new();
+    for (range, key) in &kept.0 {
+        let range = range.start.to_offset(&snapshot).0..range.end.to_offset(&snapshot).0;
+        keys.entry((range.start, range.end)).or_default().push(*key);
+    }
+    let display = editor.display_snapshot(cx);
+    let mut current: Vec<Placed> = display
+        .folds_in_range(MultiBufferOffset(0)..snapshot.len())
+        .filter(|fold| fold.placeholder.type_tag == Some(type_tag))
+        .map(|fold| {
+            let range = fold.range.start.to_offset(&snapshot)..fold.range.end.to_offset(&snapshot);
+            let key = keys
+                .get_mut(&(range.start.0, range.end.0))
+                .and_then(|keys| keys.pop())
+                .unwrap_or(incremental::STALE);
+            Placed { range, key }
+        })
+        .collect();
+    current.sort();
+    let mut placed: Vec<Placed> = wanted
+        .iter()
+        .filter(|(range, _)| !range.is_empty())
+        .map(|(range, key)| Placed {
+            range: range.clone(),
+            key: *key,
+        })
+        .collect();
+    let scope = incremental::difference(&current, &mut placed, |range| {
+        incremental::widen(range, &snapshot)
+    });
+    kept.0 = wanted
+        .iter()
+        .map(|(range, key)| {
+            (
+                snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end),
+                *key,
+            )
+        })
+        .collect();
+    if scope.is_empty() {
+        return;
+    }
+    editor.remove_folds_with_type(scope.ranges(), type_tag, false, cx);
+    let creases = wanted
+        .iter()
+        .enumerate()
+        .filter(|(_, (range, _))| !range.is_empty() && scope.meets(range))
+        .map(|(index, (range, _))| Crease::simple(range.clone(), placeholder(index)))
+        .collect();
+    editor.fold_creases(creases, false, window, cx);
+}
+
+/// Checks that the folds of `type_tag` in the view are exactly those `kept` records as last
+/// wanted, which is what removing them all and folding the wanted ones would leave; for tests.
+#[cfg(test)]
+pub(crate) fn check_kept_folds(
+    editor: &Editor,
+    type_tag: TypeId,
+    kept: &KeptFolds,
+    cx: &mut App,
+) -> Result<(), String> {
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let mut wanted: Vec<_> = kept
+        .0
+        .iter()
+        .map(|(range, _)| range.start.to_offset(&snapshot).0..range.end.to_offset(&snapshot).0)
+        .filter(|range| !range.is_empty())
+        .collect();
+    wanted.sort_by_key(|range| (range.start, range.end));
+    let display = editor.display_snapshot(cx);
+    let mut folded: Vec<_> = display
+        .folds_in_range(MultiBufferOffset(0)..snapshot.len())
+        .filter(|fold| fold.placeholder.type_tag == Some(type_tag))
+        .map(|fold| fold.range.start.to_offset(&snapshot).0..fold.range.end.to_offset(&snapshot).0)
+        .collect();
+    folded.sort_by_key(|range| (range.start, range.end));
+    if wanted == folded {
+        Ok(())
+    } else {
+        Err(format!(
+            "The view folds {folded:?}, but the folds last wanted are {wanted:?}."
+        ))
+    }
+}
+
+/// Write's folds that meet `scope`, by fold.
+fn syntax_folds_in(editor: &Editor, scope: &Scope, cx: &mut App) -> usize {
+    let snapshot = editor.display_snapshot(cx);
+    let mut folds = std::collections::HashSet::new();
+    for range in scope.ranges() {
+        folds.extend(
+            snapshot
+                .folds_in_range(range.clone())
+                .filter(|fold| fold.placeholder.type_tag == Some(TypeId::of::<Projection>()))
+                .map(|fold| fold.id),
+        );
+    }
+    folds.len()
+}
+
+/// Folds the view as Write shows it: hidden syntax, bullets, checkboxes, rendered links, and
+/// other modules' decorations, refolding as much as `mode` says.
+fn refold_with(
+    editor: &mut Editor,
+    blocks: &Arc<[AnchoredBlock]>,
+    mode: Refold,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let caret = source_caret(editor, &snapshot, window, cx);
+    let host = cx.entity().downgrade();
+    let sources = Sources::read(editor, &host, cx);
+    let mut edited = Scope::default();
+    let followed = match editor
+        .addon_mut::<Projection>()
+        .and_then(|projection| projection.layout.take())
+    {
+        Some(mut layout) if mode != Refold::All => layout.follow(&snapshot).map(|scope| {
+            edited = scope;
+            layout
+        }),
+        _ => None,
+    };
+    let (mode, mut layout) = match followed {
+        Some(layout)
+            if mode == Refold::Caret
+                && (!Arc::ptr_eq(&layout.source, blocks)
+                    || layout.blocks.len() != blocks.len()
+                    || KINDS
+                        .iter()
+                        .any(|kind| layout.syntax(*kind).len() != sources.len(*kind))) =>
+        {
+            (Refold::Changed, layout)
+        }
+        Some(layout) => (mode, layout),
+        None => {
+            let edits = editor.buffer().update(cx, |buffer, _| buffer.subscribe());
+            (Refold::All, Layout::new(blocks.clone(), edits, &snapshot))
+        }
+    };
+    layout.generation += 1;
+    let mut folding = Folding {
+        host,
+        snapshot: &snapshot,
+        hidden: FoldPlaceholder {
+            collapsed_text: Some("".into()),
+            constrain_width: false,
+            merge_adjacent: false,
+            type_tag: Some(TypeId::of::<Projection>()),
+            ..Default::default()
+        },
+        bullets: BulletPalette::of(cx),
+        external: ExternalPalette::of(cx),
+        hover: editor
+            .addon::<Projection>()
+            .map(|projection| projection.hover.clone())
+            .unwrap_or_default(),
+        generation: layout.generation,
+        caret,
+        keys_only: false,
+        wanted: Vec::new(),
+    };
+    let scope = if mode == Refold::Caret {
+        for index in layout.blocks_meeting(&edited) {
+            layout.blocks[index] = block_at(&blocks[index], &snapshot);
+        }
+        for kind in KINDS {
+            for (index, at) in layout.syntax_mut(kind).iter_mut().enumerate() {
+                if edited.meets(&at.range) || edited.meets(&at.block) {
+                    let shown = at.shown;
+                    *at = sources.syntax_at(kind, index, caret, &snapshot);
+                    at.shown = shown;
+                }
+            }
+        }
+        let mut scope = edited;
+        for kind in KINDS {
+            for at in layout.syntax_mut(kind) {
+                let shown = at.renders(caret);
+                if shown != at.shown {
+                    at.shown = shown;
+                    if !at.range.is_empty() {
+                        scope.add(at.range.clone());
+                    }
+                }
+            }
+        }
+        scope.normalize();
+        scope
+    } else {
+        layout.source = blocks.clone();
+        layout.blocks = blocks
+            .iter()
+            .map(|block| block_at(block, &snapshot))
+            .collect();
+        for kind in KINDS {
+            *layout.syntax_mut(kind) = (0..sources.len(kind))
+                .map(|index| sources.syntax_at(kind, index, caret, &snapshot))
+                .collect();
+        }
+        if mode == Refold::All {
+            Scope::whole(&snapshot)
+        } else {
+            // Every wanted fold's key, to compare with those placed; placeholders are built only
+            // for the folds that differ.
+            folding.keys_only = true;
+            let collapsed: Vec<MultiBufferOffset> = crate::outline::folds::collapsed(editor, cx)
+                .into_iter()
+                .map(|range| range.start)
+                .collect();
+            for (block, at) in blocks.iter().zip(&layout.blocks) {
+                let folded = at.children.is_some_and(|at| collapsed.contains(&at));
+                folding.block(block, at, folded);
+            }
+            for kind in KINDS {
+                for (index, at) in layout.syntax(kind).iter().enumerate() {
+                    folding.syntax(&sources, kind, index, at);
+                }
+            }
+            let mut wanted: Vec<Placed> = std::mem::take(&mut folding.wanted)
+                .into_iter()
+                .map(|wanted| wanted.placed)
+                .collect();
+            folding.keys_only = false;
+            let mut scope = incremental::difference(&layout.placed, &mut wanted, |range| {
+                incremental::widen(range, &snapshot)
+            });
+            scope.extend(&edited);
+            scope.normalize();
+            scope
+        }
+    };
+    fold_within(
+        editor,
+        &mut folding,
+        &mut layout,
+        blocks,
+        &sources,
+        &scope,
         cx,
     );
-    let placeholder = FoldPlaceholder {
-        collapsed_text: Some("".into()),
-        constrain_width: false,
-        merge_adjacent: false,
-        type_tag: Some(TypeId::of::<Projection>()),
-        ..Default::default()
+    let before = match mode {
+        Refold::All => 0,
+        _ => syntax_folds_in(editor, &scope, cx),
     };
+    if !scope.is_empty() {
+        editor.remove_folds_with_type(scope.ranges(), TypeId::of::<Projection>(), false, cx);
+    }
     let style = editor
         .addon::<Projection>()
         .map(|projection| projection.style.clone())
         .unwrap_or_default();
-    let mut replaced = Vec::new();
-    for mark in style.hidden.iter() {
-        if shown(
-            editor,
-            &mark.range,
-            &mark.block,
-            &mark.source,
-            &snapshot,
-            window,
-            cx,
-        ) {
-            hidden.push(mark.range.start.to_offset(&snapshot)..mark.range.end.to_offset(&snapshot));
-        }
-    }
-    for rule in style.rules.iter() {
-        if shown(
-            editor,
-            &rule.range,
-            &rule.block,
-            &rule.source,
-            &snapshot,
-            window,
-            cx,
-        ) {
-            replaced.push(crate::write_style::Replacement::Rule(rule.clone()));
-        }
-    }
-    for table in style.tables.iter() {
-        let mark = &table.mark;
-        if shown(
-            editor,
-            &mark.range,
-            &mark.block,
-            &mark.source,
-            &snapshot,
-            window,
-            cx,
-        ) {
-            replaced.push(crate::write_style::Replacement::Table(table.clone()));
-        }
-    }
+    let renders = |mark: &crate::write_style::Anchored| {
+        syntax_at(&mark.range, &mark.block, &mark.source, caret, &snapshot).shown
+    };
+    let replaced = style
+        .rules
+        .iter()
+        .filter(|rule| renders(rule))
+        .map(|rule| crate::write_style::Replacement::Rule(rule.clone()))
+        .chain(
+            style
+                .tables
+                .iter()
+                .filter(|table| renders(&table.mark))
+                .map(|table| crate::write_style::Replacement::Table(table.clone())),
+        )
+        .collect();
     crate::write_style::replace(editor, replaced, cx);
     let restyle = editor
         .addon_mut::<Projection>()
@@ -539,160 +1181,51 @@ fn refresh(
     if restyle {
         crate::write_style::highlight(editor, &style, cx);
     }
-    let (links, previews) = editor
-        .addon::<Projection>()
-        .map(|projection| {
-            let previews: Vec<_> = projection
-                .previews
-                .iter()
-                .filter_map(|preview| {
-                    let text = projection.preview_text.get(&preview.target)?;
-                    Some((preview.clone(), text.clone()))
-                })
-                .collect();
-            (projection.links.clone(), previews)
-        })
-        .unwrap_or_default();
-    for (ordinal, (preview, text)) in previews.into_iter().enumerate() {
-        if shown(
-            editor,
-            &preview.range,
-            &preview.block,
-            &preview.source,
-            &snapshot,
-            window,
-            cx,
-        ) {
-            let range =
-                preview.range.start.to_offset(&snapshot)..preview.range.end.to_offset(&snapshot);
-            tasks.push(Crease::simple(
-                range,
-                preview_placeholder(cx.entity().downgrade(), ordinal, preview, text),
-            ));
+    if mode != Refold::Caret {
+        let (external, internal): (Vec<_>, Vec<_>) =
+            sources.links.iter().partition(|link| link.is_external());
+        for (key, links, style) in [
+            (link_key::<Projection>(), internal, internal_link_style(cx)),
+            (
+                link_key::<ExternalLink>(),
+                external,
+                folding.external.style(),
+            ),
+        ] {
+            editor.clear_highlights(key, cx);
+            if !links.is_empty() {
+                let labels = links.into_iter().map(|link| link.label.clone()).collect();
+                editor.highlight_text(key, labels, style, cx);
+            }
         }
     }
-    let type_tag = TypeId::of::<Projection>();
-    for (spot, placeholder) in crate::task_lists::headers(editor, cx.entity().downgrade(), type_tag)
-    {
-        if shown(
-            editor,
-            &spot.range,
-            &spot.block,
-            &spot.source,
-            &snapshot,
-            window,
-            cx,
-        ) {
-            let range = spot.range.start.to_offset(&snapshot)..spot.range.end.to_offset(&snapshot);
-            tasks.push(Crease::simple(range, placeholder));
-        }
-    }
-    for (spot, placeholder) in crate::media::headers(editor, cx.entity().downgrade(), type_tag) {
-        if shown(
-            editor,
-            &spot.range,
-            &spot.block,
-            &spot.source,
-            &snapshot,
-            window,
-            cx,
-        ) {
-            let range = spot.range.start.to_offset(&snapshot)..spot.range.end.to_offset(&snapshot);
-            tasks.push(Crease::simple(range, placeholder));
-        }
-    }
-    let toolbars =
-        crate::code_format::toolbar::headers(editor, cx.entity().downgrade(), type_tag, cx);
-    for (spot, placeholder) in toolbars {
-        if shown(
-            editor,
-            &spot.range,
-            &spot.block,
-            &spot.source,
-            &snapshot,
-            window,
-            cx,
-        ) {
-            let range = spot.range.start.to_offset(&snapshot)..spot.range.end.to_offset(&snapshot);
-            tasks.push(Crease::simple(range, placeholder));
-        }
-    }
-    let embeds = crate::embeds::headers(editor, cx.entity().downgrade(), type_tag);
-    let folded: Vec<bool> = embeds
+    let (placed, creases): (Vec<Placed>, Vec<_>) = folding
+        .wanted
+        .into_iter()
+        .filter_map(|wanted| Some((wanted.placed, wanted.crease?)))
+        .unzip();
+    editor.fold_creases(creases, false, window, cx);
+    let folded: Vec<bool> = layout
+        .syntax(Kind::Embed)
         .iter()
-        .map(|(spot, _)| {
-            shown(
-                editor,
-                &spot.range,
-                &spot.block,
-                &spot.source,
-                &snapshot,
-                window,
-                cx,
-            )
-        })
+        .map(|at| at.shown)
         .collect();
-    for ((spot, placeholder), folded) in embeds.into_iter().zip(folded.iter().copied()) {
-        if folded {
-            let range = spot.range.start.to_offset(&snapshot)..spot.range.end.to_offset(&snapshot);
-            tasks.push(Crease::simple(range, placeholder));
-        }
-    }
-    let palette = ExternalPalette::of(cx);
-    let (external, internal): (Vec<_>, Vec<_>) = links.iter().partition(|link| link.is_external());
-    for link in links.iter() {
-        if !rendered_link(editor, link, &snapshot, window, cx) {
-            continue;
-        }
-        let start = link.range.start.to_offset(&snapshot);
-        let label_start = link.label.start.to_offset(&snapshot);
-        let label_end = link.label.end.to_offset(&snapshot);
-        let end = link.range.end.to_offset(&snapshot);
-        if !link.is_external() {
-            hidden.push(start..label_start);
-            hidden.push(label_end..end);
-            continue;
-        }
-        if start < label_start {
-            hidden.push(start..label_start);
-        }
-        // A bare URL has no syntax after it to carry the arrow, so its last character does.
-        let kept = (label_end == end)
-            .then(|| snapshot.reversed_chars_at(end).next())
-            .flatten();
-        let trailing = match kept {
-            Some(last) => MultiBufferOffset(end.0 - last.len_utf8())..end,
-            None => label_end..end,
-        };
-        tasks.push(Crease::simple(
-            trailing,
-            arrow_placeholder(cx.entity().downgrade(), link.clone(), kept, palette),
-        ));
-    }
-    for (key, links, style) in [
-        (link_key::<Projection>(), internal, internal_link_style(cx)),
-        (link_key::<ExternalLink>(), external, palette.style()),
-    ] {
-        editor.clear_highlights(key, cx);
-        if !links.is_empty() {
-            let labels = links.into_iter().map(|link| link.label.clone()).collect();
-            editor.highlight_text(key, labels, style, cx);
-        }
-    }
-    editor.fold_creases(
-        hidden
-            .into_iter()
-            .map(|range| Crease::simple(range, placeholder.clone()))
-            .chain(tasks)
-            .collect(),
-        false,
-        window,
-        cx,
-    );
     crate::embeds::lift(editor, &folded, cx);
-    let count = syntax_fold_count(editor, cx);
+    layout.place(&scope, placed);
+    let count = match mode {
+        Refold::All => syntax_fold_count(editor, cx),
+        _ => {
+            let after = syntax_folds_in(editor, &scope, cx);
+            editor
+                .addon::<Projection>()
+                .map_or(0, |projection| projection.syntax_folds)
+                .saturating_add(after)
+                .saturating_sub(before)
+        }
+    };
     if let Some(projection) = editor.addon_mut::<Projection>() {
         projection.syntax_folds = count;
+        projection.layout = Some(layout);
     }
 }
 
@@ -787,7 +1320,6 @@ impl BulletHover {
 }
 
 struct Bullet {
-    ordinal: usize,
     /// A numbered item's marker, such as `2.`, shown in place of the dot.
     number: Option<gpui::SharedString>,
     /// Where the item's children start, when it has any.
@@ -812,15 +1344,17 @@ fn bullet_placeholder(editor: WeakEntity<Editor>, bullet: Bullet) -> FoldPlaceho
         render: Arc::new(move |_, range, _| {
             use gpui::{InteractiveElement as _, ParentElement as _, Styled as _, px, rgb};
             let Bullet {
-                ordinal,
                 number,
                 children,
                 collapsed,
                 palette,
                 hover,
             } = &*bullet;
+            // Ids follow the fold, so a block added above leaves this one's placeholder as it was.
+            let id = fold_element_id(&range.start);
+            let key = children.as_ref().map(hover_key);
             let (ink, ring) = (rgb(palette.ink), rgb(palette.ring));
-            let group = gpui::SharedString::from(format!("quire-bullet-{ordinal}"));
+            let group = gpui::SharedString::from(format!("quire-bullet-{id}"));
             let mark = match number {
                 Some(number) => gpui::div()
                     .px(px(3.))
@@ -841,7 +1375,7 @@ fn bullet_placeholder(editor: WeakEntity<Editor>, bullet: Bullet) -> FoldPlaceho
             };
             let zoom_editor = editor.clone();
             let text_start = range.end;
-            let bullet = pointer_control(("quire-bullet", *ordinal))
+            let bullet = pointer_control(("quire-bullet", id as usize))
                 .debug_selector(|| "quire-bullet".into())
                 .group(group)
                 .flex()
@@ -862,10 +1396,12 @@ fn bullet_placeholder(editor: WeakEntity<Editor>, bullet: Bullet) -> FoldPlaceho
                         .ok();
                 });
             let mut slot = gpui::div().flex_none().w(px(16.));
-            if let Some(children) = children.filter(|_| *collapsed || hover.shows(*ordinal)) {
+            if let Some(children) =
+                children.filter(|_| *collapsed || key.is_some_and(|key| hover.shows(key)))
+            {
                 let fold_editor = editor.clone();
                 slot = slot.child(
-                    pointer_control(("quire-bullet-fold", *ordinal))
+                    pointer_control(("quire-bullet-fold", id as usize))
                         .debug_selector(|| "quire-bullet-fold".into())
                         .flex()
                         .items_center()
@@ -901,15 +1437,18 @@ fn bullet_placeholder(editor: WeakEntity<Editor>, bullet: Bullet) -> FoldPlaceho
             }
             let hover = hover.clone();
             let hover_editor = editor.clone();
-            let ordinal = *ordinal;
+            // Only an item with children shows an arrow, so only its hover is tracked.
+            let key = key.unwrap_or(NOT_HOVERED);
             gpui::div()
-                .id(("quire-bullet-marker", ordinal))
+                .id(("quire-bullet-marker", id as usize))
                 .flex()
                 .items_center()
                 .h_full()
                 .mr(px(2.))
                 .on_hover(move |hovered, _, cx| {
-                    hover.set(true, ordinal, *hovered, &hover_editor, cx)
+                    if key != NOT_HOVERED {
+                        hover.set(true, key, *hovered, &hover_editor, cx)
+                    }
                 })
                 .child(slot)
                 .child(bullet)
@@ -1108,6 +1647,100 @@ fn opens_link(
 
 #[cfg(test)]
 pub type Highlight = Option<(gpui::HighlightStyle, Vec<Range<usize>>)>;
+
+/// What Write shows: its folds and their text, the view's text, its fold count, link highlights,
+/// and where the layout found blocks and syntax.
+#[cfg(test)]
+#[derive(Debug, PartialEq)]
+struct Shown {
+    folds: Vec<(Range<usize>, Option<gpui::SharedString>)>,
+    text: String,
+    syntax_folds: usize,
+    links: [Highlight; 2],
+    blocks: Vec<BlockAt>,
+    syntax: Vec<Vec<SyntaxAt>>,
+}
+
+/// Checks that Write's folds are those a refold of the whole view places, and that its layout
+/// records each of them, then leaves the view refolded whole; for tests of refreshes that refold
+/// part of the view.
+#[cfg(test)]
+pub(crate) fn check_against_whole_refold(
+    editor: &mut Editor,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> Result<(), String> {
+    fn shown(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) -> Shown {
+        let display = editor.display_snapshot(cx);
+        let buffer = display.buffer_snapshot();
+        let mut folds: Vec<_> = display
+            .folds_in_range(MultiBufferOffset(0)..buffer.len())
+            .filter(|fold| fold.placeholder.type_tag == Some(TypeId::of::<Projection>()))
+            .map(|fold| {
+                (
+                    fold.range.start.to_offset(buffer).0..fold.range.end.to_offset(buffer).0,
+                    fold.placeholder.collapsed_text.clone(),
+                )
+            })
+            .collect();
+        folds.sort_by_key(|(range, text)| (range.start, range.end, text.clone()));
+        let layout = editor
+            .addon::<Projection>()
+            .and_then(|projection| projection.layout.as_ref());
+        Shown {
+            folds,
+            text: editor.snapshot(window, cx).display_snapshot.text(),
+            syntax_folds: editor
+                .addon::<Projection>()
+                .map_or(0, |projection| projection.syntax_folds),
+            links: link_highlights(editor, cx).0,
+            blocks: layout
+                .map(|layout| layout.blocks.clone())
+                .unwrap_or_default(),
+            syntax: layout
+                .map(|layout| layout.syntax.to_vec())
+                .unwrap_or_default(),
+        }
+    }
+    let Some(blocks) = editor
+        .addon::<Projection>()
+        .map(|projection| projection.blocks.clone())
+    else {
+        return Err("Write is not on in this editor; bind it before checking its folds.".into());
+    };
+    let before = shown(editor, window, cx);
+    let placed: Vec<_> = editor
+        .addon::<Projection>()
+        .and_then(|projection| projection.layout.as_ref())
+        .map(|layout| {
+            let mut placed: Vec<_> = layout
+                .placed
+                .iter()
+                .map(|placed| placed.range.start.0..placed.range.end.0)
+                .collect();
+            placed.sort_by_key(|range| (range.start, range.end));
+            placed
+        })
+        .unwrap_or_default();
+    let folded: Vec<_> = before
+        .folds
+        .iter()
+        .map(|(range, _)| range.clone())
+        .collect();
+    if placed != folded {
+        return Err(format!(
+            "The layout records folds at {placed:?}, but the view has them at {folded:?}."
+        ));
+    }
+    refold_with(editor, &blocks, Refold::All, window, cx);
+    let after = shown(editor, window, cx);
+    if before == after {
+        return Ok(());
+    }
+    Err(format!(
+        "A refold of the whole view changed what Write shows.\nBefore: {before:#?}\nAfter: {after:#?}"
+    ))
+}
 
 /// The style and source ranges of the internal and then the external link highlights, and the
 /// style external links should have, for tests.
@@ -1371,11 +2004,17 @@ pub fn preview_labels(editor: &Editor) -> Vec<String> {
         .collect()
 }
 
-/// Folds the view again, for decorations whose state changed outside a parse.
+/// Folds the view again, for decorations whose state changed outside a parse, or whole when a
+/// fold command outside Write removed some of its folds.
 pub(crate) fn refold(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
     if let Some(projection) = editor.addon::<Projection>() {
         let blocks = projection.blocks.clone();
-        refresh(editor, &blocks, window, cx);
+        let mode = if syntax_unfolded(editor, cx) {
+            Refold::All
+        } else {
+            Refold::Changed
+        };
+        refold_with(editor, &blocks, mode, window, cx);
     }
 }
 
@@ -1388,7 +2027,6 @@ pub fn references_changed(editor: &mut Editor, window: &mut Window, cx: &mut Con
 
 fn checkbox_placeholder(
     editor: WeakEntity<Editor>,
-    ordinal: usize,
     source: String,
     checked: bool,
 ) -> FoldPlaceholder {
@@ -1397,11 +2035,20 @@ fn checkbox_placeholder(
         constrain_width: false,
         merge_adjacent: false,
         type_tag: Some(TypeId::of::<Projection>()),
-        render: Arc::new(move |_, range, _| {
+        render: Arc::new(move |_, range, cx| {
             let editor = editor.clone();
             let source = source.clone();
-            inline_control(("quire-task-checkbox", ordinal), editor.clone())
+            // Ids follow the fold, so a block added above leaves this one's placeholder as it was.
+            let id = fold_element_id(&range.start) as usize;
+            let group = gpui::SharedString::from(format!("quire-task-checkbox-{id}"));
+            inline_control(("quire-task-checkbox", id), editor.clone())
                 .debug_selector(|| "quire-task-checkbox".into())
+                .group(group.clone())
+                .h_full()
+                .flex()
+                .items_center()
+                .pr(gpui::px(6.))
+                .cursor_pointer()
                 .role(gpui::Role::CheckBox)
                 .aria_label(if checked {
                     "Mark task incomplete"
@@ -1413,7 +2060,7 @@ fn checkbox_placeholder(
                 } else {
                     gpui::Toggled::False
                 })
-                .child(ui::Checkbox::new("task-marker", checked.into()).visualization_only(true))
+                .child(crate::task_controls::checkbox(checked, group, cx))
                 .on_click(move |_, window, cx| {
                     cx.stop_propagation();
                     editor
@@ -1432,13 +2079,15 @@ fn checkbox_placeholder(
 /// checkbox, and one from further along lands on the text, so each jump moves.
 /// A caret that lands in a collapsed block's hidden ID or children leaves them, as `rt` keeps it: a
 /// step forward reaches the next line, any other move the block's text end.
-fn clamp_carets(
-    editor: &mut Editor,
-    blocks: &[AnchoredBlock],
-    window: &mut Window,
-    cx: &mut Context<Editor>,
-) {
+/// Reads the blocks where the last refresh found them, which must be after the latest edit.
+fn clamp_carets(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
     let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let Some(layout) = editor
+        .addon_mut::<Projection>()
+        .and_then(|projection| projection.layout.take())
+    else {
+        return;
+    };
     let previous: Vec<MultiBufferOffset> = editor
         .addon::<Projection>()
         .map(|projection| {
@@ -1449,63 +2098,84 @@ fn clamp_carets(
                 .collect()
         })
         .unwrap_or_default();
-    let collapsed = crate::outline::folds::collapsed(editor, cx);
     // Vim's Normal mode keeps the caret on a character, so the last visible one before an ID.
     let on_characters = editor.clip_at_line_ends(cx);
+    let current = layout.edit_count == snapshot.edit_count();
+    // The collapsed children whose tail can hold `position`: a fold holding it, or one starting
+    // after it on its line, past the block's ID.
+    let near = |position: MultiBufferOffset, editor: &Editor, cx: &mut App| {
+        let row = snapshot.offset_to_point(position).row;
+        let end = snapshot.point_to_offset(language::Point::new(
+            row,
+            snapshot.line_len(MultiBufferRow(row)),
+        ));
+        let start = MultiBufferOffset(position.0.saturating_sub(1));
+        let end = MultiBufferOffset((end.0 + 2).min(snapshot.len().0));
+        let range = snapshot.clip_offset(start, text::Bias::Left)
+            ..snapshot.clip_offset(end, text::Bias::Right);
+        (
+            position,
+            crate::outline::folds::collapsed_in(editor, range, cx),
+        )
+    };
     let mut changed = false;
-    let selections = editor
-        .selections
-        .disjoint_anchors_arc()
-        .iter()
-        .enumerate()
-        .map(|(index, selection)| {
-            let mut selection = selection.clone().map(|anchor| anchor.to_offset(&snapshot));
-            if selection.start != selection.end {
-                return selection;
+    let mut selections = Vec::new();
+    for (index, selection) in editor.selections.disjoint_anchors_arc().iter().enumerate() {
+        let mut selection = selection.clone().map(|anchor| anchor.to_offset(&snapshot));
+        if selection.start != selection.end || !current {
+            selections.push(selection);
+            continue;
+        }
+        let from = previous.get(index).copied();
+        let mut position = selection.start;
+        let mut collapsed = near(position, editor, cx);
+        for block in &layout.blocks {
+            // Each rule needs the caret at or past the block's marker, and blocks come in order.
+            if block.start > position {
+                break;
             }
-            let from = previous.get(index).copied();
-            let mut position = selection.start;
-            for block in blocks {
-                let start = block.marker.start.to_offset(&snapshot);
-                let checkbox = block.marker.end.to_offset(&snapshot);
-                let content = text_start(block, &snapshot);
-                if position >= start && position < content {
-                    position = match from {
-                        Some(from) if checkbox <= from && from <= content => position.max(checkbox),
-                        _ => content,
-                    };
-                }
-                if let Some(children) = block.children.map(|at| at.to_offset(&snapshot))
-                    && let Some(fold) = collapsed.iter().find(|fold| fold.start == children)
-                {
-                    let tail = id_range(block, &snapshot).map_or(children, |id| id.start)..fold.end;
-                    if position > tail.start && position <= tail.end {
-                        let next = MultiBufferOffset(tail.end.0 + 1);
-                        position = match from {
-                            Some(from) if from <= tail.start && next <= snapshot.len() => next,
-                            _ => tail.start,
-                        };
+            if position >= block.start && position < block.content {
+                position = match from {
+                    Some(from) if block.checkbox <= from && from <= block.content => {
+                        position.max(block.checkbox)
                     }
-                }
-                if let Some(id) = id_range(block, &snapshot)
-                    && position >= id.start
-                    && position <= id.end
-                {
-                    position = match snapshot.reversed_chars_at(id.start).next() {
-                        Some(last) if on_characters && id.start > content => {
-                            MultiBufferOffset(id.start.0 - last.len_utf8())
-                        }
-                        _ => id.start,
+                    _ => block.content,
+                };
+            }
+            if collapsed.0 != position {
+                collapsed = near(position, editor, cx);
+            }
+            if let Some(children) = block.children
+                && let Some(fold) = collapsed.1.iter().find(|fold| fold.start == children)
+            {
+                let tail = block.id.as_ref().map_or(children, |id| id.start)..fold.end;
+                if position > tail.start && position <= tail.end {
+                    let next = MultiBufferOffset(tail.end.0 + 1);
+                    position = match from {
+                        Some(from) if from <= tail.start && next <= snapshot.len() => next,
+                        _ => tail.start,
                     };
                 }
             }
-            changed |= position != selection.start;
-            selection.start = position;
-            selection.end = position;
-            selection
-        })
-        .collect::<Vec<_>>();
+            if let Some(id) = &block.id
+                && position >= id.start
+                && position <= id.end
+            {
+                position = match snapshot.reversed_chars_at(id.start).next() {
+                    Some(last) if on_characters && id.start > block.content => {
+                        MultiBufferOffset(id.start.0 - last.len_utf8())
+                    }
+                    _ => id.start,
+                };
+            }
+        }
+        changed |= position != selection.start;
+        selection.start = position;
+        selection.end = position;
+        selections.push(selection);
+    }
     if let Some(projection) = editor.addon_mut::<Projection>() {
+        projection.layout = Some(layout);
         projection.heads = selections
             .iter()
             .map(|selection| snapshot.anchor_before(selection.head()))
@@ -1685,7 +2355,7 @@ fn apply_spans(
         })))
     });
     refresh(editor, &blocks, window, cx);
-    clamp_carets(editor, &blocks, window, cx);
+    clamp_carets(editor, window, cx);
     editor
         .addon_mut::<Projection>()
         .expect("installed projection")
@@ -1788,6 +2458,14 @@ fn apply_blocks(
             .any(|(braces, ..)| braces.start < range.end && range.start < braces.end)
     };
     links.retain(|link| !in_query(&link.range));
+    if crate::tag_labels::formats(cx) {
+        let tags = quire_core::markdown::wiki_tags(&page_text, references);
+        links.retain(|link| {
+            !tags
+                .iter()
+                .any(|tag| tag.range.start + 1 == link.range.start)
+        });
+    }
     let previews: Vec<_> = previews
         .into_iter()
         .filter(|preview| !in_query(&preview.range))
@@ -1860,6 +2538,7 @@ fn apply_blocks(
         })
         .collect();
     crate::code_format::toolbar::sync(editor, toolbars);
+    crate::task_controls::sync(editor, &page_text, blocks, shown, anchor, window, cx);
     let lists = queries
         .into_iter()
         .filter(|(braces, ..)| shown(braces))
@@ -1970,14 +2649,14 @@ pub fn bind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Resul
             |editor, _, event: &EditorEvent, window, cx| {
                 let Some(blocks) = editor.addon::<Projection>().map(|p| p.blocks.clone()) else { return; };
                 match event {
-                EditorEvent::BufferEdited | EditorEvent::Focused | EditorEvent::Blurred => refresh(editor, &blocks, window, cx),
+                EditorEvent::BufferEdited | EditorEvent::Focused | EditorEvent::Blurred => refold_with(editor, &blocks, Refold::Caret, window, cx),
                 EditorEvent::SelectionsChanged { local: true } => {
+                    refold_with(editor, &blocks, Refold::Caret, window, cx);
                     // Blocks from an older parse would clamp against moved text; the rebuild after
                     // the next parse clamps instead.
                     if projection_is_current(editor, cx) {
-                        clamp_carets(editor, &blocks, window, cx);
+                        clamp_carets(editor, window, cx);
                     }
-                    refresh(editor, &blocks, window, cx);
                 }
                 _ => {}
                 }
@@ -1989,12 +2668,12 @@ pub fn bind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Resul
         let theme_subscription = cx.observe_global_in::<theme::GlobalTheme>(window, |editor, window, cx| {
             if let Some(projection) = editor.addon_mut::<Projection>() { projection.styled = false; }
             if let Some(blocks) = editor.addon::<Projection>().map(|projection| projection.blocks.clone()) {
-                refresh(editor, &blocks, window, cx);
+                refold_with(editor, &blocks, Refold::All, window, cx);
             }
         });
         editor.register_addon(Projection {
-            blocks: Arc::default(), links: Vec::new(), previews: Vec::new(), preview_text: HashMap::new(),
-            requests: HashMap::new(), sequence: 0, parsed: None, heads: Vec::new(), syntax_folds: 0, style: Default::default(), styled: false, hover: Arc::default(),
+            blocks: Arc::default(), links: Arc::default(), previews: Vec::new(), preview_text: HashMap::new(),
+            requests: HashMap::new(), sequence: 0, parsed: None, heads: Vec::new(), syntax_folds: 0, style: Default::default(), styled: false, hover: Arc::default(), layout: None,
             _subscriptions: vec![editor_subscription, source_subscription, theme_subscription],
         });
         present(editor, true, cx);
@@ -2020,7 +2699,7 @@ pub fn view_range_changed(
         return;
     };
     projection.parsed = None;
-    projection.links.clear();
+    projection.links = Arc::default();
     projection.style = Default::default();
     projection.styled = false;
     projection.previews.clear();
@@ -2043,10 +2722,11 @@ pub fn unbind(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
         crate::media::clear(editor, cx);
         crate::task_lists::clear(editor, cx);
         crate::code_format::toolbar::clear(editor);
+        crate::task_controls::clear(editor, cx);
         editor
             .buffer()
             .update(cx, |buffer, _| buffer.set_edit_filter(None));
-        refresh(editor, &[], window, cx);
+        refold_with(editor, &Arc::default(), Refold::All, window, cx);
         crate::write_style::source_urdu(editor, cx);
         present(editor, false, cx);
     });

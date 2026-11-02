@@ -38,10 +38,12 @@ pub enum TaskView {
     Someday,
     Projects,
     Done,
+    /// Every task, open and done, so a filter can span states.
+    All,
 }
 
 impl TaskView {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Due,
         Self::Upcoming,
         Self::Inbox,
@@ -50,6 +52,7 @@ impl TaskView {
         Self::Someday,
         Self::Projects,
         Self::Done,
+        Self::All,
     ];
 
     pub fn label(self) -> &'static str {
@@ -62,6 +65,7 @@ impl TaskView {
             Self::Someday => "Someday",
             Self::Projects => "Projects",
             Self::Done => "Done",
+            Self::All => "All",
         }
     }
 }

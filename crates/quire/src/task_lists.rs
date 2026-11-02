@@ -6,7 +6,10 @@
 //! Ticking or cycling a task on this page edits the page's buffer as one undo step; a task on
 //! another page changes through the all-or-nothing page writes the Tasks browser uses.
 
-use crate::navigation::{live::Live, tasks::state_label};
+use crate::navigation::{
+    live::Live,
+    tasks::{DuePush, PushDueNextWeek, PushDueTomorrow, state_label},
+};
 use crate::task_edit::{TaskChange, TaskRef};
 use editor::{
     Addon, Editor, FoldPlaceholder,
@@ -310,11 +313,12 @@ const LIST_CONTEXT: &str = "QuireTaskQueryList";
 /// The contexts a focused list sets: it is a list, and a control the page editor and Vim leave alone.
 const LIST_KEYS: &str = "QuireControl QuireList QuireTaskQueryList";
 /// The key context around a list's date field.
-const DATE_CONTEXT: &str = "QuireTaskQueryDate";
+pub(crate) const DATE_CONTEXT: &str = "QuireTaskQueryDate";
 
 /// Keys for task lists in page editors. Cmd/Ctrl-Enter on a query line moves focus into its
 /// list, which answers the list keys, Cmd/Ctrl-Enter to tick, Cmd/Ctrl-Shift-Enter to move to
-/// the next state, D for the due date, and Escape to return to the page. The list carries
+/// the next state, D for the due date, T and W to make the task due tomorrow or next Monday, and
+/// Escape to return to the page. Its date field takes D, T, and W as text. The list carries
 /// `QuireControl`, so page editor and Vim keys stay with the page; its date field binds the
 /// few editing keys a date needs.
 pub(crate) fn init(cx: &mut App) {
@@ -348,7 +352,12 @@ pub(crate) fn init(cx: &mut App) {
             crate::navigation::tasks::EditDueDate,
             Some(LIST_CONTEXT),
         ),
+        KeyBinding::new("t", PushDueTomorrow, Some(LIST_CONTEXT)),
+        KeyBinding::new("w", PushDueNextWeek, Some(LIST_CONTEXT)),
         KeyBinding::new("escape", menu::Cancel, Some(LIST_CONTEXT)),
+        KeyBinding::new("d", gpui::NoAction {}, date),
+        KeyBinding::new("t", gpui::NoAction {}, date),
+        KeyBinding::new("w", gpui::NoAction {}, date),
         KeyBinding::new("enter", menu::Confirm, date),
         KeyBinding::new("escape", menu::Cancel, date),
         KeyBinding::new("backspace", editor::actions::Backspace, date),
@@ -686,6 +695,30 @@ impl TaskListView {
         cx.notify();
     }
 
+    /// Gives the task at row `index` the due date `date`, or with None clears it, through the
+    /// page writes, as the row's calendar menu and push buttons do.
+    fn set_due(&mut self, index: usize, date: Option<String>, cx: &mut Context<Self>) {
+        let Some(Row::Task(task)) = self.rows().get(index).cloned() else {
+            return;
+        };
+        self.highlighted = index;
+        self.notice = None;
+        self.write(
+            TaskRef::from(task.as_ref()),
+            TaskChange::Date(DateField::Due, date),
+            cx,
+        );
+    }
+
+    /// Makes the highlighted task due on `push`'s date.
+    fn push_due(&mut self, push: DuePush, cx: &mut Context<Self>) {
+        let date = push.date(self.today.as_deref().unwrap_or_default());
+        if date.is_some() {
+            let index = self.highlighted;
+            self.set_due(index, date, cx);
+        }
+    }
+
     fn cancel_due(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.date = None;
         window.focus(&self.focus, cx);
@@ -805,6 +838,17 @@ impl TaskListView {
                         .into_any_element()
                 }
             })
+            .when(!done, |row| {
+                row.child(crate::navigation::tasks::quick_dates(
+                    "task-list",
+                    index,
+                    task,
+                    &today,
+                    cx.entity().downgrade(),
+                    Self::set_due,
+                    Self::edit_due,
+                ))
+            })
     }
 }
 
@@ -824,36 +868,45 @@ impl Render for TaskListView {
         let label = format!("Tasks matching {}", self.shown_query);
         let focused = self.focus.contains_focused(window, cx);
         let highlight = cx.theme().colors().element_selected;
-        let root = v_flex()
-            .id("quire-task-list-rows")
-            .key_context(LIST_KEYS)
-            .track_focus(&self.focus)
-            .role(gpui::Role::List)
-            .aria_label(label)
-            .size_full()
-            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_action(
-                cx.listener(|this, _: &crate::tasks::ToggleTask, window, cx| {
-                    if let Some(task) = this.highlighted_task() {
-                        this.change(&task, Action::Toggle, window, cx)
-                    }
-                }),
-            )
-            .on_action(
-                cx.listener(|this, _: &crate::tasks::CycleTask, window, cx| {
-                    if let Some(task) = this.highlighted_task() {
-                        let next = next_state(task.state);
-                        this.change(&task, Action::Set(next), window, cx)
-                    }
-                }),
-            )
-            .on_action(cx.listener(
-                |this, _: &crate::navigation::tasks::EditDueDate, window, cx| {
-                    let index = this.highlighted;
-                    this.edit_due(index, window, cx)
-                },
-            ))
-            .on_action(cx.listener(|this, _: &menu::Cancel, window, cx| this.leave(window, cx)));
+        let root =
+            v_flex()
+                .id("quire-task-list-rows")
+                .key_context(LIST_KEYS)
+                .track_focus(&self.focus)
+                .role(gpui::Role::List)
+                .aria_label(label)
+                .size_full()
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_action(
+                    cx.listener(|this, _: &crate::tasks::ToggleTask, window, cx| {
+                        if let Some(task) = this.highlighted_task() {
+                            this.change(&task, Action::Toggle, window, cx)
+                        }
+                    }),
+                )
+                .on_action(
+                    cx.listener(|this, _: &crate::tasks::CycleTask, window, cx| {
+                        if let Some(task) = this.highlighted_task() {
+                            let next = next_state(task.state);
+                            this.change(&task, Action::Set(next), window, cx)
+                        }
+                    }),
+                )
+                .on_action(cx.listener(
+                    |this, _: &crate::navigation::tasks::EditDueDate, window, cx| {
+                        let index = this.highlighted;
+                        this.edit_due(index, window, cx)
+                    },
+                ))
+                .on_action(cx.listener(|this, _: &PushDueTomorrow, _, cx| {
+                    this.push_due(DuePush::Tomorrow, cx)
+                }))
+                .on_action(cx.listener(|this, _: &PushDueNextWeek, _, cx| {
+                    this.push_due(DuePush::NextWeek, cx)
+                }))
+                .on_action(
+                    cx.listener(|this, _: &menu::Cancel, window, cx| this.leave(window, cx)),
+                );
         crate::navigation::list_keys(
             root,
             cx,

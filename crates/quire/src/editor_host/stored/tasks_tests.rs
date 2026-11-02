@@ -193,7 +193,7 @@ fn task_lists_count_order_and_change_tasks_in_place(cx: &mut TestAppContext) {
         message(&notebook, cx).0.as_deref(),
         Some("Moved 1 task to Next.")
     );
-    keys(&notebook, "[", cx);
+    keys(&notebook, "[ [", cx);
     assert_eq!(
         read(&notebook, cx, |view, _| view.nav.workspace.tasks.view),
         TaskView::Done,
@@ -739,4 +739,206 @@ fn a_failed_task_save_writes_nothing_says_why_and_keeps_focus_for_a_retry(cx: &m
         list_focused(&notebook, cx),
         "focus stays on the list after the retry"
     );
+}
+
+fn filter_text(notebook: &Notebook, cx: &mut TestAppContext) -> String {
+    let list = list(notebook, cx);
+    cx.read(|cx| list.read(cx).filter.read(cx).text(cx))
+}
+
+fn choose(notebook: &Notebook, view: TaskView, cx: &mut TestAppContext) {
+    list(notebook, cx).update(cx, |list, cx| list.choose(view, cx));
+    settle_tasks(notebook, cx);
+}
+
+fn chip(notebook: &Notebook, term: &str, cx: &mut TestAppContext) {
+    settle_tasks(notebook, cx);
+    super::tags_tests::click_at(notebook, format!("quire-task-chip-{term}"), cx);
+    settle_tasks(notebook, cx);
+}
+
+const FILTERED: &str = "- [ ] Later [[2026-11-02]] #next\n- [ ] Overdue [[2026-10-20]] #next\n- [ ] Today [[2026-10-30]]\n- [ ] Undated #next\n- [x] Fresh win ✅ 2026-10-27\n- [x] Old win ✅ 2026-09-02\n- [ ] Dream #someday\n";
+
+/// Quick filter chips toggle `due:` and `done:` terms in the filter text, which stays the one
+/// remembered source of the filter; a tag term keeps tasks carrying the tag or in its state.
+#[gpui::test]
+fn filter_chips_toggle_date_and_tag_terms_in_the_filter_text(cx: &mut TestAppContext) {
+    let notebook = open_notebook(
+        &[("a", "Alpha.md", "- start\n"), ("w", "Work.md", FILTERED)],
+        "a",
+        cx,
+    );
+    show_tasks(&notebook, cx);
+    choose(&notebook, TaskView::Next, cx);
+    wait_rows(
+        &notebook,
+        &["Overdue [[2026-10-20]]", "Later [[2026-11-02]]", "Undated"],
+        cx,
+    );
+    chip(&notebook, "due:overdue", cx);
+    assert_eq!(filter_text(&notebook, cx), "due:overdue");
+    wait_rows(&notebook, &["Overdue [[2026-10-20]]"], cx);
+    chip(&notebook, "due:none", cx);
+    assert_eq!(
+        filter_text(&notebook, cx),
+        "due:none",
+        "a due chip replaces the other due term"
+    );
+    wait_rows(&notebook, &["Undated"], cx);
+    chip(&notebook, "due:none", cx);
+    assert_eq!(
+        filter_text(&notebook, cx),
+        "",
+        "an active chip removes its term"
+    );
+    wait_rows(
+        &notebook,
+        &["Overdue [[2026-10-20]]", "Later [[2026-11-02]]", "Undated"],
+        cx,
+    );
+
+    choose(&notebook, TaskView::Done, cx);
+    wait_rows(&notebook, &["Fresh win", "Old win"], cx);
+    chip(&notebook, "done:week", cx);
+    wait_rows(&notebook, &["Fresh win"], cx);
+    assert_eq!(
+        read(&notebook, cx, |view, _| view
+            .nav
+            .workspace
+            .tasks
+            .query
+            .clone()),
+        "done:week",
+        "the filter text is remembered"
+    );
+    chip(&notebook, "done:today", cx);
+    assert_eq!(filter_text(&notebook, cx), "done:today");
+    wait_rows(&notebook, &[], cx);
+    chip(&notebook, "done-on", cx);
+    assert_eq!(filter_text(&notebook, cx), "done:");
+    let tasks = list(&notebook, cx);
+    let error = cx.read(|cx| tasks.read(cx).filter_error(cx));
+    assert!(
+        error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("In \"done:\": A period is missing.")),
+        "{error:?}"
+    );
+    cx.simulate_input(notebook.window.into(), "2026-09");
+    settle_tasks(&notebook, cx);
+    assert_eq!(filter_text(&notebook, cx), "done:2026-09");
+    wait_rows(&notebook, &["Old win"], cx);
+
+    choose(&notebook, TaskView::All, cx);
+    assert_eq!(count(&notebook, TaskView::All, cx), 7);
+    let tasks = list(&notebook, cx);
+    let tags = cx.read(|cx| tasks.read(cx).tags.value.clone());
+    assert_eq!(tags, [("#next".to_owned(), 3), ("#someday".to_owned(), 1)]);
+    let toggle = |term: &'static str, cx: &mut TestAppContext| {
+        let list = list(&notebook, cx);
+        notebook
+            .window
+            .update(cx, |_, window, cx| {
+                list.update(cx, |list, cx| {
+                    list.set_filter("", window, cx);
+                    list.toggle_term(term, window, cx)
+                })
+            })
+            .unwrap();
+        settle_tasks(&notebook, cx);
+    };
+    toggle("#someday", cx);
+    wait_rows(&notebook, &["Dream"], cx);
+    toggle("#inbox", cx);
+    wait_rows(&notebook, &["Today [[2026-10-30]]"], cx);
+    chip(&notebook, "due:week", cx);
+    assert_eq!(filter_text(&notebook, cx), "#inbox due:week");
+    wait_rows(&notebook, &["Today [[2026-10-30]]"], cx);
+    toggle("-#done", cx);
+    chip(&notebook, "due:none", cx);
+    wait_rows(&notebook, &["Undated", "Dream"], cx);
+}
+
+/// Every open row ends with a calendar menu and buttons that make the task due tomorrow or next
+/// Monday, and T and W do the same for the selection or the highlighted task.
+#[gpui::test]
+fn quick_date_buttons_and_keys_push_due_dates(cx: &mut TestAppContext) {
+    let notebook = open_notebook(
+        &[
+            ("a", "Alpha.md", "- start\n"),
+            ("w", "Work.md", "- [ ] Plan #next\n- [ ] Call #next\n"),
+        ],
+        "a",
+        cx,
+    );
+    show_tasks(&notebook, cx);
+    choose(&notebook, TaskView::Next, cx);
+    wait_rows(&notebook, &["Plan", "Call"], cx);
+    let click = |selector: &str, cx: &mut TestAppContext| {
+        settle_tasks(&notebook, cx);
+        super::tags_tests::click_at(&notebook, selector.to_owned(), cx);
+    };
+    click("quire-task-tomorrow-1", cx);
+    wait_stored(
+        &notebook,
+        "w",
+        "- [ ] Plan #next\n- [ ] Call #next 📅 [[2026-10-31]]\n",
+        cx,
+    );
+    wait_notice(&notebook, "Due Oct 31.", cx);
+    wait_rows(&notebook, &["Call", "Plan"], cx);
+    click("quire-task-next-week-0", cx);
+    wait_stored(
+        &notebook,
+        "w",
+        "- [ ] Plan #next\n- [ ] Call #next 📅 [[2026-11-02]]\n",
+        cx,
+    );
+    wait_notice(&notebook, "Due Nov 2.", cx);
+    click("quire-task-dates-0", cx);
+    click("MENU_ITEM-Clear due date", cx);
+    wait_stored(&notebook, "w", "- [ ] Plan #next\n- [ ] Call #next\n", cx);
+    wait_rows(&notebook, &["Plan", "Call"], cx);
+    click("quire-task-dates-1", cx);
+    click("MENU_ITEM-Today · Oct 30", cx);
+    wait_stored(
+        &notebook,
+        "w",
+        "- [ ] Plan #next\n- [ ] Call #next 📅 [[2026-10-30]]\n",
+        cx,
+    );
+    wait_rows(&notebook, &["Call", "Plan"], cx);
+
+    let tasks = list(&notebook, cx);
+    notebook
+        .window
+        .update(cx, |_, window, cx| {
+            let focus = tasks.read(cx).focus.clone();
+            window.focus(&focus, cx);
+            tasks.update(cx, |list, _| list.highlighted = 0);
+        })
+        .unwrap();
+    keys(&notebook, "space down space w", cx);
+    wait_stored(
+        &notebook,
+        "w",
+        "- [ ] Plan #next 📅 [[2026-11-02]]\n- [ ] Call #next 📅 [[2026-11-02]]\n",
+        cx,
+    );
+    wait_notice(&notebook, "Made 2 tasks due Nov 2.", cx);
+    wait_rows(&notebook, &["Plan", "Call"], cx);
+    keys(&notebook, "up t", cx);
+    wait_stored(
+        &notebook,
+        "w",
+        "- [ ] Plan #next 📅 [[2026-10-31]]\n- [ ] Call #next 📅 [[2026-11-02]]\n",
+        cx,
+    );
+    wait_notice(&notebook, "Made 1 task due Oct 31.", cx);
+}
+
+fn wait_notice(notebook: &Notebook, expected: &str, cx: &mut TestAppContext) {
+    wait_until(cx, "the notice", |cx| {
+        message(notebook, cx).0.as_deref() == Some(expected)
+    });
 }

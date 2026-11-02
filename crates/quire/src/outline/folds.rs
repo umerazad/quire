@@ -69,6 +69,22 @@ pub(crate) fn collapsed(editor: &Editor, cx: &mut App) -> Vec<Range<MultiBufferO
         .collect()
 }
 
+/// The collapsed block children that strictly intersect `range` in the view.
+pub(crate) fn collapsed_in(
+    editor: &Editor,
+    range: Range<MultiBufferOffset>,
+    cx: &mut App,
+) -> Vec<Range<MultiBufferOffset>> {
+    let snapshot = editor.display_snapshot(cx);
+    let buffer = snapshot.buffer_snapshot();
+    snapshot
+        .folds_in_range(range)
+        .filter(|fold| fold.placeholder.type_tag == Some(TypeId::of::<OutlineFold>()))
+        .map(|fold| fold.range.start.to_offset(buffer)..fold.range.end.to_offset(buffer))
+        .filter(|range| !range.is_empty())
+        .collect()
+}
+
 /// The collapsed block children in the view, as source ranges.
 pub(super) fn collapsed_source(editor: &Editor, cx: &mut App) -> Vec<Range<usize>> {
     collapsed(editor, cx)

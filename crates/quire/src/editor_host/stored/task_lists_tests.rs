@@ -129,7 +129,7 @@ fn a_task_list_groups_its_matches_ticks_another_page_and_shows_query_errors(
                 "[ ] write the plan · Next · Launch",
             ],
             &[
-                "error: Unknown term \"colour:red\". Use a state, #tag, [[Page]], project:Name, by:, sort:, limit: or words.",
+                "error: Unknown term \"colour:red\". Use a state, #tag, [[Page]], project:Name, due:, done:, by:, sort:, limit: or words.",
             ],
         ],
         cx,
@@ -157,7 +157,7 @@ fn a_task_list_groups_its_matches_ticks_another_page_and_shows_query_errors(
         &[
             &["## Garden", "[ ] dig beds · Next · Garden"],
             &[
-                "error: Unknown term \"colour:red\". Use a state, #tag, [[Page]], project:Name, by:, sort:, limit: or words.",
+                "error: Unknown term \"colour:red\". Use a state, #tag, [[Page]], project:Name, due:, done:, by:, sort:, limit: or words.",
             ],
         ],
         cx,
@@ -465,4 +465,63 @@ fn ticking_a_task_whose_page_is_open_in_another_tab_updates_that_tab(cx: &mut Te
         },
     );
     cx.read(|cx| assert_eq!(editor.read(cx).text(cx), "- {{tasks: next}}\n"));
+}
+
+/// Each open row of a live list ends with a calendar menu and buttons that make the task due
+/// tomorrow or next Monday; T and W do the same for the highlighted task.
+#[gpui::test]
+fn quick_date_buttons_and_keys_push_listed_tasks(cx: &mut TestAppContext) {
+    const HERE: &str = "- {{tasks: next}}\n- [ ] first #next\n";
+    let pages = [
+        ("h", "Here.md", HERE),
+        ("o", "Other.md", "- [ ] remote #next\n"),
+    ];
+    let (notebook, editor) = open_in_write(&pages, "h", false, cx);
+    wait_for_lines(
+        &notebook,
+        &editor,
+        &[&["[ ] first · Next · Here", "[ ] remote · Next · Other"]],
+        cx,
+    );
+    let page = |cx: &mut TestAppContext| cx.read(|cx| editor.read(cx).text(cx));
+    click(&notebook, &editor, "quire-task-list-tomorrow-1", cx);
+    wait_until(cx, "the other page due tomorrow", |_| {
+        stored(&notebook, "o") == "- [ ] remote #next 📅 [[2026-10-31]]\n"
+    });
+    click(&notebook, &editor, "quire-task-list-next-week-0", cx);
+    wait_until(cx, "this page due next Monday", |cx| {
+        page(cx) == "- {{tasks: next}}\n- [ ] first #next 📅 [[2026-11-02]]\n"
+    });
+
+    click(&notebook, &editor, "quire-task-list-dates-0", cx);
+    click(&notebook, &editor, "MENU_ITEM-Clear due date", cx);
+    wait_until(cx, "the cleared due date", |cx| page(cx) == HERE);
+    click(&notebook, &editor, "quire-task-list-dates-0", cx);
+    click(&notebook, &editor, "MENU_ITEM-Next week · Nov 2", cx);
+    wait_until(cx, "the due date from the menu", |cx| {
+        page(cx) == "- {{tasks: next}}\n- [ ] first #next 📅 [[2026-11-02]]\n"
+    });
+
+    let window = notebook.window.into();
+    notebook
+        .window
+        .update(cx, |view, window, cx| view.focus_active(window, cx))
+        .unwrap();
+    cx.simulate_keystrokes(window, &key("enter"));
+    assert!(
+        !editor_focused(&notebook, &editor, cx),
+        "Cmd/Ctrl-Enter on the query line enters its list"
+    );
+    cx.simulate_keystrokes(window, "down w");
+    wait_until(cx, "the other page due next Monday", |_| {
+        stored(&notebook, "o") == "- [ ] remote #next 📅 [[2026-11-02]]\n"
+    });
+    wait_until(cx, "the list to settle", |cx| {
+        cx.read(|cx| crate::task_lists::settled(editor.read(cx), cx))
+    });
+    cx.simulate_keystrokes(window, "up t");
+    wait_until(cx, "the key's due date", |cx| {
+        page(cx) == "- {{tasks: next}}\n- [ ] first #next 📅 [[2026-10-31]]\n"
+            && stored(&notebook, "h") == page(cx)
+    });
 }

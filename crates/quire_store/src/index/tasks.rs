@@ -6,7 +6,7 @@ use super::query::{PAGE_COLUMNS, PageRef, PageRow, page_ref};
 use super::{QueryIndex, REBUILD, strip_markdown};
 use anyhow::{Context as _, Result};
 use quire_core::task_query;
-use quire_core::tasks::{TaskFilter, TaskState, add_days, memberships};
+use quire_core::tasks::{Candidate, TaskFilter, TaskState, add_days, memberships};
 use quire_core::workspace::{TaskStatus, TaskView};
 use std::{
     cell::RefCell,
@@ -84,6 +84,7 @@ impl TaskCounts {
             TaskView::Someday => self.someday,
             TaskView::Projects => self.projects,
             TaskView::Done => self.done,
+            TaskView::All => self.open() + self.done,
         }
     }
 
@@ -457,26 +458,30 @@ impl QueryIndex {
 
     /// The tasks of the chosen list that pass its filter and project, the first `limit` of them in
     /// the reference order (dated first, then by page path and position), and how many pass.
-    /// Saved and unsaved rows are read from their tables directly: joining the live views per
-    /// row tripled the time of the same reads.
+    /// All lists open tasks by due date, then done tasks by latest completion. Saved and unsaved
+    /// rows are read from their tables directly: joining the live views per row tripled the time
+    /// of the same reads. Text, tags, and titles are read only when the filter tests them.
     fn task_list_rows(
         &self,
         query: &TaskQuery,
         until: Option<&str>,
         members: Option<&BTreeSet<(&str, u32)>>,
     ) -> Result<(Vec<Listed>, usize)> {
-        let filter = TaskFilter::new(&query.filter);
-        let tested = if filter.is_empty() {
-            "'','[]',''"
-        } else {
+        let filter = TaskFilter::new(&query.filter, &query.today);
+        let tested = if filter.tests_text() {
             "t.text,t.tags,p.title"
+        } else {
+            "'','[]',''"
         };
         let select = |condition: &str, date: &str| {
+            let columns = format!(
+                "t.revision,t.ordinal,t.start,p.path,{date},t.state,t.day,t.completed,{tested}"
+            );
             format!(
-                "SELECT t.revision,t.ordinal,t.start,p.path,{date},{tested}
+                "SELECT {columns}
                  FROM main.tasks t JOIN main.pages p ON p.revision=t.revision
                  WHERE {condition} AND t.revision NOT IN ({SKIPPED})
-                 UNION ALL SELECT t.revision,t.ordinal,t.start,p.path,{date},{tested}
+                 UNION ALL SELECT {columns}
                  FROM temp.overlay_tasks t JOIN temp.overlay_pages p ON p.revision=t.revision
                  WHERE {condition}"
             )
@@ -503,15 +508,33 @@ impl QueryIndex {
             TaskView::Waiting => state(TaskState::Waiting)?,
             TaskView::Someday => state(TaskState::Someday)?,
             TaskView::Done => state(TaskState::Done)?,
+            TaskView::All => self.connection.select(&select(
+                "1",
+                "CASE WHEN t.state='done' THEN t.completed ELSE t.day END",
+            ))?()?,
         };
         self.count_rows(rows.len());
         let mut listed = Vec::new();
-        for (revision, ordinal, from, path, date, (text, tags, title)) in rows {
+        for (revision, ordinal, from, path, date, (state, due, completed), (text, tags, title)) in
+            rows
+        {
             if members.is_some_and(|members| !members.contains(&(revision.as_str(), from))) {
                 continue;
             }
-            if !filter.is_empty() && !filter.matches_parts(&text, &parse_list(&tags)?, &title) {
-                continue;
+            let state = TaskState::parse(&state).context(REBUILD)?;
+            if !filter.is_empty() {
+                let tags = parse_list(&tags)?;
+                let candidate = Candidate {
+                    text: &text,
+                    tags: &tags,
+                    page: &title,
+                    state,
+                    due: due.as_deref(),
+                    completed: completed.as_deref(),
+                };
+                if !filter.matches_parts(&candidate) {
+                    continue;
+                }
             }
             listed.push(Listed {
                 revision,
@@ -519,12 +542,14 @@ impl QueryIndex {
                 from,
                 path,
                 date,
+                done: state == TaskState::Done,
             });
         }
         let total = listed.len();
-        let newest = query.view == TaskView::Done;
         let order = |a: &Listed, b: &Listed| {
-            dated_first(a.date.as_deref(), b.date.as_deref(), newest)
+            a.done
+                .cmp(&b.done)
+                .then_with(|| dated_first(a.date.as_deref(), b.date.as_deref(), a.done))
                 .then_with(|| self.collator.compare(&a.path, &b.path))
                 .then(a.from.cmp(&b.from))
         };
@@ -628,6 +653,7 @@ struct Listed {
     from: u32,
     path: String,
     date: Option<String>,
+    done: bool,
 }
 
 type ListedRow = (
@@ -636,8 +662,31 @@ type ListedRow = (
     u32,
     String,
     Option<String>,
+    (String, Option<String>, Option<String>),
     (String, String, String),
 );
+
+/// How many tags the Tasks browser's tag menu offers.
+pub const TASK_TAG_LIMIT: usize = 40;
+
+impl QueryIndex {
+    /// The tags live tasks carry, lowercased with `#`, each with how many tasks carry it, most
+    /// used first and then by name: the first [`TASK_TAG_LIMIT`] of them.
+    pub fn task_tags(&self) -> Result<Vec<(String, usize)>> {
+        self.refresh()?;
+        let rows: Vec<(String, i64)> = self.connection.select_bound(&format!(
+            "SELECT lower(j.value) AS tag,count(*) AS uses FROM (
+               SELECT tags FROM main.tasks WHERE revision NOT IN ({SKIPPED})
+               UNION ALL SELECT tags FROM temp.overlay_tasks) t, json_each(t.tags) j
+             GROUP BY tag ORDER BY uses DESC, tag LIMIT ?1"
+        ))?(TASK_TAG_LIMIT as i64)?;
+        Ok(rows
+            .into_iter()
+            .map(|(tag, uses)| (tag, uses.max(0) as usize))
+            .collect())
+    }
+}
+
 impl super::IndexClient {
     pub fn task_board(&self, query: TaskQuery) -> super::Answer<TaskBoard> {
         self.request(256 + query.filter.len(), move |index| {
@@ -710,6 +759,7 @@ impl QueryIndex {
                 links: &task.links,
                 state: task.state,
                 due: task.due.as_deref(),
+                completed: task.completed.as_deref(),
             })
             .collect();
         let compare = |a: &str, b: &str| self.collator.compare(a, b);

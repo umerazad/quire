@@ -1,8 +1,8 @@
 //! Quire's asset source: Zed's bundled assets, plus the reference app's tag icons (Lucide, ISC;
 //! `assets/icons/tags/LICENSE`) under `quire/icons/tags/<tone>.svg` and the page toolbar's save
 //! states under `icons/quire/save/`, the header's light and dark icons under
-//! `icons/quire/chrome/`, the sidebar's Lucide icons that Zed lacks under `icons/quire/sidebar/`
-//! (all under `icons/`, which `ui::Icon::from_path` reads as embedded SVGs), and Quire's themes
+//! `icons/quire/chrome/`, the sidebar's Lucide icons that Zed lacks under `icons/quire/sidebar/`,
+//! the task due date controls under `icons/quire/tasks/` (all under `icons/`, which `ui::Icon::from_path` reads as embedded SVGs), and Quire's themes
 //! under `themes/quire/`.
 
 use gpui::{AssetSource, Result, SharedString};
@@ -94,6 +94,22 @@ pub const SIDEBAR_ICONS: &[(&str, &[u8])] = &[
     ),
 ];
 
+/// The due date controls after Write's task lines (Lucide, ISC; `assets/icons/tasks/LICENSE`).
+pub const TASK_ICONS: &[(&str, &[u8])] = &[
+    (
+        "icons/quire/tasks/calendar.svg",
+        include_bytes!("../assets/icons/tasks/calendar.svg"),
+    ),
+    (
+        "icons/quire/tasks/chevron-right.svg",
+        include_bytes!("../assets/icons/tasks/chevron-right.svg"),
+    ),
+    (
+        "icons/quire/tasks/chevrons-right.svg",
+        include_bytes!("../assets/icons/tasks/chevrons-right.svg"),
+    ),
+];
+
 /// Quire Light and Quire Dark, built from the reference app's palettes (`roam-theme.css`, its
 /// generated `dark-theme.css`, and `controls.css`). Zed loads every `themes/*.json` asset as a
 /// bundled theme family; `preferences` makes them the defaults.
@@ -115,12 +131,13 @@ pub const CHROME_ICONS: &[(&str, &[u8])] = &[
     ),
 ];
 
-/// Assets served at their own paths: the save, chrome, and sidebar icons and the themes.
+/// Assets served at their own paths: the save, chrome, sidebar, and task icons and the themes.
 fn named() -> impl Iterator<Item = &'static (&'static str, &'static [u8])> {
     SAVE_ICONS
         .iter()
         .chain(CHROME_ICONS)
         .chain(SIDEBAR_ICONS)
+        .chain(TASK_ICONS)
         .chain(THEMES)
 }
 

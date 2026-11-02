@@ -14,6 +14,7 @@ fn shows_in(task: &TaskItem, view: TaskView, today: &str) -> bool {
         TaskView::Someday => task.state == TaskState::Someday,
         TaskView::Done => task.state == TaskState::Done,
         TaskView::Projects => false,
+        TaskView::All => true,
     }
 }
 
@@ -71,20 +72,30 @@ fn board_reading_every_task(index: &QueryIndex, query: &TaskQuery) -> Result<Tas
         .project
         .as_deref()
         .and_then(|id| projects.iter().position(|page| page == id));
-    let filter = TaskFilter::new(&query.filter);
+    let filter = TaskFilter::new(&query.filter, today);
     let mut matching: Vec<&TaskItem> = tasks
         .iter()
         .zip(&members)
         .filter(|(task, belongs)| {
             shows_in(task, query.view, today)
                 && project.is_none_or(|project| belongs.contains(&project))
-                && filter.matches_parts(&task.text, &task.tags, &task.source.title)
+                && filter.matches_parts(&Candidate {
+                    text: &task.text,
+                    tags: &task.tags,
+                    page: &task.source.title,
+                    state: task.state,
+                    due: task.due.as_deref(),
+                    completed: task.completed.as_deref(),
+                })
         })
         .map(|(task, _)| task)
         .collect();
-    matching.sort_by(|a, b| match query.view {
-        TaskView::Done => dated_first(a.completed.as_deref(), b.completed.as_deref(), true),
-        _ => dated_first(a.due.as_deref(), b.due.as_deref(), false),
+    matching.sort_by(|a, b| {
+        let done = |task: &TaskItem| task.state == TaskState::Done;
+        done(a).cmp(&done(b)).then_with(|| match done(a) {
+            true => dated_first(a.completed.as_deref(), b.completed.as_deref(), true),
+            false => dated_first(a.due.as_deref(), b.due.as_deref(), false),
+        })
     });
     Ok(TaskBoard {
         counts,
@@ -129,23 +140,24 @@ fn boards(notebook: &TestNotebook) -> Result<()> {
     let launch = notebook.page("Projects/Launch.md");
     let garden = notebook.page("Garden.md");
     let plain = notebook.page("Topic 3.md");
-    for view in [
-        TaskView::Due,
-        TaskView::Upcoming,
-        TaskView::Inbox,
-        TaskView::Next,
-        TaskView::Waiting,
-        TaskView::Someday,
-        TaskView::Done,
-        TaskView::Projects,
-    ] {
+    for view in TaskView::ALL {
         for filter in [
             "",
             "budget",
             "-plan",
             "-#topic-1",
+            "#topic-1",
+            "#project",
+            "#next -#done",
             "launch review",
             "ملاحظات",
+            "done:week",
+            "done:month -done:today",
+            "due:month",
+            "due:overdue",
+            "due:none",
+            "-due:none #topic-2",
+            "due:2024-01-01..2024-01-20 budget",
         ] {
             for project in [None, Some(&launch), Some(&garden), Some(&plain)] {
                 for limit in [3, 200] {
@@ -187,6 +199,80 @@ fn the_task_board_answers_as_reading_every_task_did() -> Result<()> {
     notebook.open("Topic 3.md", 98)?;
     notebook.open("daily/2024-01-05.md", 97)?;
     boards(&notebook)
+}
+
+/// All lists every task, open ones by due date and then done ones by latest completion, and its
+/// date terms keep the tasks done or due in their periods.
+#[test]
+fn the_all_list_spans_states_and_date_terms_narrow_it() -> Result<()> {
+    let notebook = TestNotebook::new(240, 7)?;
+    let index = &notebook.index;
+    let tasks = index.tasks()?;
+    let board = |filter: &str| {
+        index.task_board(&TaskQuery {
+            view: TaskView::All,
+            today: TODAY.into(),
+            filter: filter.into(),
+            limit: 10_000,
+            ..Default::default()
+        })
+    };
+    let all = board("")?;
+    assert_eq!(all.matching, tasks.len());
+    assert_eq!(all.counts.of(TaskView::All), tasks.len());
+    let first_done = all.rows.iter().position(|task| !task.is_open()).unwrap();
+    assert!(first_done > 0, "open tasks come first");
+    assert!(all.rows[first_done..].iter().all(|task| !task.is_open()));
+    let completions: Vec<_> = all.rows[first_done..]
+        .iter()
+        .map(|task| task.completed.clone())
+        .collect();
+    assert!(
+        completions.windows(2).all(|pair| pair[0] >= pair[1]),
+        "done tasks come latest first"
+    );
+
+    // 2024-02-10 is a Saturday: its week runs from Monday 5 to Sunday 11 February.
+    let week = board("done:week")?;
+    assert!(week.matching > 0);
+    assert!(week.rows.iter().all(|task| {
+        !task.is_open()
+            && task
+                .completed
+                .as_deref()
+                .is_some_and(|day| ("2024-02-05"..="2024-02-11").contains(&day))
+    }));
+    let due = board("due:2024-01")?;
+    assert!(due.matching > 0);
+    assert!(due.rows.iter().all(|task| {
+        task.due
+            .as_deref()
+            .is_some_and(|day| day.starts_with("2024-01"))
+    }));
+    let undated = board("due:none")?.matching;
+    let dated = board("-due:none")?.matching;
+    assert_eq!(undated + dated, tasks.len());
+    assert!(undated > 0 && dated > 0);
+    Ok(())
+}
+
+#[test]
+fn task_tags_count_the_tasks_carrying_each_tag() -> Result<()> {
+    let notebook = TestNotebook::new(240, 7)?;
+    let index = &notebook.index;
+    notebook.open("Topic 3.md", 98)?;
+    let mut expected: HashMap<String, usize> = HashMap::new();
+    for task in index.tasks()? {
+        for tag in task.tags {
+            *expected.entry(tag.to_lowercase()).or_default() += 1;
+        }
+    }
+    let mut expected: Vec<(String, usize)> = expected.into_iter().collect();
+    expected.sort_by(|(a, x), (b, y)| y.cmp(x).then(a.cmp(b)));
+    expected.truncate(TASK_TAG_LIMIT);
+    assert!(expected.len() > 3);
+    assert_eq!(index.task_tags()?, expected);
+    Ok(())
 }
 
 /// The board reads the chosen list's matching rows and its first `limit` tasks in full, not

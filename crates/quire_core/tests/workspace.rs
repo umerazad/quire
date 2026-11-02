@@ -218,6 +218,15 @@ fn task_choices_survive_save_and_load_and_forget_deleted_projects() {
         TaskChoices::default(),
         "unreadable choices fall back to Inbox and Active"
     );
+    for (name, view) in [("done", TaskView::Done), ("all", TaskView::All)] {
+        let saved = format!(r#"{{"tabs":[],"tasks":{{"view":"{name}","query":"done:week"}}}}"#);
+        let choices = Workspace::load(&saved).tasks;
+        assert_eq!(
+            (choices.view, choices.query.as_str()),
+            (view, "done:week"),
+            "{name} loads"
+        );
+    }
     let mut pruned = loaded;
     pruned.retain_pages(|id| id != "atlas");
     assert_eq!(pruned.tasks.project, None);
